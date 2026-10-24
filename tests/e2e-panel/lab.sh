@@ -14,6 +14,7 @@
 #   lab.sh transfer <ip>              TCP 1 MB a→b; imprime ok/fail
 #   lab.sh block <p2p|udp|none>
 set -uo pipefail
+cd "${LAB_ROOT:-$PWD}"
 
 LAB=/tmp/lab
 ROOT=${LAB_ROOT:-$PWD}
@@ -31,7 +32,7 @@ setup)
   ip addr add $CP_IP/24 dev nl-public
   atenea root-init --out $LAB/root.key > $LAB/root.pub
   ROOT_PUB=$(cat $LAB/root.pub)
-  bash tests/network-lab/nat/gen-certs.sh $LAB/certs > /dev/null
+  bash "$ROOT/tests/network-lab/nat/gen-certs.sh" $LAB/certs > /dev/null || exit 1
   ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > $LAB/relay-signing.hex
     head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > $LAB/issuer.key )
   RELAY_PUB=$(ATENEA_COORD_RELAY_SIGNING_KEY_FILE=$LAB/relay-signing.hex atenea-coordinator --print-relay-key)
@@ -60,7 +61,7 @@ setup)
     ATENEA_RELAY_TLS_CERT_FILE=$LAB/certs/relay.pem ATENEA_RELAY_TLS_KEY_FILE=$LAB/certs/relay.key \
     ATENEA_RELAY_PROXY_PROTOCOL=true ATENEA_RELAY_STATUS_SOCKET=$LAB/relay.sock \
     setsid nohup ip netns exec inet atenea-relay > $LAB/relay.log 2>&1 &
-  setsid nohup ip netns exec inet python3 tests/network-lab/nat/fake-web.py 8082 > /dev/null 2>&1 &
+  setsid nohup ip netns exec inet python3 "$ROOT/tests/network-lab/nat/fake-web.py" 8082 > /dev/null 2>&1 &
   sleep 1
   start_haproxy 8443 8082 || exit 1
   for _ in $(seq 1 30); do python3 -c "import urllib.request;urllib.request.urlopen('http://$CP_IP:8080/healthz',timeout=2)" 2>/dev/null && break; sleep 1; done

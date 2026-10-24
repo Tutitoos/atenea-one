@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Model } from '@atenea/api-client';
-z.config(z.locales.es());
+// La CSP no permite eval; incluso el sondeo JIT de Zod genera una infracción.
+z.config({ ...z.locales.es(), jitless: true });
 export const nameSchema = z.string().trim().min(1, 'Indica un nombre.').refine(v => new TextEncoder().encode(v).length <= 255, 'Máximo 255 bytes UTF-8.');
 export const rootAnchor = z.string().regex(/^[a-fA-F0-9]{64}$/, 'El ancla debe contener 64 caracteres hexadecimales.');
 function networkAddress(value: string) {

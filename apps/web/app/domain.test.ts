@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { device } from './device.fixture';
 import { connection, endpoint, endpointsSchema, networkSchema, policySchema, relays, rootAnchor } from './domain';
+import { z } from 'zod';
+it('valida sin sondeos eval ni compilación JIT bajo la CSP',()=>{
+ expect(z.config().jitless).toBe(true);
+ const constructor=vi.spyOn(globalThis,'Function').mockImplementation(()=>{throw new Error('La CSP prohíbe eval.');});
+ try {
+  expect(networkSchema.safeParse({name:'Red',ipv4_cidr:'192.0.2.0/24',ipv6_cidr:'2001:db8::/64',root_anchor:'ab'.repeat(32)}).success).toBe(true);
+  expect(constructor).not.toHaveBeenCalled();
+ } finally { constructor.mockRestore(); }
+});
 describe('validadores del contrato',()=>{
  it('valida CIDR IPv4/IPv6 y ancla hex sin crear claves',()=>{const v={name:'Red',ipv4_cidr:'192.0.2.0/24',ipv6_cidr:'2001:db8::/64',root_anchor:'ab'.repeat(32)};expect(networkSchema.safeParse(v).success).toBe(true);expect(networkSchema.safeParse({...v,ipv4_cidr:'999.0.0.0/24'}).success).toBe(false);expect(networkSchema.safeParse({...v,ipv6_cidr:'2001:db8::/129'}).success).toBe(false);expect(rootAnchor.safeParse('z'.repeat(64)).success).toBe(false);});
  it('rechaza endpoints inválidos y más de cuatro',()=>{for(const s of ['192.0.2.1:443','[2001:db8::1]:4242'])expect(endpoint.safeParse(s).success).toBe(true);for(const s of ['host:443','192.0.2.1:0','192.0.2.1:65536','2001:db8::1:80'])expect(endpoint.safeParse(s).success).toBe(false);expect(endpointsSchema.safeParse(Array(5).fill('192.0.2.1:80')).success).toBe(false);});

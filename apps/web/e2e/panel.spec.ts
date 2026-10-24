@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -17,6 +18,11 @@ async function open(page: Page, view: string) {
   await page.getByRole('navigation', { name: 'Secciones de red' }).getByRole('button', { name: view }).click();
 }
 
+async function dismiss(page: Page) {
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+
 async function axeClean(page: Page, label: string) {
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   const bad = result.violations.map(v => `${v.id}: ${v.nodes.length} nodos`);
@@ -24,9 +30,8 @@ async function axeClean(page: Page, label: string) {
 }
 
 test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revocación', async ({ page }) => {
-  const setup = lab('setup');
-  const rootAnchor = /root_anchor=([0-9a-f]{64})/.exec(setup)?.[1];
-  expect(rootAnchor, 'ancla raíz generada offline').toBeTruthy();
+  const rootAnchor = readFileSync('/tmp/lab/root.pub', 'utf8').trim();
+  expect(rootAnchor, 'ancla raíz generada offline').toMatch(/^[0-9a-f]{64}$/);
 
   // --- Inicio de sesión OIDC real (Dex)
   await page.goto('/');
@@ -42,12 +47,14 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await page.getByRole('button', { name: 'Crear organización' }).click();
   await page.getByLabel('Nombre').fill('laboratorio');
   await page.getByRole('dialog').getByRole('button', { name: 'Crear organización' }).click();
-  await page.getByLabel('Organización', { exact: true }).selectOption({ label: 'laboratorio · owner' });
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
+  await dismiss(page);
+  await page.getByRole('combobox', { name: /^Organización/ }).selectOption({ label: 'laboratorio · owner' });
   await page.getByRole('button', { name: 'Crear red' }).click();
   await page.getByLabel('Nombre').fill('red-lab');
   await page.getByLabel('CIDR IPv4').fill('10.77.0.0/24');
   await page.getByLabel('CIDR IPv6').fill('fd77::/64');
-  await page.getByLabel('Ancla pública raíz (64 hex)').fill(rootAnchor!);
+  await page.getByLabel('Ancla pública raíz (64 hex)').fill(rootAnchor);
   await page.getByRole('dialog').getByRole('button', { name: 'Crear red' }).click();
   await expect(page.getByRole('heading', { name: 'red-lab' })).toBeVisible();
   const net = new URL(page.url()).searchParams.get('net')!;
@@ -82,6 +89,7 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
     await r.getByRole('button', { name: 'Aprobar' }).click();
     await expect(page.getByRole('dialog')).toContainText(fingerprints[n]);
     await page.getByRole('button', { name: 'Confirmar aprobación' }).click();
+    await dismiss(page);
     await expect(row(page, `host-${n}`)).toContainText('approved');
   }
 
@@ -89,16 +97,23 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await open(page, 'Políticas');
   await page.getByRole('button', { name: 'Crear política' }).click();
   await page.getByRole('button', { name: 'Guardar política' }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
+  await dismiss(page);
   await expect(page.getByText('Cualquiera → Cualquiera')).toBeVisible();
 
   // --- Agentes: se configuran con el `join` del panel y informan su estado
   lab('start-agent', 'a', joins.a);
   lab('start-agent', 'b', joins.b);
   await open(page, 'Dispositivos');
-  const pathOf = async (n: string) => (await row(page, `host-${n}`).innerText());
+  // Sin tráfico no hay handshake: se genera un ping por consulta, como haría un usuario.
+  await expect(row(page, 'host-b')).toContainText(/10\.77\.0\.\d+/);
+  const ipB = (await row(page, 'host-b').innerText()).match(/10\.77\.0\.\d+/)![0];
+  const pathOf = async (n: string) => {
+    labOk('ping', 'a', ipB);
+    return row(page, `host-${n}`).innerText();
+  };
   await expect.poll(async () => pathOf('a'), { timeout: 180_000, intervals: [3000] }).toMatch(/direct/);
   await expect.poll(async () => pathOf('b'), { timeout: 60_000, intervals: [3000] }).toMatch(/direct/);
-  const ipB = (await row(page, 'host-b').innerText()).match(/10\.77\.0\.\d+/)![0];
   await expect.poll(() => labOk('ping', 'a', ipB), { timeout: 60_000 }).toBe(true);
   expect(lab('transfer', ipB)).toBe('ok');
 
@@ -112,7 +127,7 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
 
   // --- Vistas derivadas con datos reales
   await open(page, 'Relays');
-  await expect(page.getByText('lab').first()).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'lab', exact: true })).toBeVisible();
   await axeClean(page, 'relays');
   await open(page, 'Topología');
   await axeClean(page, 'topología');
@@ -136,6 +151,7 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await row(page, 'host-b').getByRole('button', { name: 'Revocar' }).click();
   await expect(page.getByRole('dialog')).toContainText(fingerprints.b);
   await page.getByRole('button', { name: 'Confirmar revocación' }).click();
+  await dismiss(page);
   await expect(row(page, 'host-b')).toContainText('revoked');
   const t0 = Date.now();
   await expect.poll(() => labOk('ping', 'a', ipB), { timeout: 150_000, intervals: [2000] }).toBe(false);

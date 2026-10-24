@@ -51,7 +51,24 @@ El control plane sirve `build/client`, devuelve `index.html` para rutas SPA y
 mantiene reservadas `/api`, `/auth` y `/healthz`. En producción no se necesita
 servidor Node. `scripts/csp.mjs` externaliza los scripts de arranque generados
 por React Router a ficheros con hash; no se relaja `script-src` ni se necesitan
-scripts inline. La fuente y todos los assets se sirven localmente.
+scripts inline. `entry.client.tsx` hidrata solo `#app`: el documento y los
+scripts externos quedan fuera de esa frontera. No se debe volver a hidratar
+`document`, porque la externalización cambia los nodos de `<Scripts/>` y
+provocaría un desajuste de hidratación. La fuente y los assets se sirven localmente.
+
+El panel declara una ruta índice explícita para `/` además del comodín SPA:
+en React Router 8.5, un comodín aislado no selecciona el hijo al abrir `/`, y
+el `Outlet` raíz quedaría vacío. No requiere descubrimiento remoto de rutas:
+el manifiesto SPA ya incluye ambas. Zod se configura con `jitless: true` antes
+de crear los esquemas para evitar tanto compilación JIT como sondeos `eval`
+incompatibles con la CSP.
+
+La regresión `e2e/hydration.spec.ts` abre el build real sin sesión, exige el
+enlace OIDC, CSP y ausencia de scripts inline, errores de página, infracciones
+de CSP y llamadas JS a `console.error`. El HTTP 401 de sesión es esperado;
+el mensaje de red que muestra Chromium no es una llamada JS a `console.error`.
+Usa la configuración E2E existente y se ejecuta en el contenedor del laboratorio;
+Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
 
 ## Operación y seguridad
 

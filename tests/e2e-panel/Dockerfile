@@ -4,7 +4,7 @@ FROM atenea-lab
 ARG NODE_VERSION=24.11.0
 ARG PLAYWRIGHT_VERSION=1.64.1
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+ && apt-get install -y --no-install-recommends ca-certificates curl xz-utils rsync \
  && arch="$(dpkg --print-architecture)"; case "$arch" in amd64) n=x64;; arm64) n=arm64;; esac \
  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${n}.tar.xz" | tar -xJ -C /usr/local --strip-components=1 \
  && corepack enable \
