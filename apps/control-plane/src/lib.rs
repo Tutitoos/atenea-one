@@ -8,6 +8,7 @@ pub mod issue;
 pub mod networks;
 mod openapi;
 pub mod orgs;
+pub mod panel;
 pub mod policies;
 use std::{
     collections::HashMap,
@@ -24,6 +25,7 @@ pub struct AppState {
     pub issuer: atenea_identity::SigningKey,
     pub nonces: NonceCache,
     pub rate: Arc<Mutex<HashMap<IpAddr, (f64, Instant)>>>,
+    pub panel: Arc<panel::Live>,
 }
 impl AppState {
     pub fn new(
@@ -37,6 +39,7 @@ impl AppState {
             issuer,
             nonces: Default::default(),
             rate: Default::default(),
+            panel: Arc::new(panel::Live::default()),
         }
     }
 }

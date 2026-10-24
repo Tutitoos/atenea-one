@@ -18,6 +18,7 @@ pub struct Status {
     pub sync_ok: u64,
     pub sync_denied: u64,
     pub sync_errors: u64,
+    pub report_errors: u64,
 }
 
 impl Status {
@@ -136,10 +137,196 @@ pub fn fetch(
     write_changed(path, &bytes)
 }
 
+#[derive(Serialize)]
+pub struct Report {
+    nat_mapping: Option<&'static str>,
+    paths: Vec<ReportPath>,
+}
+
+#[derive(Serialize)]
+struct ReportPath {
+    peer: String,
+    path: &'static str,
+    last_rx_secs: Option<u64>,
+    rtt_ms: Option<u32>,
+    relay: Option<String>,
+}
+
+/// Lista blanca: el estado IPC también contiene claves públicas y direcciones que no se envían.
+pub fn build_report(
+    status: &crate::engine::Status,
+    relays: &crate::relay::RelayStatus,
+) -> Option<Report> {
+    if !status.config.lease_active {
+        return None;
+    }
+    Some(Report {
+        nat_mapping: status.nat.as_ref().map(|nat| nat.mapping),
+        paths: status
+            .peers
+            .iter()
+            .map(|peer| {
+                let id = atenea_crypto::hex::encode(&peer.device_id);
+                ReportPath {
+                    peer: format!(
+                        "{}-{}-{}-{}-{}",
+                        &id[..8],
+                        &id[8..12],
+                        &id[12..16],
+                        &id[16..20],
+                        &id[20..]
+                    ),
+                    path: peer.path,
+                    last_rx_secs: peer.last_rx_secs,
+                    rtt_ms: peer
+                        .paths
+                        .iter()
+                        .find(|p| p.kind == peer.path)
+                        .and_then(|p| p.rtt_ms),
+                    relay: relays
+                        .entries
+                        .iter()
+                        .find(|entry| {
+                            entry.peer == id
+                                && !entry.relay.is_empty()
+                                && matches!(
+                                    (peer.path, entry.transport),
+                                    ("relay-udp", crate::relay::RelayKind::Udp)
+                                        | ("relay-tls", crate::relay::RelayKind::Tls)
+                                )
+                        })
+                        .map(|entry| entry.relay.clone()),
+                }
+            })
+            .collect(),
+    })
+}
+
+pub fn send_report(
+    cfg: &SyncConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    report: &Report,
+    ts: u64,
+) -> Result<(), &'static str> {
+    cfg.endpoint().map_err(|_| "URL inválida")?;
+    let url = format!("{}/api/v1/device/status", cfg.url.trim_end_matches('/'));
+    let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
+    let path = uri.path_and_query().ok_or("URL inválida")?.as_str();
+    let body = serde_json::to_vec(report).map_err(|_| "informe inválido")?;
+    let mut nonce = [0; 16];
+    nonce.copy_from_slice(&atenea_identity::generate_seed()[..16]);
+    let authorization = sign_request(key, device, "POST", path, &body, ts, nonce);
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let response = agent
+        .post(&url)
+        .header("Authorization", &authorization)
+        .header("Content-Type", "application/json")
+        .send(body.as_slice())
+        .map_err(|_| "error de red")?;
+    if response.status().as_u16() != 204 {
+        return Err("error HTTP del control plane");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    #[test]
+    fn report_uses_device_ids_and_only_public_report_fields() {
+        use crate::engine::{ConfigStatus, NatStatus, PathStatus, PeerStatus};
+        let mut status = crate::engine::Status {
+            nat: Some(NatStatus {
+                mapping: "dependent",
+                reflexive: Some("198.51.100.1:1234".into()),
+                candidates: vec!["192.0.2.1:1234".into()],
+            }),
+            public_key: "clave local".into(),
+            counters: Default::default(),
+            config: ConfigStatus {
+                version: 1,
+                valid_until_unix: Some(300),
+                lease_active: false,
+                last_error: None,
+            },
+            peers: ["direct", "relay-udp", "relay-tls", "probing", "none"]
+                .into_iter()
+                .map(|path| PeerStatus {
+                    device_id: [0xab; 16],
+                    public_key: "no es el identificador".into(),
+                    endpoint: Some("203.0.113.1:1234".into()),
+                    session: Some("sesión".into()),
+                    last_handshake_secs_ago: Some(1),
+                    tx_bytes: 123,
+                    rx_bytes: 456,
+                    path,
+                    candidates: 1,
+                    last_rx_secs: Some(3),
+                    paths: vec![PathStatus {
+                        kind: "relay-udp",
+                        ready: true,
+                        healthy: true,
+                        last_rx_secs: Some(3),
+                        rtt_ms: Some(20),
+                    }],
+                })
+                .collect(),
+        };
+        let mut relays = crate::relay::RelayStatus::default();
+        assert!(build_report(&status, &relays).is_none());
+        status.config.lease_active = true;
+        let json = serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap();
+        let paths: Vec<_> = ["direct", "relay-udp", "relay-tls", "probing", "none"]
+            .into_iter()
+            .map(|path| {
+                serde_json::json!({
+                    "peer": "abababab-abab-abab-abab-abababababab",
+                    "path": path,
+                    "last_rx_secs": 3,
+                    "rtt_ms": if path == "relay-udp" { Some(20) } else { None },
+                    "relay": null,
+                })
+            })
+            .collect();
+        assert_eq!(
+            json,
+            serde_json::json!({"nat_mapping": "dependent", "paths": paths})
+        );
+        relays.entries.push(crate::relay::AllocationStatus {
+            peer: "ab".repeat(16),
+            transport: crate::relay::RelayKind::Udp,
+            relay: "sintético".into(),
+            state: "ready".into(),
+            peer_ready: true,
+            rtt_ms: Some(20),
+            pings_sent: 0,
+            pings_lost: 0,
+            tx_bytes: 0,
+            tx_packets: 0,
+            rx_bytes: 0,
+            rx_packets: 0,
+            drops: Default::default(),
+            last_error: None,
+        });
+        let known = serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap();
+        assert_eq!(known["paths"][1]["relay"], "sintético");
+        assert!(known["paths"][0]["relay"].is_null());
+        assert!(known["paths"][2]["relay"].is_null());
+        status.nat = None;
+        status.peers.clear();
+        assert_eq!(
+            serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap(),
+            serde_json::json!({"nat_mapping": null, "paths": []})
+        );
+    }
     fn cfg(url: &str) -> SyncConfig {
         SyncConfig {
             url: url.into(),

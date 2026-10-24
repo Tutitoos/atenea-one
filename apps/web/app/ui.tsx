@@ -1,0 +1,19 @@
+import { useId, useState } from 'react';
+import { useForm } from '@tanstack/react-form';
+import { Dialog as Primitive } from 'radix-ui';
+import { motion, useReducedMotion } from 'motion/react';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { secondsSince } from './domain';
+import { useClock } from './live';
+export function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button type="button" {...props}/>; }
+// Composición local shadcn/ui (MIT) sobre Radix: foco atrapado, Escape y retorno al disparador.
+export function Dialog({ trigger, title, description, children }: { trigger: string; title: string; description: string; children: React.ReactNode }) { const reduce = useReducedMotion(); return <Primitive.Root><Primitive.Trigger asChild><Button>{trigger}</Button></Primitive.Trigger><Primitive.Portal><Primitive.Overlay className="overlay"/><Primitive.Content asChild><motion.section className="dialog" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: reduce ? 0 : 0.16 }}><Primitive.Title>{title}</Primitive.Title><Primitive.Description>{description}</Primitive.Description>{children}<Primitive.Close asChild><Button>Cerrar</Button></Primitive.Close></motion.section></Primitive.Content></Primitive.Portal></Primitive.Root>; }
+export type Field = { name: string; label: string; value?: string; type?: string; options?: readonly string[]; required?: boolean };
+export function ActionForm({ fields, label, submit }: { fields: Field[]; label: string; submit: (values: Record<string, string>) => Promise<unknown> }) {
+  const id = useId(); const [message, setMessage] = useState('');
+  const form = useForm({ defaultValues: Object.fromEntries(fields.map(f => [f.name, f.value ?? ''])), onSubmit: async ({ value }) => { setMessage(''); try { await submit(value); setMessage('Acción completada.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo completar la acción.'); } } });
+  return <form onSubmit={event => { event.preventDefault(); void form.handleSubmit(); }}><div className="fields">{fields.map(spec => <form.Field key={spec.name} name={spec.name}>{field => <div><label htmlFor={`${id}-${spec.name}`}>{spec.label}</label>{spec.options ? <select id={`${id}-${spec.name}`} value={field.state.value} onChange={e => field.handleChange(e.target.value)}>{spec.options.map(option => <option key={option}>{option}</option>)}</select> : <input id={`${id}-${spec.name}`} type={spec.type ?? 'text'} required={spec.required !== false} value={field.state.value} onBlur={field.handleBlur} onChange={e => field.handleChange(e.target.value)}/>}</div>}</form.Field>)}</div><form.Subscribe selector={state => state.isSubmitting}>{pending => <Button type="submit" disabled={pending}>{pending ? 'Guardando…' : label}</Button>}</form.Subscribe><p role="status">{message}</p></form>;
+}
+export function Status({ query }: { query: Pick<UseQueryResult, 'isPending' | 'isError' | 'error' | 'dataUpdatedAt' | 'isFetching'> }) { const now = useClock(); return <div className="status" aria-live="polite">{query.isPending ? 'Cargando…' : query.isError ? `Error: ${query.error?.message}` : `Actualizado hace ${secondsSince(query.dataUpdatedAt, now)} s${query.isFetching ? ' · Actualizando…' : ''}`}</div>; }
+export function Empty({ children = 'Todavía no hay datos.' }: { children?: React.ReactNode }) { return <p className="empty">{children}</p>; }
+export function RunButton({ children, run }: { children: React.ReactNode; run: () => Promise<unknown> }) { const [message, setMessage] = useState(''); const [pending, setPending] = useState(false); return <><Button disabled={pending} onClick={() => { setPending(true); setMessage(''); void run().then(() => setMessage('Acción completada.'), e => setMessage(e instanceof Error ? e.message : 'Error de conexión.')).finally(() => setPending(false)); }}>{children}</Button><span role="status">{message}</span></>; }

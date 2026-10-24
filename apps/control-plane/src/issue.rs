@@ -244,6 +244,8 @@ pub async fn get(
     )
     .await?;
     tx.commit().await?;
+    s.panel.changed(net, "devices");
+    s.panel.changed(net, "audit");
     Ok((
         [
             ("content-type", "application/octet-stream"),

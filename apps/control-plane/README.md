@@ -21,6 +21,7 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
 | `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
 | `APPLICATION_ROLE` | Rol que recibe permisos limitados al aplicar migraciones |
+| `WEB_DIR` | Opcional: directorio `apps/web/build/client`; sirve SPA y assets desde este mismo origen |
 
 Ejemplo sintético (no incluya secretos reales en el repositorio):
 
@@ -61,6 +62,37 @@ La emisión responde `503 issuer_unavailable` sin certificado adecuado o si este
 
 Cree un token de enrolamiento desde la red y entregue `join` por un canal seguro: contiene URL, token de un uso y ancla de confianza. El operador genera las claves con `atenea device-init --dir DIR` y ejecuta `atenea enroll --url URL --token TOKEN --dir DIR --name NOMBRE`. Compare la huella del bundle por otro canal antes de aprobar. Nunca coloque tokens reales en historial compartido ni documentación.
 
+## Panel, informes y métricas
+
+Tras compilar `apps/web`, configure `ATENEA_CP_WEB_DIR` con su `build/client`.
+Mantenga `PUBLIC_URL` igual al origen público del navegador: el WebSocket de
+`/api/v1/networks/{net}/events` rechaza cualquier otro `Origin`. El proxy debe
+reenviar el upgrade WebSocket y permitir conexiones persistentes/ping cada 25 s.
+Se admiten ocho conexiones por usuario y 64 por proceso; no se configura CORS.
+El panel usa la misma sesión OIDC, CSRF y permisos que REST. Sin `WEB_DIR`,
+las rutas no API siguen devolviendo el error JSON habitual.
+
+`0002_panel.sql` añade informes y muestras; aplique `--migrate` con
+`APPLICATION_ROLE` para conceder permisos sobre las tablas nuevas sin permitir
+modificar auditoría. No ejecute varias instancias: las secuencias, conexiones y
+notificaciones son locales al proceso.
+
+Los agentes con `[sync]` y lease vigente envían cada 15 s un informe firmado
+a `POST /api/v1/device/status`. Los informes no contienen IPs externas ni claves,
+solo UUID de pares, caminos, edad de recepción, RTT y nombre del relay conocido.
+Los fallos no bloquean el agente y aumentan `sync.report_errors` en su estado IPC.
+El inventario distingue `online` (<90 s), `stale` (<600 s), `offline` y `unknown`;
+es información declarada por el dispositivo, no una comprobación independiente.
+No hay catálogo adicional de relays: se deriva de los nombres observados.
+
+La tarea de muestreo toma una muestra al arrancar y cada 60 s a partir de los
+informes de dispositivos aprobados, conserva siete días y se detiene limpiamente
+con el proceso. `GET /api/v1/networks/{net}/metrics` devuelve datos reales o una
+lista vacía, nunca puntos sintetizados. Un fallo de muestreo emite un aviso sin
+datos sensibles; compruebe PostgreSQL y las migraciones si faltan muestras.
+Las reglas de clasificación y caché, y las cabeceras de seguridad del contenido,
+figuran en §10 del contrato.
+
 ## Integración automatizada
 
 ```sh
@@ -86,6 +118,7 @@ Cobertura implementada de §8:
 - Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso. La clave RSA de 2048 bits se genera en memoria una vez por proceso de pruebas; no se almacena ni se publica ninguna clave privada.
 - Eventos de todas las escrituras enumeradas y denegación real de UPDATE/DELETE con `SET ROLE` sobre el rol limitado.
 - Igualdad del OpenAPI publicado con `openapi()` generado. Regeneración: `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json`.
+- Panel: inventario con IPs e informe firmado, validación y límite de tasa; muestreo/retención con reloj explícito; aislamiento de métricas y eventos; WebSocket TCP real con hello/cambios/Origin/límites; SPA, rutas reservadas, CSP y caché.
 
 ## E2E de laboratorio
 

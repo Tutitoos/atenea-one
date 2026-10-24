@@ -203,6 +203,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
             url: s.url.clone(),
             ..Default::default()
         }));
+    let report_tx = sync_tx.clone();
     let sync_task = cfg.sync.clone().map(|sync| {
         let path = cfg.config_file.clone();
         let device = cfg.device_id;
@@ -354,6 +355,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     let mut stun_refresh = tokio::time::interval(Duration::from_secs(30));
     let mut ticks: u64 = 0;
+    let mut report_every = tokio::time::interval(Duration::from_secs(15));
+    report_every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut report_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -456,6 +460,30 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 }
                 rt.engine.on_tick(now, unix)
             },
+            _ = report_every.tick(), if rt.cfg.sync.is_some() => {
+                if report_task.as_ref().is_none_or(|task| task.is_finished())
+                    && let Some(sync) = rt.cfg.sync.clone()
+                    && let Some(report) = crate::sync::build_report(&rt.engine.status(Instant::now(), unix_now()), &relay.status())
+                {
+                    let key = identity.clone();
+                    let tx = report_tx.clone();
+                    report_task = Some(tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::sync::send_report(&sync, &key, device, &report, unix_now())
+                        })
+                        .await
+                        .unwrap_or(Err("fallo de la tarea de informe"));
+                        if result.is_err() {
+                            tx.send_modify(|status| {
+                                if let Some(status) = status {
+                                    status.report_errors = status.report_errors.saturating_add(1);
+                                }
+                            });
+                        }
+                    }));
+                }
+                Vec::new()
+            },
             _ = stun_refresh.tick(), if stun.is_some() => {
                 if let Some(s) = stun.as_mut() {
                     s.start(&udp, dual, Instant::now()).await;
@@ -517,6 +545,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
         }
     }
     if let Some(task) = sync_task {
+        task.abort();
+    }
+    if let Some(task) = report_task {
         task.abort();
     }
     for t in coord_tasks {

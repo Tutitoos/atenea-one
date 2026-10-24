@@ -92,6 +92,8 @@ pub async fn create(
     )
     .await?;
     tx.commit().await?;
+    s.panel.changed(id, "network");
+    s.panel.changed(id, "audit");
     Ok((
         StatusCode::CREATED,
         Json(

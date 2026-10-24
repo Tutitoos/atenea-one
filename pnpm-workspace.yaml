@@ -1,2 +1,3 @@
-# Se añaden paquetes al crear apps/web, packages/api-client, etc.
-packages: []
+packages:
+  - apps/web
+  - packages/api-client

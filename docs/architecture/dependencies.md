@@ -134,3 +134,75 @@ acotadas a 256 mensajes; los descartes se contabilizan sin registrar secretos.
 
 Reutiliza `atenea-identity` y `atenea-relay-core` (Apache-2.0). El proveedor
 `ring` conserva la aceptación indicada arriba; no se añade `aws-lc-rs`.
+
+### Fase 6 — Control plane y estado del agente
+
+Versiones fijadas en manifiesto y `Cargo.lock`; sin nuevos servicios externos.
+El agente reutiliza su cliente `ureq`, Tokio, serde y `atenea-identity`.
+Los estáticos usan Tokio y Axum existentes, sin otro servidor de ficheros.
+
+| Crate | Versión fijada | Licencia | Motivo |
+| --- | --- | --- | --- |
+| `axum` (característica `ws`) | 0.8.9 | MIT | Upgrade y tramas WebSocket del panel |
+| `tokio-tungstenite` | 0.29.0 | MIT | Transporte WebSocket de Axum y cliente TCP real de integración |
+| `tungstenite` | 0.29.0 | MIT OR Apache-2.0 | Protocolo WebSocket transitivo |
+| `rand`, `rand_core`, `rand_chacha` | 0.9.5, 0.9.5, 0.9.0 | MIT OR Apache-2.0 | Aleatoriedad del protocolo WebSocket transitivo |
+| `futures-util`, `futures-macro` | 0.3.34, 0.3.34 | MIT OR Apache-2.0 | Lectura asíncrona del cliente de pruebas; macro transitiva |
+| `url` | 2.5.8 | MIT OR Apache-2.0 | Dependencia de pruebas ya existente, ahora fijada; producción reutiliza `reqwest::Url` para validar Origin |
+
+### Fase 6 — Panel web
+
+Dependencias directas fijadas exactamente en los manifiestos y `pnpm-lock.yaml`.
+Licencias consultadas en los metadatos oficiales npm. Los componentes locales
+de diálogo siguen la composición shadcn/ui (MIT) sobre Radix; no hay CDN.
+
+| Paquete | Versión fijada | Licencia | Motivo |
+| --- | --- | --- | --- |
+| `react`, `react-dom` | 19.3.1 | MIT | Interfaz y renderizado |
+| `react-router`, `@react-router/dev`, `@react-router/node` | 8.5.0 | MIT | Framework SPA estático y compilación |
+| `vite` | 8.3.5 | MIT | Servidor de desarrollo y bundle |
+| `typescript` | 5.9.3 | Apache-2.0 | Modo estricto; el generador requiere la API compiler JS, ausente en TS 7 |
+| `tailwindcss`, `@tailwindcss/vite` | 4.3.3 | MIT | CSS local y compilación |
+| `@tanstack/react-query` | 5.104.5 | MIT | Caché REST, invalidación y respaldo por sondeo |
+| `@tanstack/react-table` | 9.3.1 | MIT | Inventario tipado |
+| `@tanstack/react-form` | 1.33.5 | MIT | Estado y envío de formularios |
+| `zod` | 4.6.7 | MIT | Validación de límites de entrada |
+| `recharts` | 3.10.1 | MIT | Puntos reales de métricas |
+| `motion` | 14.6.0 | MIT | Aparición de diálogo respetando movimiento reducido |
+| `geist` | 1.8.2 | OFL-1.1 | Fuente variable servida localmente |
+| `radix-ui` | 1.8.1 | MIT | Diálogos accesibles y gestión del foco |
+| `openapi-typescript` | 7.13.0 | MIT | Generación de tipos desde el contrato Rust |
+| `openapi-fetch` | 0.17.0 | MIT | Cliente HTTP tipado con cookies y CSRF en memoria |
+| `vitest` | 5.0.5 | MIT | Pruebas unitarias y de componentes |
+| `@testing-library/react` | 16.3.3 | MIT | Pruebas de interacción accesibles |
+| `@testing-library/jest-dom` | 7.0.1 | MIT | Aserciones DOM |
+| `@testing-library/user-event` | 14.6.8 | MIT | Teclado y acciones de usuario |
+| `vitest-axe` | 0.1.0 | MIT | Comprobación básica de accesibilidad |
+| `jsdom` | 30.1.3 | MIT | DOM para pruebas |
+| `eslint` | 10.13.0 | MIT | Lint |
+| `@eslint/js` | 10.0.1 | MIT | Reglas recomendadas |
+| `typescript-eslint` | 8.72.0 | MIT | Lint TypeScript |
+| `eslint-plugin-jsx-a11y` | 6.10.2 | MIT | Accesibilidad estática |
+| `@types/react`, `@types/react-dom` | 19.3.0 | MIT | Tipos de React |
+| `@types/node` | 26.6.5 | MIT | Tipos de herramientas de compilación |
+| `@playwright/test` | 1.64.1 | Apache-2.0 | E2E del panel en Chromium (`tests/e2e-panel`, solo laboratorio; la imagen instala el mismo Chromium) |
+| `@axe-core/playwright` | 4.14.0 | MPL-2.0 | Auditoría de accesibilidad (incluye contraste) en el E2E; solo desarrollo, no se distribuye |
+
+Referencias oficiales de implementación: [React](https://react.dev/reference/react),
+[React Router SPA](https://reactrouter.com/how-to/spa),
+[Vite](https://vite.dev/guide/), [Tailwind](https://tailwindcss.com/docs/installation/using-vite),
+[Query](https://tanstack.com/query/latest/docs/framework/react/quick-start),
+[Table](https://tanstack.com/table/latest/docs/framework/react/guide/table-state),
+[Form](https://tanstack.com/form/latest/docs/framework/react/quick-start),
+[Zod](https://zod.dev/api), [Recharts](https://recharts.github.io/en-US/api/Line/),
+[Motion](https://motion.dev/docs/react-use-reduced-motion),
+[Geist](https://github.com/vercel/geist-font),
+[shadcn/ui](https://ui.shadcn.com/docs/components/radix/dialog),
+[Radix](https://www.radix-ui.com/primitives/docs/components/dialog),
+[OpenAPI](https://openapi-ts.dev/openapi-fetch/middleware-auth),
+[Vitest](https://vitest.dev/guide/),
+[Testing Library](https://testing-library.com/docs/react-testing-library/intro/),
+[vitest-axe](https://github.com/chaance/vitest-axe),
+[ESLint](https://eslint.org/docs/latest/use/configure/configuration-files),
+[typescript-eslint](https://typescript-eslint.io/getting-started/),
+[jsx-a11y](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y).

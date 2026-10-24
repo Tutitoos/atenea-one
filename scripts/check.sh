@@ -16,3 +16,4 @@ pnpm install --frozen-lockfile
 pnpm -r --if-present run lint
 pnpm -r --if-present run typecheck
 pnpm -r --if-present run test
+pnpm --filter @atenea/web run build

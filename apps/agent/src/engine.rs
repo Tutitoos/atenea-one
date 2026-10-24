@@ -385,6 +385,7 @@ pub struct PathStatus {
 
 #[derive(Serialize)]
 pub struct PeerStatus {
+    pub device_id: DeviceId,
     pub public_key: String,
     pub endpoint: Option<String>,
     pub session: Option<String>,
@@ -1360,6 +1361,7 @@ impl Engine {
                 .peers
                 .iter()
                 .map(|p| PeerStatus {
+                    device_id: p.device_id,
                     public_key: crypto::hex::encode(&p.public),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p

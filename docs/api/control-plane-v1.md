@@ -1,6 +1,6 @@
 # Control plane v1 (fase 3B)
 
-- **Estado:** Implementado y verificado (pruebas de integración contra PostgreSQL y E2E de laboratorio: [README](../../apps/control-plane/README.md) y [resultados E2E](../operations/e2e-fase3b.md)). Pendientes conocidos: direcciones IP asignadas en la API de inventario, HTTPS y alta disponibilidad (fase 9).
+- **Estado:** Base de fase 3B implementada y verificada (pruebas de integración contra PostgreSQL y E2E de laboratorio: [README](../../apps/control-plane/README.md) y [resultados E2E](../operations/e2e-fase3b.md)); extensiones de fase 6 descritas en §10. Pendientes: HTTPS y alta disponibilidad (fase 9).
 - **Fecha:** 2026-10-24
 - **Implementa:** `apps/control-plane` (monolito modular Axum + PostgreSQL). El panel (fase 6) y el cliente generado consumen este contrato; los agentes usan `GET /api/v1/device/config` y `POST /api/v1/enroll`.
 
@@ -193,3 +193,12 @@ Con `ATENEA_CP_WEB_DIR` (directorio con el `build/client` del panel) el control 
 ### 10.6 Fuera de alcance de la fase 6
 
 Editor Monaco, creación de claves o certificados desde el panel (la raíz y el emisor siguen offline, ADR-005), invitaciones por correo, varias instancias del control plane.
+
+### Resoluciones
+
+- `connection` es un campo explícito del inventario, calculado en el servidor; `age_secs` es el número entero de segundos transcurridos, truncado y nunca negativo. Las fechas opcionales y las asignaciones ausentes son `null`.
+- Los informes rechazan campos desconocidos, tipos inválidos, números negativos y cuerpos mayores de 64 KiB con `400 invalid_report`; la limitación de 5 s usa el reloj PostgreSQL y bloqueo del dispositivo para que dos peticiones simultáneas no la eludan. `relay` admite hasta 255 bytes sin caracteres de control.
+- El camino predominante de una muestra es la categoría más frecuente entre los caminos del informe (`relay-udp` y `relay-tls` se agrupan en `relay`; `none` en `unknown`). Los empates se resuelven por orden alfabético de categoría. Sin informe es `unknown`; desde 600 s es `offline`; los informes `stale` conservan su categoría hasta ese umbral. Solo cuentan dispositivos aprobados. Se muestrea también al arrancar y se eliminan muestras anteriores a siete días en la misma transacción. `limit` exige 1..1000, y se devuelven las últimas muestras solicitadas en orden temporal ascendente.
+- No hay catálogo ni endpoint nuevo de relays: el panel obtiene los relays observados de `report.paths[].relay`. El agente incluye el nombre declarado por su cliente relay cuando conoce la asignación y coincide con el transporte activo; si no lo conoce, devuelve `null`. No envía direcciones de transporte ni claves.
+- Los eventos se publican tras confirmar las escrituras. La secuencia es global por proceso; cada conexión solo recibe eventos de su red. Se revalida sesión y pertenencia antes de enviar eventos y cada ping. Un consumidor que pierde mensajes por saturación se desconecta para forzar resincronización REST. Los límites de conexiones se liberan también al fallar el upgrade o desconectarse.
+- El servicio estático conserva el `404` JSON para los prefijos reservados, no sigue enlaces simbólicos fuera del directorio configurado y reconoce los assets Vite con sufijo `-hash` (al menos ocho caracteres alfanuméricos o `_`) para su caché inmutable. El resto, incluido `index.html`, usa `no-cache`. Sin `WEB_DIR`, no se sirve contenido.

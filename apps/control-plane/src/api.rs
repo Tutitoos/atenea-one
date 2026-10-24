@@ -102,8 +102,18 @@ pub fn router(s: AppState) -> Router {
         .route("/api/v1/networks/{net}/audit", get(crate::audit::list))
         .route("/api/v1/enroll", post(devices::enroll))
         .route("/api/v1/device/config", get(issue::get))
+        .route(
+            "/api/v1/device/status",
+            post(crate::panel::status).layer(axum::extract::DefaultBodyLimit::max(65536)),
+        )
+        .route("/api/v1/networks/{net}/events", get(crate::panel::events))
+        .route("/api/v1/networks/{net}/metrics", get(crate::panel::metrics))
         .route("/api/openapi.json", get(|| async { Json(openapi()) }))
-        .fallback(|| async { ApiError::not_found() })
+        .fallback(crate::panel::static_content)
+        .layer(axum::middleware::from_fn_with_state(
+            s.clone(),
+            crate::panel::changed,
+        ))
         .layer(axum::middleware::from_fn(uniform_errors))
         .with_state(s)
 }
@@ -117,7 +127,11 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     crate::openapi::document()
 }
 async fn uniform_errors(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let report = req.uri().path() == "/api/v1/device/status";
     let response = next.run(req).await;
+    if report && response.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        return ApiError::bad("invalid_report").into_response();
+    }
     if (response.status().is_client_error() || response.status().is_server_error())
         && response
             .headers()

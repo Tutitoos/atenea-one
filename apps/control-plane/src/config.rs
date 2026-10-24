@@ -17,6 +17,7 @@ pub struct Config {
     pub dev_insecure_cookies: bool,
     pub enroll_per_minute: u32,
     pub application_role: Option<String>,
+    pub web_dir: Option<std::path::PathBuf>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -33,6 +34,7 @@ impl Default for Config {
             dev_insecure_cookies: false,
             enroll_per_minute: 10,
             application_role: None,
+            web_dir: None,
         }
     }
 }

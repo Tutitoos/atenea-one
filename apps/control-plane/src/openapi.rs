@@ -27,6 +27,13 @@ fn timestamp() -> RefOr<Schema> {
         .into()
 }
 
+fn nullable_timestamp() -> RefOr<Schema> {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::from_iter([Type::String, Type::Null]))
+        .format(Some(SchemaFormat::Custom("date-time".into())))
+        .into()
+}
+
 fn integer() -> RefOr<Schema> {
     ObjectBuilder::new().schema_type(Type::Integer).into()
 }
@@ -125,7 +132,7 @@ fn schemas() -> ComponentsBuilder {
         ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join"))])),
         ("Enrollment", complete(&[("token", text()), ("bundle", hex(146)), ("name", name.clone())])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("status", named("DeviceStatus")), ("endpoints", endpoints.clone()), ("fingerprint", text())])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("status", named("DeviceStatus")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceId", complete(&[("device_id", uuid())])),
         ("DeviceUpdate", object(&[("name", name), ("endpoints", endpoints)], &[])),
@@ -138,10 +145,18 @@ fn schemas() -> ComponentsBuilder {
             ("port_max", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(0)).maximum(Some(65535)).default(Some(serde_json::json!(0))).into()),
         ], &["src", "dst", "proto"])),
         ("Policy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer())])),
-        ("AuditEvent", complete(&[("id", integer()), ("at", timestamp()), ("actor_kind", text()), ("actor_id", text()), ("action", text()), ("target", text()), ("detail", ObjectBuilder::new().schema_type(Type::Object).into())])),
+        ("AuditEvent", complete(&[("id", integer()), ("at", timestamp()), ("actor_kind", choices(&["user","device","system"])), ("actor_id", text()), ("action", text()), ("target", text()), ("detail", ObjectBuilder::new().schema_type(Type::Object).into())])),
         ("SignedConfig", ObjectBuilder::new().schema_type(Type::String).format(Some(SchemaFormat::Custom("binary".into()))).description(Some("SignedConfig binario del contrato signed-config-v1; verificación con atenea-identity." )).into()),
         ("IssuerCertificate", ObjectBuilder::new().schema_type(Type::String).format(Some(SchemaFormat::Custom("binary".into()))).description(Some("IssuerCert binario de exactamente 178 bytes; firma raíz, red, emisor y vigencia comprobados." )).into()),
         ("OpenApiDocument", complete(&[("openapi", text()), ("info", ObjectBuilder::new().into()), ("paths", ObjectBuilder::new().into())])),
+        ("Connection", choices(&["online","stale","offline","unknown"])),
+        ("Path", choices(&["direct","relay-udp","relay-tls","probing","none"])),
+        ("DevicePath", object(&[("peer",uuid()),("path",named("Path")),("last_rx_secs",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer,Type::Null])).minimum(Some(0)).into()),("rtt_ms",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer,Type::Null])).minimum(Some(0)).into()),("relay",nullable_text())], &["peer","path"])),
+        ("NatMapping", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).enum_values(Some([serde_json::json!("independent"),serde_json::json!("dependent"),serde_json::json!("unknown"),serde_json::Value::Null])).into()),
+        ("DeviceReportInput", object(&[("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into())], &["paths"])),
+        ("DeviceReport", complete(&[("reported_at",timestamp()),("age_secs",integer()),("nat_mapping",named("NatMapping")),("paths",named("[]DevicePath"))])),
+        ("NetworkSample",complete(&[("at",timestamp()),("total",integer()),("direct",integer()),("relay",integer()),("probing",integer()),("unknown",integer()),("offline",integer())])),
+        ("NetworkEvent",object(&[("type",choices(&["hello","changed"])),("seq",integer()),("scope",choices(&["devices","policies","audit","network","metrics"]))], &["type","seq"])),
     ];
     for (name, schema) in definitions {
         c = c.schema(name, schema);
@@ -435,6 +450,36 @@ pub fn document() -> OpenApi {
             "SignedConfig",
         ),
         (
+            Post,
+            "/api/v1/device/status",
+            "reportDeviceStatus",
+            "Reemplaza el informe declarado del dispositivo",
+            "device",
+            "204",
+            "DeviceReportInput",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/events",
+            "networkEvents",
+            "Eventos WebSocket; Origin obligatorio, 8 conexiones por usuario y 64 por proceso",
+            "read",
+            "101",
+            "",
+            "NetworkEvent",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/metrics",
+            "networkMetrics",
+            "Muestras reales de los últimos siete días",
+            "read",
+            "200",
+            "",
+            "[]NetworkSample",
+        ),
+        (
             Get,
             "/api/openapi.json",
             "getOpenApi",
@@ -506,6 +551,27 @@ pub fn document() -> OpenApi {
             }
             operation = operation.parameter(ParameterBuilder::new().name("atenea_oidc").parameter_in(ParameterIn::Cookie)
                 .required(Required::True).schema(Some(text())).description(Some("State al azar fijado por login; debe coincidir con state en la query. Caduca a los 10 minutos y se consume una sola vez.")));
+        }
+        if id == "networkMetrics" {
+            operation = operation
+                .parameter(
+                    ParameterBuilder::new()
+                        .name("since")
+                        .parameter_in(ParameterIn::Query)
+                        .schema(Some(timestamp())),
+                )
+                .parameter(
+                    ParameterBuilder::new()
+                        .name("limit")
+                        .parameter_in(ParameterIn::Query)
+                        .schema(Some(
+                            ObjectBuilder::new()
+                                .schema_type(Type::Integer)
+                                .minimum(Some(1))
+                                .maximum(Some(1000))
+                                .default(Some(serde_json::json!(360))),
+                        )),
+                );
         }
         if id == "listAudit" {
             operation = operation
@@ -610,7 +676,7 @@ pub fn document() -> OpenApi {
                 );
             }
         }
-        if id == "enrollDevice" {
+        if matches!(id, "enrollDevice" | "reportDeviceStatus" | "networkEvents") {
             operation = operation.response(
                 "429",
                 ResponseBuilder::new()
@@ -649,7 +715,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 23);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 26);
         assert_eq!(
             document["paths"]["/api/v1/session"]["get"]["responses"]["200"]["content"]["application/json"]
                 ["schema"]["$ref"],
@@ -663,6 +729,16 @@ mod tests {
         assert!(
             document["paths"]["/api/v1/device/config"]["get"]["responses"]["200"]["content"]
                 .get("application/octet-stream")
+                .is_some()
+        );
+        assert_eq!(
+            document["paths"]["/api/v1/device/status"]["post"]["requestBody"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/DeviceReportInput"
+        );
+        assert!(
+            document["components"]["schemas"]["Device"]["properties"]
+                .get("connection")
                 .is_some()
         );
     }

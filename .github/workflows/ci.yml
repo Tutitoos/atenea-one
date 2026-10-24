@@ -16,9 +16,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - name: Instalar pnpm
         run: npm install -g pnpm@11.23.0
       - name: Comprobaciones
         run: scripts/check.sh
       - name: Integración del control plane (PostgreSQL real)
         run: apps/control-plane/tests/run.sh
+  panel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Instalar pnpm fijado
+        run: npm install -g pnpm@11.23.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run lint
+      - run: pnpm -r run typecheck
+      - run: pnpm -r run test
+      - run: pnpm -r run build

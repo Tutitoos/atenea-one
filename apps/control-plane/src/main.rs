@@ -51,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     let state = AppState::new(pool, config, atenea_identity::signing_key(bytes));
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let sampler = tokio::spawn(atenea_control_plane::panel::sampler(state.clone(), stop_rx));
     axum::serve(
         listener,
         atenea_control_plane::router(state)
@@ -60,5 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await?;
+    let _ = stop_tx.send(true);
+    sampler.await?;
     Ok(())
 }

@@ -158,6 +158,105 @@
         ]
       }
     },
+    "/api/v1/device/status": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reemplaza el informe declarado del dispositivo",
+        "operationId": "reportDeviceStatus",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceReportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite por IP de origen excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/enroll": {
       "post": {
         "tags": [
@@ -1103,6 +1202,113 @@
         ]
       }
     },
+    "/api/v1/networks/{net}/events": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Eventos WebSocket; Origin obligatorio, 8 conexiones por usuario y 64 por proceso",
+        "operationId": "networkEvents",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite por IP de origen excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}/issuer-cert": {
       "put": {
         "tags": [
@@ -1199,6 +1405,126 @@
         "security": [
           {
             "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/metrics": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Muestras reales de los últimos siete días",
+        "operationId": "networkMetrics",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 360,
+              "maximum": 1000,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NetworkSample"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
             "session": []
           }
         ]
@@ -2764,7 +3090,12 @@
             "type": "string"
           },
           "actor_kind": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "user",
+              "device",
+              "system"
+            ]
           },
           "at": {
             "type": "string",
@@ -2781,6 +3112,15 @@
           }
         }
       },
+      "Connection": {
+        "type": "string",
+        "enum": [
+          "online",
+          "stale",
+          "offline",
+          "unknown"
+        ]
+      },
       "Device": {
         "type": "object",
         "required": [
@@ -2789,9 +3129,27 @@
           "name",
           "status",
           "endpoints",
-          "fingerprint"
+          "fingerprint",
+          "ipv4",
+          "ipv6",
+          "enrolled_at",
+          "approved_at",
+          "revoked_at",
+          "last_config_at",
+          "connection",
+          "report"
         ],
         "properties": {
+          "approved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
           "device_id": {
             "type": "string",
             "format": "uuid"
@@ -2804,6 +3162,10 @@
             "description": "Direcciones IP:puerto; IPv6 entre corchetes. Puerto distinto de cero.",
             "maxItems": 4
           },
+          "enrolled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "fingerprint": {
             "type": "string"
           },
@@ -2811,8 +3173,44 @@
             "type": "string",
             "format": "uuid"
           },
+          "ipv4": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ipv6": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_config_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "name": {
             "type": "string"
+          },
+          "report": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeviceReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "status": {
             "$ref": "#/components/schemas/DeviceStatus"
@@ -2828,6 +3226,87 @@
           "device_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "DevicePath": {
+        "type": "object",
+        "required": [
+          "peer",
+          "path"
+        ],
+        "properties": {
+          "last_rx_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "path": {
+            "$ref": "#/components/schemas/Path"
+          },
+          "peer": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "relay": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rtt_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "DeviceReport": {
+        "type": "object",
+        "required": [
+          "reported_at",
+          "age_secs",
+          "nat_mapping",
+          "paths"
+        ],
+        "properties": {
+          "age_secs": {
+            "type": "integer"
+          },
+          "nat_mapping": {
+            "$ref": "#/components/schemas/NatMapping"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DevicePath"
+            }
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DeviceReportInput": {
+        "type": "object",
+        "required": [
+          "paths"
+        ],
+        "properties": {
+          "nat_mapping": {
+            "$ref": "#/components/schemas/NatMapping"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DevicePath"
+            },
+            "maxItems": 256
           }
         }
       },
@@ -3060,6 +3539,18 @@
           }
         }
       },
+      "NatMapping": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "independent",
+          "dependent",
+          "unknown",
+          null
+        ]
+      },
       "Network": {
         "type": "object",
         "required": [
@@ -3097,6 +3588,71 @@
             "maxLength": 64,
             "minLength": 64,
             "pattern": "^[0-9a-fA-F]+$"
+          }
+        }
+      },
+      "NetworkEvent": {
+        "type": "object",
+        "required": [
+          "type",
+          "seq"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "devices",
+              "policies",
+              "audit",
+              "network",
+              "metrics"
+            ]
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "hello",
+              "changed"
+            ]
+          }
+        }
+      },
+      "NetworkSample": {
+        "type": "object",
+        "required": [
+          "at",
+          "total",
+          "direct",
+          "relay",
+          "probing",
+          "unknown",
+          "offline"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "direct": {
+            "type": "integer"
+          },
+          "offline": {
+            "type": "integer"
+          },
+          "probing": {
+            "type": "integer"
+          },
+          "relay": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "unknown": {
+            "type": "integer"
           }
         }
       },
@@ -3238,6 +3794,16 @@
             "type": "string"
           }
         }
+      },
+      "Path": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "relay-udp",
+          "relay-tls",
+          "probing",
+          "none"
+        ]
       },
       "Policy": {
         "type": "object",
