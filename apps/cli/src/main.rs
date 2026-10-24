@@ -1,9 +1,9 @@
-//! CLI sin privilegios de red: genera claves y habla con el agente por su socket Unix.
+//! CLI sin privilegios de red: claves, emisión de configuraciones firmadas y control del agente por su socket Unix.
 
-use atenea_crypto::{StaticKeypair, hex};
+mod issue;
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -18,15 +18,44 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Genera una clave privada (fichero 0600; no sobrescribe) e imprime la pública.
-    Keygen {
+    /// Genera la clave raíz de firma (fichero 0600; no sobrescribe) e imprime su clave pública (trust anchor).
+    /// Debe ejecutarse en la estación de administración, nunca en un host expuesto (ADR-005).
+    RootInit {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Imprime la clave pública de un fichero de clave privada.
-    Pubkey {
+    /// Genera la clave del emisor y su certificado firmado por la raíz.
+    IssuerInit {
         #[arg(long)]
-        key: PathBuf,
+        root: PathBuf,
+        #[arg(long)]
+        network_id: String,
+        #[arg(long)]
+        serial: u64,
+        /// Validez del certificado en días (máximo 90).
+        #[arg(long, default_value_t = 30)]
+        valid_days: u64,
+        /// Clave pública (hex) de la raíz siguiente, para rotarla sin cortar el servicio.
+        #[arg(long)]
+        next_anchor: Option<String>,
+        #[arg(long)]
+        out_dir: PathBuf,
+    },
+    /// Genera las claves del dispositivo y su paquete público (no contiene secretos).
+    DeviceInit {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+    /// Emite el fichero de configuración firmado de un dispositivo.
+    Issue {
+        #[arg(long)]
+        issuer_key: PathBuf,
+        #[arg(long)]
+        issuer_cert: PathBuf,
+        #[arg(long)]
+        spec: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Arranca el agente en segundo plano con la configuración dada.
     Up {
@@ -63,29 +92,29 @@ fn main() -> ExitCode {
 
 fn run(cmd: Cmd) -> Result<(), String> {
     match cmd {
-        Cmd::Keygen { out } => {
-            let kp = StaticKeypair::generate();
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&out)
-                .map_err(|e| format!("{}: {e}", out.display()))?;
-            writeln!(f, "{}", hex::encode(kp.private_bytes())).map_err(|e| e.to_string())?;
-            println!("{}", hex::encode(&kp.public));
-            Ok(())
-        }
-        Cmd::Pubkey { key } => {
-            let text =
-                std::fs::read_to_string(&key).map_err(|e| format!("{}: {e}", key.display()))?;
-            let private =
-                hex::decode::<32>(&text).ok_or("clave privada: se esperan 64 dígitos hex")?;
-            println!(
-                "{}",
-                hex::encode(&StaticKeypair::from_private(private).public)
-            );
-            Ok(())
-        }
+        Cmd::RootInit { out } => issue::root_init(&out),
+        Cmd::IssuerInit {
+            root,
+            network_id,
+            serial,
+            valid_days,
+            next_anchor,
+            out_dir,
+        } => issue::issuer_init(
+            &root,
+            &network_id,
+            serial,
+            valid_days,
+            next_anchor.as_deref(),
+            &out_dir,
+        ),
+        Cmd::DeviceInit { dir } => issue::device_init(&dir),
+        Cmd::Issue {
+            issuer_key,
+            issuer_cert,
+            spec,
+            out,
+        } => issue::issue(&issuer_key, &issuer_cert, &spec, &out),
         Cmd::Up { config, agent, log } => up(&config, agent, &log),
         Cmd::Status { socket } => {
             println!("{}", ask(&socket, "status")?);

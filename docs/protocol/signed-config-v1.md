@@ -99,6 +99,8 @@ Los `endpoints` son **pistas no autenticadas**: no demuestran alcanzabilidad ni 
 
 `Selector`: `kind(u8)` = 1 cualquiera (sin datos), 2 dispositivo (`device_id [16]`: él mismo o un peer), 3 prefijo (`Prefix`). Puertos: solo con `proto` 6 o 17, con `port_min ≤ port_max`; `(0,0)` = cualquier puerto; para otros `proto` deben ser `(0,0)`.
 
+**Aclaración de v1 (fase 3):** `port_min`/`port_max` se comparan con el **puerto de destino** del paquete. Una regla con puertos (distintos de `(0,0)`) no coincide con fragmentos IPv4 no iniciales, con paquetes IPv6 cuyo primer `next header` sea una extensión, ni con paquetes sin puertos. `proto = 0` con `(0,0)` admite cualquier protocolo. Un `Selector` de dispositivo coincide con las direcciones de ese dispositivo (las propias si es el suyo, `addrs` si es un peer); un `device_id` que no sea el propio ni el de un peer es `InvalidStructure`.
+
 ### 2.4 Fichero (`SignedConfig`)
 
 | Campo | Tamaño |
@@ -174,10 +176,25 @@ La implementación de referencia (fase 3) debe incluir, con claves sintéticas e
 - Prueba de que una firma de un tipo no valida como otro (dominios distintos).
 - Pruebas de rollback (`config_version`, `issuer_serial`), reloj y reinicio con estado persistido; fallo de persistencia sin aplicación parcial.
 
-Hasta que existan, el contrato no está verificado: es una especificación escrita, sin implementación ni vectores.
+Estado: implementado en la fase 3; ver §8. La verificación formal con revisión externa sigue pendiente.
 
 ## 7. Puntos para la revisión externa
 
 - La cabecera `version`/`kind` del cuerpo y el fichero no están firmadas por separado: el cuerpo las incluye y la firma lo cubre; `magic`/`version` del fichero solo despachan.
 - El `proof` del `DeviceBundle` no prueba posesión de la clave X25519; el enlace real es la comprobación de huella del emisor.
 - `next_anchor` va en el certificado, firmado por la raíz (no por el emisor): un emisor comprometido no puede instalar una raíz atacante. Revisar que la lógica de rotación de anclas no abra un camino de degradación.
+
+## 8. Implementación de referencia y resoluciones (fase 3)
+
+Implementación: `crates/identity` (tipos, codificación estricta, emisión y verificación), `crates/policies` (ACL), `apps/agent` (estado persistente, recarga y aplicación) y `apps/cli` (`root-init`, `issuer-init`, `device-init`, `issue`). Vectores en `tests/fixtures/identity/` (uno válido por mensaje y uno negativo por error).
+
+Resoluciones tomadas al implementar donde el texto era ambiguo (revisar en la revisión externa):
+
+- Valores fuera de rango (MTU, `config_version = 0`, validez de configuración inválida o superior a 3600 s) son `Malformed` en el paso 3. Las relaciones entre dispositivos (solapes, claves repetidas, selectores a dispositivos desconocidos, direcciones fuera de `network_prefixes`) son `InvalidStructure` en el paso 14.
+- Los `endpoints` de un peer no están sujetos a los prefijos del túnel (son direcciones de la red subyacente). Un selector de prefijo debe estar contenido en alguno de los `network_prefixes`.
+- Un certificado con ventana invertida o duración superior a 90 días se rechaza con `CertExpired`.
+- Rotación de anclas: si el certificado verificado se firma con el ancla más reciente, se retira la anterior; si lo firma la antigua y anuncia una tercera raíz, esta sustituye a la pendiente sin desplazar a la firmante.
+- Un fichero idéntico al último aplicado (mismo hash y versión) es `noop`, pero pasa igualmente los pasos 12 a 14 (una configuración caducada se rechaza aunque ya estuviera aplicada) y solo actualiza la hora máxima observada.
+- El estado persistente solo se protege contra corrupción estructural: el contrato no define una autenticación del fichero de estado, así que alguien con escritura en el directorio de estado (root local) puede retrocederlo.
+- Las reglas de puertos usan el puerto de destino (ver la aclaración de §2.3). Los permisos son sin estado: las respuestas necesitan su propia regla (por ejemplo, TCP de vuelta con puertos de destino altos).
+- `config_version` por defecto en `atenea issue`: milisegundos Unix, creciente en cada reemisión de un mismo emisor. Dos emisores que escriban a la vez para el mismo dispositivo no están soportados.

@@ -1,0 +1,82 @@
+[package]
+name = "atenea-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Fuera del workspace raíz (excluido allí): lockfile y perfil propios.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+atenea-protocol = { path = "../crates/protocol" }
+atenea-crypto = { path = "../crates/crypto" }
+atenea-identity = { path = "../crates/identity" }
+atenea-policies = { path = "../crates/policies" }
+
+[[bin]]
+name = "datagram_parse"
+path = "fuzz_targets/datagram_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "replay_window"
+path = "fuzz_targets/replay_window.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_init"
+path = "fuzz_targets/handshake_init.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_decrypt"
+path = "fuzz_targets/session_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hex_decode"
+path = "fuzz_targets/hex_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signed_config_verify"
+path = "fuzz_targets/signed_config_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "device_config_parse"
+path = "fuzz_targets/device_config_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cert_bundle_state_parse"
+path = "fuzz_targets/cert_bundle_state_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ip_classify"
+path = "fuzz_targets/ip_classify.rs"
+test = false
+doc = false
+bench = false

@@ -138,6 +138,28 @@ def cmd_send_udp(dst, port, text):
     s.sendto(text.encode(), (dst, int(port)))
 
 
+def cmd_field(sock, dotted):
+    """Valor de un campo del estado del agente (ruta con puntos); 'none' si es null."""
+    v = json.loads(subprocess.check_output(["atenea", "status", "--socket", sock]))
+    for k in dotted.split("."):
+        v = v[k]
+    print("none" if v is None else str(v).lower() if isinstance(v, bool) else v)
+
+
+def cmd_flip_last(path):
+    """Altera el último byte de un fichero (la firma de una configuración)."""
+    b = bytearray(open(path, "rb").read())
+    b[-1] ^= 1
+    open(path, "wb").write(bytes(b))
+
+
+def cmd_spoof(src, dst, dport):
+    """Envía un paquete UDP con IP de origen falsificada por la interfaz del túnel."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    payload = struct.pack("!HHHH", 4242, int(dport), 8, 0)
+    ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(payload), 1, 0, 64, 17, 0, socket.inet_aton(src), socket.inet_aton(dst))
+    s.sendto(ip + payload, (dst, 0))
+
 if __name__ == "__main__":
     fn = globals().get("cmd_" + sys.argv[1].replace("-", "_"))
     if fn is None:

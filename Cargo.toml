@@ -3,10 +3,13 @@ resolver = "3"
 members = [
     "crates/protocol",
     "crates/crypto",
+    "crates/identity",
+    "crates/policies",
     "crates/tunnel",
     "apps/agent",
     "apps/cli",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"
@@ -23,6 +26,8 @@ all = { level = "deny", priority = -1 }
 [workspace.dependencies]
 atenea-protocol = { path = "crates/protocol" }
 atenea-crypto = { path = "crates/crypto" }
+atenea-identity = { path = "crates/identity" }
+atenea-policies = { path = "crates/policies" }
 atenea-tunnel = { path = "crates/tunnel" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

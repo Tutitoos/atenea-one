@@ -1,8 +1,9 @@
 //! Máquina de estados del agente: sin E/S. Recibe eventos y devuelve acciones.
 
-use crate::config::Config;
 use crate::packet::parse_ip;
 use atenea_crypto::{self as crypto, PendingInit, Session, StaticKeypair};
+use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId};
+use atenea_policies::{Policy, classify};
 use atenea_protocol::{self as proto, Packet, ParseError};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -52,6 +53,7 @@ impl Limiter {
 }
 
 struct Peer {
+    device_id: DeviceId,
     public: [u8; 32],
     addrs: Vec<IpAddr>,
     endpoint: Option<SocketAddr>,
@@ -67,6 +69,28 @@ struct Peer {
     last_data: Option<Instant>,
     tx_bytes: u64,
     rx_bytes: u64,
+}
+
+impl Peer {
+    fn new(device_id: DeviceId, public: [u8; 32]) -> Peer {
+        Peer {
+            device_id,
+            public,
+            addrs: Vec::new(),
+            endpoint: None,
+            current: None,
+            previous: None,
+            next: None,
+            pending: None,
+            last_attempt: None,
+            queued: None,
+            last_init_ts: None,
+            last_handshake: None,
+            last_data: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -114,14 +138,23 @@ pub struct PeerStatus {
 }
 
 #[derive(Serialize)]
+pub struct ConfigStatus {
+    pub version: u64,
+    pub valid_until_unix: Option<u64>,
+    pub lease_active: bool,
+    pub last_error: Option<&'static str>,
+}
+
+#[derive(Serialize)]
 pub struct Status {
     pub public_key: String,
     pub counters: BTreeMap<&'static str, u64>,
+    pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
 }
 
 pub struct Engine {
-    net: [u8; 16],
+    net: NetworkId,
     keys: StaticKeypair,
     own: Vec<IpAddr>,
     peers: Vec<Peer>,
@@ -130,49 +163,111 @@ pub struct Engine {
     by_index: HashMap<u32, usize>,
     limiter: Limiter,
     counters: Counters,
+    policy: Option<Policy>,
+    /// Ventana (not_before, not_after) de la configuración vigente; sin ella todo se deniega.
+    lease: Option<(u64, u64)>,
+    config_version: u64,
+    last_config_error: Option<&'static str>,
 }
 
 impl Engine {
-    pub fn new(cfg: &Config, keys: StaticKeypair, now: Instant) -> Engine {
-        let mut peers = Vec::new();
-        let mut by_addr = HashMap::new();
-        let mut by_key = HashMap::new();
-        for (i, p) in cfg.peers.iter().enumerate() {
-            for a in &p.addresses {
-                by_addr.insert(*a, i);
-            }
-            by_key.insert(p.public, i);
-            peers.push(Peer {
-                public: p.public,
-                addrs: p.addresses.clone(),
-                endpoint: p.endpoint,
-                current: None,
-                previous: None,
-                next: None,
-                pending: None,
-                last_attempt: None,
-                queued: None,
-                last_init_ts: None,
-                last_handshake: None,
-                last_data: None,
-                tx_bytes: 0,
-                rx_bytes: 0,
-            });
-        }
+    /// Sin configuración: deniega todo hasta `apply_config` (fail-closed, ADR-002).
+    pub fn new(net: NetworkId, keys: StaticKeypair, now: Instant) -> Engine {
         Engine {
-            net: cfg.network_id,
+            net,
             keys,
-            own: cfg.addresses.clone(),
-            peers,
-            by_addr,
-            by_key,
+            own: Vec::new(),
+            peers: Vec::new(),
+            by_addr: HashMap::new(),
+            by_key: HashMap::new(),
             by_index: HashMap::new(),
             limiter: Limiter {
                 tokens: INIT_RATE,
                 last: now,
             },
             counters: Counters::default(),
+            policy: None,
+            lease: None,
+            config_version: 0,
+            last_config_error: None,
         }
+    }
+
+    /// Aplica una configuración ya verificada y persistida. Conserva las sesiones de los peers cuya
+    /// clave no cambió; destruye las de peers eliminados o con clave nueva (ADR-002).
+    pub fn apply_config(&mut self, cfg: &DeviceConfig) {
+        let mut old = std::mem::take(&mut self.peers);
+        for p in &cfg.peers {
+            let mut peer = match old
+                .iter()
+                .position(|o| o.device_id == p.device_id && o.public == p.noise_pubkey)
+            {
+                Some(i) => old.swap_remove(i),
+                None => Peer::new(p.device_id, p.noise_pubkey),
+            };
+            peer.addrs = p.addrs.clone();
+            if peer.endpoint.is_none() {
+                peer.endpoint = p.endpoints.first().copied();
+            }
+            self.peers.push(peer);
+        }
+        self.own = cfg.tunnel_addrs.clone();
+        self.policy = Some(Policy::new(cfg));
+        self.lease = Some((cfg.not_before, cfg.not_after));
+        self.config_version = cfg.config_version;
+        self.last_config_error = None;
+        self.reindex();
+        self.counters.inc("config_applied");
+    }
+
+    /// Una configuración rechazada no revoca la vigente (sigue hasta su lease).
+    pub fn note_config_error(&mut self, code: &'static str) {
+        self.counters.inc("config_rejected");
+        self.last_config_error = Some(code);
+    }
+
+    /// Dentro de `[not_before - 30, not_after + 30)` (ADR-002).
+    pub fn lease_active(&self, unix: u64) -> bool {
+        self.lease.is_some_and(|(nb, na)| {
+            unix + CLOCK_TOLERANCE_SECS >= nb && unix < na + CLOCK_TOLERANCE_SECS
+        })
+    }
+
+    fn reindex(&mut self) {
+        self.by_addr.clear();
+        self.by_key.clear();
+        self.by_index.clear();
+        for (pi, p) in self.peers.iter().enumerate() {
+            for a in &p.addrs {
+                self.by_addr.insert(*a, pi);
+            }
+            self.by_key.insert(p.public, pi);
+            for s in [&p.current, &p.previous, &p.next].into_iter().flatten() {
+                self.by_index.insert(s.local_index, pi);
+            }
+            if let Some((pend, _)) = &p.pending {
+                self.by_index.insert(pend.local_index(), pi);
+            }
+        }
+    }
+
+    /// Destruye todas las sesiones y estado de handshake (lease caducado).
+    fn deny_all(&mut self) -> bool {
+        let mut had = false;
+        for p in &mut self.peers {
+            had |= p.current.is_some()
+                || p.previous.is_some()
+                || p.next.is_some()
+                || p.pending.is_some();
+            p.current = None;
+            p.previous = None;
+            p.next = None;
+            p.pending = None;
+            p.queued = None;
+            p.last_attempt = None;
+        }
+        self.by_index.clear();
+        had
     }
 
     fn fresh_index(&self) -> u32 {
@@ -187,6 +282,10 @@ impl Engine {
     /// Paquete IP leído de la TUN.
     pub fn on_tun(&mut self, pkt: &[u8], now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
+        if !self.lease_active(unix) {
+            self.counters.inc("denied_no_lease");
+            return out;
+        }
         let Some((src, dst, total)) = parse_ip(pkt) else {
             self.counters.inc("tx_malformed");
             return out;
@@ -200,6 +299,14 @@ impl Engine {
             return out;
         };
         let pkt = &pkt[..total];
+        if !self
+            .policy
+            .as_ref()
+            .is_some_and(|p| classify(pkt).is_some_and(|f| p.allows(&f)))
+        {
+            self.counters.inc("tx_acl_denied");
+            return out;
+        }
         let peer = &mut self.peers[pi];
         peer.last_data = Some(now);
         if peer.usable_current(now)
@@ -252,6 +359,10 @@ impl Engine {
     /// Datagrama UDP recibido.
     pub fn on_udp(&mut self, from: SocketAddr, dg: &[u8], now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
+        if !self.lease_active(unix) {
+            self.counters.inc("denied_no_lease");
+            return out;
+        }
         match proto::parse(dg) {
             Err(ParseError::TooLarge) => self.counters.inc("rx_oversize"),
             Err(_) => self.counters.inc("rx_malformed"),
@@ -445,6 +556,14 @@ impl Engine {
             self.counters.inc("rx_bad_destination");
             return;
         }
+        if !self
+            .policy
+            .as_ref()
+            .is_some_and(|p| classify(&plain[..total]).is_some_and(|f| p.allows(&f)))
+        {
+            self.counters.inc("rx_acl_denied");
+            return;
+        }
         peer.rx_bytes += total as u64;
         let mut pkt = plain;
         pkt.truncate(total);
@@ -454,6 +573,13 @@ impl Engine {
     /// Temporizador (~1 s): caducidad, reintentos y rekey.
     pub fn on_tick(&mut self, now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
+        if !self.lease_active(unix) {
+            // Lease caducado: fail-closed, sin sesiones hasta recibir una configuración vigente.
+            if self.deny_all() {
+                self.counters.inc("lease_expired");
+            }
+            return out;
+        }
         for pi in 0..self.peers.len() {
             let peer = &mut self.peers[pi];
             for slot in [&mut peer.current, &mut peer.previous, &mut peer.next] {
@@ -484,22 +610,20 @@ impl Engine {
                 self.maybe_initiate(pi, now, unix, &mut out);
             }
         }
-        self.by_index.clear();
-        for (pi, p) in self.peers.iter().enumerate() {
-            for s in [&p.current, &p.previous, &p.next].into_iter().flatten() {
-                self.by_index.insert(s.local_index, pi);
-            }
-            if let Some((pend, _)) = &p.pending {
-                self.by_index.insert(pend.local_index(), pi);
-            }
-        }
+        self.reindex();
         out
     }
 
-    pub fn status(&self, now: Instant) -> Status {
+    pub fn status(&self, now: Instant, unix: u64) -> Status {
         Status {
             public_key: crypto::hex::encode(&self.keys.public),
             counters: self.counters.0.clone(),
+            config: ConfigStatus {
+                version: self.config_version,
+                valid_until_unix: self.lease.map(|(_, na)| na),
+                lease_active: self.lease_active(unix),
+                last_error: self.last_config_error,
+            },
             peers: self
                 .peers
                 .iter()
@@ -530,73 +654,121 @@ mod tests {
     const A_EP: &str = "192.0.2.1:51820";
     const B_EP: &str = "192.0.2.2:51820";
 
-    fn cfg(
+    use atenea_identity::{Peer as CfgPeer, Prefix, Rule, Selector};
+
+    const NET: NetworkId = [7; 16];
+    const NOT_BEFORE: u64 = 999_000;
+    const NOT_AFTER: u64 = 1_100_000;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn allow_all() -> Vec<Rule> {
+        vec![Rule {
+            src: Selector::Any,
+            dst: Selector::Any,
+            proto: 0,
+            port_min: 0,
+            port_max: 0,
+        }]
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dev_cfg(
+        own_id: u8,
         own4: &str,
         own6: &str,
+        peer_id: u8,
         peer_pub: &[u8; 32],
         peer4: &str,
         peer6: &str,
         peer_ep: &str,
-    ) -> Config {
-        Config::parse(&format!(
-            r#"
-network_id = "00112233445566778899aabbccddeeff"
-private_key_file = "/k"
-interface = "t"
-listen = "0.0.0.0:51820"
-ipc_socket = "/s"
-addresses = ["{own4}", "{own6}"]
-networks = ["10.77.0.0/24", "fd77::/64"]
-[[peer]]
-public_key = "{}"
-addresses = ["{peer4}", "{peer6}"]
-endpoint = "{peer_ep}"
-"#,
-            crypto::hex::encode(peer_pub)
-        ))
-        .unwrap()
+        rules: Vec<Rule>,
+    ) -> DeviceConfig {
+        DeviceConfig {
+            network_id: NET,
+            device_id: [own_id; 16],
+            issuer_serial: 1,
+            config_version: 1,
+            not_before: NOT_BEFORE,
+            not_after: NOT_AFTER,
+            noise_pubkey: [0; 32],
+            identity_pubkey: [0; 32],
+            mtu: 1400,
+            tunnel_addrs: vec![ip(own4), ip(own6)],
+            network_prefixes: vec![
+                Prefix {
+                    addr: ip("10.77.0.0"),
+                    len: 24,
+                },
+                Prefix {
+                    addr: ip("fd77::"),
+                    len: 64,
+                },
+            ],
+            peers: vec![CfgPeer {
+                device_id: [peer_id; 16],
+                noise_pubkey: *peer_pub,
+                addrs: vec![ip(peer4), ip(peer6)],
+                endpoints: vec![ep(peer_ep)],
+            }],
+            rules,
+        }
+    }
+
+    fn mk(cfg: &DeviceConfig, keys: StaticKeypair, now: Instant) -> Engine {
+        let mut e = Engine::new(NET, keys, now);
+        e.apply_config(cfg);
+        e
     }
 
     struct Lab {
         a: Engine,
         b: Engine,
+        cfg_a: DeviceConfig,
+        cfg_b: DeviceConfig,
         now: Instant,
         unix: u64,
     }
 
-    fn lab() -> Lab {
+    fn lab_with(rules_a: Vec<Rule>, rules_b: Vec<Rule>) -> Lab {
         let (ka, kb) = (StaticKeypair::generate(), StaticKeypair::generate());
         let now = Instant::now();
-        let a = Engine::new(
-            &cfg(
-                "10.77.0.1",
-                "fd77::1",
-                &kb.public,
-                "10.77.0.2",
-                "fd77::2",
-                B_EP,
-            ),
-            ka,
-            now,
+        let cfg_a = dev_cfg(
+            1,
+            "10.77.0.1",
+            "fd77::1",
+            2,
+            &kb.public,
+            "10.77.0.2",
+            "fd77::2",
+            B_EP,
+            rules_a,
         );
-        let b = Engine::new(
-            &cfg(
-                "10.77.0.2",
-                "fd77::2",
-                &a.keys.public,
-                "10.77.0.1",
-                "fd77::1",
-                A_EP,
-            ),
-            kb,
-            now,
+        let cfg_b = dev_cfg(
+            2,
+            "10.77.0.2",
+            "fd77::2",
+            1,
+            &ka.public,
+            "10.77.0.1",
+            "fd77::1",
+            A_EP,
+            rules_b,
         );
         Lab {
-            a,
-            b,
+            a: mk(&cfg_a, ka, now),
+            b: mk(&cfg_b, kb, now),
+            cfg_a,
+            cfg_b,
             now,
             unix: 1_000_000,
         }
+    }
+
+    fn lab() -> Lab {
+        lab_with(allow_all(), allow_all())
     }
 
     fn ep(s: &str) -> SocketAddr {
@@ -764,15 +936,7 @@ endpoint = "{peer_ep}"
         let first_index = l.a.peers[0].current.as_ref().unwrap().remote_index;
         // A "reinicia": estado en memoria nuevo, mismas claves.
         let keys = StaticKeypair::from_private(*l.a.keys.private_bytes());
-        let cfg_a = cfg(
-            "10.77.0.1",
-            "fd77::1",
-            &l.b.keys.public,
-            "10.77.0.2",
-            "fd77::2",
-            B_EP,
-        );
-        l.a = Engine::new(&cfg_a, keys, l.now);
+        l.a = mk(&l.cfg_a, keys, l.now);
         l.unix += 2; // timestamp creciente para B
         let out = l.a.on_tun(&v4(1, 2, b"despues"), l.now, l.unix);
         let (_, tun_b) = pump(&mut l, out, vec![]);
@@ -841,5 +1005,133 @@ endpoint = "{peer_ep}"
         assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
         l.b.on_udp(ep("203.0.113.7:9"), dg, l.now, l.unix);
         assert_eq!(l.b.peers[0].endpoint, Some(ep("203.0.113.7:9")));
+    }
+
+    fn udp_to(dport: u16) -> Vec<u8> {
+        let mut d = vec![0x30, 0x39];
+        d.extend_from_slice(&dport.to_be_bytes());
+        d.extend_from_slice(&[0, 8, 0, 0]);
+        v4(1, 2, &d)
+    }
+
+    fn allow_udp_a_to_b(lo: u16, hi: u16) -> Vec<Rule> {
+        vec![Rule {
+            src: Selector::Device([1; 16]),
+            dst: Selector::Device([2; 16]),
+            proto: 17,
+            port_min: lo,
+            port_max: hi,
+        }]
+    }
+
+    #[test]
+    fn acl_denies_by_default_and_allows_only_the_rule() {
+        let mut l = lab_with(allow_udp_a_to_b(5000, 5010), allow_udp_a_to_b(5000, 5010));
+        let ok = udp_to(5005);
+        let out = l.a.on_tun(&ok, l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b, vec![ok]);
+        // fuera del rango: se descarta en origen
+        assert!(l.a.on_tun(&udp_to(80), l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["tx_acl_denied"], 1);
+        // el sentido contrario no está permitido por ninguna regla
+        let reply = v4(2, 1, &[0, 53, 0x30, 0x39, 0, 8, 0, 0]);
+        assert!(l.b.on_tun(&reply, l.now, l.unix).is_empty());
+        assert_eq!(l.b.counters.0["tx_acl_denied"], 1);
+    }
+
+    #[test]
+    fn ingress_acl_protects_against_a_permissive_peer() {
+        // A permite todo, pero B solo admite 5000-5010: B descarta lo demás aunque A lo envíe.
+        let mut l = lab_with(allow_all(), allow_udp_a_to_b(5000, 5010));
+        let out = l.a.on_tun(&udp_to(5005), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let out = l.a.on_tun(&udp_to(80), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert!(tun_b.is_empty());
+        assert_eq!(l.b.counters.0["rx_acl_denied"], 1);
+    }
+
+    #[test]
+    fn no_configuration_means_no_traffic() {
+        let mut e = Engine::new(NET, StaticKeypair::generate(), Instant::now());
+        assert!(
+            e.on_tun(&v4(1, 2, b"x"), Instant::now(), 1_000_000)
+                .is_empty()
+        );
+        assert!(
+            e.on_udp(ep(A_EP), &[1, 1, 0], Instant::now(), 1_000_000)
+                .is_empty()
+        );
+        assert_eq!(e.counters.0["denied_no_lease"], 2);
+    }
+
+    #[test]
+    fn expired_lease_fails_closed_and_new_config_recovers() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        // bordes de la tolerancia de 30 s
+        assert!(l.a.lease_active(NOT_AFTER + 29));
+        assert!(!l.a.lease_active(NOT_AFTER + 30));
+        assert!(l.a.lease_active(NOT_BEFORE - 30));
+        assert!(!l.a.lease_active(NOT_BEFORE - 31));
+        l.unix = NOT_AFTER + 30;
+        assert!(l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["denied_no_lease"], 1);
+        assert!(l.a.on_tick(l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["lease_expired"], 1);
+        assert!(l.a.peers[0].current.is_none()); // sesiones destruidas
+        // nueva configuración con lease vigente: vuelve a funcionar con handshake nuevo
+        let mut fresh_a = l.cfg_a.clone();
+        fresh_a.not_after = NOT_AFTER + 10_000;
+        fresh_a.config_version = 2;
+        l.a.apply_config(&fresh_a);
+        let mut fresh_b = l.cfg_b.clone();
+        fresh_b.not_after = NOT_AFTER + 10_000;
+        l.b.apply_config(&fresh_b);
+        let out = l.a.on_tun(&v4(1, 2, b"3"), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b.len(), 1);
+    }
+
+    #[test]
+    fn config_without_a_peer_cuts_it_and_key_change_drops_the_session() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let old_index = l.b.peers[0].current.as_ref().unwrap().local_index;
+        // B recibe una configuración sin A: el tráfico de A deja de aceptarse al instante
+        let mut without = l.cfg_b.clone();
+        without.peers.clear();
+        without.config_version = 2;
+        l.b.apply_config(&without);
+        let out = l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix);
+        let Out::Udp(_, dg) = &out[0] else { panic!() };
+        assert!(l.b.on_udp(ep(A_EP), dg, l.now, l.unix).is_empty());
+        assert_eq!(l.b.counters.0["rx_unknown_index"], 1);
+        // mismo peer pero con otra clave: la sesión vieja no sobrevive
+        let mut rekeyed = l.cfg_b.clone();
+        rekeyed.peers[0].noise_pubkey = StaticKeypair::generate().public;
+        rekeyed.config_version = 3;
+        l.b.apply_config(&rekeyed);
+        assert!(l.b.peers[0].current.is_none());
+        assert!(!l.b.by_index.contains_key(&old_index));
+    }
+
+    #[test]
+    fn unchanged_peer_keeps_its_session_across_config_updates() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let idx = l.a.peers[0].current.as_ref().unwrap().local_index;
+        let mut next = l.cfg_a.clone();
+        next.config_version = 2;
+        l.a.apply_config(&next);
+        assert_eq!(l.a.peers[0].current.as_ref().unwrap().local_index, idx);
+        let out = l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b.len(), 1);
+        assert_eq!(l.a.counters.0["handshakes_initiator"], 1);
     }
 }

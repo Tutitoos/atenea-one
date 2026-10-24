@@ -36,6 +36,8 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 
 ## Pendiente
 
-- Wintun (licencia propia, redistribución; fase 8), `utoipa`, `tun`: revisar el texto de la licencia antes de adoptarlos.
-- Añadir `cargo deny` / auditoría de dependencias (RustSec) al CI cuando exista el primer crate.
-- No se han leído las licencias de las dependencias transitivas.
+- Wintun (licencia propia, redistribución; fase 8) y `utoipa`: revisar el texto de la licencia antes de adoptarlos.
+- `tun` (WTFPL) **no se adoptó**: `atenea-tunnel` usa `/dev/net/tun` directamente con `libc` (código `unsafe` acotado y comentado).
+- Añadir `cargo deny` / auditoría de dependencias (RustSec) al CI. Ya hay un `Cargo.lock` real: queda pendiente.
+- **`ring` 0.17.14 llega a través de `snow` 0.10.0** con las características por defecto (visible con `cargo tree -p atenea-crypto -e features -i ring`). Su licencia es propia (mezcla ISC/OpenSSL), distinta de las demás. Hay que leerla y decidir si se acepta o se desactiva en `snow`.
+- Resueltas y en uso (versiones del `Cargo.lock`): `snow` 0.10.0, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0, `blake2` 0.11.0 (identity) y 0.10 (dentro de snow), `getrandom` 0.3, `zeroize`, `tokio` 1.54, `clap` 4.6, `serde`/`serde_json`/`toml` 0.9, `tracing`, `proptest` 1, `libc` 0.2. No se han leído las licencias de las dependencias transitivas.

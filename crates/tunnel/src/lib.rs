@@ -75,8 +75,8 @@ impl Tun {
         &self.name
     }
 
-    /// Asigna MTU, direcciones (`ip/prefijo`) y levanta la interfaz con `ip` (iproute2).
-    /// El prefijo instala la ruta conectada de la red del túnel.
+    /// Reemplaza MTU y direcciones (`ip/prefijo`) y levanta la interfaz con `ip` (iproute2).
+    /// El prefijo instala la ruta conectada de la red del túnel; es idempotente: vacía las anteriores.
     pub fn configure(&self, mtu: usize, addrs: &[(IpAddr, u8)]) -> io::Result<()> {
         ip(&[
             "link",
@@ -87,6 +87,7 @@ impl Tun {
             &mtu.to_string(),
             "up",
         ])?;
+        ip(&["addr", "flush", "dev", &self.name])?;
         for (addr, prefix) in addrs {
             let cidr = format!("{addr}/{prefix}");
             let mut args = vec!["addr", "add", &cidr, "dev", &self.name];

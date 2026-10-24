@@ -2,7 +2,7 @@
 
 Plataforma VPN P2P self-hosted: red privada creada desde un panel web, con dispositivos que se comunican cifrados directamente o mediante relays propios.
 
-**Estado: fase 2 en curso (túnel Linux cifrado de laboratorio) sobre una base documentada (ADRs, contrato de configuración, modelo de amenazas).** No hay releases. No usar para proteger datos sensibles: el protocolo no tiene revisión criptográfica externa.
+**Estado: MVP-0 en laboratorio (fases 0–3): túnel Linux cifrado entre dos agentes con configuración firmada, ACL mínima y revocación por lease.** Sin panel, control plane, NAT ni relays. No hay releases. No usar para proteger datos sensibles: el protocolo no tiene revisión criptográfica externa.
 
 ## Alcance
 

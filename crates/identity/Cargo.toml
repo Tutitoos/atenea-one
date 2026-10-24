@@ -1,0 +1,19 @@
+[package]
+name = "atenea-identity"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Configuración firmada v1: tipos, codificación estricta y verificación"
+
+[lints]
+workspace = true
+
+[dependencies]
+ed25519-dalek = "3.0.0"
+blake2 = "0.11.0"
+getrandom = "0.3"
+
+[dev-dependencies]
+proptest = "1"
