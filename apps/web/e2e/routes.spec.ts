@@ -1,0 +1,71 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { expect, test } from '@playwright/test';
+
+const LAB = `${process.env.LAB_ROOT ?? '/src'}/tests/e2e-panel/lab.sh`;
+const lab = (...args: string[]) => execFileSync('bash', [LAB, ...args], { encoding: 'utf8', env: process.env }).trim();
+
+// Falta soporte en lab.sh: start-agent debe recibir un spec de advertise_routes
+// (y preparar LAN/forwarding/DNS de laboratorio). Hoy solo admite <a|b> <join-json>;
+// no hay orden para declarar rutas. No inventamos una llamada ni simulamos el agente.
+// Al ampliar ese comando, pasarle el spec privado de este caso y retirar test.skip.
+test.skip('aprobar con SNAT explícito, configurar DNS dividido y revocar una ruta declarada por Linux', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Iniciar sesión con OIDC' }).click();
+  await page.locator('input[name="login"]').fill('admin@example.test');
+  await page.locator('input[name="password"]').fill('password');
+  await page.locator('button[type="submit"]').click();
+  await page.getByRole('button', { name: 'Crear organización' }).click();
+  await page.getByLabel('Nombre').fill('laboratorio-subredes');
+  await page.getByRole('dialog').getByRole('button', { name: 'Crear organización' }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
+  await page.keyboard.press('Escape');
+  await page.getByRole('combobox', { name: /^Organización/ }).selectOption({ label: 'laboratorio-subredes · owner' });
+  await page.getByRole('button', { name: 'Crear red' }).click();
+  await page.getByLabel('Nombre').fill('red-subredes');
+  await page.getByLabel('CIDR IPv4').fill('10.77.0.0/24');
+  await page.getByLabel('CIDR IPv6').fill('fd77::/64');
+  await page.getByLabel('Ancla pública raíz (64 hex)').fill(readFileSync('/tmp/lab/root.pub', 'utf8').trim());
+  await page.getByRole('dialog').getByRole('button', { name: 'Crear red' }).click();
+  await expect(page.getByRole('heading', { name: 'red-subredes' })).toBeVisible();
+  const net = new URL(page.url()).searchParams.get('net')!;
+  lab('issuer-cert', net);
+  await page.getByRole('button', { name: 'Certificado de emisor' }).click();
+  await page.getByLabel('Certificado público').setInputFiles('/tmp/lab/issuer.cert');
+  await page.getByRole('button', { name: 'Subir issuer.cert' }).click();
+  await page.keyboard.press('Escape');
+  const fingerprint = /fingerprint=(\S+)/.exec(lab('device-init', 'a'))![1];
+  const navigation = page.getByRole('navigation', { name: 'Secciones de red' });
+  await navigation.getByRole('button', { name: 'Incorporar' }).click();
+  await page.getByRole('button', { name: 'Crear token' }).click();
+  const join = await page.locator('pre').filter({ hasText: '"root_anchor"' }).innerText();
+  const { url, token } = JSON.parse(join) as { url: string; token: string };
+  lab('enroll', 'a', url, token);
+  await page.getByRole('button', { name: /Ya lo guardé/ }).click();
+  await navigation.getByRole('button', { name: 'Dispositivos', exact: true }).click();
+  await page.getByRole('row', { name: /host-a/ }).getByRole('button', { name: 'Aprobar', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText(fingerprint);
+  await page.getByRole('button', { name: 'Confirmar aprobación' }).click();
+  await page.keyboard.press('Escape');
+  lab('start-agent', 'a', JSON.stringify(JSON.parse(join)));
+  await navigation.getByRole('button', { name: 'Subredes', exact: true }).click();
+  const route = page.getByRole('row', { name: /192\.168\.50\.0\/24/ });
+  await expect(route).toContainText('pending', { timeout: 60_000 });
+  await route.getByRole('button', { name: 'Aprobar', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Aprobar ruta' })).toBeDisabled();
+  await page.getByRole('radio', { name: /^Con SNAT/ }).check();
+  await page.getByRole('button', { name: 'Aprobar ruta' }).click();
+  await expect(page.getByText('Ruta aprobada.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(route).toContainText('approved');
+  await navigation.getByRole('button', { name: 'Dispositivos', exact: true }).click();
+  await page.getByLabel('Servidores DNS (separados por espacios)').fill('192.168.50.1');
+  await page.getByLabel('Dominios de enrutamiento (separados por espacios)').fill('lab.internal');
+  await page.getByRole('button', { name: 'Guardar DNS' }).click();
+  await expect(page.getByRole('region', { name: 'DNS dividido' }).getByRole('status')).toHaveText('Acción completada.');
+  await navigation.getByRole('button', { name: 'Subredes', exact: true }).click();
+  await route.getByRole('button', { name: 'Revocar', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar revocación' }).click();
+  await page.keyboard.press('Escape');
+  await expect(route).toContainText('rejected');
+});

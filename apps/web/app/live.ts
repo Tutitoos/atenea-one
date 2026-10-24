@@ -17,6 +17,7 @@ export function useNetworkEvents(net: string) {
       catch { timer = setTimeout(connect, reconnectDelay(attempt++)); return; }
       socket.onopen = () => { attempt = 0; setConnected(true); invalidate(); };
       socket.onmessage = event => {
+        // También routes y dns: cualquier cambio reconstruye la red completa por REST.
         try { const value = JSON.parse(String(event.data)) as Model<'NetworkEvent'>; if (value.type === 'changed' || value.type === 'hello') invalidate(); } catch { /* Una trama desconocida no modifica el estado REST. */ }
       };
       socket.onerror = () => socket.close();

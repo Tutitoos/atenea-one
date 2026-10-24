@@ -202,3 +202,38 @@ Editor Monaco, creación de claves o certificados desde el panel (la raíz y el 
 - No hay catálogo ni endpoint nuevo de relays: el panel obtiene los relays observados de `report.paths[].relay`. El agente incluye el nombre declarado por su cliente relay cuando conoce la asignación y coincide con el transporte activo; si no lo conoce, devuelve `null`. No envía direcciones de transporte ni claves.
 - Los eventos se publican tras confirmar las escrituras. La secuencia es global por proceso; cada conexión solo recibe eventos de su red. Se revalida sesión y pertenencia antes de enviar eventos y cada ping. Un consumidor que pierde mensajes por saturación se desconecta para forzar resincronización REST. Los límites de conexiones se liberan también al fallar el upgrade o desconectarse.
 - El servicio estático conserva el `404` JSON para los prefijos reservados, no sigue enlaces simbólicos fuera del directorio configurado y reconoce los assets Vite con sufijo `-hash` (al menos ocho caracteres alfanuméricos o `_`) para su caché inmutable. El resto, incluido `index.html`, usa `no-cache`. Sin `WEB_DIR`, no se sirve contenido.
+
+## 11. Rutas de subred y DNS (fase 7)
+
+Las decisiones de seguridad son las de [ADR-007](../architecture/ADR-007-subredes-dns-privilegios.md); el cuerpo firmado se rige por [signed-config-v2](../protocol/signed-config-v2.md). Sin rutas ni DNS se conserva la codificación v1 byte a byte.
+
+| Método y ruta | Acceso | Contrato |
+| --- | --- | --- |
+| `POST /api/v1/device/routes` | dispositivo aprobado, firma §3.3 | `{"routes":["192.168.50.0/24"]}`; reemplaza la declaración completa, máximo 8 prefijos; `204` |
+| `GET /api/v1/networks/{net}/routes` | member | Lista `{id,device_id,prefix,status,snat,declared_at,decided_at}` |
+| `POST /api/v1/networks/{net}/routes/{id}/approve` | admin | `{"snat":true}`; booleano obligatorio sin valor por defecto; `204` |
+| `POST /api/v1/networks/{net}/routes/{id}/reject` | admin | Rechaza una pendiente o revoca una aprobada; `204` |
+| `GET /api/v1/networks/{net}/dns` | member | `{"servers":["10.77.0.1"],"domains":["lab.internal"]}` |
+| `PUT /api/v1/networks/{net}/dns` | admin | Reemplaza ambos vectores con el mismo formato; `204` |
+
+### 11.1 Declaración y aprobación
+
+Solo se aceptan CIDR canónicos completamente contenidos en RFC 1918, `100.64.0.0/10` o ULA `fc00::/7`, con longitud mínima /8 en IPv4 y /32 en IPv6. No se admiten prefijos públicos, rutas por defecto, bits de host, duplicados ni solapes dentro de una declaración (`400 invalid_route` o `route_overlap`). Las rutas nuevas entran en `pending`; las que permanecen conservan su decisión y las retiradas se borran. Una ruta rechazada no se vuelve pendiente por repetir la declaración: hay que retirarla y declararla de nuevo, o aprobarla explícitamente.
+
+Máximo una declaración aceptada cada 5 s por dispositivo (`429 rate_limited`), medido por PostgreSQL bajo bloqueo; las declaraciones inválidas no consumen el intervalo. Al aprobar se bloquea la fila de red, igual que en IPAM, y se comprueba el solape con ambos CIDR del túnel y con todas las otras rutas aprobadas de la red: `409 route_overlap`. La comprobación y la decisión se confirman en la misma transacción; dos aprobaciones simultáneas no pueden eludirla. Los solapes entre declaraciones de dispositivos distintos son posibles mientras no estén aprobadas.
+
+La tabla `device_routes` conserva `network_id`, `device_id`, `prefix cidr`, estado (`pending|approved|rejected`), `snat bool|null`, `declared_at`, `decided_at` y `decided_by`; `(device_id,prefix)` es único. `snat` solo tiene valor en una aprobada. Revocar un dispositivo rechaza también sus rutas y libera su autorización para futuras aprobaciones. RBAC y ocultación de organizaciones ajenas son los de §3 (`403` member en escrituras; `404` para redes o rutas ajenas).
+
+### 11.2 DNS y emisión
+
+`servers` admite hasta 3 direcciones únicas dentro de los CIDR del túnel o de rutas aprobadas de dispositivos aprobados. `domains` admite hasta 8 nombres únicos en ASCII minúsculo, etiquetas LDH de 1–63 caracteres sin guiones en los extremos, longitud total ≤253, sin punto final, etiquetas vacías ni dominio raíz. Datos inválidos: `400 invalid_dns`. Vectores vacíos eliminan la configuración DNS; no hay dominios ni servidores implícitos.
+
+Las políticas pueden seleccionar un prefijo contenido en una ruta aprobada: seleccionan al dispositivo que la sirve. La emisión solo añade `peers[].routes` de pares ya seleccionados por políticas y `advertised` del propio dispositivo con el bit SNAT aprobado. Si se rechaza o retira una ruta, una política cuyo prefijo queda huérfano se conserva en la base, pero no selecciona pares ni emite reglas: **la emisión no falla**. También se omiten las reglas que dependan de dispositivos revocados.
+
+Cada configuración incluye los dominios de la red y únicamente los servidores alcanzables dentro de sus propios `network_prefixes`, `peers[].routes` o `advertised`. Esto omite servidores que dejan de estar autorizados tras una revocación y los de routers que la política no selecciona; nunca se añaden pares solo para resolver DNS. Si todos los campos nuevos quedan vacíos el cuerpo vuelve a v1; en otro caso es v2.
+
+### 11.3 Estado, auditoría y eventos
+
+`POST /api/v1/device/status` añade campos opcionales `forwarding_ok: bool|null`, `dns: "applied"|"unsupported"|"none"|null` y `routes: [{"prefix":"192.168.50.0/24","state":"installed|conflict|pending","reason":"motivo opcional"}]|null`. El inventario los devuelve dentro de `report`, sin reinterpretar el estado declarado por el agente. Se mantienen límites y semántica de reemplazo de §10.2; los campos ausentes quedan en `null`. Hasta 256 rutas de estado, CIDR privados canónicos válidos y motivos de hasta 255 bytes sin controles; campos o estados desconocidos dan `400 invalid_report`.
+
+Se registran `route.declare`, `route.approve`, `route.reject` y `dns.set` en la transacción correspondiente. Tras confirmar, el WebSocket emite `changed` con scope `routes` o `dns`, además de `audit`; el consumidor vuelve a consultar REST. Los informes siguen emitiendo `changed/devices` sin generar auditoría de alta frecuencia.

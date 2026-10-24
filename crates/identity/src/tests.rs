@@ -2,6 +2,8 @@ use super::*;
 use proptest::prelude::*;
 use std::{fs, path::PathBuf};
 const NOW: u64 = 1000;
+#[path = "v2_tests.rs"]
+mod v2;
 #[test]
 fn certificate_verification_for_control_plane() {
     let (root, _, cert, _, _, _) = setup();
@@ -69,6 +71,7 @@ fn setup() -> (
             noise_pubkey: [8; 32],
             addrs: vec!["10.0.0.2".parse().unwrap()],
             endpoints: vec!["192.0.2.1:443".parse().unwrap()],
+            routes: vec![],
         }],
         rules: vec![Rule {
             src: Selector::Device([5; 16]),
@@ -77,6 +80,8 @@ fn setup() -> (
             port_min: 443,
             port_max: 443,
         }],
+        advertised: vec![],
+        dns: DnsConfig::default(),
     };
     let local = LocalKeys {
         noise_pub: cfg.noise_pubkey,

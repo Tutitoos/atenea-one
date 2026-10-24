@@ -8,8 +8,13 @@ impl DeviceConfig {
         for p in &mut self.peers {
             sort(&mut p.addrs, addr);
             sort(&mut p.endpoints, endpoint);
+            sort(&mut p.routes, prefix);
         }
         sort(&mut self.rules, rule);
+        self.advertised
+            .sort_by_cached_key(|a| encoded(&a.prefix, prefix));
+        sort(&mut self.dns.servers, addr);
+        self.dns.domains.sort();
     }
     fn wire_valid(&self) -> bool {
         (1280..=1500).contains(&self.mtu)
@@ -20,6 +25,17 @@ impl DeviceConfig {
             && (1..=4).contains(&self.network_prefixes.len())
             && self.peers.len() <= 256
             && self.rules.len() <= 256
+            && self.advertised.len() <= 8
+            && self.advertised.iter().all(|a| a.prefix.valid())
+            && self
+                .advertised
+                .windows(2)
+                .all(|a| encoded(&a[0].prefix, prefix) < encoded(&a[1].prefix, prefix))
+            && self.dns.servers.len() <= 3
+            && ordered(&self.dns.servers, addr)
+            && self.dns.domains.len() <= 8
+            && self.dns.domains.iter().all(|d| valid_domain(d))
+            && self.dns.domains.windows(2).all(|d| d[0] < d[1])
             && ordered(&self.tunnel_addrs, addr)
             && ordered(&self.network_prefixes, prefix)
             && self.network_prefixes.iter().all(Prefix::valid)
@@ -33,6 +49,9 @@ impl DeviceConfig {
                     && ordered(&p.addrs, addr)
                     && ordered(&p.endpoints, endpoint)
                     && p.endpoints.iter().all(endpoint_valid)
+                    && p.routes.len() <= 8
+                    && ordered(&p.routes, prefix)
+                    && p.routes.iter().all(Prefix::valid)
             })
             && ordered(&self.rules, rule)
             && self.rules.iter().all(|r| {
@@ -66,14 +85,33 @@ impl DeviceConfig {
                 return false;
             }
         }
+        let routes = self
+            .peers
+            .iter()
+            .flat_map(|p| &p.routes)
+            .chain(self.advertised.iter().map(|a| &a.prefix));
+        if routes.clone().enumerate().any(|(i, p)| {
+            !p.valid_route()
+                || self.network_prefixes.iter().any(|n| p.overlaps(n))
+                || routes.clone().take(i).any(|n| p.overlaps(n))
+        }) || !self
+            .dns
+            .servers
+            .iter()
+            .all(|a| inside(*a) || routes.clone().any(|p| p.contains(*a)))
+        {
+            return false;
+        }
         self.rules.iter().all(|r| {
             [&r.src, &r.dst].iter().all(|s| match s {
                 Selector::Device(id) => {
                     *id == self.device_id || self.peers.iter().any(|p| p.device_id == *id)
                 }
-                Selector::Prefix(p) => self.network_prefixes.iter().any(|n| {
-                    n.addr.is_ipv4() == p.addr.is_ipv4() && n.len <= p.len && n.contains(p.addr)
-                }),
+                Selector::Prefix(p) => self
+                    .network_prefixes
+                    .iter()
+                    .chain(routes.clone())
+                    .any(|n| n.contains_prefix(p)),
                 Selector::Any => true,
             })
         })
@@ -94,8 +132,15 @@ impl DeviceConfig {
             Ok(b)
         }
     }
+    fn has_v2_fields(&self) -> bool {
+        !self.advertised.is_empty()
+            || !self.dns.servers.is_empty()
+            || !self.dns.domains.is_empty()
+            || self.peers.iter().any(|p| !p.routes.is_empty())
+    }
     pub(crate) fn encode_wire(&self) -> Vec<u8> {
-        let mut b = vec![1, 2, 0];
+        let v2 = self.has_v2_fields();
+        let mut b = vec![if v2 { 2 } else { 1 }, 2, 0];
         b.extend_from_slice(&self.network_id);
         b.extend_from_slice(&self.device_id);
         for n in [
@@ -130,10 +175,32 @@ impl DeviceConfig {
             for e in &p.endpoints {
                 endpoint(&mut b, e);
             }
+            if v2 {
+                b.push(p.routes.len() as u8);
+                for route in &p.routes {
+                    prefix(&mut b, route);
+                }
+            }
         }
         b.extend_from_slice(&(self.rules.len() as u16).to_be_bytes());
         for r in &self.rules {
             rule(&mut b, r);
+        }
+        if v2 {
+            b.push(self.advertised.len() as u8);
+            for a in &self.advertised {
+                prefix(&mut b, &a.prefix);
+                b.push(u8::from(a.snat));
+            }
+            b.push(self.dns.servers.len() as u8);
+            for a in &self.dns.servers {
+                addr(&mut b, a);
+            }
+            b.push(self.dns.domains.len() as u8);
+            for d in &self.dns.domains {
+                b.push(d.len() as u8);
+                b.extend_from_slice(d.as_bytes());
+            }
         }
         b
     }
@@ -149,7 +216,10 @@ impl DeviceConfig {
             return Err(Error::TooLarge);
         }
         let mut r = Reader::new(body);
-        r.header(2)?;
+        let version = r.u8()?;
+        if !matches!(version, 1 | 2) || r.u8()? != 2 {
+            return Err(Error::UnsupportedVersion);
+        }
         r.zero()?;
         let mut c = Self {
             network_id: r.array()?,
@@ -165,6 +235,8 @@ impl DeviceConfig {
             network_prefixes: Vec::new(),
             peers: Vec::new(),
             rules: Vec::new(),
+            advertised: Vec::new(),
+            dns: DnsConfig::default(),
         };
         let n = r.count8(1, 4)?;
         for _ in 0..n {
@@ -178,11 +250,17 @@ impl DeviceConfig {
             let addrs = r.addrs()?;
             let n = r.count8(0, 4)?;
             let endpoints = (0..n).map(|_| r.endpoint()).collect::<Result<_, _>>()?;
+            let routes = if version == 2 {
+                r.prefixes()?
+            } else {
+                Vec::new()
+            };
             c.peers.push(Peer {
                 device_id,
                 noise_pubkey,
                 addrs,
                 endpoints,
+                routes,
             });
         }
         let n = r.count16(256)?;
@@ -194,6 +272,27 @@ impl DeviceConfig {
                 port_min: r.u16()?,
                 port_max: r.u16()?,
             });
+        }
+        if version == 2 {
+            let n = r.count8(0, 8)?;
+            for _ in 0..n {
+                let prefix = r.prefix()?;
+                let flags = r.u8()?;
+                if flags & !1 != 0 {
+                    return Err(Error::Malformed);
+                }
+                c.advertised.push(AdvertisedRoute {
+                    prefix,
+                    snat: flags == 1,
+                });
+            }
+            let n = r.count8(0, 3)?;
+            c.dns.servers = (0..n).map(|_| r.addr()).collect::<Result<_, _>>()?;
+            let n = r.count8(0, 8)?;
+            c.dns.domains = (0..n).map(|_| r.domain()).collect::<Result<_, _>>()?;
+            if !c.has_v2_fields() {
+                return Err(Error::Malformed);
+            }
         }
         r.end()?;
         if !c.wire_valid() {

@@ -153,10 +153,17 @@ fn schemas() -> ComponentsBuilder {
         ("Path", choices(&["direct","relay-udp","relay-tls","probing","none"])),
         ("DevicePath", object(&[("peer",uuid()),("path",named("Path")),("last_rx_secs",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer,Type::Null])).minimum(Some(0)).into()),("rtt_ms",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer,Type::Null])).minimum(Some(0)).into()),("relay",nullable_text())], &["peer","path"])),
         ("NatMapping", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).enum_values(Some([serde_json::json!("independent"),serde_json::json!("dependent"),serde_json::json!("unknown"),serde_json::Value::Null])).into()),
-        ("DeviceReportInput", object(&[("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into())], &["paths"])),
-        ("DeviceReport", complete(&[("reported_at",timestamp()),("age_secs",integer()),("nat_mapping",named("NatMapping")),("paths",named("[]DevicePath"))])),
+        ("Route",complete(&[("id",uuid()),("device_id",uuid()),("prefix",text()),("status",choices(&["pending","approved","rejected"])),("snat",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("declared_at",timestamp()),("decided_at",nullable_timestamp())])),
+        ("RouteDeclaration",complete(&[("routes",ArrayBuilder::new().items(text()).max_items(Some(8)).into())])),
+        ("RouteApproval",complete(&[("snat",boolean())])),
+        ("Dns",complete(&[("servers",ArrayBuilder::new().items(text()).max_items(Some(3)).into()),("domains",ArrayBuilder::new().items(text()).max_items(Some(8)).into())])),
+        ("DnsState",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).enum_values(Some([serde_json::json!("applied"),serde_json::json!("unsupported"),serde_json::json!("none"),serde_json::Value::Null])).into()),
+        ("RouteReport",object(&[("prefix",text()),("state",choices(&["installed","conflict","pending"])),("reason",nullable_text())], &["prefix","state"])),
+        ("RouteReports",utoipa::openapi::schema::OneOfBuilder::new().item(ArrayBuilder::new().items(named("RouteReport")).max_items(Some(256))).item(ObjectBuilder::new().schema_type(Type::Null)).into()),
+        ("DeviceReportInput", object(&[("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into()),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))], &["paths"])),
+        ("DeviceReport", complete(&[("reported_at",timestamp()),("age_secs",integer()),("nat_mapping",named("NatMapping")),("paths",named("[]DevicePath")),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))])),
         ("NetworkSample",complete(&[("at",timestamp()),("total",integer()),("direct",integer()),("relay",integer()),("probing",integer()),("unknown",integer()),("offline",integer())])),
-        ("NetworkEvent",object(&[("type",choices(&["hello","changed"])),("seq",integer()),("scope",choices(&["devices","policies","audit","network","metrics"]))], &["type","seq"])),
+        ("NetworkEvent",object(&[("type",choices(&["hello","changed"])),("seq",integer()),("scope",choices(&["devices","policies","audit","network","metrics","routes","dns"]))], &["type","seq"])),
     ];
     for (name, schema) in definitions {
         c = c.schema(name, schema);
@@ -451,6 +458,66 @@ pub fn document() -> OpenApi {
         ),
         (
             Post,
+            "/api/v1/device/routes",
+            "declareRoutes",
+            "Reemplaza las rutas declaradas; máximo una petición cada 5 s",
+            "device",
+            "204",
+            "RouteDeclaration",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/routes",
+            "listRoutes",
+            "Lista las declaraciones y sus decisiones",
+            "read",
+            "200",
+            "",
+            "[]Route",
+        ),
+        (
+            Post,
+            "/api/v1/networks/{net}/routes/{id}/approve",
+            "approveRoute",
+            "Aprueba una ruta sin solapes; SNAT obligatorio",
+            "write",
+            "204",
+            "RouteApproval",
+            "",
+        ),
+        (
+            Post,
+            "/api/v1/networks/{net}/routes/{id}/reject",
+            "rejectRoute",
+            "Rechaza o revoca una ruta",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/dns",
+            "getDns",
+            "Obtiene DNS dividido de la red",
+            "read",
+            "200",
+            "",
+            "Dns",
+        ),
+        (
+            Put,
+            "/api/v1/networks/{net}/dns",
+            "setDns",
+            "Reemplaza servidores y dominios DNS",
+            "write",
+            "204",
+            "Dns",
+            "",
+        ),
+        (
+            Post,
             "/api/v1/device/status",
             "reportDeviceStatus",
             "Reemplaza el informe declarado del dispositivo",
@@ -676,11 +743,14 @@ pub fn document() -> OpenApi {
                 );
             }
         }
-        if matches!(id, "enrollDevice" | "reportDeviceStatus" | "networkEvents") {
+        if matches!(
+            id,
+            "enrollDevice" | "reportDeviceStatus" | "networkEvents" | "declareRoutes"
+        ) {
             operation = operation.response(
                 "429",
                 ResponseBuilder::new()
-                    .description("Límite por IP de origen excedido")
+                    .description("Límite de peticiones o conexiones excedido")
                     .content("application/json", Content::new(Some(named("Error")))),
             );
         }
@@ -696,7 +766,7 @@ pub fn document() -> OpenApi {
             );
         }
         if id == "createPolicy" {
-            operation = operation.description(Some("Selectores: any no admite campos extra; device exige device_id de esta red; prefix exige un CIDR canónico contenido en esta red. Solo TCP/UDP admite puertos; port_min ≤ port_max. Máximo 256 políticas y 256 reglas efectivas contando inversas sin puertos y eliminando duplicados."));
+            operation = operation.description(Some("Selectores: any no admite campos extra; device exige device_id de esta red; prefix exige un CIDR canónico contenido en la red o en una ruta aprobada. Una ruta retirada deja su política huérfana sin seleccionar pares. Solo TCP/UDP admite puertos; port_min ≤ port_max. Máximo 256 políticas y 256 reglas efectivas contando inversas sin puertos y eliminando duplicados."));
         }
         if id == "getDeviceConfiguration" {
             operation = operation.description(Some("Respuesta firmada con versión estrictamente creciente. Sin políticas no hay pares. Excluye dispositivos pendientes/revocados. Incluye reglas inversas sin puertos. not_after no supera el certificado del emisor; duración por defecto 300 s."));
@@ -715,7 +785,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 26);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 31);
         assert_eq!(
             document["paths"]["/api/v1/session"]["get"]["responses"]["200"]["content"]["application/json"]
                 ["schema"]["$ref"],

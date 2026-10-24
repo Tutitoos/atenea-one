@@ -2,7 +2,7 @@
 
 Plataforma VPN P2P self-hosted: red privada creada desde un panel web, con dispositivos que se comunican cifrados directamente o mediante relays propios.
 
-**Estado: MVP administrable en laboratorio (fases 0–6).** Túnel Linux cifrado entre agentes con configuración firmada, ACL, revocación por lease, control plane con OIDC, coordinator y STUN propios con hole punching, relay UDP y TLS/TCP 443 (tras HAProxy) cuando no hay camino directo, y un panel web (`apps/web`) para administrar organizaciones, redes, dispositivos, políticas y ver el estado directo/relay declarado por los agentes. El E2E con Chromium (login OIDC → red → dos agentes → P2P → relay UDP → relay TLS → revocación) pasa en laboratorio ([informe](docs/operations/e2e-fase6.md)). Aún sin subredes/DNS (fase 7), Windows/macOS (fase 8), infraestructura y releases (fase 9) ni L2 (fase 10). No usar para proteger datos sensibles: el protocolo no tiene revisión criptográfica externa.
+**Estado: MVP administrable en laboratorio (fases 0–7).** Túnel Linux cifrado entre agentes con configuración firmada, ACL, revocación por lease, control plane con OIDC, coordinator y STUN propios con hole punching, relay UDP y TLS/TCP 443 (tras HAProxy), un panel web (`apps/web`) y, desde la fase 7, subredes servidas por un router Linux (rutas aprobadas por un administrador, SNAT elegido explícitamente), DNS dividido por enlace, servicio systemd endurecido y paquete `.deb` ([informe fase 7](docs/operations/e2e-fase7.md)). **Sin validar aún en un Proxmox real.** Aún sin Windows/macOS (fase 8), infraestructura y releases (fase 9) ni L2 (fase 10). No usar para proteger datos sensibles: el protocolo no tiene revisión criptográfica externa.
 
 ## Alcance
 

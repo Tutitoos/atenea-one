@@ -158,6 +158,105 @@
         ]
       }
     },
+    "/api/v1/device/routes": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reemplaza las rutas declaradas; máximo una petición cada 5 s",
+        "operationId": "declareRoutes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteDeclaration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/device/status": {
       "post": {
         "tags": [
@@ -230,7 +329,7 @@
             }
           },
           "429": {
-            "description": "Límite por IP de origen excedido",
+            "description": "Límite de peticiones o conexiones excedido",
             "content": {
               "application/json": {
                 "schema": {
@@ -336,7 +435,7 @@
             }
           },
           "429": {
-            "description": "Límite por IP de origen excedido",
+            "description": "Límite de peticiones o conexiones excedido",
             "content": {
               "application/json": {
                 "schema": {
@@ -1094,6 +1193,202 @@
         ]
       }
     },
+    "/api/v1/networks/{net}/dns": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Obtiene DNS dividido de la red",
+        "operationId": "getDns",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dns"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Reemplaza servidores y dominios DNS",
+        "operationId": "setDns",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Dns"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}/enrollment-tokens": {
       "post": {
         "tags": [
@@ -1282,7 +1577,7 @@
             }
           },
           "429": {
-            "description": "Límite por IP de origen excedido",
+            "description": "Límite de peticiones o conexiones excedido",
             "content": {
               "application/json": {
                 "schema": {
@@ -1634,7 +1929,7 @@
           "policies"
         ],
         "summary": "Valida y crea ACL; requiere admin u owner",
-        "description": "Selectores: any no admite campos extra; device exige device_id de esta red; prefix exige un CIDR canónico contenido en esta red. Solo TCP/UDP admite puertos; port_min ≤ port_max. Máximo 256 políticas y 256 reglas efectivas contando inversas sin puertos y eliminando duplicados.",
+        "description": "Selectores: any no admite campos extra; device exige device_id de esta red; prefix exige un CIDR canónico contenido en la red o en una ruta aprobada. Una ruta retirada deja su política huérfana sin seleccionar pares. Solo TCP/UDP admite puertos; port_min ≤ port_max. Máximo 256 políticas y 256 reglas efectivas contando inversas sin puertos y eliminando duplicados.",
         "operationId": "createPolicy",
         "parameters": [
           {
@@ -1744,6 +2039,316 @@
         ],
         "summary": "Elimina una ACL; requiere admin u owner",
         "operationId": "deletePolicy",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/routes": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista las declaraciones y sus decisiones",
+        "operationId": "listRoutes",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Route"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/routes/{id}/approve": {
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Aprueba una ruta sin solapes; SNAT obligatorio",
+        "operationId": "approveRoute",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteApproval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/routes/{id}/reject": {
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Rechaza o revoca una ruta",
+        "operationId": "rejectRoute",
         "parameters": [
           {
             "name": "net",
@@ -3271,11 +3876,23 @@
           "reported_at",
           "age_secs",
           "nat_mapping",
-          "paths"
+          "paths",
+          "forwarding_ok",
+          "dns",
+          "routes"
         ],
         "properties": {
           "age_secs": {
             "type": "integer"
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DnsState"
+          },
+          "forwarding_ok": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "nat_mapping": {
             "$ref": "#/components/schemas/NatMapping"
@@ -3289,6 +3906,9 @@
           "reported_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "routes": {
+            "$ref": "#/components/schemas/RouteReports"
           }
         }
       },
@@ -3298,6 +3918,15 @@
           "paths"
         ],
         "properties": {
+          "dns": {
+            "$ref": "#/components/schemas/DnsState"
+          },
+          "forwarding_ok": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "nat_mapping": {
             "$ref": "#/components/schemas/NatMapping"
           },
@@ -3307,6 +3936,9 @@
               "$ref": "#/components/schemas/DevicePath"
             },
             "maxItems": 256
+          },
+          "routes": {
+            "$ref": "#/components/schemas/RouteReports"
           }
         }
       },
@@ -3352,6 +3984,41 @@
             "minLength": 1
           }
         }
+      },
+      "Dns": {
+        "type": "object",
+        "required": [
+          "servers",
+          "domains"
+        ],
+        "properties": {
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          }
+        }
+      },
+      "DnsState": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "applied",
+          "unsupported",
+          "none",
+          null
+        ]
       },
       "Empty": {
         "type": "object"
@@ -3605,7 +4272,9 @@
               "policies",
               "audit",
               "network",
-              "metrics"
+              "metrics",
+              "routes",
+              "dns"
             ]
           },
           "seq": {
@@ -3843,6 +4512,122 @@
           "owner",
           "admin",
           "member"
+        ]
+      },
+      "Route": {
+        "type": "object",
+        "required": [
+          "id",
+          "device_id",
+          "prefix",
+          "status",
+          "snat",
+          "declared_at",
+          "decided_at"
+        ],
+        "properties": {
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "declared_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "snat": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ]
+          }
+        }
+      },
+      "RouteApproval": {
+        "type": "object",
+        "required": [
+          "snat"
+        ],
+        "properties": {
+          "snat": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RouteDeclaration": {
+        "type": "object",
+        "required": [
+          "routes"
+        ],
+        "properties": {
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8
+          }
+        }
+      },
+      "RouteReport": {
+        "type": "object",
+        "required": [
+          "prefix",
+          "state"
+        ],
+        "properties": {
+          "prefix": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "installed",
+              "conflict",
+              "pending"
+            ]
+          }
+        }
+      },
+      "RouteReports": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteReport"
+            },
+            "maxItems": 256
+          },
+          {
+            "type": "null"
+          }
         ]
       },
       "Selector": {

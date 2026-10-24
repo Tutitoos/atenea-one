@@ -1,0 +1,42 @@
+[Unit]
+Description=Agente de red Atenea One
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/atenea/agent.toml
+
+[Service]
+Type=simple
+User=root
+Group=atenea
+UMask=0077
+ExecStart=/usr/bin/atenea-agent run --config /etc/atenea/agent.toml
+ExecStopPost=/usr/bin/atenea-agent cleanup --config /etc/atenea/agent.toml
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=atenea
+RuntimeDirectoryMode=0750
+StateDirectory=atenea
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/atenea /run/atenea
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+MemoryDenyWriteExecute=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

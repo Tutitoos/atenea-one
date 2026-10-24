@@ -137,7 +137,7 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
     let rows = sqlx::query(
-        "SELECT d.id,d.name,d.status,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
+        "SELECT d.id,d.name,d.status,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
     )
     .bind(net)
     .fetch_all(&s.pool)
@@ -157,7 +157,7 @@ pub async fn list(
         } else {
             "offline"
         };
-        let report = reported_at.map(|at|json!({"reported_at":at,"age_secs":age,"nat_mapping":r.get::<Option<String>,_>("nat_mapping"),"paths":r.get::<Value,_>("paths")}));
+        let report = reported_at.map(|at|json!({"reported_at":at,"age_secs":age,"nat_mapping":r.get::<Option<String>,_>("nat_mapping"),"paths":r.get::<Value,_>("paths"),"forwarding_ok":r.get::<Option<bool>,_>("forwarding_ok"),"dns":r.get::<Option<String>,_>("dns"),"routes":r.get::<Option<Value>,_>("routes")}));
         out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"status":r.get::<String,_>("status"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
     }
     Ok(Json(json!(out)))
@@ -227,6 +227,7 @@ pub async fn revoke(
         .bind(dev)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind(u).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
         "user",

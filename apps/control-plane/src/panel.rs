@@ -77,10 +77,34 @@ pub struct DevicePath {
     relay: Option<String>,
 }
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DnsState {
+    Applied,
+    Unsupported,
+    None,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RouteState {
+    Installed,
+    Conflict,
+    Pending,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteReport {
+    prefix: String,
+    state: RouteState,
+    reason: Option<String>,
+}
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
     nat_mapping: Option<NatMapping>,
     paths: Vec<DevicePath>,
+    forwarding_ok: Option<bool>,
+    dns: Option<DnsState>,
+    routes: Option<Vec<RouteReport>>,
 }
 pub async fn status(
     State(s): State<AppState>,
@@ -134,6 +158,17 @@ pub async fn status(
     }
     let report: Report =
         serde_json::from_slice(&body).map_err(|_| ApiError::bad("invalid_report"))?;
+    if report.routes.as_ref().is_some_and(|routes| {
+        routes.len() > 256
+            || routes.iter().any(|r| {
+                crate::routes::prefix(&r.prefix).is_err()
+                    || r.reason
+                        .as_ref()
+                        .is_some_and(|s| s.len() > 255 || s.chars().any(char::is_control))
+            })
+    }) {
+        return Err(ApiError::bad("invalid_report"));
+    }
     if report.paths.len() > 256
         || report.paths.iter().any(|p| {
             p.relay
@@ -158,7 +193,12 @@ pub async fn status(
         NatMapping::Dependent => "dependent",
         NatMapping::Unknown => "unknown",
     });
-    sqlx::query("INSERT INTO device_reports(device_id,reported_at,nat_mapping,paths) VALUES($1,now(),$2,$3) ON CONFLICT(device_id) DO UPDATE SET reported_at=excluded.reported_at,nat_mapping=excluded.nat_mapping,paths=excluded.paths").bind(dev).bind(mapping).bind(json!(report.paths)).execute(&mut *tx).await?;
+    let dns = report.dns.map(|d| match d {
+        DnsState::Applied => "applied",
+        DnsState::Unsupported => "unsupported",
+        DnsState::None => "none",
+    });
+    sqlx::query("INSERT INTO device_reports(device_id,reported_at,nat_mapping,paths,forwarding_ok,dns,routes) VALUES($1,now(),$2,$3,$4,$5,$6) ON CONFLICT(device_id) DO UPDATE SET reported_at=excluded.reported_at,nat_mapping=excluded.nat_mapping,paths=excluded.paths,forwarding_ok=excluded.forwarding_ok,dns=excluded.dns,routes=excluded.routes").bind(dev).bind(mapping).bind(json!(report.paths)).bind(report.forwarding_ok).bind(dns).bind(report.routes.map(|r|json!(r))).execute(&mut *tx).await?;
     tx.commit().await?;
     s.panel.changed(net, "devices");
     Ok(StatusCode::NO_CONTENT)

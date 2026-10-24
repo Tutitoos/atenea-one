@@ -1,5 +1,7 @@
 use crate::{AppState, api::ApiError};
-use atenea_identity::{DeviceConfig, IssuerCert, Peer, Prefix, Rule, Selector, api_auth};
+use atenea_identity::{
+    AdvertisedRoute, DeviceConfig, DnsConfig, IssuerCert, Peer, Prefix, Rule, Selector, api_auth,
+};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -14,6 +16,7 @@ pub struct Device {
     pub identity: [u8; 32],
     pub addrs: Vec<std::net::IpAddr>,
     pub endpoints: Vec<std::net::SocketAddr>,
+    pub advertised: Vec<AdvertisedRoute>,
 }
 pub async fn load_devices(c: &mut PgConnection, net: Uuid) -> Result<Vec<Device>, ApiError> {
     let rows=sqlx::query("SELECT id,noise_pubkey,identity_pubkey,endpoints FROM devices WHERE network_id=$1 AND status='approved' ORDER BY id").bind(net).fetch_all(&mut *c).await?;
@@ -26,8 +29,19 @@ pub async fn load_devices(c: &mut PgConnection, net: Uuid) -> Result<Vec<Device>
         .bind(id)
         .fetch_all(&mut *c)
         .await?;
+        let routes = sqlx::query("SELECT prefix::text,snat FROM device_routes WHERE device_id=$1 AND status='approved' ORDER BY prefix").bind(id).fetch_all(&mut *c).await?;
+        let advertised = routes
+            .iter()
+            .map(|r| {
+                Ok(AdvertisedRoute {
+                    prefix: crate::routes::prefix(&r.get::<String, _>("prefix"))?,
+                    snat: r.get("snat"),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
         devices.push(Device {
             id,
+            advertised,
             noise: r
                 .get::<Vec<u8>, _>("noise_pubkey")
                 .try_into()
@@ -51,7 +65,9 @@ fn matches(s: &Selector, d: &Device) -> bool {
         Selector::Any => true,
         Selector::Device(id) => id == d.id.as_bytes(),
         Selector::Prefix(p) => {
-            ipnet::IpNet::new(p.addr, p.len).is_ok_and(|n| d.addrs.iter().any(|a| n.contains(a)))
+            p.valid()
+                && (d.addrs.iter().any(|a| p.contains(*a))
+                    || d.advertised.iter().any(|r| r.prefix.contains_prefix(p)))
         }
     }
 }
@@ -59,6 +75,7 @@ pub fn compile(
     own: &Device,
     devices: &[Device],
     policies: &[Rule],
+    network_prefixes: &[Prefix],
 ) -> Result<(Vec<Peer>, Vec<Rule>), ApiError> {
     let mut peers = Vec::new();
     let mut rules = Vec::new();
@@ -69,6 +86,13 @@ pub fn compile(
         }
         let viable = |s: &Selector| match s {
             Selector::Device(id) => devices.iter().any(|d| d.id.as_bytes() == id),
+            Selector::Prefix(p) => {
+                network_prefixes.iter().any(|n| n.contains_prefix(p))
+                    || devices
+                        .iter()
+                        .flat_map(|d| &d.advertised)
+                        .any(|r| r.prefix.contains_prefix(p))
+            }
             _ => true,
         };
         if !viable(&r.src) || !viable(&r.dst) {
@@ -87,6 +111,7 @@ pub fn compile(
                     noise_pubkey: other.noise,
                     addrs: other.addrs.clone(),
                     endpoints: other.endpoints.clone(),
+                    routes: other.advertised.iter().map(|r| r.prefix.clone()).collect(),
                 });
             }
         }
@@ -184,7 +209,26 @@ pub async fn get(
         .find(|d| d.id == dev)
         .ok_or_else(ApiError::internal)?;
     let policies = crate::policies::rules(&mut tx, net).await?;
-    let (peers, rules) = compile(own, &devices, &policies)?;
+    let network_prefixes = ["v4", "v6"]
+        .iter()
+        .map(|k| {
+            let p: ipnet::IpNet = n
+                .get::<String, _>(*k)
+                .parse()
+                .map_err(|_| ApiError::internal())?;
+            Ok(Prefix {
+                addr: p.network(),
+                len: p.prefix_len(),
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let (peers, rules) = compile(own, &devices, &policies, &network_prefixes)?;
+    let mut dns = crate::dns::load(&mut tx, net).await?;
+    dns.servers.retain(|a| {
+        network_prefixes.iter().any(|p| p.contains(*a))
+            || own.advertised.iter().any(|r| r.prefix.contains(*a))
+            || peers.iter().flat_map(|p| &p.routes).any(|p| p.contains(*a))
+    });
     let last: Option<i64> =
         sqlx::query_scalar("SELECT max(version) FROM configuration_versions WHERE device_id=$1")
             .bind(dev)
@@ -206,21 +250,14 @@ pub async fn get(
         identity_pubkey: own.identity,
         mtu: 1400,
         tunnel_addrs: own.addrs.clone(),
-        network_prefixes: ["v4", "v6"]
-            .iter()
-            .map(|k| {
-                let p: ipnet::IpNet = n
-                    .get::<String, _>(*k)
-                    .parse()
-                    .map_err(|_| ApiError::internal())?;
-                Ok(Prefix {
-                    addr: p.network(),
-                    len: p.prefix_len(),
-                })
-            })
-            .collect::<Result<_, ApiError>>()?,
+        network_prefixes,
         peers,
         rules,
+        advertised: own.advertised.clone(),
+        dns: DnsConfig {
+            servers: dns.servers,
+            domains: dns.domains,
+        },
     };
     cfg.canonicalize();
     let file =

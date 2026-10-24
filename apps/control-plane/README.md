@@ -93,6 +93,33 @@ datos sensibles; compruebe PostgreSQL y las migraciones si faltan muestras.
 Las reglas de clasificación y caché, y las cabeceras de seguridad del contenido,
 figuran en §10 del contrato.
 
+## Subredes y DNS (fase 7)
+
+Aplique `0003_routes_dns.sql` con `--migrate` y el rol administrativo antes de
+actualizar el servicio. No hay dependencias nuevas. El router declara hasta ocho
+CIDR privados canónicos mediante `POST /api/v1/device/routes` (firma de dispositivo,
+una petición cada cinco segundos). La declaración no autoriza tráfico:
+un admin debe aprobar cada ruta desde `/api/v1/networks/{net}/routes/{id}/approve`
+con `{"snat":true}` o `{"snat":false}` explícito. Las aprobaciones se serializan
+bajo bloqueo de la red y rechazan solapes con el túnel u otras rutas aprobadas.
+Sin SNAT configure rutas de retorno en la LAN; con SNAT se pierde la atribución
+del cliente en los registros de los hosts internos.
+
+Las políticas pueden referirse a prefijos contenidos en una ruta aprobada.
+Solo sus pares seleccionados reciben la ruta; retirarla o rechazarla elimina
+su selección en la siguiente emisión sin romper las políticas huérfanas.
+Revocar el dispositivo rechaza sus rutas. Las configuraciones sin novedades
+siguen siendo v1, byte a byte; las que incluyen rutas o DNS son v2.
+
+`PUT /api/v1/networks/{net}/dns` configura hasta tres servidores alcanzables
+y ocho dominios de enrutamiento, por ejemplo
+`{"servers":["10.77.0.1"],"domains":["lab.internal"]}`. No se captura DNS general.
+Cada emisión omite los servidores que no caben en sus rutas autorizadas.
+El inventario conserva `report.forwarding_ok`, `report.dns` y `report.routes`
+declarados por el agente; una ruta `conflict` exige resolver el solape local,
+no forzar su instalación. Los eventos `changed/routes` y `changed/dns`
+requieren resincronización REST. Contrato completo y resoluciones: §11.
+
 ## Integración automatizada
 
 ```sh

@@ -124,6 +124,15 @@ pub struct AgentConfigArgs {
     config_file: Option<PathBuf>,
     #[arg(long)]
     ipc_socket: Option<PathBuf>,
+    /// Solicita una subred privada (repetible, máximo ocho); requiere aprobación administrativa.
+    #[arg(long = "advertise-route")]
+    advertise_routes: Vec<String>,
+    /// Socket opcional de solo lectura, distinto del socket de control.
+    #[arg(long)]
+    status_socket: Option<PathBuf>,
+    /// Grupo numérico autorizado a consultar el socket de estado.
+    #[arg(long, requires = "status_socket")]
+    status_gid: Option<u32>,
 }
 
 fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<String, String> {
@@ -161,6 +170,25 @@ fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<Stri
     ] {
         table.insert(key.into(), path.to_str().ok_or("ruta no UTF-8")?.into());
     }
+    table.insert(
+        "advertise_routes".into(),
+        toml::Value::Array(
+            args.advertise_routes
+                .iter()
+                .cloned()
+                .map(toml::Value::String)
+                .collect(),
+        ),
+    );
+    if let Some(path) = &args.status_socket {
+        table.insert(
+            "status_socket".into(),
+            path.to_str().ok_or("ruta no UTF-8")?.into(),
+        );
+    }
+    if let Some(gid) = args.status_gid {
+        table.insert("status_gid".into(), i64::from(gid).into());
+    }
     let mut sync = toml::Table::new();
     sync.insert("url".into(), join.url.clone().into());
     table.insert("sync".into(), toml::Value::Table(sync));
@@ -195,7 +223,7 @@ mod tests {
             "01".repeat(32)
         );
         let join = parse_join(&input).unwrap();
-        let args = AgentConfigArgs {
+        let mut args = AgentConfigArgs {
             join: input,
             dir: "/tmp/device".into(),
             out: "unused".into(),
@@ -204,13 +232,27 @@ mod tests {
             state_dir: None,
             config_file: None,
             ipc_socket: None,
+            advertise_routes: vec!["192.168.10.0/24".into(), "fd12:3456::/32".into()],
+            status_socket: Some("/run/atenea/status.sock".into()),
+            status_gid: Some(42),
         };
         let text = render(&join, &args, &[2; 16]).unwrap();
         let cfg = agent_config_contract::Config::parse(&text).unwrap();
         assert_eq!(cfg.trust_anchor, [1; 32]);
         assert_eq!(cfg.device_id, [2; 16]);
+        assert_eq!(cfg.advertise_routes, args.advertise_routes);
+        assert_eq!(cfg.status_socket, args.status_socket);
+        assert_eq!(cfg.status_gid, Some(42));
         assert_eq!(cfg.sync.unwrap().interval_secs, 60);
         assert!(!text.contains("NO_GUARDAR"));
+        args.advertise_routes.clear();
+        args.status_socket = None;
+        args.status_gid = None;
+        let default_text = render(&join, &args, &[2; 16]).unwrap();
+        let defaults = agent_config_contract::Config::parse(&default_text).unwrap();
+        assert!(defaults.advertise_routes.is_empty());
+        assert!(defaults.status_socket.is_none());
+        assert!(defaults.status_gid.is_none());
         assert!(parse_join("{}").is_err());
         assert!(
             parse_join(

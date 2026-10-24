@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    remove|deconfigure|upgrade)
+        if [ -d /run/systemd/system ]; then
+            systemctl stop atenea-agent.service
+        fi
+        ;;
+esac

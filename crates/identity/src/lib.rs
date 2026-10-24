@@ -1,4 +1,4 @@
-//! Configuración firmada v1: codificación única y verificación sin E/S ni reloj propio.
+//! Configuración firmada v1/v2: codificación única y verificación sin E/S ni reloj propio.
 pub mod api_auth;
 mod codec;
 mod config;
@@ -12,6 +12,25 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 pub use verify::{inspect_config, verify_config};
+
+/// Dominio de enrutamiento DNS canónico (ASCII LDH, sin punto final).
+pub fn valid_domain(domain: &str) -> bool {
+    (1..=253).contains(&domain.len())
+        && domain.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
 
 #[cfg(test)]
 mod inspect_tests;
@@ -71,6 +90,7 @@ pub struct Peer {
     pub noise_pubkey: PublicKey,
     pub addrs: Vec<IpAddr>,
     pub endpoints: Vec<SocketAddr>,
+    pub routes: Vec<Prefix>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selector {
@@ -87,6 +107,16 @@ pub struct Rule {
     pub port_max: u16,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdvertisedRoute {
+    pub prefix: Prefix,
+    pub snat: bool,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DnsConfig {
+    pub servers: Vec<IpAddr>,
+    pub domains: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceConfig {
     pub network_id: NetworkId,
     pub device_id: DeviceId,
@@ -101,6 +131,8 @@ pub struct DeviceConfig {
     pub network_prefixes: Vec<Prefix>,
     pub peers: Vec<Peer>,
     pub rules: Vec<Rule>,
+    pub advertised: Vec<AdvertisedRoute>,
+    pub dns: DnsConfig,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IssuerCert {

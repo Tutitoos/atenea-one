@@ -4,13 +4,15 @@
 //! comparten UNA sesión Noise y un único espacio de contadores (ADR-003): cambiar de camino no
 //! cambia claves; el antirreplay del receptor elimina las copias. Un camino solo cuenta como sano
 //! con paquetes AUTENTICADOS recibidos por él (docs/protocol/relay-v1.md §5.2).
+//! Las rutas firmadas solo amplían orígenes autorizados y destinos locales; no hay tránsito
+//! entre pares. En salida prima la dirección exacta y después el prefijo más largo (§4 de v2).
 
 use crate::packet::parse_ip;
 use crate::relay::RelayKind;
 use atenea_crypto::{self as crypto, PendingInit, Session, StaticKeypair};
-use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId};
+use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId, Prefix};
 use atenea_nat_traversal::{MAX_CANDIDATES, sanitize_candidates};
-use atenea_policies::{Policy, classify};
+use atenea_policies::{Policy, classify, prefix_contains};
 use atenea_protocol::{self as proto, Packet, ParseError};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -181,6 +183,7 @@ struct Peer {
     device_id: DeviceId,
     public: [u8; 32],
     addrs: Vec<IpAddr>,
+    routes: Vec<Prefix>,
     /// Ruta directa CONFIRMADA: solo cambia con un paquete Noise autenticado del par.
     endpoint: Option<SocketAddr>,
     /// Pistas estáticas de la configuración firmada (no autenticadas como ruta).
@@ -227,6 +230,7 @@ impl Peer {
             device_id,
             public,
             addrs: Vec::new(),
+            routes: Vec::new(),
             endpoint: None,
             cfg_endpoints: Vec::new(),
             candidates: Vec::new(),
@@ -420,6 +424,7 @@ pub struct Engine {
     net: NetworkId,
     keys: StaticKeypair,
     own: Vec<IpAddr>,
+    advertised: Vec<Prefix>,
     peers: Vec<Peer>,
     by_addr: HashMap<IpAddr, usize>,
     by_key: HashMap<[u8; 32], usize>,
@@ -441,6 +446,7 @@ impl Engine {
             net,
             keys,
             own: Vec::new(),
+            advertised: Vec::new(),
             peers: Vec::new(),
             by_addr: HashMap::new(),
             by_key: HashMap::new(),
@@ -471,10 +477,12 @@ impl Engine {
                 None => Peer::new(p.device_id, p.noise_pubkey),
             };
             peer.addrs = p.addrs.clone();
+            peer.routes = p.routes.clone();
             peer.cfg_endpoints = p.endpoints.clone();
             self.peers.push(peer);
         }
         self.own = cfg.tunnel_addrs.clone();
+        self.advertised = cfg.advertised.iter().map(|r| r.prefix.clone()).collect();
         self.policy = Some(Policy::new(cfg));
         self.lease = Some((cfg.not_before, cfg.not_after));
         self.config_version = cfg.config_version;
@@ -554,11 +562,20 @@ impl Engine {
             self.counters.inc("tx_malformed");
             return out;
         };
-        if !self.own.contains(&src) {
+        if !self.own.contains(&src) && !self.advertised.iter().any(|p| prefix_contains(p, &src)) {
             self.counters.inc("tx_bad_source");
             return out;
         }
-        let Some(&pi) = self.by_addr.get(&dst) else {
+        let destination = self.by_addr.get(&dst).copied().or_else(|| {
+            self.peers
+                .iter()
+                .enumerate()
+                .flat_map(|(pi, peer)| peer.routes.iter().map(move |p| (pi, p)))
+                .filter(|(_, p)| prefix_contains(p, &dst))
+                .max_by_key(|(_, p)| p.len)
+                .map(|(pi, _)| pi)
+        });
+        let Some(pi) = destination else {
             self.counters.inc("tx_no_route");
             return out;
         };
@@ -974,11 +991,11 @@ impl Engine {
             self.counters.inc("rx_bad_packet");
             return;
         };
-        if !peer.addrs.contains(&src) {
+        if !peer.addrs.contains(&src) && !peer.routes.iter().any(|p| prefix_contains(p, &src)) {
             self.counters.inc("rx_bad_source");
             return;
         }
-        if !self.own.contains(&dst) {
+        if !self.own.contains(&dst) && !self.advertised.iter().any(|p| prefix_contains(p, &dst)) {
             self.counters.inc("rx_bad_destination");
             return;
         }
@@ -1403,7 +1420,7 @@ mod tests {
     const A_EP: &str = "192.0.2.1:51820";
     const B_EP: &str = "192.0.2.2:51820";
 
-    use atenea_identity::{Peer as CfgPeer, Prefix, Rule, Selector};
+    use atenea_identity::{AdvertisedRoute, DnsConfig, Peer as CfgPeer, Rule, Selector};
 
     const NET: NetworkId = [7; 16];
     const NOT_BEFORE: u64 = 999_000;
@@ -1461,8 +1478,14 @@ mod tests {
                 noise_pubkey: *peer_pub,
                 addrs: vec![ip(peer4), ip(peer6)],
                 endpoints: vec![ep(peer_ep)],
+                routes: vec![],
             }],
             rules,
+            advertised: vec![],
+            dns: DnsConfig {
+                servers: vec![],
+                domains: vec![],
+            },
         }
     }
 
@@ -1623,6 +1646,231 @@ mod tests {
         let dg = s.encrypt(&forged, l.now).unwrap();
         assert!(l.a.on_udp(ep(B_EP), &dg, l.now, l.unix).is_empty());
         assert_eq!(l.a.counters.0["rx_bad_source"], 1);
+    }
+
+    fn subnet_lab() -> Lab {
+        let mut l = lab();
+        let routes = vec![
+            Prefix {
+                addr: ip("192.168.40.0"),
+                len: 24,
+            },
+            Prefix {
+                addr: ip("fd40::"),
+                len: 64,
+            },
+        ];
+        l.cfg_a.peers[0].routes = routes.clone();
+        l.cfg_b.advertised = routes
+            .into_iter()
+            .map(|prefix| AdvertisedRoute {
+                prefix,
+                snat: false,
+            })
+            .collect();
+        l.a.apply_config(&l.cfg_a);
+        l.b.apply_config(&l.cfg_b);
+        l
+    }
+
+    #[test]
+    fn subnet_routes_deliver_ipv4_and_ipv6_and_accept_advertised_replies() {
+        let mut l = subnet_lab();
+        let packets = [
+            (
+                build_ipv4(
+                    "10.77.0.1".parse().unwrap(),
+                    "192.168.40.9".parse().unwrap(),
+                    b"ida",
+                ),
+                build_ipv4(
+                    "192.168.40.9".parse().unwrap(),
+                    "10.77.0.1".parse().unwrap(),
+                    b"vuelta",
+                ),
+            ),
+            (
+                build_ipv6(
+                    "fd77::1".parse().unwrap(),
+                    "fd40::9".parse().unwrap(),
+                    b"ida",
+                ),
+                build_ipv6(
+                    "fd40::9".parse().unwrap(),
+                    "fd77::1".parse().unwrap(),
+                    b"vuelta",
+                ),
+            ),
+        ];
+        for (request, reply) in packets {
+            let out = l.a.on_tun(&request, l.now, l.unix);
+            let (_, tun_b) = pump(&mut l, out, vec![]);
+            assert_eq!(tun_b, vec![request]);
+            let out = l.b.on_tun(&reply, l.now, l.unix);
+            let (tun_a, _) = pump(&mut l, vec![], out);
+            assert_eq!(tun_a, vec![reply]);
+        }
+    }
+
+    #[test]
+    fn exact_destination_precedes_longest_route_and_missing_routes_are_dropped() {
+        let mut l = lab();
+        // Se omite el verificador para probar precedencia incluso con solapes prohibidos.
+        l.cfg_a.peers[0].routes = vec![Prefix {
+            addr: ip("192.168.0.0"),
+            len: 16,
+        }];
+        let mut narrow = l.cfg_a.peers[0].clone();
+        narrow.device_id = [3; 16];
+        narrow.noise_pubkey = StaticKeypair::generate().public;
+        narrow.addrs = vec![ip("10.77.0.3")];
+        narrow.routes = vec![
+            Prefix {
+                addr: ip("192.168.40.0"),
+                len: 24,
+            },
+            Prefix {
+                addr: ip("10.77.0.0"),
+                len: 24,
+            },
+        ];
+        l.cfg_a.peers.push(narrow);
+        l.a.apply_config(&l.cfg_a);
+        for (dst, expected) in [("192.168.40.9", 1), ("192.168.41.9", 0), ("10.77.0.2", 0)] {
+            for peer in &mut l.a.peers {
+                peer.queued = None;
+            }
+            let pkt = build_ipv4("10.77.0.1".parse().unwrap(), dst.parse().unwrap(), b"ruta");
+            l.a.on_tun(&pkt, l.now, l.unix);
+            assert_eq!(l.a.peers[expected].queued.as_ref().unwrap().0, pkt);
+            assert!(l.a.peers[1 - expected].queued.is_none());
+        }
+        let missing = build_ipv4(
+            "10.77.0.1".parse().unwrap(),
+            "192.168.99.9".parse().unwrap(),
+            b"x",
+        );
+        // Retira también la ruta amplia: ya no debe quedar coincidencia.
+        l.cfg_a.peers[0].routes.clear();
+        l.a.apply_config(&l.cfg_a);
+        assert!(l.a.on_tun(&missing, l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["tx_no_route"], 1);
+    }
+
+    #[test]
+    fn ingress_never_transits_to_another_peer_address_or_route() {
+        let mut l = subnet_lab();
+        let mut third = l.cfg_b.peers[0].clone();
+        third.device_id = [3; 16];
+        third.noise_pubkey = StaticKeypair::generate().public;
+        third.addrs = vec![ip("10.77.0.3")];
+        third.routes = vec![Prefix {
+            addr: ip("192.168.50.0"),
+            len: 24,
+        }];
+        l.cfg_b.peers.push(third);
+        l.b.apply_config(&l.cfg_b);
+        let out = l.a.on_tun(&v4(1, 2, b"sesion"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        for dst in ["10.77.0.3", "192.168.50.9"] {
+            let pkt = build_ipv4(
+                "10.77.0.1".parse().unwrap(),
+                dst.parse().unwrap(),
+                b"transito",
+            );
+            let dg = l.a.peers[0]
+                .current
+                .as_mut()
+                .unwrap()
+                .encrypt(&pkt, l.now)
+                .unwrap();
+            assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        }
+        assert_eq!(l.b.counters.0["rx_bad_destination"], 2);
+        assert!(l.b.peers[1].queued.is_none());
+    }
+
+    #[test]
+    fn subnet_source_must_belong_to_the_authenticated_peer_or_local_advertised() {
+        let mut l = subnet_lab();
+        let forged = build_ipv4(
+            "192.168.41.9".parse().unwrap(),
+            "10.77.0.1".parse().unwrap(),
+            b"x",
+        );
+        assert!(l.b.on_tun(&forged, l.now, l.unix).is_empty());
+        assert_eq!(l.b.counters.0["tx_bad_source"], 1);
+        let out = l.a.on_tun(&v4(1, 2, b"sesion"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        // La subred es de B, no de A: ni siquiera un par autenticado puede usarla.
+        let forged = build_ipv4(
+            "192.168.40.9".parse().unwrap(),
+            "10.77.0.2".parse().unwrap(),
+            b"x",
+        );
+        let dg = l.a.peers[0]
+            .current
+            .as_mut()
+            .unwrap()
+            .encrypt(&forged, l.now)
+            .unwrap();
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        assert_eq!(l.b.counters.0["rx_bad_source"], 1);
+    }
+
+    #[test]
+    fn route_prefix_acl_is_enforced_at_both_ends_without_implicit_route_permission() {
+        let mut l = subnet_lab();
+        let prefix = Prefix {
+            addr: ip("192.168.40.0"),
+            len: 24,
+        };
+        let rule = Rule {
+            src: Selector::Device([1; 16]),
+            dst: Selector::Prefix(prefix.clone()),
+            proto: 0,
+            port_min: 0,
+            port_max: 0,
+        };
+        let request = build_ipv4(
+            "10.77.0.1".parse().unwrap(),
+            "192.168.40.9".parse().unwrap(),
+            b"acl",
+        );
+        l.cfg_a.rules.clear();
+        l.a.apply_config(&l.cfg_a);
+        assert!(l.a.on_tun(&request, l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["tx_acl_denied"], 1);
+        l.cfg_a.rules = vec![rule.clone()];
+        l.cfg_b.rules.clear();
+        l.a.apply_config(&l.cfg_a);
+        l.b.apply_config(&l.cfg_b);
+        let out = l.a.on_tun(&request, l.now, l.unix);
+        assert!(pump(&mut l, out, vec![]).1.is_empty());
+        assert_eq!(l.b.counters.0["rx_acl_denied"], 1);
+        l.cfg_b.rules = vec![rule];
+        l.b.apply_config(&l.cfg_b);
+        let out = l.a.on_tun(&request, l.now, l.unix);
+        assert_eq!(pump(&mut l, out, vec![]).1, vec![request]);
+        let reply = build_ipv4(
+            "192.168.40.9".parse().unwrap(),
+            "10.77.0.1".parse().unwrap(),
+            b"acl",
+        );
+        assert!(l.b.on_tun(&reply, l.now, l.unix).is_empty());
+        let reverse = Rule {
+            src: Selector::Prefix(prefix),
+            dst: Selector::Device([1; 16]),
+            proto: 0,
+            port_min: 0,
+            port_max: 0,
+        };
+        l.cfg_a.rules.push(reverse.clone());
+        l.cfg_b.rules.push(reverse);
+        l.a.apply_config(&l.cfg_a);
+        l.b.apply_config(&l.cfg_b);
+        let out = l.b.on_tun(&reply, l.now, l.unix);
+        assert_eq!(pump(&mut l, vec![], out).0, vec![reply]);
     }
 
     #[test]

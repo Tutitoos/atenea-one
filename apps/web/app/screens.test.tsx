@@ -26,7 +26,7 @@ it('conserva la confirmación y la huella cuando avanza el reloj',async()=>{
  expect(screen.getByRole('dialog')).toHaveTextContent(device.fingerprint);
 });
 it('suma al último RX la edad del informe y el tiempo desde la consulta',()=>{
- const reported={...device,report:{reported_at:'2026-01-01T00:00:00Z',age_secs:20,nat_mapping:null,paths:[{peer:device.id,path:'direct' as const,last_rx_secs:3}]}};
+ const reported={...device,report:{reported_at:'2026-01-01T00:00:00Z',age_secs:20,nat_mapping:null,paths:[{peer:device.id,path:'direct' as const,last_rx_secs:3}],forwarding_ok:null,dns:null,routes:null}};
  render(<Devices devices={[reported]} accessRole="member" net="red" elapsed={5} refresh={async()=>{}}/>);
  expect(screen.getByText(/último RX 28 s/)).toBeInTheDocument();
 });

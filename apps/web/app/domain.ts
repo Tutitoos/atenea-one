@@ -26,6 +26,18 @@ function networkAddress(value: string) {
 const ipv4Cidr = z.cidrv4().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
 const ipv6Cidr = z.cidrv6().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
 export const networkSchema = z.object({ name: nameSchema, ipv4_cidr: ipv4Cidr, ipv6_cidr: ipv6Cidr, root_anchor: rootAnchor });
+export const privatePrefix = z.union([ipv4Cidr, ipv6Cidr]).refine(value => {
+  const [address, length] = value.split('/');
+  if (address.includes(':')) return Number(length) >= 32 && (parseInt(address.split(':')[0], 16) & 0xfe00) === 0xfc00;
+  const [a, b] = address.split('.').map(Number);
+  const prefix = Number(length);
+  return prefix >= 8 && (a === 10 || (a === 172 && b >= 16 && b <= 31 && prefix >= 12) || (a === 192 && b === 168 && prefix >= 16) || (a === 100 && b >= 64 && b <= 127 && prefix >= 10));
+}, 'Solo prefijos privados canónicos: RFC 1918, CGNAT o ULA; mínimo /8 IPv4 o /32 IPv6. No hay salida a Internet.');
+export const dnsDomain = z.string().max(253).regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/, 'Usa dominios LDH en minúsculas, sin etiquetas vacías ni punto final; no se admite el dominio raíz.');
+export const dnsSchema = z.object({
+  servers: z.array(z.union([z.ipv4(), z.ipv6()])).max(3).refine(values => new Set(values.map(value => z.ipv6().safeParse(value).success ? new URL(`http://[${value}]`).hostname : value)).size === values.length, 'No repitas servidores.'),
+  domains: z.array(dnsDomain).max(8).refine(values => new Set(values).size === values.length, 'No repitas dominios.'),
+});
 export const endpoint = z.string().refine(value => {
   const match = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/.exec(value);
   if (!match || Number(match[3]) < 1 || Number(match[3]) > 65535) return false;

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    remove|purge)
+        if [ -d /run/systemd/system ]; then
+            systemctl disable atenea-agent.service 2>/dev/null || true
+            systemctl daemon-reload
+            systemctl reset-failed atenea-agent.service 2>/dev/null || true
+        fi
+        if [ "${1:-}" = purge ]; then
+            echo 'Se conservan /etc/atenea, /var/lib/atenea y el grupo atenea: pueden contener claves o referencias de acceso. Borrado manual explícito: consulte instalacion-linux.md.'
+        fi
+        ;;
+esac

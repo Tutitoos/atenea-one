@@ -92,13 +92,18 @@ enum Cmd {
         #[arg(long, default_value = "atenea-agent.log")]
         log: PathBuf,
     },
-    /// Estado del agente (JSON).
+    /// Estado del agente (JSON); admite el socket de control o el de solo lectura.
     Status {
         #[arg(long)]
         socket: PathBuf,
     },
-    /// Para el agente; la interfaz y sus rutas desaparecen con él.
+    /// Para el agente por el socket de control; la interfaz y sus rutas desaparecen con él.
     Down {
+        #[arg(long)]
+        socket: PathBuf,
+    },
+    /// Recarga la configuración firmada por el socket de control.
+    Reload {
         #[arg(long)]
         socket: PathBuf,
     },
@@ -156,6 +161,10 @@ fn run(cmd: Cmd) -> Result<(), String> {
             ask(&socket, "stop")?;
             Ok(())
         }
+        Cmd::Reload { socket } => {
+            ask(&socket, "reload")?;
+            Ok(())
+        }
     }
 }
 
@@ -168,6 +177,14 @@ fn ask(socket: &Path, request: &str) -> Result<String, String> {
     BufReader::new(s)
         .read_line(&mut line)
         .map_err(|e| e.to_string())?;
+    let reply: serde_json::Value =
+        serde_json::from_str(&line).map_err(|_| "respuesta IPC vacía o JSON inválido")?;
+    if let Some(error) = reply.get("error") {
+        return Err(format!(
+            "agente: {}",
+            error.as_str().unwrap_or("orden rechazada")
+        ));
+    }
     Ok(line.trim().to_string())
 }
 
@@ -222,4 +239,91 @@ fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
         "el agente no respondió en 5 s; revisa {}",
         log.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_route_and_status_options() {
+        assert!(
+            Cli::try_parse_from([
+                "atenea",
+                "agent-config",
+                "--join",
+                "join.json",
+                "--dir",
+                "/device",
+                "--out",
+                "/config.toml",
+                "--advertise-route",
+                "10.0.0.0/8",
+                "--advertise-route",
+                "fd12:3456::/32",
+                "--status-socket",
+                "/status",
+                "--status-gid",
+                "42",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "atenea",
+                "agent-config",
+                "--join",
+                "join.json",
+                "--dir",
+                "/device",
+                "--out",
+                "/config.toml",
+                "--status-gid",
+                "42",
+            ])
+            .is_err()
+        );
+        assert!(matches!(
+            Cli::try_parse_from(["atenea", "reload", "--socket", "/control"])
+                .unwrap()
+                .cmd,
+            Cmd::Reload { .. }
+        ));
+    }
+
+    #[test]
+    fn status_uses_either_socket_and_control_errors_propagate() {
+        use std::os::unix::net::UnixListener;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            Path::new("/tmp").join(format!("atenea-cli-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        for (name, request, response, succeeds) in [
+            ("control", "status", r#"{"running":true}"#, true),
+            ("status", "status", r#"{"running":true}"#, true),
+            ("readonly-stop", "stop", r#"{"error":"solo status"}"#, false),
+            (
+                "readonly-reload",
+                "reload",
+                r#"{"error":"solo status"}"#,
+                false,
+            ),
+        ] {
+            let socket = directory.join(name);
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut command = String::new();
+                BufReader::new(&stream).read_line(&mut command).unwrap();
+                assert_eq!(command.trim(), request);
+                writeln!(stream, "{response}").unwrap();
+            });
+            assert_eq!(ask(&socket, request).is_ok(), succeeds);
+            server.join().unwrap();
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

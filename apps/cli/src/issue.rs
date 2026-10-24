@@ -1,10 +1,10 @@
-//! Emisión offline de claves y configuraciones firmadas (contrato `signed-config-v1`).
+//! Emisión offline de claves y configuraciones firmadas (contrato `signed-config-v1/v2`).
 //! Corre en la estación de administración o en el emisor, nunca en el agente.
 
 use atenea_crypto::{StaticKeypair, hex};
 use atenea_identity::{
-    DeviceBundle, DeviceConfig, DeviceId, IssuerCert, Peer, Prefix, Rule, Selector, SigningKey,
-    generate_seed, issue_config, signing_key,
+    AdvertisedRoute, DeviceBundle, DeviceConfig, DeviceId, DnsConfig, IssuerCert, Peer, Prefix,
+    Rule, Selector, SigningKey, generate_seed, issue_config, signing_key,
 };
 use serde::Deserialize;
 use std::fs;
@@ -192,6 +192,10 @@ struct Spec {
     peers: Vec<SpecPeer>,
     #[serde(default, rename = "rule")]
     rules: Vec<SpecRule>,
+    #[serde(default, rename = "advertise")]
+    advertised: Vec<SpecAdvertise>,
+    #[serde(default)]
+    dns: SpecDns,
 }
 
 #[derive(Deserialize)]
@@ -201,6 +205,24 @@ struct SpecPeer {
     addrs: Vec<IpAddr>,
     #[serde(default)]
     endpoints: Vec<SocketAddr>,
+    #[serde(default)]
+    routes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecAdvertise {
+    prefix: String,
+    snat: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecDns {
+    #[serde(default)]
+    servers: Vec<IpAddr>,
+    #[serde(default)]
+    domains: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -305,6 +327,11 @@ pub fn issue(issuer_key: &Path, issuer_cert: &Path, spec: &Path, out: &Path) -> 
             noise_pubkey: b.noise_pubkey,
             addrs: p.addrs.clone(),
             endpoints: p.endpoints.clone(),
+            routes: p
+                .routes
+                .iter()
+                .map(|p| parse_prefix(p))
+                .collect::<Result<_, _>>()?,
         });
     }
     let peer_ids: Vec<DeviceId> = peers.iter().map(|p| p.device_id).collect();
@@ -342,6 +369,20 @@ pub fn issue(issuer_key: &Path, issuer_cert: &Path, spec: &Path, out: &Path) -> 
             .collect::<Result<_, _>>()?,
         peers,
         rules,
+        advertised: s
+            .advertised
+            .iter()
+            .map(|a| {
+                Ok(AdvertisedRoute {
+                    prefix: parse_prefix(&a.prefix)?,
+                    snat: a.snat,
+                })
+            })
+            .collect::<Result<_, String>>()?,
+        dns: DnsConfig {
+            servers: s.dns.servers,
+            domains: s.dns.domains,
+        },
     };
     cfg.canonicalize();
     let file = issue_config(&issuer, &cert, &cfg).map_err(|e| format!("emisión: {e:?}"))?;
@@ -351,4 +392,53 @@ pub fn issue(issuer_key: &Path, issuer_cert: &Path, spec: &Path, out: &Path) -> 
         cfg.config_version, cfg.not_after
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod spec_tests {
+    use super::*;
+
+    const BASE: &str = r#"
+network_id = "04040404040404040404040404040404"
+device_bundle = "bundle.bin"
+validity_secs = 300
+tunnel_addrs = ["10.77.0.1"]
+network_prefixes = ["10.77.0.0/24"]
+"#;
+
+    #[test]
+    fn spec_v1_defaults_and_v2_explicit_snat() {
+        let old: Spec = toml::from_str(BASE).unwrap();
+        assert!(old.advertised.is_empty());
+        assert!(old.dns.servers.is_empty());
+        let extra = r#"
+[[peer]]
+bundle = "peer.bin"
+addrs = ["10.77.0.2"]
+routes = ["192.168.50.0/24"]
+[[advertise]]
+prefix = "172.16.0.0/16"
+snat = false
+[dns]
+servers = ["192.168.50.53"]
+domains = ["lab.internal"]
+"#;
+        let spec: Spec = toml::from_str(&format!("{BASE}{extra}")).unwrap();
+        assert_eq!(spec.peers[0].routes, ["192.168.50.0/24"]);
+        assert!(!spec.advertised[0].snat);
+        assert_eq!(spec.dns.domains, ["lab.internal"]);
+        assert!(
+            toml::from_str::<Spec>(&format!("{BASE}{}", extra.replace("snat = false", "")))
+                .is_err()
+        );
+        assert!(
+            toml::from_str::<Spec>(&format!(
+                "{BASE}{}",
+                extra.replace("snat = false", "snat = true")
+            ))
+            .unwrap()
+            .advertised[0]
+                .snat
+        );
+    }
 }

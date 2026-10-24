@@ -1,0 +1,5 @@
+# EJEMPLO: copiar a /etc/sysctl.d/ solo por decisión del administrador del router.
+# No se instala ni aplica automáticamente. No usar en el host Proxmox.
+net.ipv4.ip_forward = 1
+# Activar también únicamente si se sirven subredes IPv6:
+# net.ipv6.conf.all.forwarding = 1

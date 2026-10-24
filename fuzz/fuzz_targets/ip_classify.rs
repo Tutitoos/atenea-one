@@ -20,6 +20,8 @@ fuzz_target!(|data: &[u8]| {
         network_prefixes: vec![Prefix { addr: "10.0.0.0".parse().unwrap(), len: 24 }],
         peers: vec![],
         rules: vec![],
+        advertised: vec![],
+        dns: Default::default(),
     };
     assert!(!Policy::new(&cfg).allows(&flow));
 });

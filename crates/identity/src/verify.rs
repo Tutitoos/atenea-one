@@ -33,7 +33,7 @@ fn inspect_chain(
     if file.get(..4).is_some_and(|b| b != b"AOCF")
         || file.get(4).is_some_and(|v| *v != 1)
         || file.get(5..7).is_some_and(|b| b != [1, 1])
-        || file.get(187..189).is_some_and(|b| b != [1, 2])
+        || file.get(187..189).is_some_and(|b| !matches!(b, [1 | 2, 2]))
     {
         return Err(UnsupportedVersion);
     }

@@ -97,6 +97,20 @@ impl<'a> Reader<'a> {
         let n = self.count8(1, 4)?;
         (0..n).map(|_| self.addr()).collect()
     }
+    pub fn prefixes(&mut self) -> Result<Vec<Prefix>, Error> {
+        let n = self.count8(0, 8)?;
+        (0..n).map(|_| self.prefix()).collect()
+    }
+    pub fn domain(&mut self) -> Result<String, Error> {
+        let n = self.count8(1, 253)?;
+        let (a, b) = self.b.split_at_checked(n).ok_or(Error::Malformed)?;
+        self.b = b;
+        let s = std::str::from_utf8(a).map_err(|_| Error::Malformed)?;
+        if !valid_domain(s) {
+            return Err(Error::Malformed);
+        }
+        Ok(s.to_owned())
+    }
 }
 pub(crate) fn addr(b: &mut Vec<u8>, a: &IpAddr) {
     match a {
@@ -157,7 +171,7 @@ pub(crate) fn endpoint_valid(e: &SocketAddr) -> bool {
         }
 }
 impl Prefix {
-    pub(crate) fn valid(&self) -> bool {
+    pub fn valid(&self) -> bool {
         match self.addr {
             IpAddr::V4(a) => {
                 self.len <= 32
@@ -171,7 +185,7 @@ impl Prefix {
             }
         }
     }
-    pub(crate) fn contains(&self, a: IpAddr) -> bool {
+    pub fn contains(&self, a: IpAddr) -> bool {
         match (self.addr, a) {
             (IpAddr::V4(p), IpAddr::V4(a)) if self.len <= 32 => {
                 self.len == 0 || (u32::from(p) ^ u32::from(a)) >> (32 - self.len) == 0
@@ -180,6 +194,40 @@ impl Prefix {
                 self.len == 0 || (u128::from(p) ^ u128::from(a)) >> (128 - self.len) == 0
             }
             _ => false,
+        }
+    }
+    /// Comprueba contención completa, incluida la familia y longitud.
+    pub fn contains_prefix(&self, other: &Self) -> bool {
+        self.len <= other.len && self.contains(other.addr)
+    }
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.contains(other.addr) || other.contains(self.addr)
+    }
+    /// Solo subredes privadas canónicas autorizables por ADR-007.
+    pub fn valid_route(&self) -> bool {
+        if !self.valid() {
+            return false;
+        }
+        match self.addr {
+            IpAddr::V4(a) => {
+                self.len >= 8
+                    && [
+                        (std::net::Ipv4Addr::new(10, 0, 0, 0), 8),
+                        (std::net::Ipv4Addr::new(172, 16, 0, 0), 12),
+                        (std::net::Ipv4Addr::new(192, 168, 0, 0), 16),
+                        (std::net::Ipv4Addr::new(100, 64, 0, 0), 10),
+                    ]
+                    .iter()
+                    .any(|(addr, len)| {
+                        Prefix {
+                            addr: (*addr).into(),
+                            len: *len,
+                        }
+                        .contains_prefix(self)
+                    })
+                    && !a.is_unspecified()
+            }
+            IpAddr::V6(a) => self.len >= 32 && a.octets()[0] & 0xfe == 0xfc,
         }
     }
 }

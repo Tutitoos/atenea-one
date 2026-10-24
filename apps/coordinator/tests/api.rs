@@ -128,9 +128,12 @@ fn announcement(id: u8, peers: &[u8], root: u8, network: u8, end: u64, candidate
                 noise_pubkey: [p + 30; 32],
                 addrs: vec![format!("10.0.0.{p}").parse().unwrap()],
                 endpoints: vec![],
+                routes: vec![],
             })
             .collect(),
         rules: vec![],
+        advertised: vec![],
+        dns: atenea_identity::DnsConfig::default(),
     };
     json!({"config":STANDARD.encode(issue_config(&issuer,&cert,&cfg).unwrap()),"candidates":[candidate,"127.0.0.1:3",candidate]})
 }

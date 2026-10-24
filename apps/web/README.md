@@ -94,6 +94,30 @@ Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
 - Métricas muestra puntos recibidos sin unirlos, interpolar ni rellenar muestras.
   Topología usa SVG y tabla equivalente accesible. No hay datos de demostración
   ni métricas sintéticas en la aplicación; las fixtures solo están en pruebas.
+- Subredes lista las declaraciones reales del agente, decisión, fechas y SNAT.
+  Solo owner/admin aprueban, rechazan o revocan; member solo lee. Cada aprobación
+  exige elegir explícitamente SNAT: sin él hacen falta rutas de retorno en la LAN
+  y se conserva el origen; con él se enmascara sin tocar la LAN y se pierde el origen.
+  Un `409 route_overlap` explica el solapamiento con el túnel u otra ruta aprobada.
+  Solo se sirven prefijos privados: no existe salida a Internet.
+- DNS dividido se configura en el detalle de red (Dispositivos): hasta tres IP y
+  ocho dominios LDH minúsculos, sin raíz ni punto final. Solo esos dominios usan
+  esos servidores; nunca se captura el DNS general. El backend decide el alcance
+  de los servidores (túnel/rutas aprobadas) y muestra su error. Vaciar ambos campos
+  elimina DNS. `systemd-resolved` es requisito del agente, no del navegador.
+- Dispositivos muestra forwarding, DNS y rutas instaladas/en conflicto con motivo,
+  declarados por el agente y con edad del informe. Un router con rutas aprobadas
+  que declara `forwarding_ok=false` muestra una advertencia; no equivale a una
+  prueba independiente de conectividad. Los eventos `changed/routes` y
+  `changed/dns` invalidan el mismo conjunto REST que los demás cambios de red.
+
+La regresión `e2e/routes.spec.ts` está escrita y deshabilitada con `test.skip`:
+`tests/e2e-panel/lab.sh start-agent` aún no recibe un spec de `advertise_routes`
+ni prepara LAN/forwarding/DNS para esta prueba. No se simulan declaraciones ni se
+inventan órdenes del arnés. Al ampliarlo, pasar el spec privado del caso al
+comando y retirar el skip; ejecutarlo solo en el contenedor del propietario.
+Vitest cubre validadores, selección obligatoria de SNAT, rechazo/revocación,
+roles, errores de solapamiento/alcance DNS, forwarding, eventos y axe básico.
 
 La validación Zod cubre formato y límites locales. La pertenencia de dispositivos,
 la contención de prefijos, el solapamiento CIDR, el último owner y la validez

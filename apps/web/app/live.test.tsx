@@ -13,6 +13,9 @@ it('reconecta con retroceso exponencial y jitter, invalida por REST y limpia tim
  const {result,unmount}=renderHook(()=>useNetworkEvents('red'),{wrapper});expect(result.current).toBe(false);
  act(()=>Socket.all[0].onopen?.());expect(result.current).toBe(true);expect(invalidate).toHaveBeenCalledWith({queryKey:['network','red']});
  act(()=>Socket.all[0].onmessage?.({data:'{"type":"changed","scope":"devices","seq":2}'}));expect(invalidate).toHaveBeenCalledTimes(2);
+ for(const scope of ['routes','dns'])act(()=>Socket.all[0].onmessage?.({data:JSON.stringify({type:'changed',scope,seq:3})}));
+ expect(invalidate).toHaveBeenCalledTimes(4);
+ expect(invalidate).toHaveBeenLastCalledWith({queryKey:['network','red']});
  act(()=>Socket.all[0].close());expect(result.current).toBe(false);act(()=>vi.advanceTimersByTime(999));expect(Socket.all).toHaveLength(1);act(()=>vi.advanceTimersByTime(1));expect(Socket.all).toHaveLength(2);
  act(()=>Socket.all[1].close());act(()=>vi.advanceTimersByTime(1999));expect(Socket.all).toHaveLength(2);act(()=>vi.advanceTimersByTime(1));expect(Socket.all).toHaveLength(3);
  unmount();act(()=>vi.advanceTimersByTime(60_000));expect(Socket.all).toHaveLength(3);vi.restoreAllMocks();

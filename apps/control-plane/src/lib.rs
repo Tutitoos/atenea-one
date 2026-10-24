@@ -4,12 +4,14 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod devices;
+pub mod dns;
 pub mod issue;
 pub mod networks;
 mod openapi;
 pub mod orgs;
 pub mod panel;
 pub mod policies;
+pub mod routes;
 use std::{
     collections::HashMap,
     net::IpAddr,

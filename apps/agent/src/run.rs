@@ -16,8 +16,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UdpSocket, UnixListener, UnixStream};
+use tokio::net::UdpSocket;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Notify;
 
@@ -35,11 +34,29 @@ enum Cmd {
         #[arg(short, long)]
         config: PathBuf,
     },
+    /// Elimina exclusivamente la tabla nftables del agente.
+    Cleanup {
+        #[arg(short, long)]
+        config: PathBuf,
+    },
 }
 
 pub fn main() -> ExitCode {
     tracing_subscriber::fmt().with_max_level(log_level()).init();
-    let Cmd::Run { config } = Cli::parse().cmd;
+    let config = match Cli::parse().cmd {
+        Cmd::Run { config } => config,
+        Cmd::Cleanup { config } => {
+            return match Config::load(&config).and_then(|cfg| {
+                crate::netconf::NetConf::new(cfg.interface, Default::default()).cleanup()
+            }) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+    };
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -87,6 +104,10 @@ struct Runtime {
     /// MTU y direcciones ya instaladas en la interfaz.
     iface: Option<(usize, Vec<(IpAddr, u8)>)>,
     last_saved: u64,
+    netconf: crate::netconf::NetConf,
+    protected: Vec<IpAddr>,
+    resolved_endpoints: Option<Vec<IpAddr>>,
+    routes_changed: bool,
 }
 
 impl Runtime {
@@ -150,6 +171,19 @@ impl Runtime {
             }
             self.iface = Some(wanted);
         }
+        self.netconf
+            .endpoints_resolved(self.resolved_endpoints.is_some());
+        let mut protected = self.protected.clone();
+        if let Some(endpoints) = &self.resolved_endpoints {
+            protected.extend(endpoints);
+        }
+        if let Err(e) = self.netconf.apply(&v.config, &protected) {
+            tracing::error!("configurando la red: {e}");
+            self.reject("network_failed");
+            self.seen = None;
+            return;
+        }
+        self.routes_changed = true;
         self.engine.apply_config(&v.config);
         tracing::info!(
             version = v.config.config_version,
@@ -197,7 +231,20 @@ async fn run(path: PathBuf) -> Result<(), String> {
     let udp = UdpSocket::bind(cfg.listen)
         .await
         .map_err(|e| format!("UDP {}: {e}", cfg.listen))?;
-    let ipc = bind_ipc(&cfg.ipc_socket)?;
+    let ipc = crate::ipc::bind(&cfg.ipc_socket, None, false)?;
+    let status_ipc = cfg
+        .status_socket
+        .as_ref()
+        .map(|p| crate::ipc::bind(p, cfg.status_gid, true))
+        .transpose()?;
+    let mut netconf = crate::netconf::NetConf::new(cfg.interface.clone(), Default::default());
+    netconf.cleanup()?;
+    let resolved_endpoints = if cfg.sync.is_none() && cfg.coordinator.is_none() {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    netconf.endpoints_resolved(resolved_endpoints.is_some());
     let (sync_tx, sync_rx) =
         tokio::sync::watch::channel(cfg.sync.as_ref().map(|s| crate::sync::Status {
             url: s.url.clone(),
@@ -345,6 +392,10 @@ async fn run(path: PathBuf) -> Result<(), String> {
         seen: None,
         iface: None,
         last_saved: unix_now(),
+        netconf,
+        protected: Vec::new(),
+        resolved_endpoints,
+        routes_changed: true,
     };
     tracing::info!(interface = %rt.tun.name(), listen = %rt.cfg.listen, "agente en marcha; sin tráfico hasta cargar una configuración vigente");
     rt.poll_config(unix_now());
@@ -358,6 +409,11 @@ async fn run(path: PathBuf) -> Result<(), String> {
     let mut report_every = tokio::time::interval(Duration::from_secs(15));
     report_every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut report_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut route_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut last_declaration: Option<Instant> = None;
+    let mut routes_declared = false;
+    let mut endpoint_task: Option<tokio::task::JoinHandle<Result<Vec<IpAddr>, String>>> = None;
+    let mut endpoint_started: Option<Instant> = None;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -387,8 +443,50 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 let now = Instant::now();
                 ticks += 1;
                 if ticks.is_multiple_of(4) {
+                    if endpoint_task.as_ref().is_some_and(|task| task.is_finished())
+                        && let Some(task) = endpoint_task.take()
+                    {
+                        let resolved = task.await.ok().and_then(Result::ok);
+                        if rt.resolved_endpoints != resolved {
+                            rt.resolved_endpoints = resolved;
+                            rt.seen = None;
+                        }
+                    }
+                    let refresh = endpoint_started.is_none_or(|started| now.duration_since(started) >= Duration::from_secs(10));
+                    // Una sola resolución bloqueante en vuelo; no bloquea TUN/IPC ni acumula hilos.
+                    if refresh && endpoint_task.is_some() && rt.resolved_endpoints.take().is_some() {
+                        rt.seen = None;
+                    }
+                    if refresh && endpoint_task.is_none() && (rt.cfg.sync.is_some() || rt.cfg.coordinator.is_some()) {
+                        let sync = rt.cfg.sync.clone();
+                        let coordinator = rt.cfg.coordinator.clone();
+                        endpoint_task = Some(tokio::task::spawn_blocking(move || protected_endpoints(sync, coordinator)));
+                        endpoint_started = Some(now);
+                    }
                     rt.poll_config(unix);
                     rt.housekeeping(unix);
+                    let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));
+                    if (!rt.cfg.advertise_routes.is_empty() || routes_declared)
+                        && elapsed >= Duration::from_secs(5)
+                        && (rt.routes_changed || elapsed >= Duration::from_secs(300))
+                        && route_task.as_ref().is_none_or(|task| task.is_finished())
+                        && let Some(sync) = rt.cfg.sync.clone()
+                    {
+                        let routes = rt.cfg.advertise_routes.clone();
+                        let key = identity.clone();
+                        let tx = report_tx.clone();
+                        routes_declared = true;
+                        rt.routes_changed = false;
+                        last_declaration = Some(now);
+                        route_task = Some(tokio::spawn(async move {
+                            let result = tokio::task::spawn_blocking(move || crate::sync::declare_routes(&sync, &key, device, &routes, unix_now())).await;
+                            if !matches!(result, Ok(Ok(()))) {
+                                tx.send_modify(|s| {
+                                    if let Some(s) = s { s.route_announce_errors = s.route_announce_errors.saturating_add(1); }
+                                });
+                            }
+                        }));
+                    }
                 }
                 // STUN: tras la respuesta (o 3 s), recalcula candidatos y NAT y anuncia si cambian.
                 if let (Some(s), Some(started)) = (stun.as_mut(), stun_started) {
@@ -463,8 +561,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
             _ = report_every.tick(), if rt.cfg.sync.is_some() => {
                 if report_task.as_ref().is_none_or(|task| task.is_finished())
                     && let Some(sync) = rt.cfg.sync.clone()
-                    && let Some(report) = crate::sync::build_report(&rt.engine.status(Instant::now(), unix_now()), &relay.status())
+                    && let Some(mut report) = crate::sync::build_report(&rt.engine.status(Instant::now(), unix_now()), &relay.status())
                 {
+                    report.network(&rt.netconf.status());
                     let key = identity.clone();
                     let tx = report_tx.clone();
                     report_task = Some(tokio::spawn(async move {
@@ -493,11 +592,26 @@ async fn run(path: PathBuf) -> Result<(), String> {
             },
             Some(msg) = msg_rx.recv() => match msg {
                 CoordMsg::Candidates(peer, cands) => {
+                    rt.protected.extend(cands.iter().map(SocketAddr::ip));
+                    rt.seen = None;
+                    rt.poll_config(unix_now());
                     rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
                 }
                 CoordMsg::Relay(peer, grant) => {
                     if relay_on {
-                        relay.open(peer, grant.token, grant.relays);
+                        use std::net::ToSocketAddrs;
+                        let mut resolved = true;
+                        for endpoint in &grant.relays {
+                            for address in endpoint.udp.iter().chain(&endpoint.tls) {
+                                match address.to_socket_addrs() {
+                                    Ok(addrs) => rt.protected.extend(addrs.map(|a| a.ip())),
+                                    Err(_) => resolved = false,
+                                }
+                            }
+                        }
+                        rt.seen = None;
+                        rt.poll_config(unix_now());
+                        if resolved { relay.open(peer, grant.token, grant.relays); }
                     }
                     Vec::new()
                 }
@@ -517,9 +631,30 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 }
             },
             r = ipc.accept() => {
-                let sync = sync_rx.borrow().clone();
-                let coord = coord_rx.borrow().clone();
-                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync, coord, relay.status()).await { break; }
+                if let Ok((stream, _)) = r {
+                    let status = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
+                    match crate::ipc::handle(stream, &rt.cfg.ipc_socket, false, status).await {
+                        crate::ipc::Action::Stop => break,
+                        crate::ipc::Action::Reload => {
+                            if let Ok(cfg) = Config::load(&path) { rt.cfg.advertise_routes = cfg.advertise_routes; }
+                            rt.seen = None; rt.routes_changed = true;
+                        }
+                        crate::ipc::Action::Cleanup => { let _ = rt.netconf.cleanup(); rt.seen = None; }
+                        crate::ipc::Action::None => {}
+                    }
+                }
+                continue;
+            }
+            r = async {
+                match &status_ipc {
+                    Some(listener) => listener.accept().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Ok((stream, _)) = r {
+                    let status = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
+                    if let Some(path) = &rt.cfg.status_socket { crate::ipc::handle(stream, path, true, status).await; }
+                }
                 continue;
             }
             _ = term.recv() => break,
@@ -550,12 +685,18 @@ async fn run(path: PathBuf) -> Result<(), String> {
     if let Some(task) = report_task {
         task.abort();
     }
+    if let Some(task) = route_task {
+        task.abort();
+    }
     for t in coord_tasks {
         t.abort();
     }
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
     let _ = state::save(&rt.cfg.state_dir, &rt.state);
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
+    if let Some(path) = &rt.cfg.status_socket {
+        let _ = std::fs::remove_file(path);
+    }
     Ok(())
 }
 
@@ -577,51 +718,60 @@ struct CoordStatus {
     rendezvous: u64,
 }
 
-fn bind_ipc(path: &std::path::Path) -> Result<UnixListener, String> {
-    use std::os::unix::fs::PermissionsExt;
-    if path.exists() {
-        // Un socket vivo significa otro agente con la misma configuración.
-        if std::os::unix::net::UnixStream::connect(path).is_ok() {
-            return Err(format!("{}: ya hay un agente activo", path.display()));
-        }
-        std::fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+fn protected_endpoints(
+    sync: Option<crate::config::SyncConfig>,
+    coordinator: Option<crate::config::CoordinatorConfig>,
+) -> Result<Vec<IpAddr>, String> {
+    use std::net::ToSocketAddrs;
+    let mut ips = Vec::new();
+    for url in sync
+        .as_ref()
+        .map(|c| c.url.as_str())
+        .into_iter()
+        .chain(coordinator.as_ref().map(|c| c.url.as_str()))
+    {
+        let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
+        let host = uri.host().ok_or("URL sin host")?;
+        let port = uri
+            .port_u16()
+            .unwrap_or(if uri.scheme_str() == Some("https") {
+                443
+            } else {
+                80
+            });
+        ips.extend(
+            (host, port)
+                .to_socket_addrs()
+                .map_err(|_| "no se pudo resolver un endpoint del plano de control")?
+                .map(|a| a.ip()),
+        );
     }
-    let l = UnixListener::bind(path).map_err(|e| format!("IPC {}: {e}", path.display()))?;
-    // Solo el propietario (root); el reparto por usuario/grupo llega con la fase 7.
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| e.to_string())?;
-    Ok(l)
+    if let Some(coord) = &coordinator {
+        for stun in &coord.stun {
+            ips.extend(
+                stun.to_socket_addrs()
+                    .map_err(|_| "no se pudo resolver STUN")?
+                    .map(|a| a.ip()),
+            );
+        }
+    }
+    Ok(ips)
 }
 
-/// Una petición por línea (`status` | `stop`) y una respuesta JSON por línea. `true` = parar.
-async fn handle_ipc(
-    stream: UnixStream,
-    engine: &Engine,
+fn ipc_status(
+    rt: &Runtime,
     sync: Option<crate::sync::Status>,
     coord: Option<CoordStatus>,
     relay: crate::relay::RelayStatus,
-) -> bool {
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    let read = tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line)).await;
-    if !matches!(read, Ok(Ok(n)) if n > 0) {
-        return false;
-    }
-    let (reply, stop) = match line.trim() {
-        "status" => {
-            let mut status =
-                serde_json::to_value(engine.status(Instant::now(), unix_now())).unwrap_or_default();
-            status["sync"] = serde_json::to_value(sync).unwrap_or_default();
-            status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
-            status["relay"] = serde_json::to_value(relay).unwrap_or_default();
-            (status.to_string(), false)
-        }
-        "stop" => (r#"{"ok":true}"#.to_string(), true),
-        _ => (r#"{"error":"orden desconocida"}"#.to_string(), false),
-    };
-    let _ = reader
-        .get_mut()
-        .write_all(format!("{reply}\n").as_bytes())
-        .await;
-    stop
+) -> serde_json::Value {
+    let mut status =
+        serde_json::to_value(rt.engine.status(Instant::now(), unix_now())).unwrap_or_default();
+    status["sync"] = serde_json::to_value(sync).unwrap_or_default();
+    status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
+    status["relay"] = serde_json::to_value(relay).unwrap_or_default();
+    let network = rt.netconf.status();
+    status["routes"] = serde_json::to_value(&network.routes).unwrap_or_default();
+    status["dns"] = serde_json::json!(network.dns);
+    status["forwarding_ok"] = serde_json::json!(network.forwarding_ok);
+    status
 }

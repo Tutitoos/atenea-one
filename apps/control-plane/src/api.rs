@@ -102,6 +102,20 @@ pub fn router(s: AppState) -> Router {
         .route("/api/v1/networks/{net}/audit", get(crate::audit::list))
         .route("/api/v1/enroll", post(devices::enroll))
         .route("/api/v1/device/config", get(issue::get))
+        .route("/api/v1/device/routes", post(crate::routes::declare))
+        .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
+        .route(
+            "/api/v1/networks/{net}/routes/{id}/approve",
+            post(crate::routes::approve),
+        )
+        .route(
+            "/api/v1/networks/{net}/routes/{id}/reject",
+            post(crate::routes::reject),
+        )
+        .route(
+            "/api/v1/networks/{net}/dns",
+            get(crate::dns::get).put(crate::dns::set),
+        )
         .route(
             "/api/v1/device/status",
             post(crate::panel::status).layer(axum::extract::DefaultBodyLimit::max(65536)),

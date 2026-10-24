@@ -4,8 +4,10 @@
 mod config;
 mod coord;
 mod engine;
+mod ipc;
 #[cfg(target_os = "linux")]
 mod net;
+mod netconf;
 mod packet;
 mod relay;
 #[cfg(target_os = "linux")]

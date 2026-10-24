@@ -1,0 +1,19 @@
+# Solo ejemplo: generar valores propios con atenea device-init y agent-config.
+# No instalar sin completar los identificadores y el ancla recibida por canal seguro.
+interface = "atenea0"
+listen = "0.0.0.0:51820"
+ipc_socket = "/run/atenea/control.sock"
+status_socket = "/run/atenea/status.sock"
+# Añadir status_gid = <GID numérico de getent group atenea>; no es un GID fijo.
+noise_key_file = "/var/lib/atenea/device/noise.key"
+identity_key_file = "/var/lib/atenea/device/identity.key"
+config_file = "/var/lib/atenea/config.bin"
+state_dir = "/var/lib/atenea/state"
+network_id = "REEMPLAZAR_POR_32_DIGITOS_HEX"
+device_id = "REEMPLAZAR_POR_32_DIGITOS_HEX"
+trust_anchor = "REEMPLAZAR_POR_64_DIGITOS_HEX"
+advertise_routes = []
+
+[sync]
+url = "https://control.example.test"
+interval_secs = 60

@@ -19,6 +19,7 @@ pub struct Status {
     pub sync_denied: u64,
     pub sync_errors: u64,
     pub report_errors: u64,
+    pub route_announce_errors: u64,
 }
 
 impl Status {
@@ -141,6 +142,20 @@ pub fn fetch(
 pub struct Report {
     nat_mapping: Option<&'static str>,
     paths: Vec<ReportPath>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forwarding_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    routes: Option<Vec<crate::netconf::RouteStatus>>,
+}
+
+impl Report {
+    pub fn network(&mut self, status: &crate::netconf::Status) {
+        self.forwarding_ok = status.forwarding_ok;
+        self.dns = Some(status.dns);
+        self.routes = Some(status.routes.clone());
+    }
 }
 
 #[derive(Serialize)]
@@ -161,6 +176,9 @@ pub fn build_report(
         return None;
     }
     Some(Report {
+        forwarding_ok: None,
+        dns: None,
+        routes: None,
         nat_mapping: status.nat.as_ref().map(|nat| nat.mapping),
         paths: status
             .peers
@@ -209,11 +227,40 @@ pub fn send_report(
     report: &Report,
     ts: u64,
 ) -> Result<(), &'static str> {
+    post_json(
+        cfg,
+        key,
+        device,
+        "/api/v1/device/status",
+        serde_json::to_vec(report).map_err(|_| "informe inválido")?,
+        ts,
+    )
+}
+
+pub fn declare_routes(
+    cfg: &SyncConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    routes: &[String],
+    ts: u64,
+) -> Result<(), &'static str> {
+    let body =
+        serde_json::to_vec(&serde_json::json!({"routes":routes})).map_err(|_| "rutas inválidas")?;
+    post_json(cfg, key, device, "/api/v1/device/routes", body, ts)
+}
+
+fn post_json(
+    cfg: &SyncConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    endpoint: &str,
+    body: Vec<u8>,
+    ts: u64,
+) -> Result<(), &'static str> {
     cfg.endpoint().map_err(|_| "URL inválida")?;
-    let url = format!("{}/api/v1/device/status", cfg.url.trim_end_matches('/'));
+    let url = format!("{}{endpoint}", cfg.url.trim_end_matches('/'));
     let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
     let path = uri.path_and_query().ok_or("URL inválida")?.as_str();
-    let body = serde_json::to_vec(report).map_err(|_| "informe inválido")?;
     let mut nonce = [0; 16];
     nonce.copy_from_slice(&atenea_identity::generate_seed()[..16]);
     let authorization = sign_request(key, device, "POST", path, &body, ts, nonce);

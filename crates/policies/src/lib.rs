@@ -1,4 +1,4 @@
-//! Evaluación de ACL (contrato `signed-config-v1`, §2.3 y §3): denegación por defecto.
+//! Evaluación de ACL (contrato `signed-config-v1/v2`): denegación por defecto.
 //!
 //! Los puertos de una regla se comparan con el puerto de **destino**. Solo se leen puertos del
 //! primer fragmento y de TCP/UDP; en cualquier otro caso no hay puerto y una regla con puertos no coincide.
@@ -86,6 +86,30 @@ pub fn prefix_contains(p: &Prefix, ip: &IpAddr) -> bool {
     shift >= 128 || (a >> shift) == (b >> shift)
 }
 
+/// Pertenencia a las subredes firmadas de un par, sin incluir sus direcciones exactas.
+pub fn peer_route_contains(peer: &atenea_identity::Peer, ip: IpAddr) -> bool {
+    peer.routes.iter().any(|p| p.contains(ip))
+}
+
+/// Pertenencia a una subred que sirve el dispositivo local.
+pub fn advertised_contains(cfg: &DeviceConfig, ip: IpAddr) -> bool {
+    cfg.advertised.iter().any(|a| a.prefix.contains(ip))
+}
+
+/// Dirección exacta primero; en su defecto, ruta de prefijo más largo.
+pub fn peer_for_destination(cfg: &DeviceConfig, ip: IpAddr) -> Option<&atenea_identity::Peer> {
+    cfg.peers
+        .iter()
+        .find(|p| p.addrs.contains(&ip))
+        .or_else(|| {
+            cfg.peers
+                .iter()
+                .flat_map(|p| p.routes.iter().map(move |r| (p, r)))
+                .filter(|(_, r)| r.contains(ip))
+                .max_by_key(|(_, r)| r.len)
+                .map(|(p, _)| p)
+        })
+}
 pub struct Policy {
     devices: HashMap<DeviceId, Vec<IpAddr>>,
     rules: Vec<Rule>,
@@ -166,8 +190,11 @@ mod tests {
                 noise_pubkey: [5; 32],
                 addrs: vec![ip("10.0.0.2"), ip("fd00::2")],
                 endpoints: vec![],
+                routes: vec![],
             }],
             rules,
+            advertised: vec![],
+            dns: Default::default(),
         }
     }
 
@@ -189,6 +216,63 @@ mod tests {
             dport,
             non_first_fragment: false,
         }
+    }
+
+    #[test]
+    fn subnet_acl_and_routing() {
+        let route = Prefix {
+            addr: ip("192.168.50.0"),
+            len: 24,
+        };
+        let own = Prefix {
+            addr: ip("172.16.0.0"),
+            len: 16,
+        };
+        let mut c = cfg(vec![rule(
+            Selector::Prefix(route.clone()),
+            Selector::Prefix(own.clone()),
+            0,
+            0,
+            0,
+        )]);
+        c.peers[0].routes = vec![route];
+        c.advertised = vec![atenea_identity::AdvertisedRoute {
+            prefix: own,
+            snat: false,
+        }];
+        assert!(c.validate_structure().is_ok());
+        assert!(peer_route_contains(&c.peers[0], ip("192.168.50.22")));
+        assert!(!peer_route_contains(&c.peers[0], ip("10.0.0.2")));
+        assert!(advertised_contains(&c, ip("172.16.2.3")));
+        assert!(!advertised_contains(&c, ip("192.168.50.22")));
+        assert!(Policy::new(&c).allows(&flow("192.168.50.22", "172.16.2.3", 1, None)));
+        assert!(!Policy::new(&c).allows(&flow("172.16.2.3", "192.168.50.22", 1, None)));
+        assert_eq!(
+            peer_for_destination(&c, ip("192.168.50.22"))
+                .unwrap()
+                .device_id,
+            PEER
+        );
+        assert!(peer_for_destination(&c, ip("192.168.51.1")).is_none());
+        // También es determinista antes de la validación de solapes.
+        let mut narrow = c.peers[0].clone();
+        narrow.device_id = [3; 16];
+        narrow.addrs = vec![ip("10.0.0.3")];
+        narrow.routes[0].len = 25;
+        c.peers.push(narrow);
+        assert_eq!(
+            peer_for_destination(&c, ip("192.168.50.22"))
+                .unwrap()
+                .device_id,
+            [3; 16]
+        );
+        c.peers[0].addrs.push(ip("192.168.50.22"));
+        assert_eq!(
+            peer_for_destination(&c, ip("192.168.50.22"))
+                .unwrap()
+                .device_id,
+            PEER
+        );
     }
 
     #[test]

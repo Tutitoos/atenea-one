@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    configure)
+        if ! getent group atenea >/dev/null; then
+            groupadd --system atenea
+        fi
+        install -d -o root -g atenea -m 0750 /etc/atenea
+        install -d -o root -g atenea -m 0700 /var/lib/atenea
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload
+        fi
+        echo 'Atenea instalado sin habilitar ni arrancar: configure /etc/atenea/agent.toml primero.'
+        ;;
+esac
