@@ -491,7 +491,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
             r = ipc.accept() => {
                 let sync = sync_rx.borrow().clone();
                 let coord = coord_rx.borrow().clone();
-                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync, coord).await { break; }
+                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync, coord, relay.status()).await { break; }
                 continue;
             }
             _ = term.recv() => break,
@@ -568,6 +568,7 @@ async fn handle_ipc(
     engine: &Engine,
     sync: Option<crate::sync::Status>,
     coord: Option<CoordStatus>,
+    relay: crate::relay::RelayStatus,
 ) -> bool {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -581,6 +582,7 @@ async fn handle_ipc(
                 serde_json::to_value(engine.status(Instant::now(), unix_now())).unwrap_or_default();
             status["sync"] = serde_json::to_value(sync).unwrap_or_default();
             status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
+            status["relay"] = serde_json::to_value(relay).unwrap_or_default();
             (status.to_string(), false)
         }
         "stop" => (r#"{"ok":true}"#.to_string(), true),
