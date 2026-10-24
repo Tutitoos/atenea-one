@@ -39,3 +39,7 @@ Regresiones y fuzz: ver «Regresiones» al final.
 - Durante el retardo posterior a un sondeo fallido, el agente no intentaba el handshake aunque ya hubiera un relay listo.
 - El estado informaba `none` con un único camino y keepalive de 15 s (ventana de salud de 9 s); ahora informa el camino activo mientras esté vivo.
 - Al bloquear todo UDP el propio tráfico UDP del túnel falla localmente (EPERM): la prueba de texto en claro se hace con el relay UDP.
+
+## Regresiones
+
+`tests/network-lab/run.sh` (fases 2 y 3), `tests/network-lab/run-e2e.sh` (control plane con Dex y PostgreSQL) y `tests/network-lab/nat/run-e2e.sh` (fase 4) siguen en verde con el agente nuevo; `tests/network-lab/nat/run.sh verify` y `relay` pasan con 0 fallos. Fuzz `relay_parse`: 60 s, 14,6 M ejecuciones, sin fallos.
