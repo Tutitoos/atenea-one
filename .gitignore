@@ -1,0 +1,45 @@
+# Secretos y entorno local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.age
+*.sops.key
+keys.txt
+id_*
+.ssh/
+
+# Inventarios, volcados, logs y capturas reales
+inventory/
+*.dump
+*.sql.gz
+*.log
+*.pcap
+*.pcapng
+captures/
+
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+build/
+.react-router/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# OpenTofu / Ansible
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# SO / editores
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,9 @@
+{
+  "name": "atenea-one",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.23.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+# Sin miembros hasta la fase 2: se añaden al crear cada crate.
+members = []
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Tutitoos/atenea-one"
