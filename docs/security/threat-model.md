@@ -1,6 +1,6 @@
 # Modelo de amenazas (MVP-0 y base del MVP)
 
-- **Estado:** Propuesto (pendiente de revisión)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Punto de partida, no garantía.
 - **Fecha:** 2026-10-24
 - **Relacionados:** ADR-001…005, [configuración firmada v1](../protocol/signed-config-v1.md)
 

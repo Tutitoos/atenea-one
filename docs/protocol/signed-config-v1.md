@@ -1,6 +1,6 @@
 # Contrato de configuración firmada v1
 
-- **Estado:** Propuesto (pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Sigue sin implementación ni vectores (§6).
 - **Fecha:** 2026-10-24
 - **Ámbito:** MVP-0 (fase 3) y base de la fase 3B. Los relays, coordinator y rutas de subred no existen en v1 (ver "Evolución").
 - **Basado en:** ADR-001 (claves X25519 de peers), ADR-002 (lease, rollback, reloj), ADR-005 (cadena raíz → emisor → configuración).

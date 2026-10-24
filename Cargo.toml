@@ -1,9 +1,35 @@
 [workspace]
 resolver = "3"
-# Sin miembros hasta la fase 2: se añaden al crear cada crate.
-members = []
+members = [
+    "crates/protocol",
+    "crates/crypto",
+    "crates/tunnel",
+    "apps/agent",
+    "apps/cli",
+]
 
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Tutitoos/atenea-one"
+rust-version = "1.99"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[workspace.dependencies]
+atenea-protocol = { path = "crates/protocol" }
+atenea-crypto = { path = "crates/crypto" }
+atenea-tunnel = { path = "crates/tunnel" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "io-util", "sync"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+clap = { version = "4", features = ["derive"] }
+zeroize = "1"
+proptest = "1"

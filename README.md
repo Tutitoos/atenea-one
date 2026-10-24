@@ -2,7 +2,7 @@
 
 Plataforma VPN P2P self-hosted: red privada creada desde un panel web, con dispositivos que se comunican cifrados directamente o mediante relays propios.
 
-**Estado: planificación y base del repositorio.** No hay código de producto, binarios ni releases. No usar para proteger datos sensibles.
+**Estado: fase 2 en curso (túnel Linux cifrado de laboratorio) sobre una base documentada (ADRs, contrato de configuración, modelo de amenazas).** No hay releases. No usar para proteger datos sensibles: el protocolo no tiene revisión criptográfica externa.
 
 ## Alcance
 

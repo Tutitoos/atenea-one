@@ -1,6 +1,6 @@
 # ADR-004 — Entrada TCP 443 compartida entre panel y relay
 
-- **Estado:** Propuesto (recomendación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto)
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 5
 - **Relacionados:** ADR-003 (formato de datagrama)
@@ -60,6 +60,6 @@ El firewall del host es deny por defecto y solo abre los anteriores.
 
 Fases 5 y 9: desde una red con solo TCP 443 saliente, el agente llega al relay y el navegador al panel simultáneamente; ClientHello fragmentado y lento no agota recursos; SNI desconocido no llega al relay; PROXY v2 forjado desde fuera es ignorado o rechazado; reconexión IPv6; caída de HAProxy/relay/Caddy por separado muestra el aislamiento esperado. Alcanzabilidad externa de UDP 3478/443 y TCP 80/443 en el firewall del proveedor: **sin comprobar**.
 
-## Pendiente del usuario
+## Decisiones del responsable
 
-Dominio del despliegue y nombres (`panel.` y `relay.`): sin ellos no hay SNI ni certificados. Confirmar HAProxy como componente de entrada.
+Dominio del despliegue: `atenea.one`. Nombres: `panel.atenea.one` (panel/API) y `relay.atenea.one` (relay TLS; SNI de la regla de enrutado). HAProxy confirmado como componente de entrada. El registro DNS y los certificados se crean en el despliegue (fase 9), no antes.
