@@ -10,17 +10,37 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use common::*;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use rsa::{
+    RsaPrivateKey,
+    pkcs8::{EncodePrivateKey, LineEnding},
+    rand_core::OsRng,
+    traits::PublicKeyParts,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 use url::Url;
 
-const N: &str = "twtgjAiNW2HW0YMSgUC8svgiqkOaeuhp4i1NAa8akF4kovTsmETGDPcnV8C_1hWxEIQFjA8XX7i-0I-2r-mLYV_g7lQ5oG_ZgpWPE1I9v4St2NL9O-SSufnnUTJFAVUroJiixTL5tNCIcPXJm0CUMPnxvTTL54Lj9YgtsXeHuEji5O5m5_VbiK-c_-nbeW7ZrS5gpBq2qspCHziILuEQKhsyk1w2tWvlgh8eTniynZmtL4HrtU7WSwStc5RIZWABgXOueuBuwySeD_V_T33iaFWQpeCcYE4UXlpOaJh6HcCqe6pe5qYDSvU8QXBnXYDjVcjwzNm7uiLFPyUjdwOFYw";
-// Clave sintética pública del proveedor de pruebas; nunca sirve como credencial operativa.
-const KEY: &[u8] = include_bytes!("fixtures/oidc-test-key.pem");
+struct TestKey {
+    encoding: EncodingKey,
+    modulus: String,
+    exponent: String,
+}
+
+static KEY: LazyLock<TestKey> = LazyLock::new(|| {
+    let private = RsaPrivateKey::new(&mut OsRng, 2048).expect("Generar RSA efímera de pruebas");
+    let pem = private
+        .to_pkcs8_pem(LineEnding::LF)
+        .expect("Codificar RSA efímera");
+    TestKey {
+        encoding: EncodingKey::from_rsa_pem(pem.as_bytes()).expect("Clave de firma de pruebas"),
+        modulus: URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),
+        exponent: URL_SAFE_NO_PAD.encode(private.e().to_bytes_be()),
+    }
+});
 #[derive(Default)]
 struct Flow {
     nonce: String,
@@ -40,7 +60,7 @@ async fn discovery(State(p): State<Provider>) -> Json<Value> {
 }
 async fn jwks() -> Json<Value> {
     Json(
-        json!({"keys":[{"kty":"RSA","kid":"test-key","use":"sig","alg":"RS256","n":N,"e":"AQAB"}]}),
+        json!({"keys":[{"kty":"RSA","kid":"test-key","use":"sig","alg":"RS256","n":KEY.modulus,"e":KEY.exponent}]}),
     )
 }
 async fn token(
@@ -66,8 +86,7 @@ async fn token(
     }
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some("test-key".into());
-    let mut jwt =
-        jsonwebtoken::encode(&header, &claims, &EncodingKey::from_rsa_pem(KEY).unwrap()).unwrap();
+    let mut jwt = jsonwebtoken::encode(&header, &claims, &KEY.encoding).unwrap();
     if flow.mode == "signature" {
         let pos = jwt.rfind('.').unwrap() + 1;
         let mut bytes = jwt.into_bytes();
@@ -84,6 +103,10 @@ struct Server {
 }
 impl Server {
     async fn start() -> Self {
+        // RSA se genera una vez por proceso, fuera del runtime de las peticiones OIDC.
+        tokio::task::spawn_blocking(|| LazyLock::force(&KEY))
+            .await
+            .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let provider = Provider {
             issuer: format!("http://{}", listener.local_addr().unwrap()),

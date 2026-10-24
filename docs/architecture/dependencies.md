@@ -50,6 +50,7 @@ Requisitos directos de `apps/control-plane/Cargo.toml` (versiones exactas resuel
 | `tower` | 0.5 | MIT | Router en memoria (pruebas) |
 | `http-body-util` | 0.1 | MIT | Lectura de respuestas (pruebas) |
 | `jsonwebtoken` | 10 | MIT | Proveedor OIDC falso (solo pruebas) |
+| `rsa` | 0.9 | MIT OR Apache-2.0 | Clave RSA efímera de 2048 bits y JWKS del proveedor OIDC de pruebas; PKCS#8/PEM solo en memoria |
 | `url` | 2 | MIT OR Apache-2.0 | URLs del proveedor de pruebas |
 
 Reutiliza `serde`, `serde_json`, `tokio`, `tracing`, `tracing-subscriber`, `zeroize`

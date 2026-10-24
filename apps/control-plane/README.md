@@ -83,7 +83,7 @@ Cobertura implementada de §8:
 - Fichero de configuración aceptado por `atenea_identity::verify_config` con claves y estado locales; versiones crecientes, políticas inversas, eliminación de pares revocados/pendientes y al borrar políticas; errores de emisor, firma, reloj y replay.
 - Fronteras adicionales: CIDR solapados, selectores y puertos inválidos, prefijos fuera de red, desbordamiento de reglas compiladas con rollback, certificados fuera de red/raíz/vigencia o con firma inválida y límite de tasa independiente por IP.
 - CSRF ausente/incorrecto, expiración absoluta, inactividad y logout.
-- Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso. La clave de `tests/fixtures/oidc-test-key.pem` es un vector **sintético y público**, no un secreto utilizable.
+- Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso. La clave RSA de 2048 bits se genera en memoria una vez por proceso de pruebas; no se almacena ni se publica ninguna clave privada.
 - Eventos de todas las escrituras enumeradas y denegación real de UPDATE/DELETE con `SET ROLE` sobre el rol limitado.
 - Igualdad del OpenAPI publicado con `openapi()` generado. Regeneración: `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json`.
 
