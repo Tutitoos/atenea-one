@@ -9,6 +9,6 @@
 | [005](ADR-005-custodia-clave-raiz.md) | Custodia de la clave raíz y emisores delegados | Aceptado |
 | 006 | Licencia (Apache-2.0 aplicada en el primer commit) | Pendiente de ratificar |
 
-Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (propuesto).
+Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (propuesto). Seguridad: [Modelo de amenazas](../security/threat-model.md) (propuesto). [Inventario de dependencias](dependencies.md).
 
 "Propuesto" = recomendación redactada, sin aceptar. Un ADR pasa a "Aceptado" cuando se registra la decisión del responsable; nada que dependa de él se implementa antes.
