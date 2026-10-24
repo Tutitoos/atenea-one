@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 atenea-identity.workspace = true
 atenea-nat-traversal.workspace = true
+atenea-relay-core.workspace = true
 axum = "0.8"
 base64 = "0.22"
 figment = { version = "0.10", features = ["env", "toml"] }

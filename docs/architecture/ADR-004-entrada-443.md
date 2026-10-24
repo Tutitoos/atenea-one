@@ -22,7 +22,7 @@ flowchart LR
 
 1. **Enrutador:** HAProxy en `mode tcp` con `tcp-request inspect-delay` y reglas sobre `req.ssl_sni` (y `req.ssl_alpn`). No descifra: no ve claves ni tráfico. Se prefiere un componente maduro de L4 a código propio en la ruta pública.
 2. **Regla:** SNI == nombre del relay **y** ALPN `atenea-relay/1` → relay. Cualquier otra cosa (incluido sin SNI) → Caddy, que decide. ClientHello incompleto tras el plazo de inspección → se cierra la conexión.
-3. **IP de cliente:** HAProxy envía PROXY protocol v2 a ambos backends. Solo se acepta PROXY desde loopback; el relay lo necesita para limitar por origen y Caddy para sus registros.
+3. **IP de cliente:** HAProxy envía PROXY protocol v2 **solo al relay** (el relay lo necesita para limitar por origen); el backend web recibe TCP plano (Caddy ve la IP de HAProxy hasta que se configure su propio PROXY en la fase 9). Solo se acepta PROXY desde loopback. *Ajuste de la fase 5: el texto original enviaba PROXY a ambos backends.*
 4. **Certificados:** Caddy gestiona el del panel con HTTP-01 en TCP 80 (TLS-ALPN-01 necesitaría 443). El relay termina TLS con rustls y su propio certificado para el nombre del relay; **TLS 1.3 como mínimo, sin 0-RTT**. El cliente valida ese certificado contra el nombre del relay configurado en la configuración firmada (hint de endpoint). La confidencialidad e integridad del tráfico de aplicación no dependen de TLS: va cifrado de extremo a extremo (ADR-003).
 5. **Framing TCP del relay:** cada trama = `longitud (u16, big-endian)` + cuerpo; el cuerpo contiene un datagrama del formato de ADR-003 con la cabecera de direccionamiento del relay (se define en la fase 5). Longitud máxima 2048; mayor o 0 = cierre de conexión. Lectura con búfer acotado y tolerancia a lecturas parciales.
 

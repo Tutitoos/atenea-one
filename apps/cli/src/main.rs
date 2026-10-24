@@ -3,6 +3,14 @@
 mod enroll;
 mod issue;
 
+/// El contrato del agente (`enroll.rs`, pruebas) referencia `crate::relay` solo para validar una CA.
+#[cfg(test)]
+mod relay {
+    pub fn load_roots(path: Option<&std::path::Path>) -> Result<(), String> {
+        path.map_or(Ok(()), |_| Err("sin CA en el contrato".into()))
+    }
+}
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

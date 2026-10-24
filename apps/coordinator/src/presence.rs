@@ -8,11 +8,19 @@ use std::{
 use tokio::sync::Notify;
 
 #[derive(Clone, Serialize)]
-pub struct Event {
-    pub kind: &'static str,
-    pub peer: String,
-    pub candidates: Vec<SocketAddr>,
-    pub seq: u64,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Event {
+    Connect {
+        peer: String,
+        candidates: Vec<SocketAddr>,
+        seq: u64,
+    },
+    Relay {
+        peer: String,
+        token: String,
+        relays: Vec<crate::config::Relay>,
+        seq: u64,
+    },
 }
 pub(crate) struct Presence {
     pub config: DeviceConfig,

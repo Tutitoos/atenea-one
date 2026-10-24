@@ -12,7 +12,7 @@ Desde la raíz del repositorio, con Docker Desktop disponible:
 tests/network-lab/nat/run.sh
 ```
 
-Construye la imagen local `atenea-lab` (añade `nftables` a la imagen compartida),
+Construye la imagen local `atenea-lab` (incluye `nftables`, `openssl` y `haproxy`, sin arrancar servicios),
 ejecuta un contenedor desechable `--privileged` con el repositorio de solo lectura,
 y afirma todos los casos. Imprime JSON con endpoints, `OK`/`FAIL`, versiones del
 entorno y un recuento final; cualquier fallo da salida distinta de cero. No compila
@@ -149,12 +149,122 @@ resultado parcial: la expectativa de entrada bloqueada y punch correcto se manti
   para conexiones con DNAT. Otros puertos de aplicaciones requieren añadir sus
   reglas DNAT; no hay descubrimiento dinámico de mapeos ni UPnP/NAT-PMP/PCP.
   Hairpin desactivado no instala estas reglas; puede devolver ICMP unreachable.
-- Sin relay, simulación de Internet, MTU/pérdidas/latencia, caducidad de mapeos,
-  agotamiento de puertos ni calibración de routers físicos. No hay afirmaciones
-  sobre el estado `direct`, Noise, roaming del agente o integridad de sus datos:
-  eso corresponde a los scripts de integración posteriores.
+- No ejecuta el relay ni los agentes de Atenea, ni simula Internet, MTU/pérdidas/latencia,
+  caducidad de mapeos, agotamiento de puertos o routers físicos. No hay afirmaciones
+  sobre estado `direct`, Noise, roaming o integridad cifrada: los verificadores
+  independientes siguientes comprueban las herramientas del laboratorio, no el protocolo.
 - Un solo kernel Linux compartido por todos los namespaces, incluso en Docker
   Desktop. La red de Docker no crea estos NAT: son reglas explícitas dentro de
   namespaces separados. Los resultados son de este kernel y estas reglas, no
   una garantía sobre cualquier NAT de producción. El verificador imprime las
   versiones para acompañar la evidencia.
+
+## Herramientas de relay (fase 5)
+
+```sh
+tests/network-lab/nat/run.sh relay
+```
+
+Ejecuta `verify-relay-lab.sh` en el contenedor privilegiado, sin Rust ni servicios
+externos. Cubre **todas** las topologías, dos ciclos por topología y los dos clientes,
+con sockets UDP y conexiones TCP persistentes durante las transiciones. Comprueba
+UDP 443/3478/8081 y TCP 8081, candidatos reflexivos y candidatos locales en LAN
+compartida, contadores de descarte P2P, restauración y ausencia de residuos.
+El simétrico mantiene su fallo directo esperado: el contador del filtro demuestra
+el descarte aunque el NAT ya impidiese el punch. `run.sh verify` conserva la
+verificación original de mapeos y conectividad, separada del modo `relay`.
+
+Después de `source tests/network-lab/nat/lib.sh` y `topo_setup <topología>`:
+
+| Función | Argumentos y efecto |
+| --- | --- |
+| `net_block_p2p` | Ninguno. Descarta UDP entre las redes de clientes/candidatos del laboratorio, incluyendo locales, reflexivos, doble NAT e IPv6; exceptúa todo UDP con origen o destino en las direcciones de `inet`. TCP no cambia. |
+| `net_block_udp` | Ninguno. Descarta UDP de los clientes en cualquier dirección, incluido `inet`. TCP no cambia. |
+| `net_block_relay_udp` | Ninguno. Descarta solo UDP cuyo destino sea `198.51.100.10:443` o `[2001:db8:100::10]:443`. |
+| `net_unblock_all` | Ninguno. Elimina únicamente las tablas `inet relay_lab`; idempotente. Conserva las reglas de NAT/firewall y conntrack originales. |
+| `start_haproxy` | `<puerto-relay-local> <puerto-web-local>`, ambos 1–65535. Inicia HAProxy daemonizado dentro de `inet`; devuelve error si no puede arrancarlo. |
+
+Los bloqueadores **sustituyen** al modo anterior; invocarlos repetidamente no
+acumula reglas. Usan una tabla propia en `nat1/nat2/nat3` y en `a/b` (necesario
+para `flat` y tráfico LAN que no pasa por routers). Los hooks prerouting/output,
+prioridad **−310**, preceden conntrack, DNAT y los permisos `established`: afectan
+también a sockets y flujos ya abiertos, sin vaciar sus mapeos. Solo se inspecciona
+UDP; el ICMP/ND necesario y TCP se mantienen. Los prefijos de documentación y
+privados usados por estas reglas son exclusivos de este laboratorio: no es una
+política de firewall para hosts externos. `topo_teardown` también mata HAProxy y
+los backends al destruir sus namespaces.
+
+### Certificados efímeros
+
+Dentro del contenedor:
+
+```sh
+tests/network-lab/nat/gen-certs.sh /tmp/relay-certs
+```
+
+Genera `/tmp/relay-certs/ca.pem`, `/tmp/relay-certs/relay.pem` y
+`/tmp/relay-certs/relay.key`, todos PEM y **0600**. Rechaza directorios dentro
+del repositorio y sobrescrituras. CA y servidor duran dos días; el certificado
+de servidor incluye SAN DNS `relay.atenea.one` e IP `198.51.100.10` y
+`2001:db8:100::10`, uso `serverAuth`. La clave de CA y CSR solo existen en un
+directorio temporal eliminado al terminar. No son certificados de producción;
+el llamador elimina los tres resultados cuando deja de necesitarlos.
+
+### Entrada TCP 443 compartida (ADR-004)
+
+```sh
+# Con topología ya creada; backends dentro del mismo namespace:
+ip netns exec inet python3 tests/network-lab/nat/fake-web.py 8081 &
+# Arrancar aquí el relay TLS en 127.0.0.1:8443, con PROXY v2 activado.
+start_haproxy 8443 8081
+```
+
+`haproxy.cfg.tpl` escucha IPv4 e IPv6 en TCP 443, `mode tcp`,
+`tcp-request inspect-delay 5s`. Solo **SNI `relay.atenea.one` Y ALPN
+`atenea-relay/1`** van al relay por loopback con `send-proxy-v2`; cualquier otra
+combinación, incluido SNI ausente, va al backend web **sin** PROXY protocol.
+No termina TLS. `fake-web.py <puerto>` escucha loopback y contesta `WEB` al
+aceptar la conexión; es TCP plano deliberadamente, no un servidor HTTP/TLS.
+
+`haproxy-check.sh` es autónomo (recrea la topología `flat`) y forma parte del
+modo `relay`. Genera sus certificados temporales y usa un relay TLS de eco
+independiente (`haproxy-probe.py`) que parsea PROXY v2 y devuelve la IP observada.
+Verifica cadena, SAN y permisos; TLS 1.3, ALPN y origen IPv4/IPv6 reales;
+SNI distinto, SNI ausente y ALPN ausente hacia WEB; y un ClientHello fragmentado
+con pausas de 0,7 s mientras otra conexión acaba en menos de 2 s, antes del
+cliente lento. Los clientes son Python `ssl`/MemoryBIO; no se acepta un fallo
+de handshake como prueba de enrutamiento web: se exige el banner.
+
+Limitaciones: un kernel Linux compartido, NAT simétrico sintético y ausencia de
+proxies HTTP/inspección TLS reales. No mide la conmutación de caminos del agente.
+El verificador imprime versiones, contadores y tiempos de cada ejecución; no
+necesita conntrack-tools ni borrar conntrack para imponer los bloqueos.
+
+En Linux `7.0.12-linuxkit`, un `drop` UDP en OUTPUT devuelve **EPERM** a
+`sendto`, en lugar de esperar un timeout. La sonda lo contabiliza como no entrega;
+los controles positivos siguen exigiendo respuesta (por tanto EPERM los hace
+fallar), y cualquier otro error de envío se propaga. La primera aceptación
+detectó esta diferencia de API del kernel, antes de adaptar la sonda; no se
+cambió el firewall ni se rebajaron las expectativas de conectividad.
+
+### Resultado medido de fase 5
+
+Validación final en Linux `7.0.12-linuxkit`, nftables `1.0.6`, Python `3.11.2`
+y HAProxy `2.6.12-1+deb12u4`:
+
+- `run.sh relay`: **0 fallos**, siete topologías, dos ciclos por topología;
+  **113 s** dentro del verificador (**115,04 s** con construcción/arranque).
+- `run.sh verify`: **0 fallos**, las siete topologías originales, **79,10 s**
+  incluyendo construcción/arranque; sin reducir a home/symmetric.
+- Durante el ClientHello lento, el segundo cliente TLS completó en **0,003 s**
+  tanto por IPv4 como IPv6. PROXY v2 conservó `198.51.100.11` y
+  `2001:db8:100::11`; SNI desconocido/ausente y ALPN ausente devolvieron WEB.
+- Cadena/SAN DNS y ambas IP, permisos 0600 y ausencia de errores en los backends
+  comprobados; sin namespaces, puentes ni tablas de bloqueo residuales.
+
+La aceptación completa exitosa se ejecutó una vez al final. Hubo cuatro intentos
+previos fallidos mientras se corregía el arnés: EPERM por OUTPUT; datagramas P2P
+pendientes interpretados como JSON (ahora se filtra por origen); margen inicial
+TCP IPv6 de 2 s; y margen UDP de 0,45 s. Los márgenes finales son 10 s para la
+primera conexión TCP y 5 s para respuestas UDP, sin reintentar ni cambiar las
+expectativas. EPERM es un descarte inmediato; el resto exige la respuesta.

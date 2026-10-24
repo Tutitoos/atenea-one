@@ -1,6 +1,6 @@
 # Coordinator y conexión directa v1 (fase 4)
 
-- **Estado:** Implementado y verificado en laboratorio (ver §9 y [resultados](../operations/e2e-fase4.md)); pendiente de aceptación formal y de la revisión criptográfica externa.
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto); implementado y verificado en laboratorio (ver §9 y [resultados](../operations/e2e-fase4.md)). Pendiente la revisión criptográfica externa.
 - **Fecha:** 2026-10-24
 - **Relacionados:** ADR-001 (Noise IK), ADR-003 (sesión y roaming), ADR-004 (puertos), `docs/protocol/signed-config-v1.md`, `docs/api/control-plane-v1.md` §3.3 (autenticación de dispositivo), modelo de amenazas T3, T9 y T10.
 
@@ -92,3 +92,12 @@ Implementación: `crates/nat-traversal` (STUN y candidatos), `apps/coordinator` 
 - El parseo STUN valida la estructura TLV de todos los atributos, también en peticiones.
 - La recuperación tras un cambio de red del propio agente tarda ≈ 45 s (`PATH_DEAD_AFTER`); detectar el cambio de interfaz para avisar al par antes queda como mejora.
 - Este diseño sigue **sin** distribuir coordinators por configuración firmada (v2).
+
+## 10. Relay (fase 5)
+
+Contrato completo en [`relay-v1.md`](relay-v1.md) §4. El coordinator firma los tokens con una clave propia (`RELAY_SIGNING_KEY_FILE`, semilla hex de 32 bytes, 0600; `--print-relay-key` imprime la pública para configurar el relay).
+
+- `POST /v1/relay` `{"peer":"<32 hex>"}` (firmada con `AtDevice`; autorización mutua igual que `rendezvous`) → `{"token":"<base64, 173 bytes>","relays":[{"name","udp","tls","tls_name"}],"ttl_secs":300}`.
+- Evento `relay` al par: `{"kind":"relay","peer":"<solicitante>","token":"<token inverso>","relays":[…],"seq":N}`, en la misma cola acotada (16 eventos, 30 s) que `connect`.
+- Límites independientes del rendezvous: 2 emisiones HTTP por par y minuto (4 tokens) y 10 peticiones por dispositivo y minuto. Sin relay configurado: `503`.
+- El coordinator sigue sin ser de confianza para integridad ni confidencialidad: un token solo autoriza una asignación; los datos siguen cifrados extremo a extremo por Noise.

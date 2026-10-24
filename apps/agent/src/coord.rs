@@ -3,6 +3,7 @@
 //! cuando un paquete Noise autenticado llega desde un candidato.
 
 use crate::config::CoordinatorConfig;
+use crate::relay::RelayEndpoint;
 use atenea_identity::{DeviceId, SigningKey, api_auth::sign_request};
 use base64::Engine as _;
 use serde::Deserialize;
@@ -14,9 +15,14 @@ use std::time::Duration;
 const RESPONSE_LIMIT: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Event {
-    pub peer: DeviceId,
-    pub candidates: Vec<SocketAddr>,
+pub enum Event {
+    /// Un par quiere conectar: candidatos (pistas) para el sondeo.
+    Connect {
+        peer: DeviceId,
+        candidates: Vec<SocketAddr>,
+    },
+    /// Un par pide relay: token para abrir la asignación inversa.
+    Relay { peer: DeviceId, grant: RelayGrant },
 }
 
 #[derive(Deserialize)]
@@ -38,6 +44,31 @@ struct RawEvent {
     peer: String,
     #[serde(default)]
     candidates: Vec<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    relays: Vec<RelayEndpoint>,
+}
+
+#[derive(Deserialize)]
+struct RawRelay {
+    token: String,
+    #[serde(default)]
+    relays: Vec<RelayEndpoint>,
+}
+
+/// Token de asignación del coordinator y relays a los que sirve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayGrant {
+    pub token: Vec<u8>,
+    pub relays: Vec<RelayEndpoint>,
+}
+
+fn grant(token_b64: &str, relays: Vec<RelayEndpoint>) -> Option<RelayGrant> {
+    let token = base64::engine::general_purpose::STANDARD
+        .decode(token_b64)
+        .ok()?;
+    (token.len() == atenea_relay_core::TOKEN_LEN).then_some(RelayGrant { token, relays })
 }
 
 fn parse_candidates(list: &[String]) -> Vec<SocketAddr> {
@@ -155,6 +186,37 @@ pub fn rendezvous(
     }
 }
 
+/// Pide un token de relay para `peer` (autorización mutua en el coordinator). El coordinator avisa
+/// además al par con el token inverso (evento `relay`).
+pub fn relay(
+    cfg: &CoordinatorConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    peer: DeviceId,
+    ts: u64,
+) -> Result<RelayGrant, &'static str> {
+    let (url, pq) = target(cfg, "/v1/relay")?;
+    let body = serde_json::json!({ "peer": atenea_crypto::hex::encode(&peer) })
+        .to_string()
+        .into_bytes();
+    let auth = sign_request(key, device, "POST", &pq, &body, ts, nonce());
+    let mut response = agent(Duration::from_secs(15))
+        .post(&url)
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .send(&body[..])
+        .map_err(|_| "error de red")?;
+    match response.status().as_u16() {
+        200 => {
+            let bytes = read_limited(&mut response)?;
+            let raw: RawRelay = serde_json::from_slice(&bytes).map_err(|_| "respuesta inválida")?;
+            grant(&raw.token, raw.relays).ok_or("respuesta inválida")
+        }
+        503 => Err("relay no disponible"),
+        c => Err(status_error(c)),
+    }
+}
+
 /// Espera avisos de pares que quieren conectar (long-poll de hasta `wait` segundos).
 pub fn events(
     cfg: &CoordinatorConfig,
@@ -178,12 +240,19 @@ pub fn events(
             Ok(raw
                 .events
                 .iter()
-                .filter(|e| e.kind == "connect")
                 .filter_map(|e| {
-                    Some(Event {
-                        peer: atenea_crypto::hex::decode::<16>(&e.peer)?,
-                        candidates: parse_candidates(&e.candidates),
-                    })
+                    let peer = atenea_crypto::hex::decode::<16>(&e.peer)?;
+                    match e.kind.as_str() {
+                        "connect" => Some(Event::Connect {
+                            peer,
+                            candidates: parse_candidates(&e.candidates),
+                        }),
+                        "relay" => Some(Event::Relay {
+                            peer,
+                            grant: grant(e.token.as_deref()?, e.relays.clone())?,
+                        }),
+                        _ => None,
+                    }
                 })
                 .collect())
         }
@@ -201,6 +270,8 @@ mod tests {
         CoordinatorConfig {
             url: url.into(),
             stun: vec!["h:1".into(), "h:2".into()],
+            relay_ca_file: None,
+            relay: "auto".into(),
         }
     }
 
@@ -287,7 +358,7 @@ mod tests {
         let ev = events(&cfg(&url), &key, [2; 16], 100, 1).unwrap();
         assert_eq!(
             ev,
-            vec![Event {
+            vec![Event::Connect {
                 peer: [3; 16],
                 candidates: vec!["192.0.2.7:1".parse().unwrap()]
             }]
@@ -295,6 +366,45 @@ mod tests {
         assert!(h.join().unwrap().starts_with("GET /v1/events?wait=1"));
     }
 
+    #[test]
+    fn relay_grant_and_relay_events() {
+        let key = atenea_identity::signing_key([1; 32]);
+        let token = base64::engine::general_purpose::STANDARD.encode([7u8; 173]);
+        let relays = r#"[{"name":"r1","udp":"198.51.100.10:443","tls":"198.51.100.10:443","tls_name":"relay.atenea.one"}]"#;
+        let (url, h) = serve(
+            "200 OK",
+            &format!(r#"{{"token":"{token}","relays":{relays},"ttl_secs":300}}"#),
+        );
+        let g = relay(&cfg(&url), &key, [2; 16], [3; 16], 100).unwrap();
+        assert_eq!(g.token, vec![7u8; 173]);
+        assert_eq!(g.relays.len(), 1);
+        assert_eq!(g.relays[0].tls_name.as_deref(), Some("relay.atenea.one"));
+        assert!(h.join().unwrap().starts_with("POST /v1/relay"));
+        // token de longitud incorrecta: se rechaza
+        let short = base64::engine::general_purpose::STANDARD.encode([7u8; 10]);
+        let (url, h) = serve("200 OK", &format!(r#"{{"token":"{short}","relays":[]}}"#));
+        assert_eq!(
+            relay(&cfg(&url), &key, [2; 16], [3; 16], 100),
+            Err("respuesta inválida")
+        );
+        h.join().unwrap();
+        // evento relay válido y evento relay con token corrupto (ignorado)
+        let peer = "03".repeat(16);
+        let body = format!(
+            r#"{{"events":[{{"kind":"relay","peer":"{peer}","token":"{token}","relays":{relays}}},{{"kind":"relay","peer":"{peer}","token":"!!","relays":[]}}]}}"#
+        );
+        let (url, h) = serve("200 OK", &body);
+        let ev = events(&cfg(&url), &key, [2; 16], 100, 1).unwrap();
+        assert_eq!(ev.len(), 1);
+        match &ev[0] {
+            Event::Relay { peer, grant } => {
+                assert_eq!(*peer, [3; 16]);
+                assert_eq!(grant.token.len(), 173);
+            }
+            other => panic!("{other:?}"),
+        }
+        h.join().unwrap();
+    }
     #[test]
     fn announce_sends_base64_config_and_maps_errors() {
         let key = atenea_identity::signing_key([1; 32]);

@@ -176,3 +176,68 @@ ipv6: a/eth0 = 2001:db8:a::10/64 vía ::1; b = 2001:db8:b::10/64 vía ::1.
 ipv6: nat1/wan = 2001:db8:100::1; nat2/wan = ::2; lan = 2001:db8:a::1 / b::1.
 TEXT
 }
+
+# Tabla separada: antes de conntrack/DNAT y del accept established existente.
+# En a/b cubre también LAN compartida y flat, que no atraviesan routers.
+_net_block() {
+  local mode=$1 ns rules
+  case "$mode" in
+    p2p) rules='ip saddr 198.51.100.10 return
+      ip daddr 198.51.100.10 return
+      ip6 saddr 2001:db8:100::10 return
+      ip6 daddr 2001:db8:100::10 return
+      ip saddr { 192.168.0.0/16, 100.64.0.0/10, 198.51.100.0/24 } ip daddr { 192.168.0.0/16, 100.64.0.0/10, 198.51.100.0/24 } counter drop
+      ip6 saddr { 2001:db8::/32, fe80::/10 } ip6 daddr { 2001:db8::/32, fe80::/10 } counter drop';;
+    udp) rules='counter drop';;
+    relay_udp) rules='ip daddr 198.51.100.10 udp dport 443 counter drop
+      ip6 daddr 2001:db8:100::10 udp dport 443 counter drop';;
+    *) return 2;;
+  esac
+  for ns in a b nat1 nat2 nat3; do
+    ip netns exec "$ns" nft list table inet relay_lab >/dev/null 2>&1 ||
+      ip netns exec "$ns" nft add table inet relay_lab
+    ip netns exec "$ns" nft -f - <<NFT
+flush table inet relay_lab
+add chain inet relay_lab udp_filter
+add chain inet relay_lab early_input { type filter hook prerouting priority -310; policy accept; }
+add chain inet relay_lab early_output { type filter hook output priority -310; policy accept; }
+add rule inet relay_lab early_input meta l4proto udp jump udp_filter
+add rule inet relay_lab early_output meta l4proto udp jump udp_filter
+$(while IFS= read -r rule; do printf 'add rule inet relay_lab udp_filter %s\n' "$rule"; done <<<"$rules")
+NFT
+  done
+}
+
+# Cada bloqueador sustituye al anterior; no altera NAT ni vacía conntrack.
+net_block_p2p() { _net_block p2p; }
+net_block_udp() { _net_block udp; }
+net_block_relay_udp() { _net_block relay_udp; }
+net_unblock_all() {
+  local ns
+  for ns in a b nat1 nat2 nat3; do
+    if ip netns exec "$ns" nft list table inet relay_lab >/dev/null 2>&1; then
+      ip netns exec "$ns" nft delete table inet relay_lab
+    fi
+  done
+}
+
+start_haproxy() {
+  local relay=$1 web=$2 template config
+  for port in "$relay" "$web"; do
+    [[ "$port" =~ ^[0-9]+$ ]] && ((port > 0 && port <= 65535)) || return 2
+  done
+  template="$(dirname "${BASH_SOURCE[0]}")/haproxy.cfg.tpl"
+  config=$(mktemp /tmp/atenea-haproxy.XXXXXX)
+  # HAProxy lee la configuración antes de daemonizar; no quedan ficheros temporales.
+  if ! python3 - "$template" "$config" "$relay" "$web" <<'PY'
+import pathlib, sys
+template, target, relay, web = sys.argv[1:]
+pathlib.Path(target).write_text(pathlib.Path(template).read_text()
+                              .replace("@RELAY_PORT@", relay).replace("@WEB_PORT@", web))
+PY
+  then rm -f "$config"; return 1; fi
+  local result=0
+  ip netns exec inet haproxy -D -f "$config" || result=$?
+  rm -f "$config"
+  return "$result"
+}

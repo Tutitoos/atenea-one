@@ -97,3 +97,40 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 - Añadir `cargo deny` / auditoría de dependencias (RustSec) al CI. Ya hay un `Cargo.lock` real: queda pendiente.
 - **`ring` 0.17.14 llega a través de `snow` 0.10.0** con las características por defecto (visible con `cargo tree -p atenea-crypto -e features -i ring`). Su licencia es propia (mezcla ISC/OpenSSL). **Aceptado por el responsable "por ahora" (2026-10-24)**; se revisará el texto de la licencia antes del primer release.
 - Resueltas y en uso (versiones del `Cargo.lock`): `snow` 0.10.0, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0, `blake2` 0.11.0 (identity) y 0.10 (dentro de snow), `getrandom` 0.3, `zeroize`, `tokio` 1.54, `clap` 4.6, `serde`/`serde_json`/`toml` 0.9, `tracing`, `proptest` 1, `libc` 0.2. No se han leído las licencias de las dependencias transitivas.
+
+### Fase 5 — Coordinator relay
+
+`apps/coordinator` añade únicamente `atenea-relay-core` (crate interna, Apache-2.0)
+para emitir tokens; reutiliza Ed25519 y el RNG del sistema a través de
+`atenea-identity`, y las dependencias Figment/serde/hex/base64 existentes.
+Sin nuevas dependencias externas, TLS ni certificados en este componente.
+
+### Fase 5 — Cliente relay del agente
+
+| Crate | Requisito | Licencia | Uso |
+| --- | --- | --- | --- |
+| `rustls` | 0.23 | Apache-2.0 OR ISC OR MIT | TLS 1.3, proveedor `ring`, sin características por defecto |
+| `tokio-rustls` | 0.26 | MIT OR Apache-2.0 | Transporte TLS asíncrono, solo proveedor `ring` |
+| `webpki-roots` | 1 | CDLA-Permissive-2.0 | Raíces públicas, ampliadas por PEM local opcional |
+| `socket2` | 0.6 | MIT OR Apache-2.0 | Un socket UDP dual-stack por cliente, separado del socket de datos |
+| `rcgen` | 0.14 | MIT OR Apache-2.0 | Solo pruebas: certificados y claves efímeros generados en ejecución |
+
+Reutiliza `atenea-relay-core`, Tokio y serde. Colas de entrada, salida y eventos
+acotadas a 256 mensajes; los descartes se contabilizan sin registrar secretos.
+
+### Fase 5 — Servidor relay
+
+| Crate | Requisito | Licencia | Uso |
+| --- | --- | --- | --- |
+| `rustls` | 0.23 | Apache-2.0 OR ISC OR MIT | TLS 1.3 exclusivamente, proveedor `ring`, sin características por defecto; `tls12` solo en pruebas de rechazo |
+| `tokio-rustls` | 0.26 | MIT OR Apache-2.0 | TLS asíncrono, proveedor `ring`, sin características por defecto |
+| `rustls-pemfile` | 2 | Apache-2.0 OR ISC OR MIT | Certificado y clave PEM |
+| `rand` | 0.8 | MIT OR Apache-2.0 | `OsRng`: secreto de cookies e identificadores impredecibles |
+| `figment`, `hex` | 0.10, 0.4 | MIT OR Apache-2.0 | Configuración TOML/entorno y claves públicas hex |
+| `serde`, `serde_json` | 1, 1 | MIT OR Apache-2.0 | Estado y configuración |
+| `tokio` | 1 | MIT | Sockets, tareas acotadas, señales y plazos |
+| `tracing`, `tracing-subscriber` | 0.1, 0.3 | MIT (tracing también Apache-2.0) | Registro sin secretos |
+| `rcgen` | 0.14 | MIT OR Apache-2.0 | Solo pruebas: certificados y claves efímeros |
+
+Reutiliza `atenea-identity` y `atenea-relay-core` (Apache-2.0). El proveedor
+`ring` conserva la aceptación indicada arriba; no se añade `aws-lc-rs`.

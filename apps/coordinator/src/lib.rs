@@ -58,6 +58,9 @@ struct Memory {
     announce: Rates<DeviceId>,
     pair: Rates<(DeviceId, DeviceId)>,
     device: Rates<DeviceId>,
+    relay_pair: rate::Window<(DeviceId, DeviceId)>,
+    relay_device: rate::Window<DeviceId>,
+    relay_tokens: rate::Window<(DeviceId, DeviceId)>,
     seq: u64,
 }
 pub struct Coordinator {
@@ -66,6 +69,7 @@ pub struct Coordinator {
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     memory: Mutex<Memory>,
     polls: Semaphore,
+    relay_signer: Option<atenea_identity::SigningKey>,
 }
 impl Coordinator {
     pub fn new(config: Config) -> Result<Arc<Self>, &'static str> {
@@ -84,6 +88,7 @@ impl Coordinator {
         clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     ) -> Result<Arc<Self>, &'static str> {
         let anchors = config.validate()?;
+        let relay_signer = config.relay_signing_key()?;
         Ok(Arc::new(Self {
             memory: Mutex::new(Memory {
                 presences: HashMap::new(),
@@ -91,12 +96,17 @@ impl Coordinator {
                 announce: Rates::new(config.max_rate_entries),
                 pair: Rates::new(config.max_rate_entries),
                 device: Rates::new(config.max_rate_entries),
+                relay_pair: rate::Window::new(config.max_rate_entries, 5, 1),
+                relay_device: rate::Window::new(config.max_rate_entries, 60, 10),
+                // Cada emisión genera dos tokens; el tope compartido es cuatro por minuto.
+                relay_tokens: rate::Window::new(config.max_rate_entries, 60, 2),
                 seq: 0,
             }),
             polls: Semaphore::new(config.max_long_polls),
             config,
             anchors,
             clock,
+            relay_signer,
         }))
     }
     pub fn sweep(&self) {
@@ -117,6 +127,7 @@ pub fn router(state: Arc<Coordinator>) -> Router {
         .route("/healthz", get(health))
         .route("/v1/announce", post(announce))
         .route("/v1/rendezvous", post(rendezvous))
+        .route("/v1/relay", post(relay))
         .route("/v1/events", get(events))
         .fallback(|| async { ApiError(StatusCode::NOT_FOUND, "not_found") })
         .method_not_allowed_fallback(|| async {
@@ -257,21 +268,11 @@ async fn rendezvous(
     ) {
         return Err(ApiError::rate());
     }
-    let own = m.presences.get(&id).expect("autenticado");
-    let target = m
-        .presences
-        .get(&peer)
-        .filter(|target| {
-            target.config.network_id == own.config.network_id
-                && own.config.peers.iter().any(|p| p.device_id == peer)
-                && target.config.peers.iter().any(|p| p.device_id == id)
-        })
-        .ok_or_else(ApiError::unavailable)?;
+    let (own, target) = authorized_pair(&m, id, peer)?;
     let candidates = target.candidates.clone();
     let own_candidates = own.candidates.clone();
     m.seq = m.seq.wrapping_add(1);
-    let event = Event {
-        kind: "connect",
+    let event = Event::Connect {
         peer: hex::encode(id),
         candidates: own_candidates,
         seq: m.seq,
@@ -282,6 +283,89 @@ async fn rendezvous(
         .enqueue(event, now);
     Ok(Json(
         json!({"peer":hex::encode(peer),"candidates":candidates}),
+    ))
+}
+fn authorized_pair(
+    m: &Memory,
+    id: DeviceId,
+    peer: DeviceId,
+) -> Result<(&Presence, &Presence), ApiError> {
+    let own = m.presences.get(&id).expect("autenticado");
+    let target = m
+        .presences
+        .get(&peer)
+        .filter(|target| {
+            target.config.network_id == own.config.network_id
+                && own.config.peers.iter().any(|p| p.device_id == peer)
+                && target.config.peers.iter().any(|p| p.device_id == id)
+        })
+        .ok_or_else(ApiError::unavailable)?;
+    Ok((own, target))
+}
+
+async fn relay(
+    State(s): State<Arc<Coordinator>>,
+    request: Request,
+) -> Result<Json<Value>, ApiError> {
+    let (method, uri, headers, bytes) = body(request, s.config.max_body_bytes).await?;
+    let now = (s.clock)();
+    let data: Rendezvous = decode(&bytes)?;
+    let peer: DeviceId = hex::decode(data.peer)
+        .ok()
+        .and_then(|p| p.try_into().ok())
+        .ok_or_else(ApiError::unavailable)?;
+    let mut m = s.memory.lock().expect("memoria");
+    let id = authenticate(&mut m, &headers, &method, &uri, &bytes, now)?;
+    let signer = s
+        .relay_signer
+        .as_ref()
+        .filter(|_| !s.config.relays.is_empty())
+        .ok_or(ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "relay_unavailable",
+        ))?;
+    let pair = if id < peer { (id, peer) } else { (peer, id) };
+    if !m.relay_device.allow(id, now) {
+        return Err(ApiError::rate());
+    }
+    let (own, target) = authorized_pair(&m, id, peer)?;
+    let network = own.config.network_id;
+    let own_key = own.config.identity_pubkey;
+    let target_key = target.config.identity_pubkey;
+    if !m.relay_pair.allow(pair, now) || !m.relay_tokens.allow(pair, now) {
+        return Err(ApiError::rate());
+    }
+    let issue = |src, dst, key| {
+        let random = atenea_identity::generate_seed();
+        STANDARD.encode(
+            atenea_relay_core::RelayToken::issue(
+                signer,
+                network,
+                src,
+                dst,
+                key,
+                now,
+                now.saturating_add(s.config.relay_token_ttl_secs),
+                random[..8].try_into().expect("8 bytes aleatorios"),
+            )
+            .encode(),
+        )
+    };
+    let token = issue(id, peer, own_key);
+    let inverse = issue(peer, id, target_key);
+    m.seq = m.seq.wrapping_add(1);
+    let event = Event::Relay {
+        peer: hex::encode(id),
+        token: inverse,
+        relays: s.config.relays.clone(),
+        seq: m.seq,
+    };
+    m.presences
+        .get_mut(&peer)
+        .expect("par autorizado")
+        .enqueue(event, now);
+    Ok(Json(
+        json!({"token":token,"relays":s.config.relays,"ttl_secs":s.config.relay_token_ttl_secs}),
     ))
 }
 async fn events(

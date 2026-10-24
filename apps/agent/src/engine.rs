@@ -1,6 +1,12 @@
 //! Máquina de estados del agente: sin E/S. Recibe eventos y devuelve acciones.
+//!
+//! Un par puede alcanzarse por tres caminos (preferencia `directo > relay UDP > relay TLS`) que
+//! comparten UNA sesión Noise y un único espacio de contadores (ADR-003): cambiar de camino no
+//! cambia claves; el antirreplay del receptor elimina las copias. Un camino solo cuenta como sano
+//! con paquetes AUTENTICADOS recibidos por él (docs/protocol/relay-v1.md §5.2).
 
 use crate::packet::parse_ip;
+use crate::relay::RelayKind;
 use atenea_crypto::{self as crypto, PendingInit, Session, StaticKeypair};
 use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId};
 use atenea_nat_traversal::{MAX_CANDIDATES, sanitize_candidates};
@@ -24,10 +30,23 @@ const PROBE_WINDOW: Duration = Duration::from_secs(10);
 const PROBE_MAX_ROUNDS: u32 = 12;
 /// Intervalo mínimo entre rendezvous al coordinator para un mismo par.
 const RENDEZVOUS_MIN_INTERVAL: Duration = Duration::from_secs(5);
-/// Paquete vacío con ruta directa ociosa (los mapeos UDP de los NAT caducan a ~30 s).
+/// Paquete vacío con un único camino establecido (los mapeos UDP de los NAT caducan a ~30 s).
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-/// Sin nada autenticado del par durante este tiempo, la ruta se da por perdida.
+/// Keepalive de cada camino cuando hay un camino alternativo establecido (detección rápida).
+const FAST_KEEPALIVE: Duration = Duration::from_secs(4);
+/// Sin nada autenticado del par por la ruta directa durante este tiempo, se da por perdida.
 const PATH_DEAD_AFTER: Duration = Duration::from_secs(45);
+/// Un camino está sano si recibió un paquete autenticado en esta ventana.
+const HEALTH_WINDOW: Duration = Duration::from_secs(9);
+/// Un camino preferido debe estar sano de forma continua este tiempo antes de volver a él.
+const UPGRADE_HOLD: Duration = Duration::from_secs(5);
+/// Se envió tráfico y no llegó nada autenticado en este tiempo: se sospecha del camino.
+const SUSPECT_AFTER: Duration = Duration::from_secs(4);
+/// Sondeo directo sin éxito durante este tiempo: se pide relay en paralelo.
+const RELAY_AFTER_PROBE: Duration = Duration::from_secs(4);
+const RELAY_REQUEST_INTERVAL: Duration = Duration::from_secs(5);
+/// El directo lleva sano este tiempo: se libera la asignación del relay.
+const RELEASE_AFTER_DIRECT: Duration = Duration::from_secs(30);
 
 /// Retardo creciente tras un sondeo fallido: 30, 60, 120, 240 y 300 s como máximo.
 fn backoff(failures: u32) -> Duration {
@@ -47,8 +66,69 @@ pub struct NatStatus {
     pub candidates: Vec<String>,
 }
 
+/// Camino hacia un par, de mayor a menor preferencia.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PathKind {
+    Direct,
+    RelayUdp,
+    RelayTls,
+}
+
+const PATHS: [PathKind; 3] = [PathKind::Direct, PathKind::RelayUdp, PathKind::RelayTls];
+
+impl PathKind {
+    fn idx(self) -> usize {
+        self as usize
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            PathKind::Direct => "direct",
+            PathKind::RelayUdp => "relay-udp",
+            PathKind::RelayTls => "relay-tls",
+        }
+    }
+
+    fn of(k: RelayKind) -> PathKind {
+        match k {
+            RelayKind::Udp => PathKind::RelayUdp,
+            RelayKind::Tls => PathKind::RelayTls,
+        }
+    }
+
+    fn relay(self) -> Option<RelayKind> {
+        match self {
+            PathKind::Direct => None,
+            PathKind::RelayUdp => Some(RelayKind::Udp),
+            PathKind::RelayTls => Some(RelayKind::Tls),
+        }
+    }
+}
+
+/// Por dónde llegó un datagrama.
+#[derive(Clone, Copy)]
+enum Via {
+    Direct(SocketAddr),
+    Relay(RelayKind),
+}
+
+impl Via {
+    fn kind(self) -> PathKind {
+        match self {
+            Via::Direct(_) => PathKind::Direct,
+            Via::Relay(k) => PathKind::of(k),
+        }
+    }
+}
+
 pub enum Out {
     Udp(SocketAddr, Vec<u8>),
+    /// Datagrama de Atenea para un par por su asignación de relay.
+    Relay {
+        peer: DeviceId,
+        kind: RelayKind,
+        dg: Vec<u8>,
+    },
     Tun(Vec<u8>),
 }
 
@@ -80,18 +160,28 @@ impl Limiter {
     }
 }
 
-/// Sondeo en curso: reenvío periódico del mismo mensaje 1 a todos los candidatos.
+/// Sondeo en curso: reenvío periódico (mismo mensaje 1, o keepalives con sesión) a los candidatos.
 struct Probe {
     started: Instant,
     next_at: Instant,
     rounds: u32,
 }
 
+#[derive(Default, Clone)]
+struct PathStat {
+    /// Solo relays: la asignación está lista para enviar.
+    ready: bool,
+    last_rx: Option<Instant>,
+    healthy_since: Option<Instant>,
+    last_tx: Option<Instant>,
+    rtt_ms: Option<u32>,
+}
+
 struct Peer {
     device_id: DeviceId,
     public: [u8; 32],
     addrs: Vec<IpAddr>,
-    /// Ruta CONFIRMADA: solo cambia con un paquete Noise autenticado del par.
+    /// Ruta directa CONFIRMADA: solo cambia con un paquete Noise autenticado del par.
     endpoint: Option<SocketAddr>,
     /// Pistas estáticas de la configuración firmada (no autenticadas como ruta).
     cfg_endpoints: Vec<SocketAddr>,
@@ -105,20 +195,28 @@ struct Peer {
     /// Mensaje 1 en vuelo, para reenviarlo idéntico durante el sondeo.
     pending_dg: Option<Vec<u8>>,
     probe: Option<Probe>,
+    /// Sondeo del directo con la sesión ya establecida (keepalives cifrados a los candidatos).
+    kprobe: Option<Probe>,
     probe_failures: u32,
     /// Sin sondear ni pedir rendezvous hasta este instante (retardo tras un sondeo fallido).
     hold_until: Option<Instant>,
     next_rendezvous: Option<Instant>,
     rendezvous_wanted: bool,
+    relay_wanted: bool,
+    next_relay_request: Option<Instant>,
     last_attempt: Option<Instant>,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
     /// Último mensaje 1 aceptado y su respuesta, para repetirla ante retransmisiones idénticas.
     last_init_cache: Option<(Vec<u8>, Vec<u8>)>,
     last_handshake: Option<Instant>,
+    /// Última actividad de datos (envío o recepción).
     last_data: Option<Instant>,
-    last_rx: Option<Instant>,
-    last_tx: Option<Instant>,
+    /// Último envío de datos de usuario (no keepalives).
+    last_data_tx: Option<Instant>,
+    stat: [PathStat; 3],
+    /// Camino por el que se envían los datos.
+    active: PathKind,
     tx_bytes: u64,
     rx_bytes: u64,
 }
@@ -138,30 +236,102 @@ impl Peer {
             pending: None,
             pending_dg: None,
             probe: None,
+            kprobe: None,
             probe_failures: 0,
             hold_until: None,
             next_rendezvous: None,
             rendezvous_wanted: false,
+            relay_wanted: false,
+            next_relay_request: None,
             last_attempt: None,
             queued: None,
             last_init_ts: None,
             last_init_cache: None,
             last_handshake: None,
             last_data: None,
-            last_rx: None,
-            last_tx: None,
+            last_data_tx: None,
+            stat: Default::default(),
+            active: PathKind::Direct,
             tx_bytes: 0,
             rx_bytes: 0,
         }
     }
 
-    fn path(&self, now: Instant) -> &'static str {
-        if self.endpoint.is_some()
-            && self
+    /// ¿Hay forma de enviar por ese camino?
+    fn sendable(&self, k: PathKind) -> bool {
+        match k {
+            PathKind::Direct => self.endpoint.is_some(),
+            _ => self.stat[k.idx()].ready,
+        }
+    }
+
+    fn healthy(&self, k: PathKind, now: Instant) -> bool {
+        self.sendable(k)
+            && self.stat[k.idx()]
                 .last_rx
-                .is_some_and(|t| now.duration_since(t) < PATH_DEAD_AFTER)
+                .is_some_and(|t| now.duration_since(t) < HEALTH_WINDOW)
+    }
+
+    /// Registra un paquete AUTENTICADO recibido por `k`.
+    fn note_rx(&mut self, k: PathKind, now: Instant) {
+        let s = &mut self.stat[k.idx()];
+        if s.last_rx
+            .is_none_or(|t| now.duration_since(t) >= HEALTH_WINDOW)
         {
-            "direct"
+            s.healthy_since = Some(now);
+        }
+        s.last_rx = Some(now);
+    }
+
+    /// Camino de envío: el activo, o el mejor disponible si el activo no se puede usar.
+    fn send_path(&self) -> Option<PathKind> {
+        if self.sendable(self.active) {
+            Some(self.active)
+        } else {
+            PATHS.into_iter().find(|k| self.sendable(*k))
+        }
+    }
+
+    fn out(&self, k: PathKind, dg: Vec<u8>) -> Option<Out> {
+        match k {
+            PathKind::Direct => self.endpoint.map(|e| Out::Udp(e, dg)),
+            _ => Some(Out::Relay {
+                peer: self.device_id,
+                kind: k.relay()?,
+                dg,
+            }),
+        }
+    }
+
+    fn reply(&self, via: Via, dg: Vec<u8>) -> Out {
+        match via {
+            Via::Direct(a) => Out::Udp(a, dg),
+            Via::Relay(kind) => Out::Relay {
+                peer: self.device_id,
+                kind,
+                dg,
+            },
+        }
+    }
+
+    fn established_paths(&self) -> usize {
+        PATHS.into_iter().filter(|k| self.sendable(*k)).count()
+    }
+
+    fn last_rx_any(&self) -> Option<Instant> {
+        self.stat.iter().filter_map(|s| s.last_rx).max()
+    }
+
+    fn path_name(&self, now: Instant) -> &'static str {
+        // Con un único camino el keepalive es de 15 s: para informar basta con que esté vivo.
+        let alive = self.sendable(self.active)
+            && self.stat[self.active.idx()]
+                .last_rx
+                .is_some_and(|t| now.duration_since(t) < KEEPALIVE_INTERVAL + HEALTH_WINDOW);
+        if alive {
+            self.active.name()
+        } else if let Some(k) = PATHS.into_iter().find(|k| self.healthy(*k, now)) {
+            k.name()
         } else if self.pending.is_some() && self.probe.is_some() {
             "probing"
         } else {
@@ -205,6 +375,15 @@ impl Peer {
 }
 
 #[derive(Serialize)]
+pub struct PathStatus {
+    pub kind: &'static str,
+    pub ready: bool,
+    pub healthy: bool,
+    pub last_rx_secs: Option<u64>,
+    pub rtt_ms: Option<u32>,
+}
+
+#[derive(Serialize)]
 pub struct PeerStatus {
     pub public_key: String,
     pub endpoint: Option<String>,
@@ -212,10 +391,11 @@ pub struct PeerStatus {
     pub last_handshake_secs_ago: Option<u64>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
-    /// `direct` (ruta confirmada y viva), `probing` (hole punching en curso) o `none`.
+    /// `direct`, `relay-udp`, `relay-tls` (camino sano en uso), `probing` (hole punching en curso) o `none`.
     pub path: &'static str,
     pub candidates: usize,
     pub last_rx_secs: Option<u64>,
+    pub paths: Vec<PathStatus>,
 }
 
 #[derive(Serialize)]
@@ -347,6 +527,7 @@ impl Engine {
             p.pending = None;
             p.queued = None;
             p.last_attempt = None;
+            p.kprobe = None;
         }
         self.by_index.clear();
         had
@@ -392,14 +573,17 @@ impl Engine {
         let peer = &mut self.peers[pi];
         peer.last_data = Some(now);
         if peer.usable_current(now)
-            && let Some(ep) = peer.endpoint
+            && let Some(k) = peer.send_path()
             && let Some(s) = peer.current.as_mut()
         {
             match s.encrypt(pkt, now) {
                 Ok(dg) => {
                     peer.tx_bytes += pkt.len() as u64;
-                    peer.last_tx = Some(now);
-                    out.push(Out::Udp(ep, dg));
+                    peer.last_data_tx = Some(now);
+                    peer.stat[k.idx()].last_tx = Some(now);
+                    if let Some(o) = peer.out(k, dg) {
+                        out.push(o);
+                    }
                     return out;
                 }
                 Err(crypto::Error::NotConfirmed) => {}
@@ -414,7 +598,7 @@ impl Engine {
         out
     }
 
-    /// Destinos de un handshake: la ruta confirmada o, sin ella, las pistas (configuración y coordinator).
+    /// Destinos directos de un handshake o sondeo: la ruta confirmada o, sin ella, las pistas.
     fn targets(peer: &Peer) -> Vec<SocketAddr> {
         if let Some(ep) = peer.endpoint {
             return vec![ep];
@@ -428,6 +612,13 @@ impl Engine {
         v
     }
 
+    /// Primer camino de relay listo (UDP antes que TLS).
+    fn ready_relay(peer: &Peer) -> Option<PathKind> {
+        [PathKind::RelayUdp, PathKind::RelayTls]
+            .into_iter()
+            .find(|k| peer.sendable(*k))
+    }
+
     fn maybe_initiate(&mut self, pi: usize, now: Instant, unix: u64, out: &mut Vec<Out>) {
         let index = self.fresh_index();
         let peer = &mut self.peers[pi];
@@ -435,12 +626,21 @@ impl Engine {
             || peer
                 .last_attempt
                 .is_some_and(|t| now.duration_since(t) < HANDSHAKE_RETRY)
-            || (peer.endpoint.is_none() && peer.hold_until.is_some_and(|h| now < h))
+            || (peer.endpoint.is_none()
+                && peer.hold_until.is_some_and(|h| now < h)
+                && Self::ready_relay(peer).is_none())
         {
             return;
         }
+        // Con ruta directa activa y confirmada solo se usa esa; si no, también el mejor relay listo.
+        let direct_only = peer.endpoint.is_some() && peer.active == PathKind::Direct;
         let targets = Self::targets(peer);
-        if targets.is_empty() {
+        let relay = if direct_only {
+            None
+        } else {
+            Self::ready_relay(peer)
+        };
+        if targets.is_empty() && relay.is_none() {
             // Sin pistas: solo el coordinator puede aportar candidatos.
             peer.rendezvous_wanted = true;
             return;
@@ -470,10 +670,38 @@ impl Engine {
         for t in targets {
             out.push(Out::Udp(t, dg.clone()));
         }
+        if let Some(k) = relay
+            && let Some(o) = peer.out(k, dg)
+        {
+            out.push(o);
+        }
     }
 
-    /// Datagrama UDP recibido.
+    /// Datagrama UDP recibido por el socket de datos.
     pub fn on_udp(&mut self, from: SocketAddr, dg: &[u8], now: Instant, unix: u64) -> Vec<Out> {
+        self.on_datagram(Via::Direct(from), None, dg, now, unix)
+    }
+
+    /// Datagrama de Atenea recibido de `peer` a través de su asignación de relay.
+    pub fn on_relay_rx(
+        &mut self,
+        peer: &DeviceId,
+        kind: RelayKind,
+        dg: &[u8],
+        now: Instant,
+        unix: u64,
+    ) -> Vec<Out> {
+        self.on_datagram(Via::Relay(kind), Some(peer), dg, now, unix)
+    }
+
+    fn on_datagram(
+        &mut self,
+        via: Via,
+        hint: Option<&DeviceId>,
+        dg: &[u8],
+        now: Instant,
+        unix: u64,
+    ) -> Vec<Out> {
         let mut out = Vec::new();
         if !self.lease_active(unix) {
             self.counters.inc("denied_no_lease");
@@ -485,24 +713,42 @@ impl Engine {
             Ok(Packet::Init {
                 sender_index,
                 noise,
-            }) => self.on_init(from, sender_index, noise, now, unix, &mut out),
+            }) => self.on_init(via, hint, sender_index, noise, now, unix, &mut out),
             Ok(Packet::Resp {
                 sender_index,
                 receiver_index,
                 noise,
-            }) => self.on_resp(from, sender_index, receiver_index, noise, now, &mut out),
+            }) => self.on_resp(
+                via,
+                hint,
+                sender_index,
+                receiver_index,
+                noise,
+                now,
+                &mut out,
+            ),
             Ok(Packet::Data {
                 receiver_index,
                 counter,
                 ciphertext,
-            }) => self.on_data(from, receiver_index, counter, ciphertext, now, &mut out),
+            }) => self.on_data(
+                via,
+                hint,
+                receiver_index,
+                counter,
+                ciphertext,
+                now,
+                &mut out,
+            ),
         }
         out
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_init(
         &mut self,
-        from: SocketAddr,
+        via: Via,
+        hint: Option<&DeviceId>,
         sender_index: u32,
         noise: &[u8],
         now: Instant,
@@ -522,6 +768,10 @@ impl Engine {
             self.counters.inc("rx_init_unknown_peer");
             return;
         };
+        if hint.is_some_and(|h| *h != self.peers[pi].device_id) {
+            self.counters.inc("rx_relay_peer_mismatch");
+            return;
+        }
         let index = self.fresh_index();
         let peer = &mut self.peers[pi];
         if crypto::check_timestamp(inc.timestamp, unix, peer.last_init_ts).is_err() {
@@ -531,7 +781,7 @@ impl Engine {
             if let Some((n, r)) = &peer.last_init_cache
                 && n.as_slice() == noise
             {
-                out.push(Out::Udp(from, r.clone()));
+                out.push(peer.reply(via, r.clone()));
                 self.counters.inc("rx_init_retransmit");
             } else {
                 self.counters.inc("rx_init_stale");
@@ -560,12 +810,14 @@ impl Engine {
         // El endpoint NO cambia aquí: solo un paquete autenticado de la sesión lo confirma.
         self.by_index.insert(index, pi);
         self.counters.inc("rx_init");
-        out.push(Out::Udp(from, resp));
+        out.push(peer.reply(via, resp));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_resp(
         &mut self,
-        from: SocketAddr,
+        via: Via,
+        hint: Option<&DeviceId>,
         sender_index: u32,
         receiver_index: u32,
         noise: &[u8],
@@ -577,6 +829,10 @@ impl Engine {
             return;
         };
         let peer = &mut self.peers[pi];
+        if hint.is_some_and(|h| *h != peer.device_id) {
+            self.counters.inc("rx_relay_peer_mismatch");
+            return;
+        }
         if peer.pending.as_ref().map(|(p, _)| p.local_index()) != Some(receiver_index) {
             self.counters.inc("rx_resp_unknown");
             return;
@@ -588,21 +844,29 @@ impl Engine {
         };
         peer.previous = peer.current.take();
         peer.current = Some(session);
-        // Ruta confirmada: la respuesta solo puede producirla el par (Noise IK autenticado).
-        peer.endpoint = Some(from);
+        // Camino confirmado: la respuesta solo puede producirla el par (Noise IK autenticado).
+        let kind = via.kind();
+        if let Via::Direct(from) = via {
+            peer.endpoint = Some(from);
+        }
+        peer.note_rx(kind, now);
+        if !peer.healthy(peer.active, now) {
+            peer.active = kind;
+        }
         peer.last_handshake = Some(now);
-        peer.last_rx = Some(now);
         peer.pending_dg = None;
         peer.probe = None;
-        peer.probe_failures = 0;
-        peer.hold_until = None;
-        peer.rendezvous_wanted = false;
+        if kind == PathKind::Direct {
+            peer.probe_failures = 0;
+            peer.hold_until = None;
+            peer.rendezvous_wanted = false;
+        }
         self.counters.inc("handshakes_initiator");
         // Keepalive inmediato: confirma la sesión en el respondedor.
         let s = peer.current.as_mut().expect("recién creada");
         if let Ok(dg) = s.encrypt(&[], now) {
-            peer.last_tx = Some(now);
-            out.push(Out::Udp(from, dg));
+            peer.stat[kind.idx()].last_tx = Some(now);
+            out.push(peer.reply(via, dg));
         }
         if let Some((pkt, at)) = peer.queued.take()
             && now.duration_since(at) < QUEUE_TTL
@@ -613,13 +877,16 @@ impl Engine {
                 .encrypt(&pkt, now)
         {
             peer.tx_bytes += pkt.len() as u64;
-            out.push(Out::Udp(from, dg));
+            peer.last_data_tx = Some(now);
+            out.push(peer.reply(via, dg));
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_data(
         &mut self,
-        from: SocketAddr,
+        via: Via,
+        hint: Option<&DeviceId>,
         receiver_index: u32,
         counter: u64,
         ct: &[u8],
@@ -631,6 +898,10 @@ impl Engine {
             return;
         };
         let peer = &mut self.peers[pi];
+        if hint.is_some_and(|h| *h != peer.device_id) {
+            self.counters.inc("rx_relay_peer_mismatch");
+            return;
+        }
         let Some(slot) = peer.slot_of(receiver_index) else {
             self.counters.inc("rx_unknown_index");
             return;
@@ -659,19 +930,28 @@ impl Engine {
             peer.last_handshake = Some(now);
             self.counters.inc("handshakes_responder");
         }
-        // Roaming: el endpoint solo cambia tras un paquete autenticado (ADR-003).
-        if peer.endpoint != Some(from) {
+        // Paquete AUTENTICADO por este camino: lo marca sano. El endpoint directo solo cambia aquí (ADR-003).
+        let kind = via.kind();
+        if let Via::Direct(from) = via
+            && peer.endpoint != Some(from)
+        {
             peer.endpoint = Some(from);
             self.counters.inc("endpoint_updates");
         }
+        peer.note_rx(kind, now);
+        if !peer.healthy(peer.active, now) {
+            peer.active = kind;
+        }
+        if kind == PathKind::Direct {
+            peer.kprobe = None;
+            peer.probe_failures = 0;
+            peer.hold_until = None;
+            peer.rendezvous_wanted = false;
+        }
         peer.last_data = Some(now);
-        peer.last_rx = Some(now);
-        peer.probe_failures = 0;
-        peer.hold_until = None;
-        peer.rendezvous_wanted = false;
         // Con sesión confirmada, un paquete en cola esperando ya puede salir.
         if peer.queued.is_some()
-            && let Some(ep) = peer.endpoint
+            && let Some(k) = peer.send_path()
             && let Some(s) = peer.current.as_mut()
             && s.is_confirmed()
             && let Some((q, at)) = peer.queued.take()
@@ -679,8 +959,11 @@ impl Engine {
             && let Ok(dg) = s.encrypt(&q, now)
         {
             peer.tx_bytes += q.len() as u64;
-            peer.last_tx = Some(now);
-            out.push(Out::Udp(ep, dg));
+            peer.last_data_tx = Some(now);
+            peer.stat[k.idx()].last_tx = Some(now);
+            if let Some(o) = peer.out(k, dg) {
+                out.push(o);
+            }
         }
         if plain.is_empty() {
             self.counters.inc("rx_keepalive");
@@ -712,7 +995,7 @@ impl Engine {
         out.push(Out::Tun(pkt));
     }
 
-    /// Temporizador (~250 ms): caducidad, sondeo, keepalive, reintentos y rekey.
+    /// Temporizador (~250 ms): caducidad, sondeo, keepalive, conmutación de caminos, reintentos y rekey.
     pub fn on_tick(&mut self, now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
         if !self.lease_active(unix) {
@@ -733,7 +1016,7 @@ impl Engine {
             let active = peer
                 .last_data
                 .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
-            // Sondeo (hole punching): se reenvía el MISMO mensaje 1 a todos los candidatos.
+            // Sondeo (hole punching): se reenvía el MISMO mensaje 1 a todos los candidatos directos.
             if let Some((_, at)) = &peer.pending {
                 let probe_over = peer.probe.as_ref().is_some_and(|p| {
                     now.duration_since(p.started) >= PROBE_WINDOW || p.rounds >= PROBE_MAX_ROUNDS
@@ -755,10 +1038,60 @@ impl Engine {
                         p.next_at = next_probe(now);
                         self.counters.inc("tx_probe");
                     }
+                    // El directo no llega: se pide relay en paralelo sin abandonar el sondeo.
+                    if now.duration_since(p.started) >= RELAY_AFTER_PROBE
+                        && Self::ready_relay(peer).is_none()
+                    {
+                        peer.relay_wanted = true;
+                    }
                 } else if now.duration_since(*at) >= HANDSHAKE_RETRY {
                     peer.pending = None;
                     peer.pending_dg = None;
                 }
+            }
+            // Con la sesión establecida y sin directo confirmado: keepalives cifrados a los candidatos.
+            let session_ok = peer
+                .current
+                .as_ref()
+                .is_some_and(|s| s.is_confirmed() && !s.is_expired(now));
+            if session_ok && peer.endpoint.is_none() && peer.pending.is_none() {
+                if peer.kprobe.is_none()
+                    && !targets.is_empty()
+                    && peer.hold_until.is_none_or(|h| now >= h)
+                    && peer.established_paths() > 0
+                {
+                    peer.kprobe = Some(Probe {
+                        started: now,
+                        next_at: now,
+                        rounds: 0,
+                    });
+                }
+                let mut finished = false;
+                if let Some(kp) = peer.kprobe.as_mut() {
+                    if now.duration_since(kp.started) >= PROBE_WINDOW
+                        || kp.rounds >= PROBE_MAX_ROUNDS
+                    {
+                        finished = true;
+                    } else if now >= kp.next_at
+                        && let Some(s) = peer.current.as_mut()
+                        && let Ok(dg) = s.encrypt(&[], now)
+                    {
+                        for t in &targets {
+                            out.push(Out::Udp(*t, dg.clone()));
+                        }
+                        kp.rounds += 1;
+                        kp.next_at = next_probe(now);
+                        self.counters.inc("tx_probe_ka");
+                    }
+                }
+                if finished {
+                    peer.kprobe = None;
+                    peer.probe_failures += 1;
+                    peer.hold_until = Some(now + backoff(peer.probe_failures));
+                    self.counters.inc("probe_failed");
+                }
+            } else {
+                peer.kprobe = None;
             }
             if peer
                 .queued
@@ -767,31 +1100,75 @@ impl Engine {
             {
                 peer.queued = None;
             }
-            // Keepalive con ruta directa: mantiene abierto el mapeo UDP de los NAT.
-            if let Some(ep) = peer.endpoint
-                && let Some(s) = peer.current.as_mut()
-                && s.is_confirmed()
-                && !s.is_expired(now)
-                && peer
-                    .last_tx
-                    .is_none_or(|t| now.duration_since(t) >= KEEPALIVE_INTERVAL)
-                && let Ok(dg) = s.encrypt(&[], now)
-            {
-                peer.last_tx = Some(now);
-                out.push(Out::Udp(ep, dg));
+            // Keepalive por cada camino establecido: rápido si hay alternativa, lento si es el único.
+            if session_ok {
+                let interval = if peer.established_paths() >= 2 {
+                    FAST_KEEPALIVE
+                } else {
+                    KEEPALIVE_INTERVAL
+                };
+                for k in PATHS {
+                    if peer.sendable(k)
+                        && peer.stat[k.idx()]
+                            .last_tx
+                            .is_none_or(|t| now.duration_since(t) >= interval)
+                        && let Some(s) = peer.current.as_mut()
+                        && let Ok(dg) = s.encrypt(&[], now)
+                        && let Some(o) = peer.out(k, dg)
+                    {
+                        peer.stat[k.idx()].last_tx = Some(now);
+                        out.push(o);
+                    }
+                }
             }
-            // Ruta perdida: nada autenticado del par durante demasiado tiempo.
+            // Ruta directa perdida: nada autenticado del par por ella durante demasiado tiempo.
             if peer.endpoint.is_some()
-                && peer
+                && peer.stat[0]
                     .last_rx
                     .is_some_and(|t| now.duration_since(t) >= PATH_DEAD_AFTER)
             {
                 peer.endpoint = None;
-                peer.last_rx = None;
+                peer.stat[0].last_rx = None;
+                peer.stat[0].healthy_since = None;
                 self.counters.inc("path_lost");
                 if active {
                     peer.rendezvous_wanted = true;
                 }
+            }
+            // Conmutación de caminos (docs/protocol/relay-v1.md §5.2).
+            let healthy = PATHS.map(|k| peer.healthy(k, now));
+            for k in PATHS {
+                if !healthy[k.idx()] {
+                    peer.stat[k.idx()].healthy_since = None;
+                }
+            }
+            if !healthy[peer.active.idx()] {
+                // Conmutación a peor: inmediata si otro camino está sano.
+                if let Some(best) = PATHS.into_iter().find(|k| healthy[k.idx()]) {
+                    peer.active = best;
+                    self.counters.inc("path_switches");
+                }
+            } else if let Some(better) = PATHS.into_iter().find(|k| {
+                k.idx() < peer.active.idx()
+                    && healthy[k.idx()]
+                    && peer.stat[k.idx()]
+                        .healthy_since
+                        .is_some_and(|t| now.duration_since(t) >= UPGRADE_HOLD)
+            }) {
+                // Conmutación a mejor: solo tras estar sano de forma continua (histéresis).
+                peer.active = better;
+                self.counters.inc("path_switches");
+            }
+            // Sospecha: se envió tráfico por el camino activo y no llegó nada autenticado.
+            if session_ok
+                && Self::ready_relay(peer).is_none()
+                && let Some(tx) = peer.last_data_tx
+                && now.duration_since(tx) < SUSPECT_AFTER * 2
+                && peer
+                    .last_rx_any()
+                    .is_none_or(|rx| tx > rx && now.duration_since(rx) >= SUSPECT_AFTER)
+            {
+                peer.relay_wanted = true;
             }
             let stale = peer.current.as_ref().is_none_or(|s| s.should_rekey(now));
             let need = peer.queued.is_some() || (active && stale);
@@ -821,7 +1198,103 @@ impl Engine {
         v
     }
 
-    /// Candidatos de un par entregados por el coordinator: son PISTAS no autenticadas. Se saneán,
+    /// Pares que necesitan un relay ahora (el directo no llega y no hay relay listo).
+    pub fn take_relay_requests(&mut self, now: Instant) -> Vec<DeviceId> {
+        let mut v = Vec::new();
+        for p in &mut self.peers {
+            if p.relay_wanted
+                && Self::ready_relay(p).is_none()
+                && p.next_relay_request.is_none_or(|t| now >= t)
+            {
+                v.push(p.device_id);
+                p.next_relay_request = Some(now + RELAY_REQUEST_INTERVAL);
+                self.counters.inc("relay_requests");
+            }
+            p.relay_wanted = false;
+        }
+        v
+    }
+
+    /// Pares cuyo relay ya no hace falta (directo sano y estable): el llamador cierra la asignación.
+    pub fn take_relay_releases(&mut self, now: Instant) -> Vec<DeviceId> {
+        let mut v = Vec::new();
+        for p in &mut self.peers {
+            if p.active == PathKind::Direct
+                && p.healthy(PathKind::Direct, now)
+                && p.stat[0]
+                    .healthy_since
+                    .is_some_and(|t| now.duration_since(t) >= RELEASE_AFTER_DIRECT)
+                && (p.stat[1].ready || p.stat[2].ready)
+            {
+                for k in [PathKind::RelayUdp, PathKind::RelayTls] {
+                    p.stat[k.idx()] = PathStat::default();
+                }
+                v.push(p.device_id);
+                self.counters.inc("relay_released");
+            }
+        }
+        v
+    }
+
+    /// El cliente de relay informa de que la asignación hacia `peer` está lista o caída.
+    /// Al estar lista se reenvía el mensaje 1 pendiente y un keepalive por ese camino, para que el
+    /// par aprenda el camino.
+    pub fn set_relay_ready(
+        &mut self,
+        peer: &DeviceId,
+        kind: RelayKind,
+        ready: bool,
+        now: Instant,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        let Some(p) = self.peers.iter_mut().find(|p| &p.device_id == peer) else {
+            return out;
+        };
+        let k = PathKind::of(kind);
+        let s = &mut p.stat[k.idx()];
+        s.ready = ready;
+        s.last_rx = None;
+        s.healthy_since = None;
+        if ready {
+            self.counters.inc("relay_ready");
+            if let Some(dg) = p.pending_dg.clone()
+                && let Some(o) = p.out(k, dg)
+            {
+                out.push(o);
+            }
+            if let Some(s) = p.current.as_mut()
+                && s.is_confirmed()
+                && let Ok(dg) = s.encrypt(&[], now)
+                && let Some(o) = p.out(k, dg)
+            {
+                p.stat[k.idx()].last_tx = Some(now);
+                out.push(o);
+            }
+        } else {
+            self.counters.inc("relay_down");
+            if p.active == k {
+                p.active = PATHS
+                    .into_iter()
+                    .find(|x| p.sendable(*x))
+                    .unwrap_or(PathKind::Direct);
+            }
+            // Si aún hace falta, se vuelve a pedir tras el intervalo mínimo.
+            if p.last_data
+                .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW)
+            {
+                p.relay_wanted = true;
+            }
+        }
+        out
+    }
+
+    pub fn set_relay_rtt(&mut self, peer: &DeviceId, kind: RelayKind, ms: u32) {
+        if let Some(p) = self.peers.iter_mut().find(|p| &p.device_id == peer) {
+            p.stat[PathKind::of(kind).idx()].rtt_ms = Some(ms);
+        }
+    }
+
+    /// Candidatos de un par entregados por el coordinator: son PISTAS no autenticadas. Se sanean,
     /// se acotan y solo sirven como destino de sondeos; la ruta se confirma con un paquete
     /// autenticado (nunca por el aviso del coordinator).
     pub fn on_peer_candidates(
@@ -842,11 +1315,7 @@ impl Engine {
         let peer = &mut self.peers[pi];
         peer.candidates = sanitize_candidates(cands, MAX_CANDIDATES);
         peer.hold_until = None;
-        if peer.endpoint.is_some()
-            && peer
-                .last_rx
-                .is_some_and(|t| now.duration_since(t) < PATH_DEAD_AFTER)
-        {
+        if peer.healthy(PathKind::Direct, now) {
             return out;
         }
         self.counters.inc("rendezvous_candidates");
@@ -856,6 +1325,14 @@ impl Engine {
                 p.next_at = now;
                 p.rounds = 0;
             }
+        } else if peer.current.as_ref().is_some_and(|s| s.is_confirmed()) {
+            // Sesión ya establecida (p. ej. por relay): se sondea el directo con keepalives cifrados.
+            peer.endpoint = None;
+            peer.kprobe = Some(Probe {
+                started: now,
+                next_at: now,
+                rounds: 0,
+            });
         } else {
             peer.last_attempt = None;
             self.maybe_initiate(pi, now, unix, &mut out);
@@ -894,9 +1371,21 @@ impl Engine {
                         .map(|t| now.duration_since(t).as_secs()),
                     tx_bytes: p.tx_bytes,
                     rx_bytes: p.rx_bytes,
-                    path: p.path(now),
+                    path: p.path_name(now),
                     candidates: p.candidates.len() + p.cfg_endpoints.len(),
-                    last_rx_secs: p.last_rx.map(|t| now.duration_since(t).as_secs()),
+                    last_rx_secs: p.last_rx_any().map(|t| now.duration_since(t).as_secs()),
+                    paths: PATHS
+                        .into_iter()
+                        .map(|k| PathStatus {
+                            kind: k.name(),
+                            ready: p.sendable(k),
+                            healthy: p.healthy(k, now),
+                            last_rx_secs: p.stat[k.idx()]
+                                .last_rx
+                                .map(|t| now.duration_since(t).as_secs()),
+                            rtt_ms: p.stat[k.idx()].rtt_ms,
+                        })
+                        .collect(),
                 })
                 .collect(),
         }
@@ -988,6 +1477,9 @@ mod tests {
         cfg_b: DeviceConfig,
         now: Instant,
         unix: u64,
+        /// Simulación de red: si es falso, los datagramas directos / por relay se pierden.
+        direct_ok: bool,
+        relay_ok: bool,
     }
 
     fn lab_with(rules_a: Vec<Rule>, rules_b: Vec<Rule>) -> Lab {
@@ -1022,6 +1514,8 @@ mod tests {
             cfg_b,
             now,
             unix: 1_000_000,
+            direct_ok: true,
+            relay_ok: true,
         }
     }
 
@@ -1055,14 +1549,26 @@ mod tests {
             let (mut na, mut nb) = (vec![], vec![]);
             for o in from_a.drain(..) {
                 match o {
-                    Out::Udp(_, dg) => nb.extend(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix)),
+                    Out::Udp(_, dg) if l.direct_ok => {
+                        nb.extend(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix))
+                    }
+                    Out::Relay { kind, dg, .. } if l.relay_ok => {
+                        nb.extend(l.b.on_relay_rx(&[1; 16], kind, &dg, l.now, l.unix))
+                    }
                     Out::Tun(p) => tun_a.push(p),
+                    _ => {}
                 }
             }
             for o in from_b.drain(..) {
                 match o {
-                    Out::Udp(_, dg) => na.extend(l.a.on_udp(ep(B_EP), &dg, l.now, l.unix)),
+                    Out::Udp(_, dg) if l.direct_ok => {
+                        na.extend(l.a.on_udp(ep(B_EP), &dg, l.now, l.unix))
+                    }
+                    Out::Relay { kind, dg, .. } if l.relay_ok => {
+                        na.extend(l.a.on_relay_rx(&[2; 16], kind, &dg, l.now, l.unix))
+                    }
                     Out::Tun(p) => tun_b.push(p),
+                    _ => {}
                 }
             }
             from_a = na;
@@ -1420,7 +1926,7 @@ mod tests {
         outs.iter()
             .filter_map(|o| match o {
                 Out::Udp(a, d) => Some((*a, d.clone())),
-                Out::Tun(_) => None,
+                Out::Tun(_) | Out::Relay { .. } => None,
             })
             .collect()
     }
@@ -1448,8 +1954,8 @@ mod tests {
         assert_eq!(udp_of(&oa).len(), 1);
         let (tun_a, tun_b) = pump(&mut l, oa, ob);
         assert_eq!((tun_a.len(), tun_b.len()), (1, 1));
-        assert_eq!(l.a.peers[0].path(l.now), "direct");
-        assert_eq!(l.b.peers[0].path(l.now), "direct");
+        assert_eq!(l.a.peers[0].path_name(l.now), "direct");
+        assert_eq!(l.b.peers[0].path_name(l.now), "direct");
         assert_eq!(l.a.peers[0].endpoint, Some(ep(B_EP)));
         assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
     }
@@ -1502,7 +2008,7 @@ mod tests {
             "≈ 1 ráfaga/s a 2 candidatos durante 10 s: {resent}"
         );
         assert_eq!(l.a.counters.0["probe_failed"], 1);
-        assert_eq!(l.a.peers[0].path(l.now), "none");
+        assert_eq!(l.a.peers[0].path_name(l.now), "none");
         // tras fallar, retardo antes de pedir otro rendezvous o sondear de nuevo
         l.a.on_tun(&v4(1, 2, b"y"), l.now, l.unix);
         assert!(l.a.take_rendezvous(l.now).is_empty());
@@ -1552,6 +2058,46 @@ mod tests {
         l.a.on_tick(l.now, l.unix);
         assert_eq!(l.a.counters.0["path_lost"], 1);
         assert_eq!(l.a.peers[0].endpoint, None);
-        assert_eq!(l.a.peers[0].path(l.now), "none");
+        assert_eq!(l.a.peers[0].path_name(l.now), "none");
+    }
+
+    /// Avanza `secs` segundos con ticks cada 250 ms, entregando lo que se genere.
+    fn run(l: &mut Lab, secs: u64) {
+        for _ in 0..secs * 4 {
+            l.now += Duration::from_millis(250);
+            let (oa, ob) = (l.a.on_tick(l.now, l.unix), l.b.on_tick(l.now, l.unix));
+            pump(l, oa, ob);
+        }
+    }
+
+    #[test]
+    fn path_switches_to_relay_and_back_with_hysteresis() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let (ra, rb) = (
+            l.a.set_relay_ready(&[2; 16], RelayKind::Udp, true, l.now),
+            l.b.set_relay_ready(&[1; 16], RelayKind::Udp, true, l.now),
+        );
+        pump(&mut l, ra, rb);
+        run(&mut l, 10);
+        assert_eq!(l.a.peers[0].active, PathKind::Direct);
+        // El directo deja de llegar: se pasa al relay en menos de 10 s sin perder la sesión.
+        l.direct_ok = false;
+        run(&mut l, 10);
+        assert_eq!(l.a.peers[0].active, PathKind::RelayUdp);
+        assert_eq!(l.b.peers[0].active, PathKind::RelayUdp);
+        let out = l.a.on_tun(&v4(1, 2, b"por relay"), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b, vec![v4(1, 2, b"por relay")]);
+        assert_eq!(l.a.counters.0["handshakes_initiator"], 1, "misma sesión");
+        // Vuelve el directo: no se regresa de inmediato (histéresis de 5 s).
+        l.direct_ok = true;
+        run(&mut l, 2);
+        let early = l.a.peers[0].active;
+        run(&mut l, 20);
+        assert_eq!(early, PathKind::RelayUdp);
+        assert_eq!(l.a.peers[0].active, PathKind::Direct);
+        assert_eq!(l.a.counters.0["path_switches"], 2);
     }
 }

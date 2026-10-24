@@ -18,6 +18,7 @@ atenea-crypto = { path = "../crates/crypto" }
 atenea-identity = { path = "../crates/identity" }
 atenea-policies = { path = "../crates/policies" }
 atenea-nat-traversal = { path = "../crates/nat-traversal" }
+atenea-relay-core = { path = "../crates/relay-core" }
 
 [[bin]]
 name = "datagram_parse"
@@ -85,6 +86,13 @@ bench = false
 [[bin]]
 name = "stun_parse"
 path = "fuzz_targets/stun_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relay_parse"
+path = "fuzz_targets/relay_parse.rs"
 test = false
 doc = false
 bench = false

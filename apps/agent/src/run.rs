@@ -4,6 +4,7 @@
 use crate::config::{Config, load_identity_key, load_noise_key};
 use crate::engine::{Engine, NatStatus, Out};
 use crate::net::{self, Stun, from_wire, to_wire};
+use crate::relay::{RelayClient, RelayClientConfig, RelayEvent};
 use crate::state;
 use atenea_identity::{AgentState, LocalKeys, MAX_BODY_LEN, verify_config};
 use atenea_nat_traversal::looks_like_stun;
@@ -304,7 +305,14 @@ async fn run(path: PathBuf) -> Result<(), String> {
                                     s.events += 1;
                                 }
                             });
-                            let _ = tx2.send(CoordMsg::Candidates(e.peer, e.candidates)).await;
+                            match e {
+                                crate::coord::Event::Connect { peer, candidates } => {
+                                    let _ = tx2.send(CoordMsg::Candidates(peer, candidates)).await;
+                                }
+                                crate::coord::Event::Relay { peer, grant } => {
+                                    let _ = tx2.send(CoordMsg::Relay(peer, grant)).await;
+                                }
+                            }
                         }
                     }
                     // Aún sin presencia o coordinator caído: reintento con pausa.
@@ -313,6 +321,17 @@ async fn run(path: PathBuf) -> Result<(), String> {
             }
         }));
     }
+    let relay_on = cfg.coordinator.as_ref().is_some_and(|c| c.relay != "off");
+    let (relay, mut relay_rx) = RelayClient::new(
+        RelayClientConfig {
+            ca_file: cfg
+                .coordinator
+                .as_ref()
+                .and_then(|c| c.relay_ca_file.clone()),
+        },
+        identity.clone(),
+        device,
+    );
     let mut stun = cfg.coordinator.as_ref().map(|c| Stun::new(c.stun.clone()));
     let mut stun_started: Option<Instant> = None;
 
@@ -413,6 +432,28 @@ async fn run(path: PathBuf) -> Result<(), String> {
                         });
                     }
                 }
+                // Relay: petición cuando el directo no llega; se libera cuando el directo es estable.
+                if relay_on && let Some(c) = rt.cfg.coordinator.clone() {
+                    for peer in rt.engine.take_relay_requests(now) {
+                        let (c, k, tx) = (c.clone(), identity.clone(), msg_tx.clone());
+                        tokio::spawn(async move {
+                            let res = tokio::task::spawn_blocking(move || {
+                                crate::coord::relay(&c, &k, device, peer, unix_now())
+                            })
+                            .await
+                            .unwrap_or(Err("fallo de la tarea"));
+                            match res {
+                                Ok(g) => {
+                                    let _ = tx.send(CoordMsg::Relay(peer, g)).await;
+                                }
+                                Err(e) => tracing::debug!("relay {}: {e}", atenea_crypto::hex::encode(&peer)),
+                            }
+                        });
+                    }
+                    for peer in rt.engine.take_relay_releases(now) {
+                        relay.close(peer);
+                    }
+                }
                 rt.engine.on_tick(now, unix)
             },
             _ = stun_refresh.tick(), if stun.is_some() => {
@@ -422,8 +463,30 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 }
                 Vec::new()
             },
-            Some(CoordMsg::Candidates(peer, cands)) = msg_rx.recv() => {
-                rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
+            Some(msg) = msg_rx.recv() => match msg {
+                CoordMsg::Candidates(peer, cands) => {
+                    rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
+                }
+                CoordMsg::Relay(peer, grant) => {
+                    if relay_on {
+                        relay.open(peer, grant.token, grant.relays);
+                    }
+                    Vec::new()
+                }
+            },
+            Some(ev) = relay_rx.recv() => {
+                let now = Instant::now();
+                match ev {
+                    RelayEvent::Ready { peer, kind } => rt.engine.set_relay_ready(&peer, kind, true, now),
+                    RelayEvent::Down { peer, kind } => rt.engine.set_relay_ready(&peer, kind, false, now),
+                    RelayEvent::Rx { peer, kind, datagram } => {
+                        rt.engine.on_relay_rx(&peer, kind, &datagram, now, unix_now())
+                    }
+                    RelayEvent::Rtt { peer, kind, ms } => {
+                        rt.engine.set_relay_rtt(&peer, kind, ms);
+                        Vec::new()
+                    }
+                }
             },
             r = ipc.accept() => {
                 let sync = sync_rx.borrow().clone();
@@ -449,6 +512,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
                         tracing::debug!("escritura TUN: {e}");
                     }
                 }
+                Out::Relay { peer, kind, dg } => relay.send(peer, kind, dg),
             }
         }
     }
@@ -468,6 +532,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
 enum CoordMsg {
     /// Candidatos de un par (por rendezvous propio o por aviso del coordinator): solo pistas.
     Candidates(atenea_identity::DeviceId, Vec<SocketAddr>),
+    /// Token de relay para un par (petición propia o aviso del coordinator).
+    Relay(atenea_identity::DeviceId, crate::coord::RelayGrant),
 }
 
 #[derive(Clone, Default, serde::Serialize)]

@@ -60,10 +60,24 @@ pub struct CoordinatorConfig {
     pub url: String,
     /// Dos puertos del MISMO servidor STUN (`host:3478`, `host:3479`), en ese orden.
     pub stun: Vec<String>,
+    #[serde(default)]
+    pub relay_ca_file: Option<PathBuf>,
+    #[serde(default = "default_relay")]
+    pub relay: String,
+}
+
+fn default_relay() -> String {
+    "auto".into()
 }
 
 impl CoordinatorConfig {
     pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.relay.as_str(), "auto" | "off") {
+            return Err("coordinator.relay: se espera auto u off".into());
+        }
+        if let Some(path) = &self.relay_ca_file {
+            crate::relay::load_roots(Some(path))?;
+        }
         let uri: ureq::http::Uri = self.url.parse().map_err(|_| "coordinator.url inválida")?;
         if !matches!(uri.scheme_str(), Some("http" | "https"))
             || uri.host().is_none()
@@ -210,5 +224,20 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         );
         assert!(Config::parse(&GOOD.replace("trust_anchor", "anchor")).is_err());
         assert!(Config::parse("").is_err());
+    }
+
+    #[test]
+    fn relay_options_default_and_validate() {
+        let base = format!(
+            "{GOOD}\n[coordinator]\nurl = \"https://coord.test\"\nstun = [\"stun.test:1\", \"stun.test:2\"]"
+        );
+        let c = Config::parse(&base).unwrap().coordinator.unwrap();
+        assert_eq!(c.relay, "auto");
+        assert!(c.relay_ca_file.is_none());
+        assert!(Config::parse(&format!("{base}\nrelay = \"off\"")).is_ok());
+        assert!(Config::parse(&format!("{base}\nrelay = \"invalid\"")).is_err());
+        assert!(
+            Config::parse(&format!("{base}\nrelay_ca_file = \"/nonexistent/ca.pem\"")).is_err()
+        );
     }
 }

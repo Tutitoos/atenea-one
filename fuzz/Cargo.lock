@@ -64,6 +64,7 @@ dependencies = [
  "atenea-nat-traversal",
  "atenea-policies",
  "atenea-protocol",
+ "atenea-relay-core",
  "libfuzzer-sys",
 ]
 
@@ -90,6 +91,16 @@ dependencies = [
 [[package]]
 name = "atenea-protocol"
 version = "0.1.0"
+
+[[package]]
+name = "atenea-relay-core"
+version = "0.1.0"
+dependencies = [
+ "atenea-identity",
+ "atenea-protocol",
+ "blake2 0.11.0",
+ "ed25519-dalek",
+]
 
 [[package]]
 name = "blake2"

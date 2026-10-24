@@ -7,6 +7,7 @@ mod engine;
 #[cfg(target_os = "linux")]
 mod net;
 mod packet;
+mod relay;
 #[cfg(target_os = "linux")]
 mod run;
 mod state;

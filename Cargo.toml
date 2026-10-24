@@ -6,10 +6,12 @@ members = [
     "crates/identity",
     "crates/policies",
     "crates/nat-traversal",
+    "crates/relay-core",
     "crates/tunnel",
     "apps/agent",
     "apps/control-plane",
     "apps/coordinator",
+    "apps/relay",
     "apps/cli",
 ]
 exclude = ["fuzz"]
@@ -32,6 +34,7 @@ atenea-crypto = { path = "crates/crypto" }
 atenea-identity = { path = "crates/identity" }
 atenea-policies = { path = "crates/policies" }
 atenea-nat-traversal = { path = "crates/nat-traversal" }
+atenea-relay-core = { path = "crates/relay-core" }
 atenea-tunnel = { path = "crates/tunnel" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

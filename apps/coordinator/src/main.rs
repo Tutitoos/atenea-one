@@ -8,6 +8,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let config = Config::load()?;
+    if std::env::args().any(|arg| arg == "--print-relay-key") {
+        let key = config
+            .relay_signing_key()?
+            .ok_or("RELAY_SIGNING_KEY_FILE no configurada")?;
+        println!("{}", hex::encode(key.verifying_key().to_bytes()));
+        return Ok(());
+    }
     let state = Coordinator::new(config.clone())?;
     let udp = stun::bind(&config).await?;
     let http = TcpListener::bind(&config.listen).await?;
