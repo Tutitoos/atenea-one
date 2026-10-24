@@ -1,6 +1,6 @@
 # ADR-002 — Revocación mediante leases de configuración
 
-- **Estado:** Propuesto (recomendación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Los valores numéricos siguen siendo parámetros a medir en el laboratorio.
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 3
 - **Relacionados:** ADR-001, ADR-005

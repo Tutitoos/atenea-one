@@ -1,6 +1,6 @@
 # ADR-001 — Patrón de handshake: Noise IK
 
-- **Estado:** Propuesto (recomendación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto)
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 2
 - **Relacionados:** ADR-002 (configuración firmada), ADR-003 (transporte y antirreplay)

@@ -1,6 +1,6 @@
 # ADR-003 — Transporte cifrado con snow, antirreplay y rekey propios
 
-- **Estado:** Propuesto (recomendación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Los límites de rekey y MTU siguen siendo parámetros a medir en la fase 2.
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 2
 - **Relacionados:** ADR-001, ADR-002

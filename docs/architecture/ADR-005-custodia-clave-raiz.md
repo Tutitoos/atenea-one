@@ -1,6 +1,6 @@
 # ADR-005 — Custodia de la clave raíz de firma y emisores delegados
 
-- **Estado:** Propuesto (recomendación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Pendiente: elección del token hardware antes del piloto.
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 3
 - **Relacionados:** ADR-002
