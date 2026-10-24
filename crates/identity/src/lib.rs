@@ -1,4 +1,5 @@
 //! Configuración firmada v1: codificación única y verificación sin E/S ni reloj propio.
+pub mod api_auth;
 mod codec;
 mod config;
 mod verify;
@@ -110,6 +111,21 @@ pub struct IssuerCert {
     pub signature: [u8; 64],
 }
 impl IssuerCert {
+    /// Verifica una delegación para el control plane, sin tolerancia de reloj.
+    pub fn verify(&self, root: &PublicKey, network: NetworkId, now: u64) -> Result<(), Error> {
+        if !valid_anchor(root)
+            || self.root_key_id != key_id(root)
+            || self.network_id != network
+            || self.not_before > now
+            || self.not_after <= now
+            || self.not_after <= self.not_before
+            || self.not_after - self.not_before > MAX_CERT_VALIDITY_SECS
+            || (self.next_anchor != [0; 32] && !valid_anchor(&self.next_anchor))
+        {
+            return Err(Error::InvalidStructure);
+        }
+        check(root, CERT_DOMAIN, &self.encode()[..114], &self.signature)
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn issue(
         root: &SigningKey,

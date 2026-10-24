@@ -24,6 +24,35 @@ scripts/setup.sh   # comprueba herramientas e instala dependencias
 scripts/check.sh   # formato, clippy, tests Rust y comprobaciones web (lo mismo que CI)
 ```
 
+### Incorporar un dispositivo al control plane
+
+En la estación de administración (la raíz nunca se copia al servidor), certifica la
+clave de emisor existente para la red creada en el control plane y sube el certificado:
+
+```sh
+atenea issuer-cert --root ROOT.key --issuer-key ISSUER.key --network-id HEX \
+  --serial 2 --valid-days 30 --out red.cert
+```
+
+El administrador entrega el objeto `join` por un canal de confianza: comprueba su
+`root_anchor` fuera de banda. En el dispositivo:
+
+```sh
+atenea device-init --dir ./dispositivo
+atenea enroll --url https://vpn.example.test --token TOKEN --dir ./dispositivo --name portatil
+atenea agent-config --join join.json --dir ./dispositivo --out agent.toml
+sudo atenea up --config agent.toml
+```
+
+`--join` acepta un fichero o el objeto JSON literal. El token no se guarda ni se
+imprime (el argumento puede aparecer en el historial del shell/listado de procesos).
+El administrador compara la huella del bundle antes de aprobar el dispositivo.
+`agent-config` no sobrescribe y crea un fichero 0600; usa rutas absolutas bajo
+`--dir`, con opciones para interfaz, escucha, estado, configuración firmada e IPC.
+La sección opcional `[sync]` descarga al arrancar y cada 60 s (`interval_secs`,
+mínimo 5); el agente verifica la firma antes de aplicar y mantiene el lease si la
+descarga falla. Sin `[sync]` sigue funcionando la emisión manual a fichero.
+
 ## Seguridad
 
 Ver [SECURITY.md](SECURITY.md). Contribuir: [CONTRIBUTING.md](CONTRIBUTING.md).

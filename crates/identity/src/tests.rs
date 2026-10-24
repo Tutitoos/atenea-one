@@ -2,6 +2,32 @@ use super::*;
 use proptest::prelude::*;
 use std::{fs, path::PathBuf};
 const NOW: u64 = 1000;
+#[test]
+fn certificate_verification_for_control_plane() {
+    let (root, _, cert, _, _, _) = setup();
+    let anchor = root.verifying_key().to_bytes();
+    assert!(cert.verify(&anchor, cert.network_id, NOW).is_ok());
+    assert!(cert.verify(&anchor, [9; 16], NOW).is_err());
+    assert!(
+        cert.verify(&anchor, cert.network_id, cert.not_after)
+            .is_err()
+    );
+    assert!(
+        cert.verify(&anchor, cert.network_id, cert.not_before - 1)
+            .is_err()
+    );
+    assert!(
+        cert.verify(
+            &signing_key([9; 32]).verifying_key().to_bytes(),
+            cert.network_id,
+            NOW
+        )
+        .is_err()
+    );
+    let mut bad = cert.clone();
+    bad.signature[0] ^= 1;
+    assert!(bad.verify(&anchor, cert.network_id, NOW).is_err());
+}
 fn setup() -> (
     SigningKey,
     SigningKey,

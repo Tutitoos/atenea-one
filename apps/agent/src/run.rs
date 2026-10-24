@@ -193,6 +193,35 @@ async fn run(path: PathBuf) -> Result<(), String> {
         .await
         .map_err(|e| format!("UDP {}: {e}", cfg.listen))?;
     let ipc = bind_ipc(&cfg.ipc_socket)?;
+    let (sync_tx, sync_rx) =
+        tokio::sync::watch::channel(cfg.sync.as_ref().map(|s| crate::sync::Status {
+            url: s.url.clone(),
+            ..Default::default()
+        }));
+    let sync_task = cfg.sync.clone().map(|sync| {
+        let path = cfg.config_file.clone();
+        let device = cfg.device_id;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(sync.interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let sync = sync.clone();
+                let identity = identity.clone();
+                let path = path.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::sync::fetch(&sync, &identity, device, &path, unix_now())
+                })
+                .await
+                .unwrap_or(Err("fallo de la tarea de sincronización"));
+                sync_tx.send_modify(|s| {
+                    if let Some(s) = s {
+                        s.record(result, unix_now());
+                    }
+                });
+            }
+        })
+    });
     let engine = Engine::new(cfg.network_id, noise, Instant::now());
     let mut rt = Runtime {
         cfg,
@@ -230,7 +259,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 rt.engine.on_tick(Instant::now(), unix)
             },
             r = ipc.accept() => {
-                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine).await { break; }
+                let sync = sync_rx.borrow().clone();
+                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync).await { break; }
                 continue;
             }
             _ = term.recv() => break,
@@ -250,6 +280,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 }
             }
         }
+    }
+    if let Some(task) = sync_task {
+        task.abort();
     }
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
     let _ = state::save(&rt.cfg.state_dir, &rt.state);
@@ -274,7 +307,11 @@ fn bind_ipc(path: &std::path::Path) -> Result<UnixListener, String> {
 }
 
 /// Una petición por línea (`status` | `stop`) y una respuesta JSON por línea. `true` = parar.
-async fn handle_ipc(stream: UnixStream, engine: &Engine) -> bool {
+async fn handle_ipc(
+    stream: UnixStream,
+    engine: &Engine,
+    sync: Option<crate::sync::Status>,
+) -> bool {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let read = tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line)).await;
@@ -282,10 +319,12 @@ async fn handle_ipc(stream: UnixStream, engine: &Engine) -> bool {
         return false;
     }
     let (reply, stop) = match line.trim() {
-        "status" => (
-            serde_json::to_string(&engine.status(Instant::now(), unix_now())).unwrap_or_default(),
-            false,
-        ),
+        "status" => {
+            let mut status =
+                serde_json::to_value(engine.status(Instant::now(), unix_now())).unwrap_or_default();
+            status["sync"] = serde_json::to_value(sync).unwrap_or_default();
+            (status.to_string(), false)
+        }
         "stop" => (r#"{"ok":true}"#.to_string(), true),
         _ => (r#"{"error":"orden desconocida"}"#.to_string(), false),
     };

@@ -7,6 +7,7 @@ mod packet;
 #[cfg(target_os = "linux")]
 mod run;
 mod state;
+mod sync;
 
 #[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {

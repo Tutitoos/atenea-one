@@ -52,3 +52,7 @@ Consecuencias de la disponibilidad: si el emisor está caído más de ~5 min, **
 ## Verificación (fase 3)
 
 Medir y registrar con y sin conectividad al emisor: tiempo de corte de D visto por sus peers y por D; configuración caducada rechazada; reloj atrasado/adelantado fuera de tolerancia; rollback de `version` rechazado; reinicio del agente con estado persistido conserva las protecciones; emisor caído 6 min tumba los túneles y se recuperan al volver.
+
+## Decisión del responsable para el piloto (2026-10-24)
+
+Validez 300 s, reemisión cada 60 s y tolerancia de reloj 30 s. Con estos valores el corte máximo para un agente que deja de renovarse es 330 s, y para sus peers, 60 s más el tiempo de recarga si alcanzan al emisor. El control plane de la fase 3B usa estos valores por defecto (`config_validity_secs = 300`; el agente sondea cada 60 s). El laboratorio sigue usando 40/10/30 para acortar las pruebas.

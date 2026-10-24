@@ -27,7 +27,7 @@ fn now_millis() -> u64 {
 }
 
 /// Escribe un fichero nuevo con permisos 0600; no sobrescribe.
-fn write_secret(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -114,6 +114,50 @@ pub fn issuer_init(
     write_new(&out_dir.join("issuer.cert"), &cert.encode())?;
     println!("{}", hex::encode(&issuer_pub));
     Ok(())
+}
+#[derive(clap::Args)]
+pub struct IssuerCertArgs {
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    issuer_key: PathBuf,
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    serial: u64,
+    #[arg(long)]
+    valid_days: u64,
+    #[arg(long)]
+    next_anchor: Option<String>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+pub fn issuer_cert(args: IssuerCertArgs) -> Result<(), String> {
+    let root = read_seed(&args.root)?;
+    let issuer = read_seed(&args.issuer_key)?;
+    let network =
+        hex::decode::<16>(&args.network_id).ok_or("network-id: se esperan 32 dígitos hex")?;
+    if !(1..=90).contains(&args.valid_days) {
+        return Err("valid-days debe estar entre 1 y 90".into());
+    }
+    let next = args
+        .next_anchor
+        .as_deref()
+        .map(|s| hex::decode::<32>(s).ok_or("next-anchor: se esperan 64 dígitos hex"))
+        .transpose()?;
+    let now = now_secs();
+    let cert = IssuerCert::issue(
+        &root,
+        network,
+        args.serial,
+        now,
+        now + args.valid_days * 86400,
+        issuer.verifying_key().to_bytes(),
+        next,
+    )
+    .map_err(|e| format!("certificado: {e:?}"))?;
+    write_new(&args.out, &cert.encode())
 }
 
 pub fn device_init(dir: &Path) -> Result<(), String> {

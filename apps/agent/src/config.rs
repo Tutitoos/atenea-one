@@ -21,6 +21,7 @@ struct RawConfig {
     network_id: String,
     device_id: String,
     trust_anchor: String,
+    sync: Option<SyncConfig>,
 }
 
 #[derive(Debug)]
@@ -35,6 +36,41 @@ pub struct Config {
     pub network_id: NetworkId,
     pub device_id: DeviceId,
     pub trust_anchor: PublicKey,
+    pub sync: Option<SyncConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncConfig {
+    pub url: String,
+    #[serde(default = "default_interval")]
+    pub interval_secs: u64,
+}
+
+fn default_interval() -> u64 {
+    60
+}
+
+impl SyncConfig {
+    pub fn endpoint(&self) -> Result<String, String> {
+        let uri: ureq::http::Uri = self.url.parse().map_err(|_| "sync.url inválida")?;
+        if !matches!(uri.scheme_str(), Some("http" | "https"))
+            || uri.host().is_none()
+            || uri.authority().is_some_and(|a| a.as_str().contains('@'))
+            || uri.query().is_some()
+            || self.url.contains('#')
+            || self.interval_secs < 5
+        {
+            return Err(
+                "sync: URL http(s) sin credenciales, query ni fragmento e intervalo mínimo de 5 s"
+                    .into(),
+            );
+        }
+        Ok(format!(
+            "{}/api/v1/device/config",
+            self.url.trim_end_matches('/')
+        ))
+    }
 }
 
 impl Config {
@@ -45,6 +81,9 @@ impl Config {
 
     pub fn parse(text: &str) -> Result<Config, String> {
         let raw: RawConfig = toml::from_str(text).map_err(|e| e.to_string())?;
+        if let Some(sync) = &raw.sync {
+            sync.endpoint()?;
+        }
         Ok(Config {
             network_id: hex::decode::<16>(&raw.network_id)
                 .ok_or("network_id: se esperan 32 dígitos hex")?,
@@ -59,6 +98,7 @@ impl Config {
             identity_key_file: raw.identity_key_file,
             config_file: raw.config_file,
             state_dir: raw.state_dir,
+            sync: raw.sync,
         })
     }
 }
@@ -107,6 +147,20 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         let c = Config::parse(GOOD).unwrap();
         assert_eq!(c.interface, "atenea0");
         assert_eq!(c.device_id[0], 0xff);
+    }
+
+    #[test]
+    fn optional_sync_defaults_and_validation() {
+        assert!(Config::parse(GOOD).unwrap().sync.is_none());
+        let text = format!("{GOOD}\n[sync]\nurl = \"https://example.test\"");
+        assert_eq!(
+            Config::parse(&text).unwrap().sync.unwrap().interval_secs,
+            60
+        );
+        assert!(Config::parse(&format!("{text}\ninterval_secs = 4")).is_err());
+        assert!(Config::parse(&format!("{text}\ninterval_secs = 5")).is_ok());
+        assert!(Config::parse(&text.replace("https://", "ftp://")).is_err());
+        assert!(Config::parse(&text.replace("example.test", "example.test/?token=x")).is_err());
     }
 
     #[test]

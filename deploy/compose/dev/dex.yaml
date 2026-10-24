@@ -1,0 +1,27 @@
+# Proveedor OIDC SOLO para desarrollo y laboratorio (no usar en producción).
+# Usuarios y secretos son sintéticos y públicos.
+issuer: http://dex:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+enablePasswordDB: true
+staticClients:
+  - id: atenea-control-plane
+    name: Atenea One (desarrollo)
+    secret: dev-only-secret-not-for-production
+    redirectURIs:
+      - http://192.0.2.254:8080/auth/callback
+      - http://localhost:8080/auth/callback
+staticPasswords:
+  # contraseña: "password" (bcrypt generado con htpasswd; público y solo para desarrollo)
+  - email: admin@example.test
+    hash: "$2a$10$M7Ql/Xzvb9SrkhkSHLqf3.3/smyE3F7NpWCZkU//b/PAZzF614tBS"
+    username: admin
+    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+  - email: member@example.test
+    hash: "$2a$10$M7Ql/Xzvb9SrkhkSHLqf3.3/smyE3F7NpWCZkU//b/PAZzF614tBS"
+    username: member
+    userID: "3f1c1c6e-2f0e-4f9b-9a41-5c1d6b7f0a22"

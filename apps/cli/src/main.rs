@@ -1,5 +1,6 @@
 //! CLI sin privilegios de red: claves, emisión de configuraciones firmadas y control del agente por su socket Unix.
 
+mod enroll;
 mod issue;
 
 use clap::{Parser, Subcommand};
@@ -18,6 +19,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Enrola el paquete público; el token no se guarda.
+    Enroll {
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    /// Certifica una clave de emisor existente para otra red.
+    IssuerCert(issue::IssuerCertArgs),
+    /// Genera un TOML local con ancla fijada y sincronización.
+    AgentConfig(enroll::AgentConfigArgs),
     /// Genera la clave raíz de firma (fichero 0600; no sobrescribe) e imprime su clave pública (trust anchor).
     /// Debe ejecutarse en la estación de administración, nunca en un host expuesto (ADR-005).
     RootInit {
@@ -92,6 +108,14 @@ fn main() -> ExitCode {
 
 fn run(cmd: Cmd) -> Result<(), String> {
     match cmd {
+        Cmd::Enroll {
+            url,
+            token,
+            dir,
+            name,
+        } => enroll::enroll(&url, &token, &dir, &name),
+        Cmd::IssuerCert(args) => issue::issuer_cert(args),
+        Cmd::AgentConfig(args) => enroll::agent_config(args),
         Cmd::RootInit { out } => issue::root_init(&out),
         Cmd::IssuerInit {
             root,
