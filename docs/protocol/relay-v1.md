@@ -1,6 +1,6 @@
 # Relay y conmutación de caminos v1 (fase 5)
 
-- **Estado:** Propuesto (diseño de implementación; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-24, por el responsable; implementado y verificado en laboratorio, fase 5)
 - **Fecha:** 2026-10-24
 - **Relacionados:** ADR-001/003 (Noise y sesión), ADR-004 (entrada 443, tramado TCP), `docs/protocol/coordinator-v1.md`, modelo de amenazas T2, T9, T10, T15.
 - **Implementa:** `crates/relay-core` (mensajes, token, cookie, tramas), `apps/relay`, `apps/coordinator` (`/v1/relay`), `apps/agent` (`relay.rs`, gestor de caminos en `engine.rs`).

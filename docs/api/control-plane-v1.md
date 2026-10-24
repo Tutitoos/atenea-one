@@ -153,3 +153,43 @@ Panel web (fase 6), coordinator/STUN/relays y descubrimiento de endpoints (fases
 - `--migrate` usa la conexión administrativa, concede permisos al rol configurado y termina. El servicio normal usa otra conexión restringida y rechaza permisos UPDATE/DELETE/TRUNCATE sobre auditoría.
 - `config.issue` se registra en la transacción de cada nueva versión firmada: versión y ventana cambian el contenido firmado incluso cuando los pares y reglas permanecen iguales.
 - Las pruebas del router no sustituyen el E2E con TUN Linux; este se ejecuta con `tests/network-lab/run-e2e.sh` (ver [resultados](../operations/e2e-fase3b.md)). No forma parte del CI porque necesita contenedores privilegiados.
+
+## 10. Extensiones para el panel (fase 6)
+
+Contrato compartido por backend (`apps/control-plane`, agente) y panel (`apps/web`). Todo cambio de forma se refleja en `docs/api/openapi.json` (generado) y el cliente TypeScript se regenera desde él; el panel no define modelos de API a mano.
+
+### 10.1 Inventario ampliado
+
+`GET /api/v1/networks/{net}/devices` añade a cada elemento: `ipv4` y `ipv6` (texto o `null` si no está aprobado), `enrolled_at`, `approved_at`, `revoked_at`, `last_config_at` (RFC 3339 o `null`) y `report` (`null` si el agente nunca informó):
+
+```json
+{"report": {"reported_at": "…", "age_secs": 12, "nat_mapping": "independent|dependent|unknown|null",
+  "paths": [{"peer": "<uuid>", "path": "direct|relay-udp|relay-tls|probing|none", "last_rx_secs": 3, "rtt_ms": 20, "relay": "lab"}]}}
+```
+
+`age_secs` lo calcula el servidor con su reloj (el panel no compara relojes). `rtt_ms` y `relay` pueden ser `null`. Un informe es **declarado por el agente** (autenticado como ese dispositivo, no verificado por terceros): el panel lo presenta como tal, con su antigüedad. Conexión mostrada: `online` (< 90 s), `stale` (< 10 min), `offline` (más), `unknown` (sin informe).
+
+### 10.2 Informe de estado del dispositivo
+
+`POST /api/v1/device/status` (autenticación de dispositivo §3.3; solo `approved`). Cuerpo ≤ 64 KiB: `{"nat_mapping"?: …, "paths": [{"peer","path","last_rx_secs"?,"rtt_ms"?,"relay"?}]}`, como máximo 256 caminos, `peer` UUID de un dispositivo de la misma red, `path` en el conjunto de §10.1; se rechaza con `400` cualquier otra cosa. Reemplaza el último informe del dispositivo (tabla `device_reports`, uno por dispositivo) y responde `204`. Máximo un informe cada 5 s por dispositivo (`429`). No genera evento de auditoría (alta frecuencia, sin cambio de autorización). Notifica `changed/devices` por WebSocket.
+
+El agente informa cada 15 s mientras tenga `[sync]` configurado y configuración vigente; no incluye IPs externas ni claves.
+
+### 10.3 Eventos en vivo (WebSocket)
+
+`GET /api/v1/networks/{net}/events` con `Upgrade: websocket`, autenticado por la cookie de sesión (member o superior; red ajena `404`). Se exige que `Origin` coincida con el origen de `PUBLIC_URL` (`403` si no), por ser una petición con cookies sin CSRF. Mensajes JSON del servidor, uno por trama de texto:
+
+- `{"type":"hello","seq":N}` al conectar.
+- `{"type":"changed","scope":"devices|policies|audit|network|metrics","seq":N}` cuando cambia ese recurso. `seq` crece por proceso; el panel **no reconstruye estado a partir de eventos**: ante cualquier evento, o al reconectar, vuelve a pedir el recurso por REST (resincronización). Ping del servidor cada 25 s; el cliente reconecta con retardo exponencial y jitter. Máximo 8 conexiones por usuario y 64 por proceso (`429`). Un solo proceso: la difusión es en memoria (con varias instancias hará falta LISTEN/NOTIFY o equivalente, fase 9).
+
+### 10.4 Métricas
+
+`GET /api/v1/networks/{net}/metrics?since=<RFC 3339>&limit=` (member): serie real muestreada por el servidor cada 60 s a partir de los últimos informes: `[{"at","total","direct","relay","probing","unknown","offline"}]` (dispositivos aprobados clasificados por su camino predominante y conexión). Tabla `network_samples`, retención 7 días, `limit` ≤ 1000 (por defecto 360). Sin datos no se inventan puntos: lista vacía.
+
+### 10.5 Contenido estático
+
+Con `ATENEA_CP_WEB_DIR` (directorio con el `build/client` del panel) el control plane sirve el panel desde el mismo origen (cookies `SameSite=Lax` y CSRF sin CORS). Rutas que no empiezan por `/api`, `/auth` ni `/healthz` y no son un fichero existente devuelven `index.html` (SPA). Cabeceras en todas las respuestas de contenido: `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-cache` para `index.html` y `immutable` para ficheros con hash.
+
+### 10.6 Fuera de alcance de la fase 6
+
+Editor Monaco, creación de claves o certificados desde el panel (la raíz y el emisor siguen offline, ADR-005), invitaciones por correo, varias instancias del control plane.
