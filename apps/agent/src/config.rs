@@ -22,6 +22,7 @@ struct RawConfig {
     device_id: String,
     trust_anchor: String,
     sync: Option<SyncConfig>,
+    coordinator: Option<CoordinatorConfig>,
 }
 
 #[derive(Debug)]
@@ -37,6 +38,7 @@ pub struct Config {
     pub device_id: DeviceId,
     pub trust_anchor: PublicKey,
     pub sync: Option<SyncConfig>,
+    pub coordinator: Option<CoordinatorConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,6 +51,38 @@ pub struct SyncConfig {
 
 fn default_interval() -> u64 {
     60
+}
+
+/// Coordinator y STUN propios (docs/protocol/coordinator-v1.md §4). No es de confianza: solo aporta pistas.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorConfig {
+    pub url: String,
+    /// Dos puertos del MISMO servidor STUN (`host:3478`, `host:3479`), en ese orden.
+    pub stun: Vec<String>,
+}
+
+impl CoordinatorConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let uri: ureq::http::Uri = self.url.parse().map_err(|_| "coordinator.url inválida")?;
+        if !matches!(uri.scheme_str(), Some("http" | "https"))
+            || uri.host().is_none()
+            || uri.authority().is_some_and(|a| a.as_str().contains('@'))
+            || uri.query().is_some()
+            || self.url.contains('#')
+        {
+            return Err("coordinator: URL http(s) sin credenciales, query ni fragmento".into());
+        }
+        if self.stun.len() != 2
+            || self.stun.iter().any(|s| {
+                s.rsplit_once(':')
+                    .is_none_or(|(h, p)| h.is_empty() || p.parse::<u16>().is_err())
+            })
+        {
+            return Err("coordinator.stun: se esperan exactamente dos entradas host:puerto".into());
+        }
+        Ok(())
+    }
 }
 
 impl SyncConfig {
@@ -84,6 +118,9 @@ impl Config {
         if let Some(sync) = &raw.sync {
             sync.endpoint()?;
         }
+        if let Some(c) = &raw.coordinator {
+            c.validate()?;
+        }
         Ok(Config {
             network_id: hex::decode::<16>(&raw.network_id)
                 .ok_or("network_id: se esperan 32 dígitos hex")?,
@@ -99,6 +136,7 @@ impl Config {
             config_file: raw.config_file,
             state_dir: raw.state_dir,
             sync: raw.sync,
+            coordinator: raw.coordinator,
         })
     }
 }

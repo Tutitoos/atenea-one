@@ -142,7 +142,7 @@ def cmd_field(sock, dotted):
     """Valor de un campo del estado del agente (ruta con puntos); 'none' si es null."""
     v = json.loads(subprocess.check_output(["atenea", "status", "--socket", sock]))
     for k in dotted.split("."):
-        v = v[k]
+        v = v[int(k)] if isinstance(v, list) else v[k]
     print("none" if v is None else str(v).lower() if isinstance(v, bool) else v)
 
 

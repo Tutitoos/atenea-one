@@ -5,9 +5,11 @@ members = [
     "crates/crypto",
     "crates/identity",
     "crates/policies",
+    "crates/nat-traversal",
     "crates/tunnel",
     "apps/agent",
     "apps/control-plane",
+    "apps/coordinator",
     "apps/cli",
 ]
 exclude = ["fuzz"]
@@ -29,11 +31,12 @@ atenea-protocol = { path = "crates/protocol" }
 atenea-crypto = { path = "crates/crypto" }
 atenea-identity = { path = "crates/identity" }
 atenea-policies = { path = "crates/policies" }
+atenea-nat-traversal = { path = "crates/nat-traversal" }
 atenea-tunnel = { path = "crates/tunnel" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "io-util", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "io-util", "sync", "process"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 clap = { version = "4", features = ["derive"] }

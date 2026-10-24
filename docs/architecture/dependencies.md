@@ -56,6 +56,26 @@ Requisitos directos de `apps/control-plane/Cargo.toml` (versiones exactas resuel
 Reutiliza `serde`, `serde_json`, `tokio`, `tracing`, `tracing-subscriber`, `zeroize`
 y `atenea-identity`. Sin dependencias operativas del panel, coordinator ni relays.
 
+### Coordinator (fase 4)
+
+`apps/coordinator` reutiliza `atenea-identity` (inspección sin estado y firmas de
+petición) y `atenea-nat-traversal` (STUN y saneamiento de candidatos), sin nuevas
+dependencias criptográficas ni servicios externos. Requisitos directos:
+
+| Crate | Requisito | Licencia | Uso |
+| --- | --- | --- | --- |
+| `axum` | 0.8 | MIT | HTTP, router y dirección TCP observada |
+| `base64` | 0.22 | MIT OR Apache-2.0 | Configuración firmada en JSON |
+| `figment` | 0.10 | MIT OR Apache-2.0 | TOML opcional y variables de entorno |
+| `hex` | 0.4 | MIT OR Apache-2.0 | Identificadores y anclas públicas |
+| `serde`, `serde_json` | 1, 1 | MIT OR Apache-2.0 | JSON y configuración |
+| `tokio` | 1 | MIT | UDP, long-poll, señales y barrido |
+| `tracing`, `tracing-subscriber` | 0.1, 0.3 | MIT | Registro sin secretos (tracing también Apache-2.0) |
+| `tower`, `http-body-util` | 0.5, 0.1 | MIT | Router en memoria y cuerpos, solo pruebas |
+
+Todos estos crates ya se usan en el workspace; versiones resueltas en
+`Cargo.lock`. No añade TLS, base de datos ni cliente STUN público.
+
 ## TypeScript / panel (fase 6)
 
 | Paquete | Versión observada | Licencia |

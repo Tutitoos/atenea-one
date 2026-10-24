@@ -2,7 +2,10 @@
 //! Agente VPN: dueño de la TUN y de las claves del dispositivo (fase 2, configuración de laboratorio).
 
 mod config;
+mod coord;
 mod engine;
+#[cfg(target_os = "linux")]
+mod net;
 mod packet;
 #[cfg(target_os = "linux")]
 mod run;

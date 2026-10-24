@@ -2,19 +2,23 @@
 //! Toda la lógica de protocolo vive en `engine`; la verificación, en `atenea-identity`.
 
 use crate::config::{Config, load_identity_key, load_noise_key};
-use crate::engine::{Engine, Out};
+use crate::engine::{Engine, NatStatus, Out};
+use crate::net::{self, Stun, from_wire, to_wire};
 use crate::state;
 use atenea_identity::{AgentState, LocalKeys, MAX_BODY_LEN, verify_config};
+use atenea_nat_traversal::looks_like_stun;
 use atenea_policies::prefix_contains;
 use atenea_tunnel::Tun;
 use clap::{Parser, Subcommand};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UdpSocket, UnixListener, UnixStream};
 use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::Notify;
 
 #[derive(Parser)]
 #[command(name = "atenea-agent", version)]
@@ -201,6 +205,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
     let sync_task = cfg.sync.clone().map(|sync| {
         let path = cfg.config_file.clone();
         let device = cfg.device_id;
+        let identity = identity.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(sync.interval_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -223,6 +228,94 @@ async fn run(path: PathBuf) -> Result<(), String> {
         })
     });
     let engine = Engine::new(cfg.network_id, noise, Instant::now());
+    let dual = cfg.listen.is_ipv6();
+    let device = cfg.device_id;
+
+    // Coordinator (fase 4): anuncio de presencia, avisos de pares y descubrimiento de candidatos.
+    let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel::<CoordMsg>(64);
+    let (cand_tx, cand_rx) = tokio::sync::watch::channel::<Vec<SocketAddr>>(Vec::new());
+    let announce_now = Arc::new(Notify::new());
+    let (coord_tx, coord_rx) =
+        tokio::sync::watch::channel(cfg.coordinator.as_ref().map(|c| CoordStatus {
+            url: c.url.clone(),
+            ..Default::default()
+        }));
+    let mut coord_tasks = Vec::new();
+    if let Some(c) = cfg.coordinator.clone() {
+        let (c1, id1, path1, rx1, n1, tx1) = (
+            c.clone(),
+            identity.clone(),
+            cfg.config_file.clone(),
+            cand_rx.clone(),
+            announce_now.clone(),
+            coord_tx.clone(),
+        );
+        coord_tasks.push(tokio::spawn(async move {
+            let mut every = tokio::time::interval(Duration::from_secs(20));
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! { _ = every.tick() => {}, _ = n1.notified() => {} }
+                let Ok(bytes) = std::fs::read(&path1) else {
+                    continue;
+                };
+                if !bytes.starts_with(b"AOCF") {
+                    continue;
+                }
+                let cands = rx1.borrow().clone();
+                let (c, k) = (c1.clone(), id1.clone());
+                let res = tokio::task::spawn_blocking(move || {
+                    crate::coord::announce(&c, &k, device, &bytes, &cands, unix_now())
+                })
+                .await
+                .unwrap_or(Err("fallo de la tarea"));
+                tx1.send_modify(|s| {
+                    if let Some(s) = s {
+                        s.announces += 1;
+                        match res {
+                            Ok(()) => {
+                                s.last_announce_ok_unix = Some(unix_now());
+                                s.last_error = None;
+                            }
+                            Err(e) => s.last_error = Some(e),
+                        }
+                    }
+                });
+            }
+        }));
+        let (c2, id2, tx2, ctx2) = (
+            c.clone(),
+            identity.clone(),
+            msg_tx.clone(),
+            coord_tx.clone(),
+        );
+        coord_tasks.push(tokio::spawn(async move {
+            loop {
+                let (c, k) = (c2.clone(), id2.clone());
+                let res = tokio::task::spawn_blocking(move || {
+                    crate::coord::events(&c, &k, device, unix_now(), 25)
+                })
+                .await
+                .unwrap_or(Err("fallo de la tarea"));
+                match res {
+                    Ok(events) => {
+                        for e in events {
+                            ctx2.send_modify(|s| {
+                                if let Some(s) = s {
+                                    s.events += 1;
+                                }
+                            });
+                            let _ = tx2.send(CoordMsg::Candidates(e.peer, e.candidates)).await;
+                        }
+                    }
+                    // Aún sin presencia o coordinator caído: reintento con pausa.
+                    Err(_) => tokio::time::sleep(Duration::from_secs(3)).await,
+                }
+            }
+        }));
+    }
+    let mut stun = cfg.coordinator.as_ref().map(|c| Stun::new(c.stun.clone()));
+    let mut stun_started: Option<Instant> = None;
+
     let mut rt = Runtime {
         cfg,
         local,
@@ -238,7 +331,10 @@ async fn run(path: PathBuf) -> Result<(), String> {
 
     let mut term = signal(SignalKind::terminate()).map_err(|e| e.to_string())?;
     let mut int = signal(SignalKind::interrupt()).map_err(|e| e.to_string())?;
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    // Paso fino (250 ms) para el sondeo con jitter; lo caro (configuración, estado) cada segundo.
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
+    let mut stun_refresh = tokio::time::interval(Duration::from_secs(30));
+    let mut ticks: u64 = 0;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -249,18 +345,90 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 Err(e) => return Err(format!("lectura TUN: {e}")),
             },
             r = udp.recv_from(&mut udp_buf) => match r {
-                Ok((n, from)) => rt.engine.on_udp(from, &udp_buf[..n], Instant::now(), unix_now()),
+                Ok((n, from)) => {
+                    let data = &udp_buf[..n];
+                    if looks_like_stun(data) {
+                        // Respuesta STUN en el socket de datos compartido (ver nat-traversal).
+                        if let Some(s) = stun.as_mut() {
+                            s.on_response(data);
+                        }
+                        Vec::new()
+                    } else {
+                        rt.engine.on_udp(from_wire(from), data, Instant::now(), unix_now())
+                    }
+                }
                 Err(e) => { tracing::debug!("recv_from: {e}"); continue }
             },
             _ = tick.tick() => {
                 let unix = unix_now();
-                rt.poll_config(unix);
-                rt.housekeeping(unix);
-                rt.engine.on_tick(Instant::now(), unix)
+                let now = Instant::now();
+                ticks += 1;
+                if ticks.is_multiple_of(4) {
+                    rt.poll_config(unix);
+                    rt.housekeeping(unix);
+                }
+                // STUN: tras la respuesta (o 3 s), recalcula candidatos y NAT y anuncia si cambian.
+                if let (Some(s), Some(started)) = (stun.as_mut(), stun_started) {
+                    s.expire(now, Duration::from_secs(3));
+                    if s.complete() || now.duration_since(started) >= Duration::from_secs(3) {
+                        stun_started = None;
+                        let (mapping, reflexive) = s.result();
+                        let mut cands = net::local_addrs(&rt.cfg.interface, rt.cfg.listen.port()).await;
+                        if let Some(r) = reflexive && !cands.contains(&r) {
+                            cands.push(r);
+                        }
+                        rt.engine.set_nat(NatStatus {
+                            mapping: match mapping { "independent" => "independent", "dependent" => "dependent", _ => "unknown" },
+                            reflexive: reflexive.map(|r| r.to_string()),
+                            candidates: cands.iter().map(|c| c.to_string()).collect(),
+                        });
+                        if *cand_tx.borrow() != cands {
+                            tracing::info!(mapping, candidates = cands.len(), "candidatos propios actualizados");
+                            let _ = cand_tx.send(cands);
+                            announce_now.notify_one();
+                        }
+                    }
+                }
+                // Rendezvous pendientes (sin ruta confirmada y con tráfico o ruta perdida).
+                if let Some(c) = rt.cfg.coordinator.clone() {
+                    for peer in rt.engine.take_rendezvous(now) {
+                        let (c, k, tx, st) = (c.clone(), identity.clone(), msg_tx.clone(), coord_tx.clone());
+                        tokio::spawn(async move {
+                            let res = tokio::task::spawn_blocking(move || {
+                                crate::coord::rendezvous(&c, &k, device, peer, unix_now())
+                            })
+                            .await
+                            .unwrap_or(Err("fallo de la tarea"));
+                            st.send_modify(|s| {
+                                if let Some(s) = s {
+                                    s.rendezvous += 1;
+                                    if let Err(e) = &res {
+                                        s.last_error = Some(e);
+                                    }
+                                }
+                            });
+                            if let Ok(cands) = res {
+                                let _ = tx.send(CoordMsg::Candidates(peer, cands)).await;
+                            }
+                        });
+                    }
+                }
+                rt.engine.on_tick(now, unix)
+            },
+            _ = stun_refresh.tick(), if stun.is_some() => {
+                if let Some(s) = stun.as_mut() {
+                    s.start(&udp, dual, Instant::now()).await;
+                    stun_started = Some(Instant::now());
+                }
+                Vec::new()
+            },
+            Some(CoordMsg::Candidates(peer, cands)) = msg_rx.recv() => {
+                rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
             },
             r = ipc.accept() => {
                 let sync = sync_rx.borrow().clone();
-                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync).await { break; }
+                let coord = coord_rx.borrow().clone();
+                if let Ok((stream, _)) = r && handle_ipc(stream, &rt.engine, sync, coord).await { break; }
                 continue;
             }
             _ = term.recv() => break,
@@ -269,7 +437,10 @@ async fn run(path: PathBuf) -> Result<(), String> {
         for o in outs {
             match o {
                 Out::Udp(to, dg) => {
-                    if let Err(e) = udp.send_to(&dg, to).await {
+                    let Some(wire) = to_wire(to, dual) else {
+                        continue;
+                    };
+                    if let Err(e) = udp.send_to(&dg, wire).await {
                         tracing::debug!("send_to {to}: {e}");
                     }
                 }
@@ -284,10 +455,29 @@ async fn run(path: PathBuf) -> Result<(), String> {
     if let Some(task) = sync_task {
         task.abort();
     }
+    for t in coord_tasks {
+        t.abort();
+    }
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
     let _ = state::save(&rt.cfg.state_dir, &rt.state);
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
     Ok(())
+}
+
+/// Mensajes de las tareas del coordinator hacia el bucle principal.
+enum CoordMsg {
+    /// Candidatos de un par (por rendezvous propio o por aviso del coordinator): solo pistas.
+    Candidates(atenea_identity::DeviceId, Vec<SocketAddr>),
+}
+
+#[derive(Clone, Default, serde::Serialize)]
+struct CoordStatus {
+    url: String,
+    last_announce_ok_unix: Option<u64>,
+    last_error: Option<&'static str>,
+    announces: u64,
+    events: u64,
+    rendezvous: u64,
 }
 
 fn bind_ipc(path: &std::path::Path) -> Result<UnixListener, String> {
@@ -311,6 +501,7 @@ async fn handle_ipc(
     stream: UnixStream,
     engine: &Engine,
     sync: Option<crate::sync::Status>,
+    coord: Option<CoordStatus>,
 ) -> bool {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -323,6 +514,7 @@ async fn handle_ipc(
             let mut status =
                 serde_json::to_value(engine.status(Instant::now(), unix_now())).unwrap_or_default();
             status["sync"] = serde_json::to_value(sync).unwrap_or_default();
+            status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
             (status.to_string(), false)
         }
         "stop" => (r#"{"ok":true}"#.to_string(), true),

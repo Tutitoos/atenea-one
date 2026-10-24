@@ -12,13 +12,12 @@ fn expired(now: u64, end: u64) -> bool {
 fn early(now: u64, start: u64) -> bool {
     now < start.saturating_sub(CLOCK_TOLERANCE_SECS)
 }
-/// Verifica los catorce pasos sin modificar el estado recibido. El llamador persiste antes de aplicar.
-pub fn verify_config(
+fn inspect_chain(
     file: &[u8],
-    local: &LocalKeys,
-    state: &AgentState,
+    anchors: &[PublicKey],
     now: u64,
-) -> Result<Verified, ConfigError> {
+    min_serial: Option<u64>,
+) -> Result<(usize, IssuerCert, DeviceConfig), ConfigError> {
     use ConfigError::*;
     // 1: el tamaño declarado se comprueba incluso antes de despachar la versión.
     if file.len() > 251 + MAX_BODY_LEN {
@@ -51,18 +50,12 @@ pub fn verify_config(
     let cfg = DeviceConfig::parse_wire(body).map_err(parsed_error)?;
     let signature = file[187 + n..].try_into().map_err(|_| Malformed)?;
     // 4–8: cadena de confianza y serial, antes de confiar en el cuerpo.
-    let root = state
-        .anchors
+    let root = anchors
         .iter()
         .position(|a| key_id(a) == cert.root_key_id)
         .ok_or(UnknownRoot)?;
-    check(
-        &state.anchors[root],
-        CERT_DOMAIN,
-        &file[5..119],
-        &cert.signature,
-    )
-    .map_err(|_| BadCertSignature)?;
+    check(&anchors[root], CERT_DOMAIN, &file[5..119], &cert.signature)
+        .map_err(|_| BadCertSignature)?;
     if cert.not_after <= cert.not_before
         || cert.not_after - cert.not_before > MAX_CERT_VALIDITY_SECS
         || expired(now, cert.not_after)
@@ -72,10 +65,50 @@ pub fn verify_config(
     if early(now, cert.not_before) {
         return Err(CertNotYetValid);
     }
-    if cert.issuer_serial < state.max_issuer_serial {
+    if min_serial.is_some_and(|serial| cert.issuer_serial < serial) {
         return Err(IssuerRollback);
     }
     check(&cert.issuer_pubkey, CONFIG_DOMAIN, body, &signature).map_err(|_| BadConfigSignature)?;
+    Ok((root, cert, cfg))
+}
+
+/// Inspecciona la cadena y el cuerpo sin identidad local, persistencia ni protección antirrollback.
+pub fn inspect_config(
+    file: &[u8],
+    anchors: &[PublicKey],
+    now: u64,
+) -> Result<(IssuerCert, DeviceConfig), ConfigError> {
+    let (_, cert, cfg) = inspect_chain(file, anchors, now, None)?;
+    if cfg.network_id != cert.network_id || cfg.issuer_serial != cert.issuer_serial {
+        return Err(ConfigError::ScopeMismatch);
+    }
+    check_lease(&cfg, now)?;
+    if !cfg.semantic_valid() {
+        return Err(ConfigError::InvalidStructure);
+    }
+    Ok((cert, cfg))
+}
+
+fn check_lease(cfg: &DeviceConfig, now: u64) -> Result<(), ConfigError> {
+    if expired(now, cfg.not_after) {
+        return Err(ConfigError::Expired);
+    }
+    if early(now, cfg.not_before) {
+        return Err(ConfigError::NotYetValid);
+    }
+    Ok(())
+}
+
+/// Verifica los catorce pasos sin modificar el estado recibido. El llamador persiste antes de aplicar.
+pub fn verify_config(
+    file: &[u8],
+    local: &LocalKeys,
+    state: &AgentState,
+    now: u64,
+) -> Result<Verified, ConfigError> {
+    use ConfigError::*;
+    let (root, cert, cfg) =
+        inspect_chain(file, &state.anchors, now, Some(state.max_issuer_serial))?;
     // 9–11: ámbito, identidad y protección contra rollback (el hash cubre TODO el fichero).
     if cfg.network_id != cert.network_id
         || cfg.issuer_serial != cert.issuer_serial
@@ -97,12 +130,7 @@ pub fn verify_config(
         return Err(ConfigRollback);
     }
     // 12–14: un no-op también caduca y no evita la comprobación del reloj.
-    if expired(now, cfg.not_after) {
-        return Err(Expired);
-    }
-    if early(now, cfg.not_before) {
-        return Err(NotYetValid);
-    }
+    check_lease(&cfg, now)?;
     if early(now, state.max_time_observed) {
         return Err(ClockAnomaly);
     }

@@ -117,9 +117,11 @@ version = "0.1.0"
 dependencies = [
  "atenea-crypto",
  "atenea-identity",
+ "atenea-nat-traversal",
  "atenea-policies",
  "atenea-protocol",
  "atenea-tunnel",
+ "base64 0.22.1",
  "clap",
  "serde",
  "serde_json",
@@ -174,6 +176,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "atenea-coordinator"
+version = "0.1.0"
+dependencies = [
+ "atenea-identity",
+ "atenea-nat-traversal",
+ "axum",
+ "base64 0.22.1",
+ "figment",
+ "hex",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atenea-crypto"
 version = "0.1.0"
 dependencies = [
@@ -192,6 +213,13 @@ dependencies = [
  "blake2 0.11.0",
  "ed25519-dalek 3.0.0",
  "getrandom 0.3.4",
+ "proptest",
+]
+
+[[package]]
+name = "atenea-nat-traversal"
+version = "0.1.0"
+dependencies = [
  "proptest",
 ]
 

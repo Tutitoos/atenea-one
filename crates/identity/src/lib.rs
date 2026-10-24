@@ -11,7 +11,10 @@ use std::{
     fmt,
     net::{IpAddr, SocketAddr},
 };
-pub use verify::verify_config;
+pub use verify::{inspect_config, verify_config};
+
+#[cfg(test)]
+mod inspect_tests;
 
 pub type NetworkId = [u8; 16];
 pub type DeviceId = [u8; 16];

@@ -3,6 +3,7 @@
 use crate::packet::parse_ip;
 use atenea_crypto::{self as crypto, PendingInit, Session, StaticKeypair};
 use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId};
+use atenea_nat_traversal::{MAX_CANDIDATES, sanitize_candidates};
 use atenea_policies::{Policy, classify};
 use atenea_protocol::{self as proto, Packet, ParseError};
 use serde::Serialize;
@@ -18,6 +19,33 @@ const QUEUE_TTL: Duration = Duration::from_secs(10);
 const ACTIVE_WINDOW: Duration = Duration::from_secs(15);
 /// Máximo de mensajes 1 procesados por segundo (cada uno cuesta operaciones DH).
 const INIT_RATE: f64 = 50.0;
+/// Sondeo (hole punching): ventana y límite de envíos del mismo mensaje 1 (~1 s con jitter ±25 %).
+const PROBE_WINDOW: Duration = Duration::from_secs(10);
+const PROBE_MAX_ROUNDS: u32 = 12;
+/// Intervalo mínimo entre rendezvous al coordinator para un mismo par.
+const RENDEZVOUS_MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// Paquete vacío con ruta directa ociosa (los mapeos UDP de los NAT caducan a ~30 s).
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+/// Sin nada autenticado del par durante este tiempo, la ruta se da por perdida.
+const PATH_DEAD_AFTER: Duration = Duration::from_secs(45);
+
+/// Retardo creciente tras un sondeo fallido: 30, 60, 120, 240 y 300 s como máximo.
+fn backoff(failures: u32) -> Duration {
+    Duration::from_secs((30u64 << failures.saturating_sub(1).min(4)).min(300))
+}
+
+/// Próximo reenvío del sondeo: 1 s ±25 %.
+fn next_probe(now: Instant) -> Instant {
+    now + Duration::from_millis(750 + u64::from(crypto::random_u32() % 501))
+}
+
+/// Información de NAT y candidatos propios que muestra el estado.
+#[derive(Serialize, Clone)]
+pub struct NatStatus {
+    pub mapping: &'static str,
+    pub reflexive: Option<String>,
+    pub candidates: Vec<String>,
+}
 
 pub enum Out {
     Udp(SocketAddr, Vec<u8>),
@@ -52,21 +80,45 @@ impl Limiter {
     }
 }
 
+/// Sondeo en curso: reenvío periódico del mismo mensaje 1 a todos los candidatos.
+struct Probe {
+    started: Instant,
+    next_at: Instant,
+    rounds: u32,
+}
+
 struct Peer {
     device_id: DeviceId,
     public: [u8; 32],
     addrs: Vec<IpAddr>,
+    /// Ruta CONFIRMADA: solo cambia con un paquete Noise autenticado del par.
     endpoint: Option<SocketAddr>,
+    /// Pistas estáticas de la configuración firmada (no autenticadas como ruta).
+    cfg_endpoints: Vec<SocketAddr>,
+    /// Pistas del coordinator (saneadas, acotadas, no autenticadas).
+    candidates: Vec<SocketAddr>,
     current: Option<Session>,
     previous: Option<Session>,
     /// Sesión de respondedor aún sin confirmar por un paquete válido del iniciador.
     next: Option<Session>,
     pending: Option<(PendingInit, Instant)>,
+    /// Mensaje 1 en vuelo, para reenviarlo idéntico durante el sondeo.
+    pending_dg: Option<Vec<u8>>,
+    probe: Option<Probe>,
+    probe_failures: u32,
+    /// Sin sondear ni pedir rendezvous hasta este instante (retardo tras un sondeo fallido).
+    hold_until: Option<Instant>,
+    next_rendezvous: Option<Instant>,
+    rendezvous_wanted: bool,
     last_attempt: Option<Instant>,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
+    /// Último mensaje 1 aceptado y su respuesta, para repetirla ante retransmisiones idénticas.
+    last_init_cache: Option<(Vec<u8>, Vec<u8>)>,
     last_handshake: Option<Instant>,
     last_data: Option<Instant>,
+    last_rx: Option<Instant>,
+    last_tx: Option<Instant>,
     tx_bytes: u64,
     rx_bytes: u64,
 }
@@ -78,17 +130,42 @@ impl Peer {
             public,
             addrs: Vec::new(),
             endpoint: None,
+            cfg_endpoints: Vec::new(),
+            candidates: Vec::new(),
             current: None,
             previous: None,
             next: None,
             pending: None,
+            pending_dg: None,
+            probe: None,
+            probe_failures: 0,
+            hold_until: None,
+            next_rendezvous: None,
+            rendezvous_wanted: false,
             last_attempt: None,
             queued: None,
             last_init_ts: None,
+            last_init_cache: None,
             last_handshake: None,
             last_data: None,
+            last_rx: None,
+            last_tx: None,
             tx_bytes: 0,
             rx_bytes: 0,
+        }
+    }
+
+    fn path(&self, now: Instant) -> &'static str {
+        if self.endpoint.is_some()
+            && self
+                .last_rx
+                .is_some_and(|t| now.duration_since(t) < PATH_DEAD_AFTER)
+        {
+            "direct"
+        } else if self.pending.is_some() && self.probe.is_some() {
+            "probing"
+        } else {
+            "none"
         }
     }
 }
@@ -135,6 +212,10 @@ pub struct PeerStatus {
     pub last_handshake_secs_ago: Option<u64>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    /// `direct` (ruta confirmada y viva), `probing` (hole punching en curso) o `none`.
+    pub path: &'static str,
+    pub candidates: usize,
+    pub last_rx_secs: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -147,6 +228,7 @@ pub struct ConfigStatus {
 
 #[derive(Serialize)]
 pub struct Status {
+    pub nat: Option<NatStatus>,
     pub public_key: String,
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
@@ -168,6 +250,7 @@ pub struct Engine {
     lease: Option<(u64, u64)>,
     config_version: u64,
     last_config_error: Option<&'static str>,
+    nat: Option<NatStatus>,
 }
 
 impl Engine {
@@ -190,6 +273,7 @@ impl Engine {
             lease: None,
             config_version: 0,
             last_config_error: None,
+            nat: None,
         }
     }
 
@@ -206,9 +290,7 @@ impl Engine {
                 None => Peer::new(p.device_id, p.noise_pubkey),
             };
             peer.addrs = p.addrs.clone();
-            if peer.endpoint.is_none() {
-                peer.endpoint = p.endpoints.first().copied();
-            }
+            peer.cfg_endpoints = p.endpoints.clone();
             self.peers.push(peer);
         }
         self.own = cfg.tunnel_addrs.clone();
@@ -316,6 +398,7 @@ impl Engine {
             match s.encrypt(pkt, now) {
                 Ok(dg) => {
                     peer.tx_bytes += pkt.len() as u64;
+                    peer.last_tx = Some(now);
                     out.push(Out::Udp(ep, dg));
                     return out;
                 }
@@ -326,19 +409,40 @@ impl Engine {
         // Sin sesión utilizable: se guarda el último paquete y se inicia handshake.
         let peer = &mut self.peers[pi];
         peer.queued = Some((pkt.to_vec(), now));
+        peer.rendezvous_wanted = peer.endpoint.is_none();
         self.maybe_initiate(pi, now, unix, &mut out);
         out
+    }
+
+    /// Destinos de un handshake: la ruta confirmada o, sin ella, las pistas (configuración y coordinator).
+    fn targets(peer: &Peer) -> Vec<SocketAddr> {
+        if let Some(ep) = peer.endpoint {
+            return vec![ep];
+        }
+        let mut v = peer.cfg_endpoints.clone();
+        for c in &peer.candidates {
+            if !v.contains(c) {
+                v.push(*c);
+            }
+        }
+        v
     }
 
     fn maybe_initiate(&mut self, pi: usize, now: Instant, unix: u64, out: &mut Vec<Out>) {
         let index = self.fresh_index();
         let peer = &mut self.peers[pi];
-        let Some(ep) = peer.endpoint else { return };
         if peer.pending.is_some()
             || peer
                 .last_attempt
                 .is_some_and(|t| now.duration_since(t) < HANDSHAKE_RETRY)
+            || (peer.endpoint.is_none() && peer.hold_until.is_some_and(|h| now < h))
         {
+            return;
+        }
+        let targets = Self::targets(peer);
+        if targets.is_empty() {
+            // Sin pistas: solo el coordinator puede aportar candidatos.
+            peer.rendezvous_wanted = true;
             return;
         }
         let Ok((pending, msg)) = crypto::initiate(&self.keys, &peer.public, &self.net, index, unix)
@@ -349,11 +453,23 @@ impl Engine {
         let Ok(dg) = proto::encode_init(index, &msg) else {
             return;
         };
+        let probing = peer.endpoint.is_none();
         peer.pending = Some((pending, now));
+        peer.pending_dg = Some(dg.clone());
+        peer.probe = probing.then(|| Probe {
+            started: now,
+            next_at: next_probe(now),
+            rounds: 1,
+        });
         peer.last_attempt = Some(now);
+        if probing {
+            peer.rendezvous_wanted = true;
+        }
         self.by_index.insert(index, pi);
         self.counters.inc("tx_init");
-        out.push(Out::Udp(ep, dg));
+        for t in targets {
+            out.push(Out::Udp(t, dg.clone()));
+        }
     }
 
     /// Datagrama UDP recibido.
@@ -409,7 +525,17 @@ impl Engine {
         let index = self.fresh_index();
         let peer = &mut self.peers[pi];
         if crypto::check_timestamp(inc.timestamp, unix, peer.last_init_ts).is_err() {
-            self.counters.inc("rx_init_stale");
+            // Retransmisión idéntica del último mensaje 1 aceptado (sondeo por varios candidatos o
+            // respuesta perdida por un NAT): se repite la respuesta guardada sin crear sesión ni
+            // tocar el endpoint. Una repetición ajena solo recibe una respuesta más corta que la petición.
+            if let Some((n, r)) = &peer.last_init_cache
+                && n.as_slice() == noise
+            {
+                out.push(Out::Udp(from, r.clone()));
+                self.counters.inc("rx_init_retransmit");
+            } else {
+                self.counters.inc("rx_init_stale");
+            }
             return;
         }
         // Iniciación simultánea: gana como iniciador la clave pública menor.
@@ -426,9 +552,12 @@ impl Engine {
             return;
         };
         peer.pending = None;
+        peer.pending_dg = None;
+        peer.probe = None;
         peer.next = Some(session);
         peer.last_init_ts = Some(ts);
-        peer.endpoint = Some(from);
+        peer.last_init_cache = Some((noise.to_vec(), resp.clone()));
+        // El endpoint NO cambia aquí: solo un paquete autenticado de la sesión lo confirma.
         self.by_index.insert(index, pi);
         self.counters.inc("rx_init");
         out.push(Out::Udp(from, resp));
@@ -459,12 +588,20 @@ impl Engine {
         };
         peer.previous = peer.current.take();
         peer.current = Some(session);
+        // Ruta confirmada: la respuesta solo puede producirla el par (Noise IK autenticado).
         peer.endpoint = Some(from);
         peer.last_handshake = Some(now);
+        peer.last_rx = Some(now);
+        peer.pending_dg = None;
+        peer.probe = None;
+        peer.probe_failures = 0;
+        peer.hold_until = None;
+        peer.rendezvous_wanted = false;
         self.counters.inc("handshakes_initiator");
         // Keepalive inmediato: confirma la sesión en el respondedor.
         let s = peer.current.as_mut().expect("recién creada");
         if let Ok(dg) = s.encrypt(&[], now) {
+            peer.last_tx = Some(now);
             out.push(Out::Udp(from, dg));
         }
         if let Some((pkt, at)) = peer.queued.take()
@@ -528,6 +665,10 @@ impl Engine {
             self.counters.inc("endpoint_updates");
         }
         peer.last_data = Some(now);
+        peer.last_rx = Some(now);
+        peer.probe_failures = 0;
+        peer.hold_until = None;
+        peer.rendezvous_wanted = false;
         // Con sesión confirmada, un paquete en cola esperando ya puede salir.
         if peer.queued.is_some()
             && let Some(ep) = peer.endpoint
@@ -538,6 +679,7 @@ impl Engine {
             && let Ok(dg) = s.encrypt(&q, now)
         {
             peer.tx_bytes += q.len() as u64;
+            peer.last_tx = Some(now);
             out.push(Out::Udp(ep, dg));
         }
         if plain.is_empty() {
@@ -570,7 +712,7 @@ impl Engine {
         out.push(Out::Tun(pkt));
     }
 
-    /// Temporizador (~1 s): caducidad, reintentos y rekey.
+    /// Temporizador (~250 ms): caducidad, sondeo, keepalive, reintentos y rekey.
     pub fn on_tick(&mut self, now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
         if !self.lease_active(unix) {
@@ -581,18 +723,42 @@ impl Engine {
             return out;
         }
         for pi in 0..self.peers.len() {
+            let targets = Self::targets(&self.peers[pi]);
             let peer = &mut self.peers[pi];
             for slot in [&mut peer.current, &mut peer.previous, &mut peer.next] {
                 if slot.as_ref().is_some_and(|s| s.is_expired(now)) {
                     *slot = None;
                 }
             }
-            if peer
-                .pending
-                .as_ref()
-                .is_some_and(|(_, at)| now.duration_since(*at) >= HANDSHAKE_RETRY)
-            {
-                peer.pending = None;
+            let active = peer
+                .last_data
+                .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
+            // Sondeo (hole punching): se reenvía el MISMO mensaje 1 a todos los candidatos.
+            if let Some((_, at)) = &peer.pending {
+                let probe_over = peer.probe.as_ref().is_some_and(|p| {
+                    now.duration_since(p.started) >= PROBE_WINDOW || p.rounds >= PROBE_MAX_ROUNDS
+                });
+                if probe_over {
+                    peer.pending = None;
+                    peer.pending_dg = None;
+                    peer.probe = None;
+                    peer.probe_failures += 1;
+                    peer.hold_until = Some(now + backoff(peer.probe_failures));
+                    self.counters.inc("probe_failed");
+                } else if let (Some(p), Some(dg)) = (peer.probe.as_mut(), peer.pending_dg.as_ref())
+                {
+                    if now >= p.next_at {
+                        for t in &targets {
+                            out.push(Out::Udp(*t, dg.clone()));
+                        }
+                        p.rounds += 1;
+                        p.next_at = next_probe(now);
+                        self.counters.inc("tx_probe");
+                    }
+                } else if now.duration_since(*at) >= HANDSHAKE_RETRY {
+                    peer.pending = None;
+                    peer.pending_dg = None;
+                }
             }
             if peer
                 .queued
@@ -601,9 +767,32 @@ impl Engine {
             {
                 peer.queued = None;
             }
-            let active = peer
-                .last_data
-                .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
+            // Keepalive con ruta directa: mantiene abierto el mapeo UDP de los NAT.
+            if let Some(ep) = peer.endpoint
+                && let Some(s) = peer.current.as_mut()
+                && s.is_confirmed()
+                && !s.is_expired(now)
+                && peer
+                    .last_tx
+                    .is_none_or(|t| now.duration_since(t) >= KEEPALIVE_INTERVAL)
+                && let Ok(dg) = s.encrypt(&[], now)
+            {
+                peer.last_tx = Some(now);
+                out.push(Out::Udp(ep, dg));
+            }
+            // Ruta perdida: nada autenticado del par durante demasiado tiempo.
+            if peer.endpoint.is_some()
+                && peer
+                    .last_rx
+                    .is_some_and(|t| now.duration_since(t) >= PATH_DEAD_AFTER)
+            {
+                peer.endpoint = None;
+                peer.last_rx = None;
+                self.counters.inc("path_lost");
+                if active {
+                    peer.rendezvous_wanted = true;
+                }
+            }
             let stale = peer.current.as_ref().is_none_or(|s| s.should_rekey(now));
             let need = peer.queued.is_some() || (active && stale);
             if need {
@@ -612,6 +801,71 @@ impl Engine {
         }
         self.reindex();
         out
+    }
+
+    /// Pares que necesitan un rendezvous con el coordinator ahora (sin ruta confirmada, con tráfico
+    /// pendiente o ruta perdida), respetando el intervalo mínimo y el retardo tras un sondeo fallido.
+    pub fn take_rendezvous(&mut self, now: Instant) -> Vec<DeviceId> {
+        let mut v = Vec::new();
+        for p in &mut self.peers {
+            if p.rendezvous_wanted
+                && p.endpoint.is_none()
+                && p.next_rendezvous.is_none_or(|t| now >= t)
+                && p.hold_until.is_none_or(|t| now >= t)
+            {
+                v.push(p.device_id);
+                p.next_rendezvous = Some(now + RENDEZVOUS_MIN_INTERVAL);
+                p.rendezvous_wanted = false;
+            }
+        }
+        v
+    }
+
+    /// Candidatos de un par entregados por el coordinator: son PISTAS no autenticadas. Se saneán,
+    /// se acotan y solo sirven como destino de sondeos; la ruta se confirma con un paquete
+    /// autenticado (nunca por el aviso del coordinator).
+    pub fn on_peer_candidates(
+        &mut self,
+        id: &DeviceId,
+        cands: Vec<SocketAddr>,
+        now: Instant,
+        unix: u64,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        if !self.lease_active(unix) {
+            return out;
+        }
+        let Some(pi) = self.peers.iter().position(|p| &p.device_id == id) else {
+            self.counters.inc("coord_unknown_peer");
+            return out;
+        };
+        let peer = &mut self.peers[pi];
+        peer.candidates = sanitize_candidates(cands, MAX_CANDIDATES);
+        peer.hold_until = None;
+        if peer.endpoint.is_some()
+            && peer
+                .last_rx
+                .is_some_and(|t| now.duration_since(t) < PATH_DEAD_AFTER)
+        {
+            return out;
+        }
+        self.counters.inc("rendezvous_candidates");
+        if peer.pending.is_some() {
+            if let Some(p) = peer.probe.as_mut() {
+                p.started = now;
+                p.next_at = now;
+                p.rounds = 0;
+            }
+        } else {
+            peer.last_attempt = None;
+            self.maybe_initiate(pi, now, unix, &mut out);
+        }
+        out
+    }
+
+    /// Información de NAT/candidatos propios para el estado (la calcula el bucle de E/S).
+    pub fn set_nat(&mut self, nat: NatStatus) {
+        self.nat = Some(nat);
     }
 
     pub fn status(&self, now: Instant, unix: u64) -> Status {
@@ -624,6 +878,7 @@ impl Engine {
                 lease_active: self.lease_active(unix),
                 last_error: self.last_config_error,
             },
+            nat: self.nat.clone(),
             peers: self
                 .peers
                 .iter()
@@ -639,6 +894,9 @@ impl Engine {
                         .map(|t| now.duration_since(t).as_secs()),
                     tx_bytes: p.tx_bytes,
                     rx_bytes: p.rx_bytes,
+                    path: p.path(now),
+                    candidates: p.candidates.len() + p.cfg_endpoints.len(),
+                    last_rx_secs: p.last_rx.map(|t| now.duration_since(t).as_secs()),
                 })
                 .collect(),
         }
@@ -911,9 +1169,20 @@ mod tests {
         assert_eq!(l.b.counters.0["rx_init_stale"], 1);
         let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 6, l.unix).unwrap();
         let dg = proto::encode_init(6, &msg).unwrap();
-        assert_eq!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).len(), 1);
-        // el mismo mensaje 1 repetido ya no es creciente
-        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        let first = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
+        assert_eq!(first.len(), 1);
+        let again = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
+        assert_eq!(again.len(), 1);
+        let (Out::Udp(_, r1), Out::Udp(_, r2)) = (&first[0], &again[0]) else {
+            panic!()
+        };
+        assert_eq!(r1, r2, "se repite la misma respuesta");
+        assert_eq!(l.b.counters.0["rx_init_retransmit"], 1);
+        assert_eq!(l.b.counters.0["rx_init_stale"], 1);
+        // otro mensaje 1 distinto con el mismo timestamp no es una retransmisión
+        let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 7, l.unix).unwrap();
+        let dg2 = proto::encode_init(7, &msg).unwrap();
+        assert!(l.b.on_udp(ep(A_EP), &dg2, l.now, l.unix).is_empty());
         assert_eq!(l.b.counters.0["rx_init_stale"], 2);
     }
 
@@ -1133,5 +1402,156 @@ mod tests {
         let (_, tun_b) = pump(&mut l, out, vec![]);
         assert_eq!(tun_b.len(), 1);
         assert_eq!(l.a.counters.0["handshakes_initiator"], 1);
+    }
+
+    // ---- Conexión directa (fase 4): candidatos, sondeo, confirmación de ruta, keepalive ----
+
+    fn without_static_endpoints() -> Lab {
+        let mut l = lab();
+        l.cfg_a.peers[0].endpoints.clear();
+        l.cfg_b.peers[0].endpoints.clear();
+        let (ca, cb) = (l.cfg_a.clone(), l.cfg_b.clone());
+        l.a.apply_config(&ca);
+        l.b.apply_config(&cb);
+        l
+    }
+
+    fn udp_of(outs: &[Out]) -> Vec<(SocketAddr, Vec<u8>)> {
+        outs.iter()
+            .filter_map(|o| match o {
+                Out::Udp(a, d) => Some((*a, d.clone())),
+                Out::Tun(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_hints_means_rendezvous_not_blind_probing() {
+        let mut l = without_static_endpoints();
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        assert!(out.is_empty(), "sin candidatos no se envía nada");
+        assert_eq!(l.a.take_rendezvous(l.now), vec![[2u8; 16]]);
+        // el intervalo mínimo evita repetir el rendezvous
+        assert!(l.a.take_rendezvous(l.now).is_empty());
+    }
+
+    #[test]
+    fn hole_punching_both_sides_converge_on_a_direct_path() {
+        let mut l = without_static_endpoints();
+        l.a.on_tun(&v4(1, 2, b"hola"), l.now, l.unix);
+        l.b.on_tun(&v4(2, 1, b"eco"), l.now, l.unix);
+        // el coordinator entrega a cada lado los candidatos del otro
+        let oa =
+            l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
+        let ob =
+            l.b.on_peer_candidates(&[1; 16], vec![ep(A_EP)], l.now, l.unix);
+        assert_eq!(udp_of(&oa).len(), 1);
+        let (tun_a, tun_b) = pump(&mut l, oa, ob);
+        assert_eq!((tun_a.len(), tun_b.len()), (1, 1));
+        assert_eq!(l.a.peers[0].path(l.now), "direct");
+        assert_eq!(l.b.peers[0].path(l.now), "direct");
+        assert_eq!(l.a.peers[0].endpoint, Some(ep(B_EP)));
+        assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
+    }
+
+    #[test]
+    fn candidates_from_the_coordinator_are_sanitized_and_only_for_known_peers() {
+        let mut l = without_static_endpoints();
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        let many: Vec<SocketAddr> = (1..=20)
+            .map(|i| ep(&format!("198.51.100.{i}:5000")))
+            .collect();
+        let mut cands = vec![ep("127.0.0.1:9"), ep("[fe80::1]:9"), ep("0.0.0.0:9")];
+        cands.extend(many);
+        let out = l.a.on_peer_candidates(&[2; 16], cands, l.now, l.unix);
+        let sent = udp_of(&out);
+        assert_eq!(sent.len(), atenea_nat_traversal::MAX_CANDIDATES);
+        assert!(
+            sent.iter()
+                .all(|(a, _)| a.ip().to_string().starts_with("198.51.100."))
+        );
+        // un par que no figura en la configuración se ignora
+        assert!(
+            l.a.on_peer_candidates(&[9; 16], vec![ep(B_EP)], l.now, l.unix)
+                .is_empty()
+        );
+        assert_eq!(l.a.counters.0["coord_unknown_peer"], 1);
+    }
+
+    #[test]
+    fn probing_resends_the_same_message_then_fails_and_backs_off() {
+        let mut l = without_static_endpoints();
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        let first = udp_of(&l.a.on_peer_candidates(
+            &[2; 16],
+            vec![ep(B_EP), ep("203.0.113.9:7")],
+            l.now,
+            l.unix,
+        ));
+        assert_eq!(first.len(), 2);
+        let mut resent = 0;
+        for _ in 0..40 {
+            l.now += Duration::from_millis(250);
+            for (_, dg) in udp_of(&l.a.on_tick(l.now, l.unix)) {
+                assert_eq!(dg, first[0].1, "se reenvía el mismo mensaje 1");
+                resent += 1;
+            }
+        }
+        assert!(
+            (16..=26).contains(&resent),
+            "≈ 1 ráfaga/s a 2 candidatos durante 10 s: {resent}"
+        );
+        assert_eq!(l.a.counters.0["probe_failed"], 1);
+        assert_eq!(l.a.peers[0].path(l.now), "none");
+        // tras fallar, retardo antes de pedir otro rendezvous o sondear de nuevo
+        l.a.on_tun(&v4(1, 2, b"y"), l.now, l.unix);
+        assert!(l.a.take_rendezvous(l.now).is_empty());
+        l.now += Duration::from_secs(31);
+        l.unix += 31;
+        assert_eq!(l.a.take_rendezvous(l.now), vec![[2u8; 16]]);
+    }
+
+    #[test]
+    fn an_init_from_another_address_never_redirects_the_confirmed_endpoint() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
+        // Repetición/captura del mensaje 1 desde otra IP: se responde a ella, pero la ruta no cambia.
+        l.unix += 1;
+        let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 77, l.unix).unwrap();
+        let dg = proto::encode_init(77, &msg).unwrap();
+        let out = l.b.on_udp(ep("203.0.113.66:40000"), &dg, l.now, l.unix);
+        assert_eq!(udp_of(&out)[0].0, ep("203.0.113.66:40000"));
+        assert_eq!(
+            l.b.peers[0].endpoint,
+            Some(ep(A_EP)),
+            "el endpoint solo cambia con un paquete autenticado de la sesión"
+        );
+    }
+
+    #[test]
+    fn keepalive_keeps_the_path_and_silence_kills_it() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        // inactividad: a los 15 s cada extremo emite un keepalive hacia el endpoint confirmado
+        l.now += KEEPALIVE_INTERVAL + Duration::from_secs(1);
+        l.unix += 16;
+        let ka = udp_of(&l.a.on_tick(l.now, l.unix));
+        assert_eq!(ka.len(), 1);
+        assert_eq!(ka[0].0, ep(B_EP));
+        assert!(l.a.on_tick(l.now, l.unix).is_empty(), "uno por intervalo");
+        // el keepalive llega y mantiene viva la ruta en el otro extremo
+        let (_, _) = pump(&mut l, vec![Out::Udp(ep(B_EP), ka[0].1.clone())], vec![]);
+        assert_eq!(l.b.counters.0["rx_keepalive"], 2);
+        // silencio total del par: la ruta se da por perdida y se pide rendezvous si había tráfico
+        l.a.peers[0].last_data = Some(l.now);
+        l.now += PATH_DEAD_AFTER + Duration::from_secs(1);
+        l.unix += 46;
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.counters.0["path_lost"], 1);
+        assert_eq!(l.a.peers[0].endpoint, None);
+        assert_eq!(l.a.peers[0].path(l.now), "none");
     }
 }

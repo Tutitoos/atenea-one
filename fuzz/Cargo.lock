@@ -61,6 +61,7 @@ dependencies = [
  "arbitrary",
  "atenea-crypto",
  "atenea-identity",
+ "atenea-nat-traversal",
  "atenea-policies",
  "atenea-protocol",
  "libfuzzer-sys",
@@ -74,6 +75,10 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "atenea-nat-traversal"
+version = "0.1.0"
 
 [[package]]
 name = "atenea-policies"
