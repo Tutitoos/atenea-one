@@ -27,10 +27,15 @@ try {
         if (-not (Get-LocalGroupMember -Group $group | Where-Object {$_.Name -eq "$env:COMPUTERNAME\$name"})) {
             Add-LocalGroupMember -Group $group -Member $name
         }
-        $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$name", $password)
-        $process = Start-Process -FilePath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" `
-            -Credential $credential -PassThru -WorkingDirectory $work `
-            -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$probe`"", '-ResultPath', "`"$result`"")
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe"
+        $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -ResultPath "{1}"' -f $probe,$result
+        $info.UseShellExecute = $false
+        $info.WorkingDirectory = $work
+        $info.Domain = $env:COMPUTERNAME
+        $info.UserName = $name
+        $info.Password = $password
+        $process = [Diagnostics.Process]::Start($info)
     } catch {
         # Solo la imposibilidad de crear/iniciar otro usuario admite la prueba DACL de respaldo.
         Write-Output ('fallback_dacl: el runner no permite crear/iniciar usuario estándar: ' + $_.Exception.Message)
@@ -39,8 +44,10 @@ try {
     if (-not $process.WaitForExit(30000)) { throw 'Timeout del usuario estándar.' }
     if (-not (Test-Path -LiteralPath $result)) { throw 'El usuario estándar no produjo resultado.' }
     $response = Get-Content -LiteralPath $result -Raw | ConvertFrom-Json
-    if ($process.ExitCode -ne 0 -or -not $response.ok) {
-        throw ('Falló el aislamiento real de IPC: ' + (Get-Content -LiteralPath $result -Raw))
+    $code = $process.ExitCode
+    if ($null -eq $code) { throw 'No se obtuvo un código de salida del usuario estándar.' }
+    if ($code -ne 0 -or -not $response.ok) {
+        throw ('Falló el aislamiento real de IPC (salida ' + $code + '): ' + (Get-Content -LiteralPath $result -Raw))
     }
     Write-Output 'standard_user: control denegado, estado permitido y stop rechazado'
 } catch {

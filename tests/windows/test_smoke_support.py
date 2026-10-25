@@ -44,6 +44,20 @@ class SmokeSupportTests(unittest.TestCase):
         self.assertEqual(call.call_args.args[-2:], (r'\\.\pipe\atenea-status', 'status'))
         self.assertEqual(call.call_args.kwargs['timeout'], 5)
 
+    @patch('builtins.open', side_effect=FileNotFoundError(2, 'pipe aún ausente'))
+    def test_pipe_readiness_absence_is_not_a_diagnostic_failure(self, open_pipe):
+        self.assertIsNone(support.pipe_exchange(r'\\.\pipe\atenea-control', 'status'))
+
+    @patch('builtins.open')
+    def test_pipe_readiness_busy_is_expected_but_access_denied_is_not(self, open_pipe):
+        busy = OSError('pipe ocupado')
+        busy.winerror = 231
+        open_pipe.side_effect = busy
+        self.assertIsNone(support.pipe_exchange(r'\\.\pipe\atenea-control', 'status'))
+        open_pipe.side_effect = PermissionError(13, 'acceso denegado')
+        with self.assertRaises(PermissionError):
+            support.pipe_exchange(r'\\.\pipe\atenea-control', 'status')
+
 
 if __name__ == '__main__':
     unittest.main()

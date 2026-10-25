@@ -1,4 +1,5 @@
 """Aceptación real: ejecutar exclusivamente mediante run.sh en el runner desechable."""
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -121,8 +122,44 @@ def defaults():
                      if line.split() and line.split()[0] == "default")
 
 
-def route_iface(address):
-    return call("/sbin/route", "-n", "get", address)
+def route_interfaces(table, prefix):
+    """Busca el prefijo exacto instalado, no un lookup de gateway con route get."""
+    wanted = ipaddress.ip_network(prefix)
+    interfaces = set()
+    column = None
+    for line in table.splitlines():
+        fields = line.split()
+        if fields and fields[0] == "Destination":
+            column = fields.index("Netif")
+            continue
+        if not fields or column is None:
+            continue
+        if len(fields) <= column or len(fields) < 3:
+            raise AssertionError(f"fila netstat inválida: {line}")
+        if fields[0] == "default":
+            continue
+        address, slash, length = fields[0].partition("/")
+        address = address.split("%")[0]
+        if ":" not in address:
+            octets = address.split(".")
+            length = length if slash else str(32 if "H" in fields[2] else len(octets) * 8)
+            address = ".".join(octets + ["0"] * (4 - len(octets)))
+        elif not slash:
+            length = "128"
+        network = ipaddress.ip_network(f"{address}/{length}", strict=False)
+        if network == wanted and "U" in fields[2]:
+            interfaces.add(fields[column])
+    if column is None:
+        raise AssertionError("netstat sin cabecera Destination/Netif")
+    return interfaces
+
+
+def check_route(prefix, interface):
+    family = "inet6" if ":" in prefix else "inet"
+    table = call("/usr/sbin/netstat", "-rn", "-f", family)
+    actual = route_interfaces(table, prefix)
+    assert actual == {interface}, f"ruta {prefix}: esperado {interface}, obtenido {actual}\n{table}"
+    phase(f"ruta {prefix} confirmada por {interface} en netstat {family}")
 
 
 def echo(command):
@@ -246,8 +283,8 @@ dst = "any"
         status = ask(work / "status.sock", "status")
         phase("estado v2: " + json.dumps(status, sort_keys=True))
         assert {r["prefix"] for r in status["routes"] if r["state"] == "installed"} == {"10.88.0.0/24", "fd88::/64"}, status
-        for address in ("10.88.0.1", "fd88::1"):
-            assert re.search(r"interface:\s+" + interface + r"\b", route_iface(address))
+        for prefix in ("10.88.0.0/24", "fd88::/64"):
+            check_route(prefix, interface)
         assert "mtu 1280" in call("/sbin/ifconfig", interface)
         assert RESOLVER.read_text() == OWNER + "nameserver 10.77.0.1\n"
         assert not Path("/etc/resolver/.").is_file()

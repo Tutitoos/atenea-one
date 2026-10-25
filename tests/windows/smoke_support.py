@@ -46,8 +46,21 @@ def ask(pipe, command):
     # El proceso auxiliar permite interrumpir también open/read síncronos bloqueados.
     return json.loads(call(sys.executable, __file__, pipe, command, timeout=5))
 
+def pipe_exchange(pipe, command):
+    try:
+        with open(pipe, 'r+b', buffering=0) as stream:
+            stream.write((command + '\n').encode())
+            return stream.readline(1024 * 1024).decode()
+    except OSError as error:
+        # Antes de readiness no existe instancia o todas están ocupadas; no es un fallo.
+        if isinstance(error, FileNotFoundError) or getattr(error, 'winerror', None) == 231:
+            return None
+        raise
+
+
 
 if __name__ == '__main__':
-    with open(sys.argv[1], 'r+b', buffering=0) as stream:
-        stream.write((sys.argv[2] + '\n').encode())
-        print(stream.readline(1024 * 1024).decode())
+    reply = pipe_exchange(sys.argv[1], sys.argv[2])
+    if reply is None:
+        sys.exit(3)  # El sondeo conserva su plazo; no imprime un traceback transitorio.
+    print(reply)
