@@ -137,6 +137,28 @@ impl Config {
 mod tests {
     use super::*;
     #[test]
+    fn per_ip_capacity_is_configurable_without_changing_the_default() {
+        assert_eq!(Config::default().max_per_ip, 32);
+        let mut c: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::string("max_per_ip = 64"))
+            .extract()
+            .unwrap();
+        c.coordinator_keys = vec![hex::encode(
+            atenea_identity::SigningKey::from_bytes(&[1; 32])
+                .verifying_key()
+                .to_bytes(),
+        )];
+        c.tls_cert_file = "test.pem".into();
+        c.tls_key_file = "test-key.pem".into();
+        assert_eq!(c.max_per_ip, 64);
+        assert!(c.validate().is_ok());
+        for invalid in [0, c.max_allocations + 1] {
+            c.max_per_ip = invalid;
+            assert_eq!(c.validate(), Err("límites fuera de rango"));
+        }
+    }
+
+    #[test]
     fn proxy_never_binds_external_and_limits_are_validated() {
         let mut c = Config {
             proxy_protocol: true,

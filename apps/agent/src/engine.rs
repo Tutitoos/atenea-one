@@ -1053,8 +1053,9 @@ impl Engine {
             let active = peer
                 .last_data
                 .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
-            // Sondeo (hole punching): se reenvía el MISMO mensaje 1 a todos los candidatos directos.
+            // Sondeo: el MISMO mensaje 1 por directo y relay; el primer envío UDP puede perderse.
             if let Some((_, at)) = &peer.pending {
+                let relay = Self::ready_relay(peer).and_then(PathKind::relay);
                 let probe_over = peer.probe.as_ref().is_some_and(|p| {
                     now.duration_since(p.started) >= PROBE_WINDOW || p.rounds >= PROBE_MAX_ROUNDS
                 });
@@ -1070,6 +1071,13 @@ impl Engine {
                     if now >= p.next_at {
                         for t in &targets {
                             out.push(Out::Udp(*t, dg.clone()));
+                        }
+                        if let Some(kind) = relay {
+                            out.push(Out::Relay {
+                                peer: peer.device_id,
+                                kind,
+                                dg: dg.clone(),
+                            });
                         }
                         p.rounds += 1;
                         p.next_at = next_probe(now);
@@ -1364,9 +1372,8 @@ impl Engine {
         self.counters.inc("rendezvous_candidates");
         if peer.pending.is_some() {
             if let Some(p) = peer.probe.as_mut() {
-                p.started = now;
+                // Nuevas pistas no renuevan la ventana ni el presupuesto del mismo mensaje 1.
                 p.next_at = now;
-                p.rounds = 0;
             }
         } else if peer.current.as_ref().is_some_and(|s| s.is_confirmed()) {
             // Sesión ya establecida (p. ej. por relay): se sondea el directo con keepalives cifrados.
@@ -2366,6 +2373,38 @@ mod tests {
             let (oa, ob) = (l.a.on_tick(l.now, l.unix), l.b.on_tick(l.now, l.unix));
             pump(l, oa, ob);
         }
+    }
+
+    #[test]
+    fn repeated_candidates_do_not_extend_a_pending_probe() {
+        let mut l = lab();
+        l.a.on_tun(&v4(1, 2, b"a"), l.now, l.unix);
+        let first = l.a.peers[0].pending.as_ref().unwrap().0.local_index();
+        for _ in 0..40 {
+            l.now += Duration::from_millis(250);
+            l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
+            l.a.on_tick(l.now, l.unix);
+        }
+        // Puede empezar otro intento con pistas nuevas, pero el original ya debe haber caducado.
+        assert_ne!(
+            l.a.peers[0].pending.as_ref().map(|(p, _)| p.local_index()),
+            Some(first)
+        );
+        assert!(l.a.counters.0["probe_failed"] >= 1);
+    }
+
+    #[test]
+    fn relay_handshake_retries_after_the_first_datagrams_are_lost() {
+        let mut l = lab();
+        l.direct_ok = false;
+        // Se pierden los mensajes iniciales, incluso los enviados al abrir el relay.
+        l.a.on_tun(&v4(1, 2, b"a"), l.now, l.unix);
+        l.b.on_tun(&v4(2, 1, b"b"), l.now, l.unix);
+        l.a.set_relay_ready(&[2; 16], RelayKind::Udp, true, l.now);
+        l.b.set_relay_ready(&[1; 16], RelayKind::Udp, true, l.now);
+        run(&mut l, 3);
+        assert_eq!(l.a.peers[0].path_name(l.now), "relay-udp");
+        assert_eq!(l.b.peers[0].path_name(l.now), "relay-udp");
     }
 
     #[test]

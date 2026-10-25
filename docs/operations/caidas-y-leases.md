@@ -141,7 +141,7 @@ La corrección añade un dueño estable `netns` con la imagen HAProxy ya local, 
 
 ## Hallazgos abiertos
 
-### Posible fallo multipar (no investigado ni corregido)
+### Fallo multipar: dos defectos de sondeo corregidos; atribución histórica pendiente
 
 - **Escenario exacto:** proyecto `atenea-drill-11879`, seis agentes acumulados: `a`, `b`, `c2`, `c3`, `c4`, `c5`. Cada `c*` se añadió para una repetición de caída del coordinator; no se habían retirado los anteriores. Falló el nuevo par **a↔c5** en la segunda repetición con P2P bloqueado (`net_block_p2p`); tráfico a↔b ya establecido por relay UDP. Topología home, todos los `c*` detrás de NAT1 con IPv4 LAN distinta. Lease/sondeo/tolerancia **60/20/30 s**; announce 20 s. El coordinator se paró, c5 se arrancó durante la caída y su primer ping falló; después se arrancó coordinator, se repuso la ruta de retorno del laboratorio y se esperó presencia antes de intentar el nuevo par.
 - **Revisión:** HEAD registrado al redactar el informe `3b26ab97070bd4d411752fddaa96772eba8604af`, con cambios de trabajo sin commit. Imágenes efectivamente usadas: coordinator `sha256:ee91a94861b2c9c9635dd2e04f13b58096add0fa695718a8b365801ba997bf48`, relay `sha256:a1c38018cca748289028494978d65ee0230e31008ea125c83616ff55c7e855f0`, control plane `sha256:bb7777cd6af45aeb318280d86505d2a87e5618415edb88c23f3ca78335397218`; runner `sha256:371610f0c57e6971dfd76a68cb0d4d6e21d8f044c9cac536b1fa56ee60f6be2e`. Los binarios de agentes/CLI provenían del volumen local `atenea-lab-target`; **no se verificó su correspondencia exacta con ese commit**.
@@ -159,7 +159,167 @@ AssertionError: Tiempo agotado esperando condición
 DRILL cleanup project=atenea-drill-11879 exit=1; pulls=0 (pull_policy=never/--pull=never; imágenes precomprobadas)
 ```
 
-No se capturó el estado IPC de c5 ni el estado interno en memoria del coordinator. **NO COMPROBADO:** causa, determinismo, cardinalidad mínima que lo activa, si depende del orden de claves/handshakes o de la topología, comportamiento con carga ni corrección. No se investigó más por decisión del responsable; se tratará aparte como posible bug multipar antes de fase 11. El arnés final retira/revoca cada par nuevo entre repeticiones para mantener dos agentes estables más uno nuevo, sin presentar el resultado multipar fallido como éxito ni afirmar cobertura de seis agentes.
+En aquella ejecución no se capturó el estado IPC de c5 ni el estado interno del coordinator. El arnés de caídas final retira/revoca cada par nuevo entre repeticiones para mantener dos agentes estables más uno nuevo; eso no constituye una corrección del producto ni cobertura multipar. La investigación posterior siguiente conserva esta evidencia histórica sin atribuirle una causa no observada.
+
+### Investigación multipar posterior (2026-10-25)
+
+**Laboratorio barato:** `tests/network-lab/run-multi-peer.sh` ejecuta secuencialmente un
+único contenedor `atenea-lab` por caso, con `--pull=never --network none`, TUN real,
+namespaces/NAT de `nat/lib.sh`, coordinator/STUN y relay reales compilados de las fuentes
+actuales. No requiere stack/OIDC/BD/HAProxy. `a` y los `c*` comparten NAT1; `b` usa NAT2.
+Todos los pares tienen configuración firmada mutua y ping cada 0,5 s; el estado se muestrea
+cada ~1 s. `PAIR` registra ambos caminos y tiempo desde iniciar las sondas; `STATUS`
+guarda el IPC completo de cada agente; `RELAY`, `COORDINATOR` y `LOG` guardan contadores,
+métricas y hasta 12 líneas de log por proceso. No publica claves privadas ni tokens.
+Los bloqueos también se copian a cada namespace adicional: el helper original solo
+cubre `a`/`b`/routers y dejaría directo entre dos `c*` de la misma LAN.
+
+Las configuraciones duran 900 s y no se renuevan durante el caso (máximo 155 s):
+se aísla establecimiento de caminos, **no** se repite el lease 60/20/30 ni la secuencia
+de cuatro reinicios del coordinator del hallazgo histórico. No hay revocaciones,
+retiradas, cambios de reloj ni rutas Docker de retorno que reponer.
+
+```sh
+# Compilar solo desde cachés; no modificar tags de imágenes locales.
+docker ps -a
+docker run --pull=never --rm --name atenea-multi-build --network none \
+  -v "$PWD:/src:ro" -v atenea-lab-target:/cache \
+  -v atenea-cargo-registry:/usr/local/cargo/registry \
+  -e CARGO_TARGET_DIR=/cache/target -e CARGO_BUILD_JOBS=2 -w /src atenea-lab \
+  cargo build --release --locked --offline \
+  -p atenea-agent -p atenea-cli -p atenea-coordinator -p atenea-relay
+set -o pipefail
+bash tests/network-lab/run-multi-peer.sh | tee /tmp/atenea-multi-before.log
+# Tras la corrección: una repetición N=6/8, dimensionando la opción ya existente.
+ATENEA_RELAY_MAX_PER_IP=64 bash tests/network-lab/run-multi-peer.sh 6 8 \
+  | tee /tmp/atenea-multi-after.log
+```
+
+**OBSERVADO antes de corregir** (una pasada por celda, límite por IP 32):
+
+| N | P2P | Pares establecidos / total | Primer / último establecimiento (s) | Fin del caso (s) |
+| --- | --- | --- | --- | --- |
+| 3 | permitido | 3/3 | 21,229 / 22,238 | 22,282 |
+| 3 | bloqueado | 3/3 | 30,358 / 30,358 | 30,415 |
+| 4 | permitido | 6/6 | 20,224 / 27,311 | 27,372 |
+| 4 | bloqueado | 6/6 | 25,283 / 46,509 | 46,563 |
+| 6 | permitido | 15/15 | 21,289 / 47,692 | 47,732 |
+| 6 | bloqueado | 15/15 | 25,308 / 77,055 | 77,100 |
+| 8 | permitido | 28/28 | 21,381 / 57,969 | 58,023 |
+| 8 | bloqueado | **17/28** | 25,425 / 46,794 (solo los logrados) | **155,819: incompleto** |
+
+El ensayo N=6 no reprodujo los 150 s históricos: no es un fallo determinista de
+cardinalidad seis. Una pasada por celda no caracteriza estadísticamente intermitencia,
+orden de arranque ni sensibilidad a los intervalos. Las claves son nuevas por caso.
+El primer controlador basal fue editado antes de que terminara su última lectura:
+tras emitir los ocho `RESULT`, imprimió `none: command not found`; esa salida exterior
+no se usa como PASS. Los estados/resultados de los ocho contenedores sí quedaron
+guardados; el controlador definitivo no se modifica mientras está ejecutándose y
+propaga el fallo de cualquier caso incompleto.
+
+**Aislamiento:**
+
+- **(a) Coordinator:** N=6 bloqueado: 107 rendezvous HTTP 200 y 93 HTTP 429; 15
+  solicitudes relay HTTP 200, cero rechazos de tokens `rate_limited` y
+  `peer_unavailable`. N=8 bloqueado: 205/264 rendezvous 200/429; relay 45/85
+  HTTP 200/429; `peer_unavailable=0`, presencia=8. Los límites contribuyen a
+  los tiempos, pero no explican por sí solos un handshake pendiente con relay listo.
+  El límite relay de diez solicitudes/minuto cuenta **intentos del solicitante**,
+  incluso si el par o la ventana compartida después rechazan. Como techo ideal:
+  diez pares nuevos/minuto/dispositivo si basta una solicitud por par; reintentos
+  y solicitudes simultáneas de ambos extremos consumen presupuesto sin crear pares.
+  Cada par no dirigido admite una emisión cada 5 s y dos emisiones/minuto
+  (cuatro tokens, dos por emisión). No cambió ninguna cuota.
+- **(b) Motor, dos bugs demostrados con pruebas unitarias que fallaron antes:**
+  `relay_handshake_retries_after_the_first_datagrams_are_lost` obtuvo `probing`
+  en vez de `relay-udp` tras 3 s cuando se perdían los envíos iniciales; el temporizador
+  retransmitía msg1 **solo por directo**, aunque el relay estuviera listo.
+  `repeated_candidates_do_not_extend_a_pending_probe` demostró que cada aviso
+  reiniciaba `started` y `rounds` del mismo intento, anulando sus límites 10 s/12 rondas.
+  Ahora se retransmite el **mismo msg1** también por el mejor relay listo en cada ronda;
+  nuevos candidatos adelantan el próximo envío sin renovar ventana ni presupuesto.
+  Se conservan Noise, desempate por clave, antirreplay, leases y límites de solicitudes.
+  No se cambia el formato ni la autorización del protocolo: se cumplen límites y
+  caminos ya documentados. **INFERENCIA:** ambas condiciones pueden explicar el
+  síntoma histórico, pero no se afirma que esa ejecución concreta las sufriera.
+- **(c) Capacidad/cola/candidatos:** defaults 4096 presencias, 256 long-polls,
+  cola de 16 eventos/30 s y ocho candidatos; se observaron N presencias y dos
+  candidatos por par. No se observó pérdida de eventos; tampoco hay contador de
+  expulsiones que permita descartarla categóricamente. El `announce` sustituye
+  presencia y cola: su posible contribución al episodio histórico sigue siendo
+  **INFERENCIA**, no causa demostrada.
+- **(d) Relay:** N=6 bloqueado: 30 asignaciones, cero rechazos, siete DATA `no_peer`.
+  N=8 bloqueado: 39 asignaciones vigentes (32 como máximo en NAT1 más hasta siete
+  de NAT2), **44 rechazos código 4 (Full)** y 43 DATA `no_peer`.
+  No son 28 asignaciones: cada par requiere dos. Con K agentes tras una IP y
+  N agentes en la malla hacen falta K·(N−1) asignaciones/IP; N·(N−1) en total.
+  N=6 home requiere 25 en NAT1; N=8 home requiere 49: 32 no puede alojarlas.
+  Todos tras una IP: 30 para N=6, 42 para N=7, 56 para N=8.
+  `ATENEA_RELAY_MAX_PER_IP`/TOML ya era configurable y validado; se añade prueba
+  explícita de 64 válido y 0/superior al total inválidos, sin cambiar default32.
+  TLS mantiene su límite independiente de ocho conexiones/IP.
+- **(e) Arnés:** el fallo N=8 aparece sin bajas/revocaciones ni saltos de reloj.
+  Eso descarta que esos eventos sean necesarios para el caso nuevo, pero **no**
+  prueba la ausencia de un artefacto específico del simulacro histórico.
+
+**Propuesta, no aplicada:** presupuestar y repartir con equidad solicitudes por
+dispositivo/par antes de subir cuotas del coordinator; decidir el contrato y
+sus consecuencias antiabuso por separado. Subir MAX_PER_IP dimensiona capacidad,
+no elimina los límites ALLOC/COOKIE, TCP, por red/global o del coordinator.
+
+**Repetición final, una vez N=6 y N=8 con/sin P2P**, binarios recompilados
+offline y `MAX_PER_IP=64`: salida exterior **0**, 244,56 s de pared.
+Ahora el laboratorio exige además tráfico positivo recibido/enviado en **ambos**
+extremos de cada par y falla si al terminar queda algún camino `probing`/`none`.
+Los cuatro casos cumplieron: **cero pares pendientes**, todos con tráfico.
+
+| N | P2P | Pares | Primer / último establecimiento con tráfico (s) | Fin (s) |
+| --- | --- | --- | --- | --- |
+| 6 | permitido | 15/15 directos | 21,335 / 46,682 | 46,745 |
+| 6 | bloqueado | 15/15 relay UDP | 25,340 / 61,872 | 61,926 |
+| 8 | permitido | 28/28 directos | 21,367 / 56,986 | 57,035 |
+| 8 | bloqueado | 28/28 relay UDP | 25,433 / 72,264 | 72,304 |
+
+Extracto literal de la salida final:
+
+```text
+RESULT {"blocked": false, "complete": true, "elapsed": 46.745, "established": 15, "max_per_ip": 64, "n": 6, "pairs": 15, "pending": []}
+RESULT {"blocked": true, "complete": true, "elapsed": 61.926, "established": 15, "max_per_ip": 64, "n": 6, "pairs": 15, "pending": []}
+RESULT {"blocked": false, "complete": true, "elapsed": 57.035, "established": 28, "max_per_ip": 64, "n": 8, "pairs": 28, "pending": []}
+RESULT {"blocked": true, "complete": true, "elapsed": 72.304, "established": 28, "max_per_ip": 64, "n": 8, "pairs": 28, "pending": []}
+```
+
+En N=8 bloqueado hubo 56 asignaciones UDP vigentes, cero rechazos del relay,
+11 DATA `no_peer` (al abrir antes que la pareja), 28 peticiones relay HTTP200,
+cero rechazos de tokens `rate_limited`/`peer_unavailable`; rendezvous 150 HTTP200
+y 218 HTTP429. Los límites de solicitudes siguen afectando el establecimiento;
+no se promete convergencia inmediata ni que una sola pasada mida rendimiento.
+Al haber cambiado código **y** capacidad operativa, la mejora N=8 de 17/28 a
+28/28 no aísla cuánto corresponde a cada factor: los tests unitarios sí aíslan
+los dos defectos del motor.
+
+**Comprobaciones macOS** (`CARGO_BUILD_JOBS=2`, Cargo `--locked --offline`):
+`cargo fmt --all -- --check`, clippy de `atenea-agent`/`atenea-relay` con
+`--all-targets -- -D warnings`, y tests de ambos paquetes: **90** del agente,
+**7+1+7** del relay, todos correctos. Los dos tests nuevos del motor se vieron
+fallar antes de su corrección; una primera versión del assert de caducidad
+exigía que no hubiera *otro* intento posterior y se corrigió para comprobar
+la identidad del intento original, que es el límite documentado.
+No se repitieron los simulacros de caídas completos ni clippy/tests Linux
+del workspace (los ejecuta el responsable).
+
+**Descargas de esta investigación: 0** imágenes/capas/crates/paquetes/toolchains;
+ambas compilaciones Docker y todos los laboratorios usan `--network none`,
+imágenes con `--pull=never` y Cargo offline. Las comprobaciones macOS fueron
+offline. Se conservaron imágenes y volúmenes protegidos; solo se actualizaron
+los binarios/cachés de compilación locales ya autorizados. **Recursos Docker
+propios dejados: 0** contenedores/redes/volúmenes/imágenes. Inventario final:
+solo `atenea-control-plane-tests-pg17` preexistente, redes bridge/host/none,
+filtros `atenea-multi-`/`atenea-drill-` de volúmenes vacíos. Salidas completas
+locales: `/tmp/atenea-multi-before.log` y `/tmp/atenea-multi-after.log`.
+No se hizo commit/push ni se publicaron artefactos.
+
+
 
 ## Regresiones, descargas y recursos dejados
 

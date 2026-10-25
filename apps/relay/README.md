@@ -110,6 +110,22 @@ la vida autorizada. Solo un ALLOC nuevo puede renovarla (máximo 120 s y nunca m
 allá de not_after+30). Las lecturas TCP parciales están acotadas a una trama y un
 bloque de lectura de 2048 bytes. Longitudes 0 y >2048 cierran la conexión.
 
+### Dimensionar varios dispositivos tras una IP
+
+Una asignación es **dirigida**, no un par completo: una malla de N agentes requiere
+N·(N−1) asignaciones, no N·(N−1)/2. Si K de esos agentes comparten la IP pública,
+esa IP consume K·(N−1) asignaciones cuando todos usan relay. Con el valor 32 caben
+6 agentes totalmente tras una IP (30 asignaciones), pero no 7 (42); N=8 requiere
+56. En la topología home con un agente en otra NAT, N=6 consume 25 en NAT1 y
+N=8 consume 49. No es un límite al número total de pares directos.
+
+Para dimensionar ese despliegue, `ATENEA_RELAY_MAX_PER_IP=64` (o
+`max_per_ip = 64` en el TOML) reutiliza la opción existente; no cambia el valor
+por defecto. Rango: 1..=MAX_ALLOCATIONS (este último como máximo 1.000.000).
+Respetar también MAX_PER_NETWORK/MAX_ALLOCATIONS y las cuotas independientes de
+COOKIE/ALLOC. Si se exige TLS, TCP_PER_IP=8 limita conexiones dirigidas por IP:
+subir MAX_PER_IP por sí solo no eleva esa capacidad ni elimina cuotas del coordinator.
+
 ## Estado
 
 Cada conexión al socket Unix obtiene un objeto JSON seguido de salto de línea y
