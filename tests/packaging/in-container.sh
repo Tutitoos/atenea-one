@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C SYSTEMD_COLORS=0
 fail() { echo "FALLO: $*" >&2; journalctl -u atenea-agent --no-pager -n 60; exit 1; }
 wait_active() {
     for ((i=0; i<50; i++)); do
@@ -9,6 +10,45 @@ wait_active() {
     fail 'servicio o socket no disponible'
 }
 assert_mode() { [ "$(stat -c '%a %U %G' "$1")" = "$2" ] || fail "permisos de $1"; }
+status_field() { python3 tests/network-lab/tools.py field /run/atenea/status.sock "$1"; }
+wait_dns() {
+    for ((i=0; i<50; i++)); do
+        if [ "$(status_field dns 2>/dev/null)" = "$1" ]; then return; fi
+        sleep 0.2
+    done
+    fail "estado DNS distinto de $1"
+}
+assert_resolv_conf() {
+    [ "$(sha256sum /etc/resolv.conf)" = "$resolv_conf_before" ] || fail '/etc/resolv.conf modificado'
+}
+assert_dns() {
+    wait_dns applied
+    resolvectl status atenea0 | tee /tmp/resolved-link.status
+    resolvectl dns atenea0 | tee /tmp/resolved-link.dns
+    resolvectl domain atenea0 | tee /tmp/resolved-link.domain
+    python3 - <<'PY'
+from pathlib import Path
+assert Path('/tmp/resolved-link.dns').read_text().split(':', 1)[1].split() == ['10.77.0.1']
+assert Path('/tmp/resolved-link.domain').read_text().split(':', 1)[1].split() == ['~lab.internal']
+status = Path('/tmp/resolved-link.status').read_text()
+assert '-DefaultRoute' in status or 'Default Route: no' in status, status
+assert '~.' not in status.split(), status
+PY
+    [ "$(resolvectl default-route atenea0 | cut -d: -f2 | xargs)" = no ] || fail 'enlace como ruta DNS predeterminada'
+    assert_resolv_conf
+}
+wait_removed() {
+    for ((i=0; i<100; i++)); do
+        resolvectl status > /tmp/resolved-all.status
+        if [ ! -e /sys/class/net/atenea0 ] && ! grep -q '(atenea0)' /tmp/resolved-all.status; then
+            cat /tmp/resolved-all.status
+            assert_resolv_conf
+            return
+        fi
+        sleep 0.02
+    done
+    fail 'interfaz o configuración DNS residual en resolved'
+}
 cd /src
 bash -n packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm tests/packaging/run.sh tests/packaging/in-container.sh
 shellcheck packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm tests/packaging/run.sh tests/packaging/in-container.sh
@@ -39,8 +79,20 @@ device_bundle = "/var/lib/atenea/device/bundle.bin"
 validity_secs = 3600
 tunnel_addrs = ["10.77.0.1"]
 network_prefixes = ["10.77.0.0/24"]
+[[advertise]]
+prefix = "192.168.50.0/24"
+snat = false
 EOF
-atenea issue --issuer-key /tmp/authority/issuer/issuer.key --issuer-cert /tmp/authority/issuer/issuer.cert --spec /tmp/spec.toml --out /var/lib/atenea/config.bin
+cp /tmp/spec.toml /tmp/spec-without-dns.toml
+cat >> /tmp/spec.toml <<'EOF'
+[dns]
+servers = ["10.77.0.1"]
+domains = ["lab.internal"]
+EOF
+issue_config() {
+    atenea issue --issuer-key /tmp/authority/issuer/issuer.key --issuer-cert /tmp/authority/issuer/issuer.cert --spec "$1" --out /var/lib/atenea/config.bin
+}
+issue_config /tmp/spec.toml
 cat > /etc/atenea/agent.toml <<EOF
 interface = "atenea0"
 listen = "0.0.0.0:51820"
@@ -55,8 +107,18 @@ network_id = "$net"
 device_id = "$device"
 trust_anchor = "$(cat /tmp/authority/root.pub)"
 EOF
+systemctl start systemd-resolved
+resolvectl status
+resolv_conf_before=$(sha256sum /etc/resolv.conf)
+echo 0 > /proc/sys/net/ipv4/ip_forward
 systemctl start atenea-agent
 wait_active
+assert_dns
+[ "$(status_field forwarding_ok)" = false ] || fail 'forwarding_ok no informa false con ip_forward=0'
+[ "$(cat /proc/sys/net/ipv4/ip_forward)" = 0 ] || fail 'el agente activó ip_forward'
+echo 1 > /proc/sys/net/ipv4/ip_forward
+[ "$(status_field forwarding_ok)" = true ] || fail 'forwarding_ok no se actualiza con ip_forward=1'
+echo 'DNS firmado v2 y forwarding declarado: OK'
 assert_mode /run/atenea '750 root atenea'
 assert_mode /run/atenea/control.sock '600 root atenea'
 assert_mode /run/atenea/status.sock '660 root atenea'
@@ -77,12 +139,23 @@ for command in (b"stop\n", b"reload\n"):
         assert b'error' in response, response
 PY
 systemctl is-active --quiet atenea-agent
+systemctl stop atenea-agent
+wait_removed
+systemctl start atenea-agent
+wait_active
+assert_dns
+echo 'Parada limpia y reaplicación de DNS por systemd: OK'
+# Amplía solo la ventana de observación de la caída; no cambia el reinicio on-failure del paquete.
+mkdir -p /run/systemd/system/atenea-agent.service.d
+printf '[Service]\nRestartSec=10s\n' > /run/systemd/system/atenea-agent.service.d/observar-caida.conf
+systemctl daemon-reload
 # Simula una tabla residual tras SIGKILL; cleanup debe eliminarla antes del reinicio.
 nft add table inet atenea_atenea0
 nft add chain inet atenea_atenea0 residuo
 old_pid=$(systemctl show atenea-agent -p MainPID --value)
 old_ifindex=$(cat /sys/class/net/atenea0/ifindex)
 kill -9 "$old_pid"
+wait_removed
 for ((i=0; i<100; i++)); do
     new_pid=$(systemctl show atenea-agent -p MainPID --value)
     if [ "$new_pid" != 0 ] && [ "$new_pid" != "$old_pid" ] && [ -S /run/atenea/status.sock ]; then break; fi
@@ -93,21 +166,22 @@ wait_active
 [ "$(cat /sys/class/net/atenea0/ifindex)" != "$old_ifindex" ] || fail 'interfaz antigua persistente'
 if nft list chain inet atenea_atenea0 residuo 2>/dev/null; then fail 'tabla residual tras reinicio'; fi
 atenea status --socket /run/atenea/status.sock
-# Prueba real de resolved por enlace; la integración firmada se cubre en el E2E de subredes.
-if systemctl start systemd-resolved && resolvectl status >/dev/null 2>&1; then
-    ip link add dnsprueba type dummy
-    ip link set dnsprueba up
-    resolvectl dns dnsprueba 10.77.0.1
-    resolvectl domain dnsprueba '~lab.internal'
-    resolvectl dns dnsprueba | python3 -c 'import sys; assert "10.77.0.1" in sys.stdin.read()'
-    resolvectl domain dnsprueba | python3 -c 'import sys; assert "~lab.internal" in sys.stdin.read()'
-    ip link delete dnsprueba
-    # `resolvectl status <enlace inexistente>` sale con 0 y solo avisa: se mira la lista completa de enlaces.
-    if resolvectl status 2>/dev/null | grep -q '(dnsprueba)'; then fail 'resolved conserva el enlace borrado'; fi
-    echo 'DNS real por enlace y retirada: OK (enlace dummy, no integración del agente)'
-else
-    echo 'DNS NO comprobado: systemd-resolved no puede arrancar en este contenedor' >&2
-fi
+assert_dns
+echo 'SIGKILL: enlace y DNS retirados; reinicio por systemd reaplica DNS: OK'
+issue_config /tmp/spec-without-dns.toml
+atenea reload --socket /run/atenea/control.sock
+wait_dns none
+resolvectl status atenea0
+resolvectl dns atenea0 | tee /tmp/resolved-without-dns
+resolvectl domain atenea0 | tee /tmp/resolved-without-domain
+python3 - <<'PY'
+from pathlib import Path
+for name in ('dns', 'domain'):
+    output = Path('/tmp/resolved-without-' + name).read_text()
+    assert not output.split(':', 1)[1].split(), output
+PY
+assert_resolv_conf
+echo 'Configuración posterior sin DNS: dns=none y enlace sin servidores ni dominios: OK'
 dpkg -r atenea
 if ip link show atenea0 2>/dev/null; then fail 'interfaz residual al desinstalar'; fi
 if nft list table inet atenea_atenea0 2>/dev/null; then fail 'tabla residual al desinstalar'; fi

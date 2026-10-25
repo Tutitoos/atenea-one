@@ -63,17 +63,27 @@ pub fn parse_ip_addr(text: &str, skip_iface: &str, port: u16) -> Vec<SocketAddr>
     out
 }
 
-pub async fn local_addrs(skip_iface: &str, port: u16) -> Vec<SocketAddr> {
-    match tokio::process::Command::new("ip")
-        .args(["-o", "addr", "show", "scope", "global"])
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => {
-            parse_ip_addr(&String::from_utf8_lossy(&o.stdout), skip_iface, port)
-        }
-        _ => Vec::new(),
-    }
+pub fn exclude_tunnel_candidates(
+    candidates: &mut Vec<SocketAddr>,
+    excluded: &[atenea_identity::Prefix],
+) {
+    candidates.retain(|address| {
+        !excluded
+            .iter()
+            .any(|prefix| atenea_policies::prefix_contains(prefix, &address.ip()))
+    });
+}
+
+pub async fn local_addrs(
+    skip_iface: &str,
+    port: u16,
+    excluded: &[atenea_identity::Prefix],
+) -> Vec<SocketAddr> {
+    use crate::platform::HostNetwork;
+    let host = crate::platform::Platform::new(skip_iface.into(), Default::default());
+    let mut candidates = host.local_addrs(port).await;
+    exclude_tunnel_candidates(&mut candidates, excluded);
+    candidates
 }
 
 /// Cliente STUN: dos consultas (dos puertos del mismo servidor) desde el socket de datos.

@@ -1,7 +1,9 @@
 use super::*;
+use crate::platform::linux::{Binaries, Network};
 use atenea_identity::{AdvertisedRoute, Peer};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Host {
@@ -79,8 +81,8 @@ if [ -f "$base/dns-fail" ]; then exit 1; fi
         }
     }
 
-    fn netconf(&self) -> NetConf {
-        NetConf::new(
+    fn netconf(&self) -> NetConf<Network> {
+        NetConf::with_host(Network::new(
             "atenea0".into(),
             Binaries {
                 ip: self.root.join("ip"),
@@ -88,7 +90,7 @@ if [ -f "$base/dns-fail" ]; then exit 1; fi
                 resolvectl: self.root.join("resolvectl"),
                 proc_sys: self.root.join("proc_sys"),
             },
-        )
+        ))
     }
 }
 
@@ -197,7 +199,7 @@ fn route_conflicts_remove_previously_installed_routes() {
 }
 
 #[test]
-fn protected_addresses_and_peer_endpoints_are_not_captured() {
+fn protected_control_addresses_but_not_peer_endpoints_block_routes() {
     let host = Host::new();
     let mut net = host.netconf();
     let mut cfg = config();
@@ -212,8 +214,8 @@ fn protected_addresses_and_peer_endpoints_are_not_captured() {
     );
     cfg.peers[0].endpoints = vec!["192.168.40.9:51820".parse().unwrap()];
     net.apply(&cfg, &[]).unwrap();
-    assert_eq!(net.status.routes[0].state, "conflict");
-    assert!(!host.log("ip.log").contains(" route add "));
+    assert_eq!(net.status.routes[0].state, "installed");
+    assert!(host.log("ip.log").contains(" route add "));
 }
 
 #[test]
@@ -260,7 +262,7 @@ fn unavailable_or_failing_resolved_is_reported_unsupported_and_retried() {
     fs::remove_file(host.root.join("dns-fail")).unwrap();
     net.apply(&cfg, &[]).unwrap();
     assert_eq!(net.status.dns, "applied");
-    net.bins.resolvectl = host.root.join("absent");
+    fs::remove_file(host.root.join("resolvectl")).unwrap();
     cfg.dns.domains.push("other.example".into());
     net.apply(&cfg, &[]).unwrap();
     assert_eq!(net.status.dns, "unsupported");

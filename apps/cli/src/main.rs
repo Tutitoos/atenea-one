@@ -1,7 +1,16 @@
 //! CLI sin privilegios de red: claves, emisión de configuraciones firmadas y control del agente por su socket Unix.
 
 mod enroll;
+mod ipc;
 mod issue;
+
+#[cfg(test)]
+#[path = "../../agent/src/platform/private_files.rs"]
+pub(crate) mod private_files_contract;
+#[cfg(test)]
+mod platform {
+    pub(crate) use crate::private_files_contract as private_files;
+}
 
 /// El contrato del agente (`enroll.rs`, pruebas) referencia `crate::relay` solo para validar una CA.
 #[cfg(test)]
@@ -12,10 +21,13 @@ mod relay {
 }
 
 use clap::{Parser, Subcommand};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::ExitCode;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -168,8 +180,9 @@ fn run(cmd: Cmd) -> Result<(), String> {
     }
 }
 
+#[cfg(unix)]
 fn ask(socket: &Path, request: &str) -> Result<String, String> {
-    let mut s = UnixStream::connect(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
+    let mut s = ipc::LocalIpc::connect(socket)?;
     s.set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| e.to_string())?;
     writeln!(s, "{request}").map_err(|e| e.to_string())?;
@@ -188,6 +201,17 @@ fn ask(socket: &Path, request: &str) -> Result<String, String> {
     Ok(line.trim().to_string())
 }
 
+#[cfg(not(unix))]
+fn ask(_socket: &Path, _request: &str) -> Result<String, String> {
+    Err(ipc::LocalIpc::unsupported())
+}
+
+#[cfg(not(unix))]
+fn up(_config: &Path, _agent: Option<PathBuf>, _log: &Path) -> Result<(), String> {
+    Err("arranque local no soportado: backend de servicio e IPC pendiente".into())
+}
+
+#[cfg(unix)]
 fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let value: toml::Table =
@@ -225,7 +249,7 @@ fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
                 log.display()
             ));
         }
-        if UnixStream::connect(&socket).is_ok() {
+        if ipc::LocalIpc::connect(&socket).is_ok() {
             println!(
                 "agente en marcha (pid {}); socket {}",
                 child.id(),
@@ -244,6 +268,14 @@ fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(unix))]
+    #[test]
+    fn unsupported_local_backend_fails_explicitly() {
+        let path = Path::new("unused");
+        assert!(ask(path, "status").unwrap_err().contains("pendiente"));
+        assert!(up(path, None, path).unwrap_err().contains("pendiente"));
+    }
 
     #[test]
     fn parses_route_and_status_options() {
@@ -291,6 +323,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn status_uses_either_socket_and_control_errors_propagate() {
         use std::os::unix::net::UnixListener;

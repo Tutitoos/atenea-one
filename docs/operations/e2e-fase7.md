@@ -39,9 +39,8 @@ Topología: cliente `a`, segundo cliente `a2`, router de subred `r` (192.168.50.
 ## Qué no demuestra
 
 - **No se ha instalado en un Proxmox ni en una VM Proxmox real**: no hay acceso desde este entorno. El criterio del plan («acceso real a VM interna en Proxmox») queda **pendiente de tu validación**.
-- El DNS del **agente** se probó con un `resolvectl` simulado; `systemd-resolved` real se probó con un enlace `dummy` y `resolvectl` directo, **no** con el agente configurando el enlace del túnel. La integración completa agente + resolved real queda pendiente.
-- La aprobación de rutas con SNAT desde el **panel** no tiene prueba E2E con navegador: `apps/web/e2e/routes.spec.ts` está **omitido** (`test.skip`) porque `tests/e2e-panel/lab.sh` aún no prepara LAN, forwarding ni la declaración de rutas por un agente. El panel y el control plane están cubiertos por pruebas de componentes y de integración con PostgreSQL.
-- El laboratorio emite las configuraciones con `atenea issue` (emisor manual); el ciclo declarar → aprobar → emitir se probó en el control plane (PostgreSQL real), no con agentes reales enlazados al control plane.
+- Con `systemd-resolved` real el agente se probó en el paquete instalado; en el laboratorio de subredes y el E2E del panel el DNS usa un `resolvectl` simulado (sin systemd en esos contenedores).
+- El laboratorio manual de subredes emite con `atenea issue`; el ciclo con control plane real se prueba en el E2E del panel (un router, un cliente).
 - Solo IPv4/IPv6 de red privada; no hay prueba de subredes solapadas entre **dos routers** (el control plane lo rechaza con 409 y el agente lo rechaza al verificar).
 - No se probó amd64 ni otras distribuciones; el `.deb` se construyó y probó en arm64.
 - Sin revisión criptográfica externa del formato v2.
@@ -54,3 +53,11 @@ Topología: cliente `a`, segundo cliente `a2`, router de subred `r` (192.168.50.
 
 - El código de `run.rs` solo se compila en Linux: clippy en macOS no lo ve. Un `continue` perdido en un `select!` y un `if` colapsable solo aparecieron en Docker. Desde ahora Linux es parte de la comprobación.
 - Dos fallos reales del agente aparecieron en el laboratorio: `forwarding_ok` obsoleto; y una comprobación del arnés mal planteada para la desaparición del enlace en resolved.
+- **El E2E del panel destapó un bug real que el laboratorio manual no veía:** el coordinator entrega al cliente la IP de LAN del router (`192.168.50.1`) como candidato; el agente la trataba como endpoint protegido del plano de control y marcaba su propia ruta como `conflict`. Corrección: los candidatos y endpoints de **pares** dentro de la red del túnel o de una subred servida se descartan (solo son alcanzables por el propio túnel), el router no anuncia direcciones dentro de sus `advertised`, y los endpoints del plano de control (sync, coordinator, STUN, relay) siguen protegiendo.
+- El `axe` del E2E marcó un contraste que en realidad era el fundido de aparición del diálogo (160 ms); además la pantalla tenía un defecto visual real (radios mal maquetados), ya corregido. El `axe` espera ahora a que el diálogo esté estable, sin desactivar ninguna regla.
+
+## Pendientes de la fase, cerrados el 2026-10-25
+
+- **E2E del panel con rutas** (`apps/web/e2e/routes.spec.ts`, ya sin `skip`): agente router con LAN interna sin ruta de retorno declara `192.168.50.0/24`; el panel la muestra `pending`; el botón queda deshabilitado hasta elegir SNAT; se aprueba con SNAT; el cliente la instala y alcanza la VM (ping y TCP 1 MB íntegro, origen enmascarado `192.168.50.1`); el DNS dividido configurado en el panel llega al agente (`dns atenea0 192.168.50.1`, `domain atenea0 ~lab.internal`, sin `~.`); al revocar la ruta el cliente la retira y deja de alcanzar la VM (15 s). Los tres specs (hidratación, panel y rutas) pasan en 2 min.
+- **Agente real con `systemd-resolved` real** (`tests/packaging`): el servicio instalado desde el `.deb` configura `atenea0` con `10.77.0.1`, `~lab.internal` y `Default Route: no`; `/etc/resolv.conf` no cambia (mismo SHA-256); el enlace y la configuración desaparecen al parar y tras `kill -9`; reinicio por systemd reaplica el DNS; una configuración posterior sin DNS deja `dns: none`; `forwarding_ok` pasa de `false` a `true` al activar `ip_forward`.
+- **Ciclo declarar → aprobar → emitir con agentes reales** enlazados al control plane real: cubierto por el E2E anterior.

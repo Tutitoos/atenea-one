@@ -5,15 +5,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-NETNAME=atenea-panel
+NETNAME=atenea-panel-routes
 cleanup() {
   local rc=$?
-  docker rm -f atenea-panel-pg atenea-panel-dex >/dev/null 2>&1 || true
+  docker rm -f atenea-panel-routes-pg atenea-panel-routes-dex atenea-panel-routes-run >/dev/null 2>&1 || true
   docker network rm $NETNAME >/dev/null 2>&1 || true
   return $rc
 }
 trap cleanup EXIT
-docker rm -f atenea-panel-pg atenea-panel-dex >/dev/null 2>&1 || true
+docker rm -f atenea-panel-routes-pg atenea-panel-routes-dex atenea-panel-routes-run >/dev/null 2>&1 || true
 docker network rm $NETNAME >/dev/null 2>&1 || true
 
 # El panel se construye en el anfitrión (salida estática independiente de la plataforma).
@@ -23,14 +23,14 @@ pnpm --filter ./apps/web run build
 docker build -q -t atenea-lab tests/network-lab >/dev/null
 docker build -q -t atenea-panel-lab -f tests/e2e-panel/Dockerfile tests/e2e-panel >/dev/null
 docker network create $NETNAME >/dev/null
-docker run -d --name atenea-panel-pg --network $NETNAME --network-alias postgres \
+docker run -d --name atenea-panel-routes-pg --network $NETNAME --network-alias postgres \
   -e POSTGRES_PASSWORD=pg -e POSTGRES_DB=atenea postgres:17 >/dev/null
-docker run -d --name atenea-panel-dex --network $NETNAME --network-alias dex \
+docker run -d --name atenea-panel-routes-dex --network $NETNAME --network-alias dex \
   -v "$PWD/deploy/compose/dev/dex.yaml":/etc/dex/config.yaml:ro \
   ghcr.io/dexidp/dex:v2.41.1 dex serve /etc/dex/config.yaml >/dev/null
 
 mkdir -p apps/web/test-results
-docker run --rm --privileged --network $NETNAME \
+docker run --rm --name atenea-panel-routes-run --privileged --network $NETNAME \
   -v "$PWD":/src:ro -v "$PWD/apps/web/test-results":/src/apps/web/test-results \
   -v atenea-lab-target:/cache -e CARGO_TARGET_DIR=/cache/target \
   -v atenea-panel-pnpm:/pnpm-store -v atenea-panel-modules:/work \

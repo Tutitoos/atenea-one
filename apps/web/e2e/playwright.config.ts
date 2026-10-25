@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
-// E2E del panel (ver tests/e2e-panel/run.sh): un único escenario largo y ordenado contra el
-// control plane real, Dex y agentes Linux; no se ejecuta en CI (necesita contenedores privilegiados).
+// E2E del panel: hidratación y dos escenarios contra servicios reales compartidos.
+// Cada escenario crea su organización/red y usa agentes distintos; requiere contenedores privilegiados.
 export default defineConfig({
   globalSetup: './global-setup.ts',
   testDir: '.',

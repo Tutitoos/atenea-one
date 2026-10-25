@@ -1,6 +1,6 @@
 # ADR-007: Subredes, DNS, privilegios del agente y custodia de claves locales (fase 7)
 
-- **Estado:** Propuesto (2026-10-25; implementado en laboratorio, pendiente de aceptación del responsable)
+- **Estado:** Aceptado (2026-10-25, por el responsable; implementado y verificado en laboratorio, fase 7). Pendiente: validación en una VM Proxmox real.
 - **Relacionados:** ADR-002 (lease), ADR-005 (jerarquía de claves), `docs/protocol/signed-config-v2.md`, modelo de amenazas T23–T28.
 
 ## Contexto
@@ -35,7 +35,7 @@ La tabla nftables es propiedad exclusiva del agente: se crea al aplicar una conf
 
 ### 4. Instalación de rutas en el cliente sin pisar la red local
 
-Una ruta aprobada no se instala (y se informa `conflict` con el motivo) si: se solapa con una ruta no-por-defecto ya presente por otra interfaz (p. ej. la LAN local con el mismo prefijo), o cubre la dirección de un par, del coordinator, de un relay o del control plane (evita capturar el propio plano de control). La ruta por defecto jamás se modifica. Las rutas viven en la interfaz TUN: al cerrar el descriptor el kernel las elimina (sin residuo tras cierre o caída).
+Una ruta aprobada no se instala (y se informa `conflict` con el motivo) si: se solapa con una ruta no-por-defecto ya presente por otra interfaz (p. ej. la LAN local con el mismo prefijo), o cubre la dirección del coordinator, de STUN, de un relay o del control plane (evita capturar el propio plano de control). Los candidatos y endpoints de pares dentro de rutas firmadas o prefijos del túnel se descartan como destinos subyacentes, sin bloquear la ruta; el router tampoco anuncia candidatos dentro de sus subredes servidas o prefijos del túnel. La ruta por defecto jamás se modifica. Las rutas viven en la interfaz TUN: al cerrar el descriptor el kernel las elimina (sin residuo tras cierre o caída).
 
 ### 5. DNS dividido
 

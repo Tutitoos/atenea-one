@@ -1,9 +1,9 @@
 //! Control local autenticado y socket separado de solo lectura.
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use crate::platform::LocalIpc;
+use crate::platform::local_ipc::{Listener, Stream};
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -13,23 +13,8 @@ pub enum Action {
     Cleanup,
 }
 
-pub fn bind(path: &Path, status_gid: Option<u32>, read_only: bool) -> Result<UnixListener, String> {
-    if path.exists() {
-        if std::os::unix::net::UnixStream::connect(path).is_ok() {
-            return Err(format!("{}: ya hay un agente activo", path.display()));
-        }
-        std::fs::remove_file(path).map_err(|e| e.to_string())?;
-    }
-    let listener = UnixListener::bind(path).map_err(|e| format!("IPC {}: {e}", path.display()))?;
-    std::fs::set_permissions(
-        path,
-        std::fs::Permissions::from_mode(if read_only { 0o660 } else { 0o600 }),
-    )
-    .map_err(|e| e.to_string())?;
-    if read_only && let Some(gid) = status_gid {
-        std::os::unix::fs::chown(path, None, Some(gid)).map_err(|e| e.to_string())?;
-    }
-    Ok(listener)
+pub fn bind(path: &Path, status_gid: Option<u32>, read_only: bool) -> Result<Listener, String> {
+    LocalIpc::bind(path, status_gid, read_only)
 }
 fn allowed(uid: u32, owner: u32) -> bool {
     uid == 0 || uid == owner
@@ -45,17 +30,16 @@ fn action(command: &str, read_only: bool) -> Result<Action, &'static str> {
     }
 }
 pub async fn handle(
-    stream: UnixStream,
+    stream: Stream,
     socket: &Path,
     read_only: bool,
     status: serde_json::Value,
 ) -> Action {
     if !read_only {
-        let authorized = stream
-            .peer_cred()
+        let authorized = LocalIpc::peer_uid(&stream)
             .ok()
-            .zip(std::fs::metadata(socket).ok())
-            .is_some_and(|(cred, meta)| allowed(cred.uid(), meta.uid()));
+            .zip(LocalIpc::socket_owner(socket).ok())
+            .is_some_and(|(uid, owner)| allowed(uid, owner));
         if !authorized {
             return Action::None;
         }

@@ -1,6 +1,6 @@
 # Contrato de configuración firmada v2 (fase 7): rutas de subred y DNS
 
-- **Estado:** Propuesto (2026-10-25; pendiente de aceptación)
+- **Estado:** Aceptado (2026-10-25, por el responsable; implementado y verificado en laboratorio, fase 7). Sin revisión criptográfica externa.
 - **Basado en:** `signed-config-v1.md` (todo lo no mencionado aquí no cambia), ADR-007.
 - **Alcance:** solo el cuerpo `DeviceConfig`. `IssuerCert`, `DeviceBundle` y el envoltorio `SignedConfig` (`magic`, `version` = 1) no cambian.
 

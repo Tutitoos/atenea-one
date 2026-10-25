@@ -425,6 +425,8 @@ pub struct Engine {
     keys: StaticKeypair,
     own: Vec<IpAddr>,
     advertised: Vec<Prefix>,
+    /// Red del túnel y subredes (propias y de los pares): nada de ello es un destino de sondeo directo.
+    tunnel_only: Vec<Prefix>,
     peers: Vec<Peer>,
     by_addr: HashMap<IpAddr, usize>,
     by_key: HashMap<[u8; 32], usize>,
@@ -447,6 +449,7 @@ impl Engine {
             keys,
             own: Vec::new(),
             advertised: Vec::new(),
+            tunnel_only: Vec::new(),
             peers: Vec::new(),
             by_addr: HashMap::new(),
             by_key: HashMap::new(),
@@ -468,6 +471,14 @@ impl Engine {
     /// clave no cambió; destruye las de peers eliminados o con clave nueva (ADR-002).
     pub fn apply_config(&mut self, cfg: &DeviceConfig) {
         let mut old = std::mem::take(&mut self.peers);
+        // Prefijos alcanzables únicamente a través del túnel: red del túnel, rutas de los pares y las propias.
+        let tunnel_only: Vec<Prefix> = cfg
+            .network_prefixes
+            .iter()
+            .cloned()
+            .chain(cfg.peers.iter().flat_map(|p| p.routes.iter().cloned()))
+            .chain(cfg.advertised.iter().map(|r| r.prefix.clone()))
+            .collect();
         for p in &cfg.peers {
             let mut peer = match old
                 .iter()
@@ -478,9 +489,17 @@ impl Engine {
             };
             peer.addrs = p.addrs.clone();
             peer.routes = p.routes.clone();
-            peer.cfg_endpoints = p.endpoints.clone();
+            peer.cfg_endpoints = p
+                .endpoints
+                .iter()
+                .copied()
+                .filter(|e| !tunnel_only.iter().any(|t| prefix_contains(t, &e.ip())))
+                .collect();
+            peer.candidates
+                .retain(|c| !tunnel_only.iter().any(|t| prefix_contains(t, &c.ip())));
             self.peers.push(peer);
         }
+        self.tunnel_only = tunnel_only;
         self.own = cfg.tunnel_addrs.clone();
         self.advertised = cfg.advertised.iter().map(|r| r.prefix.clone()).collect();
         self.policy = Some(Policy::new(cfg));
@@ -1330,8 +1349,14 @@ impl Engine {
             self.counters.inc("coord_unknown_peer");
             return out;
         };
+        let tunnel_only = &self.tunnel_only;
         let peer = &mut self.peers[pi];
-        peer.candidates = sanitize_candidates(cands, MAX_CANDIDATES);
+        // Un candidato dentro de la red del túnel o de una subred servida solo es alcanzable POR el túnel:
+        // sondearlo sería un bucle (y el coordinator no es de confianza para decidirlo).
+        peer.candidates = sanitize_candidates(cands, MAX_CANDIDATES)
+            .into_iter()
+            .filter(|c| !tunnel_only.iter().any(|p| prefix_contains(p, &c.ip())))
+            .collect();
         peer.hold_until = None;
         if peer.healthy(PathKind::Direct, now) {
             return out;
@@ -1710,6 +1735,29 @@ mod tests {
             let (tun_a, _) = pump(&mut l, vec![], out);
             assert_eq!(tun_a, vec![reply]);
         }
+    }
+
+    #[test]
+    fn peer_endpoints_inside_tunnel_only_prefixes_are_discarded() {
+        let mut l = lab();
+        l.cfg_a.peers[0].routes = vec![Prefix {
+            addr: ip("192.168.50.0"),
+            len: 24,
+        }];
+        l.cfg_a.peers[0].endpoints = vec![ep("192.168.50.1:51820"), ep("192.0.2.9:51820")];
+        l.a.apply_config(&l.cfg_a);
+        assert_eq!(l.a.peers[0].cfg_endpoints, vec![ep("192.0.2.9:51820")]);
+        l.a.on_peer_candidates(
+            &[2; 16],
+            vec![
+                ep("192.168.50.1:51820"),
+                ep("192.0.2.7:51820"),
+                ep("10.77.0.2:51820"),
+            ],
+            l.now,
+            l.unix,
+        );
+        assert_eq!(l.a.peers[0].candidates, vec![ep("192.0.2.7:51820")]);
     }
 
     #[test]

@@ -22,9 +22,11 @@ it.each([false, true])('exige elegir SNAT explícitamente y envía %s sin valor 
   await user.click(await screen.findByRole('button', { name: 'Aprobar' }));
   const dialog = screen.getByRole('dialog');
   expect(dialog).toHaveTextContent(device.name); expect(dialog).toHaveTextContent(route.prefix);
+  await waitFor(() => expect(within(dialog).getByRole('radiogroup', { name: 'Elige explícitamente el modo SNAT' })).toBeVisible());
   expect(within(dialog).getByRole('button', { name: 'Aprobar ruta' })).toBeDisabled();
   for (const radio of within(dialog).getAllByRole('radio')) expect(radio).not.toBeChecked();
   await user.click(within(dialog).getByRole('radio', { name: snat ? /^Con SNAT/ : /^Sin SNAT/ }));
+  expect(within(dialog).getByRole('radio', { name: snat ? /^Con SNAT/ : /^Sin SNAT/ })).toHaveFocus();
   await user.click(within(dialog).getByRole('button', { name: 'Aprobar ruta' }));
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/networks/{net}/routes/{id}/approve', { params: { path: { net: 'red', id: route.id } }, body: { snat } }));
   expect(await screen.findByText('Ruta aprobada.')).toBeVisible();

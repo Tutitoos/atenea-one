@@ -2,6 +2,8 @@
 
 El agente aplica únicamente rutas y DNS de una configuración firmada vigente. Declarar una ruta no la autoriza: un administrador debe aprobarla y elegir explícitamente su valor de SNAT. No hay nodo de salida ni tránsito entre pares. Véanse [ADR-007](../../docs/architecture/ADR-007-subredes-dns-privilegios.md) y [configuración v2](../../docs/protocol/signed-config-v2.md).
 
+La integración con el host se delimita en `src/platform`: `TunDevice` (IP puro), `HostNetwork` (enlace, rutas, DNS, SNAT, forwarding y candidatos), `LocalIpc` (transporte y credenciales), `PrivateFiles` (secretos y persistencia duradera) y `Lifecycle` (parada). Linux conserva su backend. macOS compila, pero `run` falla explícitamente con «plataforma sin backend todavía»: no es todavía un cliente utilizable. `advertise_routes` se rechaza en plataformas sin capacidad de servir subredes; un `advertised` firmado se informa como `routes: unsupported` y `forwarding_ok: false`, sin instalar SNAT.
+
 ## Configuración local
 
 Además de las claves habituales del TOML:
@@ -26,6 +28,8 @@ identity_key_file = "credential:identity"
 Linux necesita `ip`, `nft` y, para DNS dividido, `resolvectl` con systemd-resolved activo. El servicio necesita `CAP_NET_ADMIN`; no necesita `CAP_NET_RAW`. No modifica `/etc/resolv.conf` ni sysctls globales. El administrador debe habilitar explícitamente el forwarding de las familias servidas; `forwarding_ok` lo lee de nuevo en cada consulta de estado y en cada informe, sin esperar una nueva configuración ni intentar repararlo. Es nulo cuando la configuración aplicada no anuncia subredes.
 
 Cada ruta de un par se instala con `ip route add PREFIJO dev INTERFAZ`. Se informa `conflict` si solapa una ruta no predeterminada de otra interfaz, cubre un endpoint del plano de control o no se puede comprobar/instalar con seguridad. La ruta predeterminada nunca se modifica. Reaplicar conserva las rutas sin cambios y elimina únicamente las que el agente instaló y han desaparecido. Al cerrar la TUN, el kernel retira sus rutas.
+
+Los endpoints y candidatos de pares dentro de cualquier ruta firmada o prefijo del túnel se descartan antes de sondear/negociar: alcanzarlos por la propia VPN crearía un bucle, pero no bloquean instalar la ruta. El router no anuncia sus direcciones dentro de `advertised` ni de los prefijos del túnel. Los endpoints del plano de control y los de relay recibidos siguen protegidos y sí producen `conflict`.
 
 El servicio arranca aunque no pueda resolver los endpoints del control plane, coordinator o STUN. Mientras falte esa información, las rutas de subred quedan `pending` con motivo `endpoints_unresolved`; la TUN y las direcciones de la red del túnel siguen operativas. Reintenta cada diez segundos fuera del bucle de E/S, con una única resolución en vuelo (sin acumular hilos). Si tarda más de diez segundos, retira las rutas de subred hasta completar la resolución. Cambiar las IP resueltas vuelve a comprobar los conflictos.
 
@@ -53,4 +57,4 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 
 ## Pruebas sin privilegios
 
-`netconf::Binaries` inyecta las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls. Las pruebas unitarias usan ejecutables simulados y ficheros temporales; no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.
+La política de `netconf` usa un backend `HostNetwork` en memoria para probar rutas, diferencias, conflictos, DNS y capacidades en cualquier plataforma, sin procesos ni privilegios. Las pruebas adicionales del backend Linux inyectan las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls; usan ejecutables simulados y ficheros temporales y no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.

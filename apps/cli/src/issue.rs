@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,6 +28,7 @@ fn now_millis() -> u64 {
 }
 
 /// Escribe un fichero nuevo con permisos 0600; no sobrescribe.
+#[cfg(unix)]
 pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
     let mut f = fs::OpenOptions::new()
         .write(true)
@@ -35,6 +37,11 @@ pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(f, "{content}").map_err(|e| e.to_string())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn write_secret(_path: &Path, _content: &str) -> Result<(), String> {
+    Err("custodia de claves no soportada: backend de permisos privados pendiente".into())
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -53,6 +60,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+#[cfg(unix)]
 fn read_seed(path: &Path) -> Result<SigningKey, String> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(path)
@@ -69,6 +77,11 @@ fn read_seed(path: &Path) -> Result<SigningKey, String> {
     Ok(signing_key(hex::decode::<32>(&text).ok_or_else(|| {
         format!("{}: se esperan 64 dígitos hex", path.display())
     })?))
+}
+
+#[cfg(not(unix))]
+fn read_seed(_path: &Path) -> Result<SigningKey, String> {
+    Err("lectura de claves no soportada: backend de permisos privados pendiente".into())
 }
 
 pub fn root_init(out: &Path) -> Result<(), String> {
@@ -397,6 +410,23 @@ pub fn issue(issuer_key: &Path, issuer_cert: &Path, spec: &Path, out: &Path) -> 
 #[cfg(test)]
 mod spec_tests {
     use super::*;
+
+    #[cfg(not(unix))]
+    #[test]
+    fn private_keys_require_a_supported_permissions_backend() {
+        let path = std::env::temp_dir().join(format!(
+            "atenea-unsupported-secret-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        assert!(
+            write_secret(&path, "secret")
+                .unwrap_err()
+                .contains("pendiente")
+        );
+        assert!(read_seed(&path).is_err());
+        assert!(!path.exists());
+    }
 
     const BASE: &str = r#"
 network_id = "04040404040404040404040404040404"

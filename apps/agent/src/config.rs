@@ -1,6 +1,7 @@
 //! Configuración local del agente (TOML, sin firmar): rutas y arranque inicial.
 //! La autorización (peers, direcciones, ACL) viene de la configuración firmada (`config_file`).
 
+use crate::platform::private_files::PrivateFiles;
 use atenea_crypto::{StaticKeypair, hex};
 use atenea_identity::{DeviceId, NetworkId, Prefix, PublicKey, SigningKey, signing_key};
 use serde::Deserialize;
@@ -226,22 +227,7 @@ fn load_seed(path: &Path) -> Result<[u8; 32], String> {
 
 fn load_seed_from_directory(path: &Path, directory: Option<&Path>) -> Result<[u8; 32], String> {
     let path = resolve_key_path(path, directory)?;
-    use std::os::unix::fs::PermissionsExt;
-    let file = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    if meta.permissions().mode() & 0o077 != 0 {
-        return Err(format!(
-            "{}: permisos demasiado abiertos (se exige 0600)",
-            path.display()
-        ));
-    }
-    use std::io::Read;
-    let mut text = String::new();
-    (&file)
-        .read_to_string(&mut text)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = PrivateFiles::read_secret(&path)?;
     hex::decode::<32>(&text).ok_or_else(|| format!("{}: se esperan 64 dígitos hex", path.display()))
 }
 
@@ -407,6 +393,7 @@ mod phase7_tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn credential_files_keep_strict_permissions() {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};

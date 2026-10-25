@@ -111,11 +111,13 @@ Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
   prueba independiente de conectividad. Los eventos `changed/routes` y
   `changed/dns` invalidan el mismo conjunto REST que los demás cambios de red.
 
-La regresión `e2e/routes.spec.ts` está escrita y deshabilitada con `test.skip`:
-`tests/e2e-panel/lab.sh start-agent` aún no recibe un spec de `advertise_routes`
-ni prepara LAN/forwarding/DNS para esta prueba. No se simulan declaraciones ni se
-inventan órdenes del arnés. Al ampliarlo, pasar el spec privado del caso al
-comando y retirar el skip; ejecutarlo solo en el contenedor del propietario.
+La regresión `e2e/routes.spec.ts` usa el laboratorio Linux real para declarar,
+aprobar con SNAT explícito, comprobar tráfico y DNS dividido, y revocar una ruta.
+Se ejecuta solo en el contenedor del propietario. La aprobación agrupa las
+opciones en un `radiogroup` con nombre accesible, etiquetas alineadas y foco visible.
+Antes de medir contraste con axe se espera al final del fade del diálogo:
+medir durante la transición mezcla sus colores con el fondo de la superposición.
+Se conserva la auditoría de página completa, sin desactivar reglas de contraste.
 Vitest cubre validadores, selección obligatoria de SNAT, rechazo/revocación,
 roles, errores de solapamiento/alcance DNS, forwarding, eventos y axe básico.
 

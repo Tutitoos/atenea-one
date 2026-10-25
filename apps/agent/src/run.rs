@@ -4,12 +4,12 @@
 use crate::config::{Config, load_identity_key, load_noise_key};
 use crate::engine::{Engine, NatStatus, Out};
 use crate::net::{self, Stun, from_wire, to_wire};
+use crate::platform::{HostNetwork, Lifecycle, Platform, TunDevice};
 use crate::relay::{RelayClient, RelayClientConfig, RelayEvent};
 use crate::state;
 use atenea_identity::{AgentState, LocalKeys, MAX_BODY_LEN, verify_config};
 use atenea_nat_traversal::looks_like_stun;
 use atenea_policies::prefix_contains;
-use atenea_tunnel::Tun;
 use clap::{Parser, Subcommand};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -17,7 +17,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Notify;
 
 #[derive(Parser)]
@@ -97,7 +96,7 @@ struct Runtime {
     cfg: Config,
     local: LocalKeys,
     state: AgentState,
-    tun: Tun,
+    tun: TunDevice,
     engine: Engine,
     /// (mtime, longitud) del último fichero de configuración procesado, para no reprocesarlo.
     seen: Option<(SystemTime, u64)>,
@@ -108,6 +107,7 @@ struct Runtime {
     protected: Vec<IpAddr>,
     resolved_endpoints: Option<Vec<IpAddr>>,
     routes_changed: bool,
+    candidate_exclusions: Vec<atenea_identity::Prefix>,
 }
 
 impl Runtime {
@@ -164,7 +164,7 @@ impl Runtime {
             .collect();
         let wanted = (usize::from(v.config.mtu), addrs);
         if self.iface.as_ref() != Some(&wanted) {
-            if let Err(e) = self.tun.configure(wanted.0, &wanted.1) {
+            if let Err(e) = self.netconf.configure_link(wanted.0, &wanted.1) {
                 tracing::error!("configurando la interfaz: {e}");
                 self.reject("interface_failed");
                 return;
@@ -184,6 +184,13 @@ impl Runtime {
             return;
         }
         self.routes_changed = true;
+        self.candidate_exclusions = v
+            .config
+            .network_prefixes
+            .iter()
+            .cloned()
+            .chain(v.config.advertised.iter().map(|r| r.prefix.clone()))
+            .collect();
         self.engine.apply_config(&v.config);
         tracing::info!(
             version = v.config.config_version,
@@ -212,6 +219,14 @@ impl Runtime {
 
 async fn run(path: PathBuf) -> Result<(), String> {
     let cfg = Config::load(&path)?;
+    if !cfg.advertise_routes.is_empty()
+        && !Platform::new(cfg.interface.clone(), Default::default()).supports_subnet_routing()
+    {
+        return Err(
+            "advertise_routes no soportado: esta plataforma no admite servir subredes".into(),
+        );
+    }
+    Platform::ensure_available()?;
     let noise = load_noise_key(&cfg.noise_key_file)?;
     let identity = load_identity_key(&cfg.identity_key_file)?;
     let local = LocalKeys {
@@ -227,7 +242,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
             s
         }
     };
-    let tun = Tun::create(&cfg.interface).map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
+    let tun = TunDevice::open(&cfg.interface).map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
     let udp = UdpSocket::bind(cfg.listen)
         .await
         .map_err(|e| format!("UDP {}: {e}", cfg.listen))?;
@@ -396,12 +411,12 @@ async fn run(path: PathBuf) -> Result<(), String> {
         protected: Vec::new(),
         resolved_endpoints,
         routes_changed: true,
+        candidate_exclusions: Vec::new(),
     };
     tracing::info!(interface = %rt.tun.name(), listen = %rt.cfg.listen, "agente en marcha; sin tráfico hasta cargar una configuración vigente");
     rt.poll_config(unix_now());
 
-    let mut term = signal(SignalKind::terminate()).map_err(|e| e.to_string())?;
-    let mut int = signal(SignalKind::interrupt()).map_err(|e| e.to_string())?;
+    let mut lifecycle = Lifecycle::new().map_err(|e| e.to_string())?;
     // Paso fino (250 ms) para el sondeo con jitter; lo caro (configuración, estado) cada segundo.
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     let mut stun_refresh = tokio::time::interval(Duration::from_secs(30));
@@ -419,7 +434,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
 
     loop {
         let outs = tokio::select! {
-            r = rt.tun.read_packet(&mut tun_buf) => match r {
+            r = rt.tun.recv(&mut tun_buf) => match r {
                 Ok(n) => rt.engine.on_tun(&tun_buf[..n], Instant::now(), unix_now()),
                 Err(e) => return Err(format!("lectura TUN: {e}")),
             },
@@ -464,6 +479,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
                         endpoint_started = Some(now);
                     }
                     rt.poll_config(unix);
+                    let before = cand_tx.borrow().len();
+                    cand_tx.send_modify(|cands| net::exclude_tunnel_candidates(cands, &rt.candidate_exclusions));
+                    if cand_tx.borrow().len() != before { announce_now.notify_one(); }
                     rt.housekeeping(unix);
                     let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));
                     if (!rt.cfg.advertise_routes.is_empty() || routes_declared)
@@ -494,10 +512,11 @@ async fn run(path: PathBuf) -> Result<(), String> {
                     if s.complete() || now.duration_since(started) >= Duration::from_secs(3) {
                         stun_started = None;
                         let (mapping, reflexive) = s.result();
-                        let mut cands = net::local_addrs(&rt.cfg.interface, rt.cfg.listen.port()).await;
+                        let mut cands = net::local_addrs(&rt.cfg.interface, rt.cfg.listen.port(), &rt.candidate_exclusions).await;
                         if let Some(r) = reflexive && !cands.contains(&r) {
                             cands.push(r);
                         }
+                        net::exclude_tunnel_candidates(&mut cands, &rt.candidate_exclusions);
                         rt.engine.set_nat(NatStatus {
                             mapping: match mapping { "independent" => "independent", "dependent" => "dependent", _ => "unknown" },
                             reflexive: reflexive.map(|r| r.to_string()),
@@ -592,9 +611,6 @@ async fn run(path: PathBuf) -> Result<(), String> {
             },
             Some(msg) = msg_rx.recv() => match msg {
                 CoordMsg::Candidates(peer, cands) => {
-                    rt.protected.extend(cands.iter().map(SocketAddr::ip));
-                    rt.seen = None;
-                    rt.poll_config(unix_now());
                     rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
                 }
                 CoordMsg::Relay(peer, grant) => {
@@ -657,8 +673,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
                 }
                 continue;
             }
-            _ = term.recv() => break,
-            _ = int.recv() => break,
+            _ = lifecycle.wait() => break,
         };
         for o in outs {
             match o {
@@ -671,7 +686,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
                     }
                 }
                 Out::Tun(p) => {
-                    if let Err(e) = rt.tun.write_packet(&p).await {
+                    if let Err(e) = rt.tun.send(&p).await {
                         tracing::debug!("escritura TUN: {e}");
                     }
                 }

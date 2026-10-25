@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { flexRender, tableFeatures, useTable, type ColumnDef } from '@tanstack/react-table';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
@@ -6,10 +6,11 @@ import { Button, Dialog, Empty, RunButton, Status } from './ui';
 const features = tableFeatures({});
 
 function Approval({ route, device, net, refresh }: { route: Model<'Route'>; device: string; net: string; refresh: () => Promise<unknown> }) {
+  const snatLabel = useId();
   const [snat, setSnat] = useState('');
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
-  return <><p><strong>{device}</strong> · <code>{route.prefix}</code></p><fieldset disabled={pending}><legend>Elige explícitamente el modo SNAT</legend><label><input type="radio" name={`snat-${route.id}`} value="false" checked={snat === 'false'} onChange={e => setSnat(e.target.value)}/>Sin SNAT: exige rutas de retorno en la LAN y conserva el origen real del cliente.</label><label><input type="radio" name={`snat-${route.id}`} value="true" checked={snat === 'true'} onChange={e => setSnat(e.target.value)}/>Con SNAT: enmascara el tráfico sin tocar la LAN, pero se pierde el origen real.</label></fieldset><Button disabled={!snat || pending} onClick={() => {
+  return <><p><strong>{device}</strong> · <code>{route.prefix}</code></p><fieldset className="snat-options" role="radiogroup" aria-labelledby={snatLabel} disabled={pending}><legend id={snatLabel}>Elige explícitamente el modo SNAT</legend><label><input type="radio" name={`snat-${route.id}`} value="false" checked={snat === 'false'} onChange={e => setSnat(e.target.value)}/><span>Sin SNAT: exige rutas de retorno en la LAN y conserva el origen real del cliente.</span></label><label><input type="radio" name={`snat-${route.id}`} value="true" checked={snat === 'true'} onChange={e => setSnat(e.target.value)}/><span>Con SNAT: enmascara el tráfico sin tocar la LAN, pero se pierde el origen real.</span></label></fieldset><Button disabled={!snat || pending} onClick={() => {
     if (!snat || pending) return;
     setPending(true); setMessage('');
     void api.POST('/api/v1/networks/{net}/routes/{id}/approve', { params: { path: { net, id: route.id } }, body: { snat: snat === 'true' } }).then(async () => { await refresh(); setMessage('Ruta aprobada.'); }, error => {

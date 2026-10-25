@@ -6,13 +6,17 @@
 #
 #   lab.sh setup                      topología, servicios y claves (raíz offline en /tmp/lab)
 #   lab.sh issuer-cert <uuid-red>     genera /tmp/lab/issuer.cert para esa red
-#   lab.sh device-init <a|b>          claves del dispositivo; imprime device_id y fingerprint
-#   lab.sh enroll <a|b> <url> <token> enrola el dispositivo (queda pending)
-#   lab.sh start-agent <a|b> <join-json>
+#   lab.sh device-init <a|b|r|c>      claves del dispositivo; imprime device_id y fingerprint
+#   lab.sh enroll <n> <url> <token>  enrola el dispositivo (queda pending)
+#   lab.sh start-agent <n> <join-json> (r declara 192.168.50.0/24)
 #   lab.sh field <a|b> <campo>        campo del estado del agente
 #   lab.sh ping <a|b> <ip>            0 si responde
 #   lab.sh transfer <ip>              TCP 1 MB a→b; imprime ok/fail
 #   lab.sh block <p2p|udp|none>
+#   lab.sh routes-setup              router r, cliente c y LAN h sin retorno (forwarding explícito)
+#   lab.sh subnet-transfer           TCP 1 MB c→h; comprueba integridad y origen SNAT
+#   lab.sh subnet-route              ruta del cliente a la LAN
+#   lab.sh dns-log <r|c>              invocaciones al resolvectl simulado
 set -uo pipefail
 cd "${LAB_ROOT:-$PWD}"
 
@@ -67,7 +71,34 @@ setup)
   for _ in $(seq 1 30); do python3 -c "import urllib.request;urllib.request.urlopen('http://$CP_IP:8080/healthz',timeout=2)" 2>/dev/null && break; sleep 1; done
   python3 -c "import urllib.request;urllib.request.urlopen('http://$CP_IP:8080/healthz',timeout=2)" && echo "listo root_anchor=$ROOT_PUB"
   ;;
+routes-setup)
+  # Espacios separados: no reutilizar agentes ni reglas de bloqueo del escenario del panel.
+  for n in r c h; do
+    ip netns add "$n" || exit 1
+    ip -n "$n" link set lo up
+  done
+  _topo_host r 1 20
+  _topo_host c 2 20
+  ip link add pr-lan type veth peer name ph-lan
+  ip link set pr-lan netns r
+  ip link set ph-lan netns h
+  ip -n r addr add 192.168.50.1/24 dev pr-lan
+  ip -n h addr add 192.168.50.20/24 dev ph-lan
+  ip -n r link set pr-lan up
+  ip -n h link set ph-lan up
+  # Puerta inexistente: h no puede devolver tráfico al túnel sin SNAT.
+  ip -n h route add default via 192.168.50.254
+  ip netns exec r sysctl -qw net.ipv4.ip_forward=1
+  mkdir -p "$LAB/dns-bin"
+  cat > "$LAB/dns-bin/resolvectl" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "/tmp/lab/resolvectl-${ATENEA_LAB_DEVICE:?}.log"
+SH
+  chmod +x "$LAB/dns-bin/resolvectl"
+  ;;
 issuer-cert)
+  # Cada spec firma su propia red; la CLI no sobrescribe certificados.
+  rm -f "$LAB/issuer.cert"
   atenea issuer-cert --root $LAB/root.key --issuer-key $LAB/issuer.key --network-id "${1//-/}" --serial 1 --valid-days 30 --out $LAB/issuer.cert
   ;;
 device-init)
@@ -78,11 +109,16 @@ enroll)
   ;;
 start-agent)
   n=$1
-  atenea agent-config --join "$2" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock >/dev/null || exit 1
+  advertise=()
+  if [[ "$n" == r ]]; then advertise=(--advertise-route 192.168.50.0/24); fi
+  atenea agent-config --join "$2" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock "${advertise[@]}" >/dev/null || exit 1
   {
     echo "interval_secs = 10"
     printf '\n[coordinator]\nurl = "http://198.51.100.10:8081"\nstun = ["198.51.100.10:3478", "198.51.100.10:3479"]\nrelay_ca_file = "%s/certs/ca.pem"\n' "$LAB"
   } >> $LAB/$n.toml
+  if [[ "$n" == r || "$n" == c ]]; then
+    export PATH="$LAB/dns-bin:$PATH" ATENEA_LAB_DEVICE=$n
+  fi
   ip netns exec $n atenea up --config $LAB/$n.toml --log $LAB/$n.log
   ;;
 field)
@@ -100,6 +136,43 @@ transfer)
 import json
 print("ok" if json.load(open("$LAB/srv.json"))["sha256"] == json.load(open("$LAB/cli.json"))["sha256"] else "fail")
 PY
+  ;;
+subnet-transfer)
+  ip netns exec h python3 - > "$LAB/subnet-srv.json" <<'PY' &
+import hashlib, json, socket
+with socket.socket() as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("192.168.50.20", 9000))
+    server.listen(1)
+    server.settimeout(120)
+    connection, peer = server.accept()
+    connection.settimeout(120)
+    digest, size = hashlib.sha256(), 0
+    with connection:
+        while data := connection.recv(65536):
+            digest.update(data)
+            size += len(data)
+    print(json.dumps({"bytes": size, "sha256": digest.hexdigest(), "source": peer[0]}))
+PY
+  S=$!; sleep 0.5
+  ip netns exec c python3 "$TOOLS" tcp-client 192.168.50.20 9000 1000000 9 > "$LAB/subnet-cli.json"
+  wait "$S"
+  python3 - "$LAB" <<'PY'
+import json, pathlib, sys
+lab = pathlib.Path(sys.argv[1])
+server = json.loads((lab / "subnet-srv.json").read_text())
+client = json.loads((lab / "subnet-cli.json").read_text())
+assert server["sha256"] == client["sha256"], (server, client)
+assert server["bytes"] == 1000000, server
+assert server["source"] == "192.168.50.1", server
+print(json.dumps(server))
+PY
+  ;;
+subnet-route)
+  ip -n c route show 192.168.50.0/24
+  ;;
+dns-log)
+  cat "$LAB/resolvectl-$1.log"
   ;;
 block)
   case "$1" in p2p) net_block_p2p;; udp) net_block_udp;; none) net_unblock_all;; *) exit 2;; esac

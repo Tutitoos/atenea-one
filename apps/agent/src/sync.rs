@@ -1,10 +1,9 @@
 //! Descarga acotada: solo `poll_config` decide si la configuración es de confianza.
 use crate::config::SyncConfig;
+use crate::platform::private_files::PrivateFiles;
 use atenea_identity::{DeviceId, MAX_BODY_LEN, SigningKey, api_auth::sign_request};
 use serde::Serialize;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
@@ -69,35 +68,17 @@ fn validate_body(body: &[u8]) -> Result<(), &'static str> {
 
 fn write_changed(path: &Path, body: &[u8]) -> Result<bool, &'static str> {
     validate_body(body)?;
-    match fs::read(path) {
+    match PrivateFiles::read(path) {
         Ok(current) if current == body => return Ok(false),
         Ok(_) => (),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        #[cfg(not(unix))]
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            return Err("ficheros privados no soportados: backend con DACL restrictiva pendiente");
+        }
         Err(_) => return Err("no se pudo leer config_file"),
     }
-    let suffix = atenea_crypto::hex::encode(&atenea_identity::generate_seed()[..16]);
-    let tmp = path.with_file_name(format!(".atenea-sync-{suffix}.tmp"));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&tmp)
-        .map_err(|_| "no se pudo crear el temporal")?;
-    let result = (|| {
-        file.write_all(body)?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)?;
-        std::fs::File::open(
-            path.parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new(".")),
-        )?
-        .sync_all()
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.map_err(|_| "no se pudo guardar config_file")?;
+    PrivateFiles::replace(path, body)?;
     Ok(true)
 }
 
@@ -286,6 +267,11 @@ fn post_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::io::Write;
+    #[cfg(unix)]
     use std::net::TcpListener;
     #[test]
     fn report_uses_device_ids_and_only_public_report_fields() {
@@ -380,6 +366,7 @@ mod tests {
             interval_secs: 60,
         }
     }
+    #[cfg(unix)]
     fn temp() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
             "atenea-sync-{}",
@@ -418,6 +405,7 @@ mod tests {
         assert!(cfg("https://user:secret@example.test").endpoint().is_err());
     }
     #[test]
+    #[cfg(unix)]
     fn atomic_write_and_noop() {
         let dir = temp();
         let path = dir.join("config.bin");
@@ -432,6 +420,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    #[cfg(unix)]
     fn local_http_success_denied_invalid() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
