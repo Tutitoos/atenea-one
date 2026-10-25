@@ -21,10 +21,10 @@ flowchart LR
 ```
 
 1. **Enrutador:** HAProxy en `mode tcp` con `tcp-request inspect-delay` y reglas sobre `req.ssl_sni` (y `req.ssl_alpn`). No descifra: no ve claves ni tráfico. Se prefiere un componente maduro de L4 a código propio en la ruta pública.
-2. **Regla:** SNI == nombre del relay **y** ALPN `atenea-relay/1` → relay. Cualquier otra cosa (incluido sin SNI) → Caddy, que decide. ClientHello incompleto tras el plazo de inspección → se cierra la conexión.
+2. **Regla:** SNI == nombre del relay **y** ALPN `atenea-relay/2` → relay. Cualquier otra cosa (incluido sin SNI o ALPN `/1`) → Caddy, que decide. ClientHello incompleto tras el plazo de inspección → se cierra la conexión. El relay negocia exclusivamente `/2`, sin fallback v1.
 3. **IP de cliente:** HAProxy envía PROXY protocol v2 **solo al relay** (el relay lo necesita para limitar por origen); el backend web recibe TCP plano (Caddy ve la IP de HAProxy hasta que se configure su propio PROXY en la fase 9). Solo se acepta PROXY desde loopback. *Ajuste de la fase 5: el texto original enviaba PROXY a ambos backends.*
 4. **Certificados:** Caddy gestiona el del panel con HTTP-01 en TCP 80 (TLS-ALPN-01 necesitaría 443). El relay termina TLS con rustls y su propio certificado para el nombre del relay; **TLS 1.3 como mínimo, sin 0-RTT**. El cliente valida ese certificado contra el nombre del relay configurado en la configuración firmada (hint de endpoint). La confidencialidad e integridad del tráfico de aplicación no dependen de TLS: va cifrado de extremo a extremo (ADR-003).
-5. **Framing TCP del relay:** cada trama = `longitud (u16, big-endian)` + cuerpo; el cuerpo contiene un datagrama del formato de ADR-003 con la cabecera de direccionamiento del relay (se define en la fase 5). Longitud máxima 2048; mayor o 0 = cierre de conexión. Lectura con búfer acotado y tolerancia a lecturas parciales.
+5. **Framing TCP del relay:** cada trama = `longitud (u16, big-endian)` + cuerpo [relay-v2](../protocol/relay-v2.md); DATA contiene un datagrama de ADR-003 con la cabecera de direccionamiento del relay. Longitud máxima 2048; mayor o 0 = cierre de conexión. Lectura con búfer acotado y tolerancia a lecturas parciales.
 
 ### Puertos del host
 
@@ -55,6 +55,7 @@ El firewall del host es deny por defecto y solo abre los anteriores.
 - Con PROXY v2 hay que impedir que un cliente externo lo envíe: backends solo en loopback y comprobación de origen.
 - Clientes sin SNI correcto no pueden usar el fallback; es intencionado.
 - No resuelve proxies HTTP ni inspección TLS que sustituya certificados: se documentan como redes no soportadas.
+- Relay-v2 exige `relay_id` persistente (16 bytes aleatorios del SO, 32 hex minúsculos no cero), obligatorio en cada relay y en su entrada del coordinator. Relays distintos usan IDs distintos y tokens por audiencia; certificados, DNS y reinicios no regeneran el ID. Actualizar binarios, configuración y ALPN conjuntamente; la evidencia histórica con `/1` no verifica este cutover.
 
 ## Verificación
 

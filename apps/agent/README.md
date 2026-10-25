@@ -15,11 +15,14 @@ status_socket = "/run/atenea/status.sock"
 # Sustituir por el GID numérico del grupo local autorizado a consultar estado.
 status_gid = 1000
 advertise_routes = ["192.168.50.0/24"]
+handshake_cookie_threshold_per_second = 100
 noise_key_file = "credential:noise"
 identity_key_file = "credential:identity"
 ```
 
 `advertise_routes` es opcional (vacío por defecto), admite hasta ocho prefijos privados y requiere `[sync]` para declararlos al control plane. Se declara al arrancar, después de aplicar una configuración o de `reload`, y cada cinco minutos; los fallos no se registran con cuerpos ni claves y se cuentan en `sync.route_announce_errors`. Recargar una lista vacía retira una declaración anterior. `reload` vuelve a leer esta lista local y fuerza la lectura de la configuración firmada; el resto de cambios locales requiere reiniciar el servicio.
+
+`handshake_cookie_threshold_per_second` es un entero positivo de 32 bits (por defecto 100; cero se rechaza), configurable también con `atenea agent-config --handshake-cookie-threshold-per-second N`. Cuenta INIT wire-v2 con longitud y MAC1 válidos en ventanas monotónicas de un segundo; al superar el umbral se exige MAC2 antes de DH. La cookie no autentica al par ni sustituye las cuotas DH existentes; su respuesta tampoco confirma ni marca sano un camino. Véase [wire-v2](../../docs/protocol/wire-v2.md). Cambiar el umbral requiere reiniciar.
 
 `credential:nombre` busca el fichero dentro de `$CREDENTIALS_DIRECTORY` de systemd (`LoadCredential` o `LoadCredentialEncrypted`). El nombre no puede contener `/` ni `..`; falta de directorio, clave ilegible o permisos de grupo/otros producen un error. También se admiten los ficheros privados 0600 habituales. La interfaz admite letras ASCII, números y `_`, hasta 15 caracteres: se usa como identificador de la tabla nftables.
 
@@ -35,7 +38,7 @@ atenea-agent reset-clock --config /etc/atenea/agent.toml
 
 Solo borra la hora máxima observada; conserva versión, serial y anclas.
 
-Las concesiones de relay del coordinator se aceptan solo para pares de la configuración, como mucho cuatro relays por concesión y cuatro resoluciones en vuelo; cada dirección se resuelve con plazo y el cliente conecta a la IP verificada (se descartan loopback, enlace local, multicast, la red del túnel y las subredes servidas). El mensaje 1 se limita antes de la criptografía: cupo propio por par configurado y cupo por origen desconocido.
+Las concesiones de relay del coordinator se aceptan solo para pares de la configuración, como mucho cuatro relays por concesión y cuatro resoluciones en vuelo; cada dirección se resuelve con plazo y el cliente conecta a la IP verificada (se descartan loopback, enlace local, multicast, la red del túnel y las subredes servidas). Cada entrada lleva `relay_id` y su token de audiencia propio: no se comparte un token entre relays. Solo se admite wire-v2/relay-v2 (TLS ALPN `atenea-relay/2`), sin fallback v1. Las cookies INIT se ligan al endpoint directo o al contexto `(relay_id, red, emisor, receptor)`; UDP y TLS del mismo relay comparten ese contexto. El mensaje 1 conserva sus cupos pre-DH por par configurado y por origen desconocido.
 
 ## Aplicación por enlace
 

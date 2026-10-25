@@ -14,6 +14,8 @@ Los ejemplos públicos usan `panel.example.test`, `relay.example.test`,
 La elección y contratación del proveedor pertenece al responsable: ningún módulo
 entregado contrata servidores ni este procedimiento autoriza despliegues reales.
 
+Las mediciones de infraestructura publicadas abajo son anteriores al cutover wire-v2/relay-v2. El ejemplo y los fixtures actuales incluyen `relay_id` persistente; su nueva ejecución y la negociación ALPN `/2` quedan sin comprobar durante este cambio.
+
 ## Orden de instalación
 
 1. Elegir proveedor principal y otro para el secundario; Debian 13, SSH por clave,
@@ -33,7 +35,7 @@ entregado contrata servidores ni este procedimiento autoriza despliegues reales.
    acceso por consola disponible. La clave administrativa se instala **antes**
    de prohibir root/contraseña; el usuario administrativo tiene sudo por clave.
 7. Ejecutar `relay.yml` sobre el segundo nodo, configurar el coordinator principal
-   con ambos endpoints en `ATENEA_COORD_RELAYS` y comprobar conmutación desde fuera.
+   con ambos endpoints y sus `relay_id` distintos en `ATENEA_COORD_RELAYS` y comprobar conmutación desde fuera.
 8. Configurar el hook `observability_agent_tasks` con una ruta de tareas del
    exportador revisada por el operador; por defecto no instala otro servicio.
    Habilitar y ensayar las copias antes de una actualización.
@@ -87,6 +89,15 @@ segundo coordinator público. Se publica solo UDP 3478; su segundo puerto STUN
 
 Preparar `config/stun.toml`, `config/relay.toml` a partir de los `.example`,
 `certs/relay.pem` y un SOPS separado cuyo único secreto sea `files.relay.key`.
+Generar una sola vez por relay un identificador de 16 bytes con RNG del SO,
+codificarlo en 32 hex minúsculos no cero y conservarlo como `relay_id` en su TOML
+(equivalente a `ATENEA_RELAY_ID` en el proceso). Copiar **ese mismo valor** a la
+entrada del coordinator; el secundario nunca reutiliza el ID del principal.
+Ansible copia la configuración del operador: no genera ni renueva IDs al converger,
+reiniciar Docker o rotar TLS. Mantenerlos en la copia de configuración pública.
+El relay usa exclusivamente ALPN `atenea-relay/2`; actualizar todos los binarios
+y configuraciones juntos, sin compatibilidad v1. Una concesión lleva un token
+de 189 bytes por relay, no un token compartido entre principal y secundario.
 En `atenea_env` necesita `ATENEA_RUNTIME_DIR`; `atenea_stack_images` fija `relay`
 y `stun` por digest y el rol deriva `RELAY_IMAGE` y `COORDINATOR_IMAGE`.
 El rol rechaza los servicios del principal y otros secretos **antes de arrancar**.

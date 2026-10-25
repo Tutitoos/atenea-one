@@ -34,6 +34,25 @@ it('solo muestra join en memoria tras crear y lo elimina al ocultar o desmontar'
  const post=vi.spyOn(api,'POST').mockResolvedValue({data:{token:'token-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:'https://example.invalid',token:'token-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)}},response:new Response()});
  const user=userEvent.setup();const {unmount}=wrap(<Enrollment net="red"/>);expect(screen.queryByText(/token-sintetico/)).not.toBeInTheDocument();await user.click(screen.getByRole('button',{name:'Crear token'}));await screen.findByRole('button',{name:'Copiar join'});expect(screen.getByText(/"token": "token-sintetico"/)).toBeVisible();await user.click(screen.getByRole('button',{name:/Ya lo guardé/}));expect(screen.queryByText(/"token": "token-sintetico"/)).not.toBeInTheDocument();unmount();wrap(<Enrollment net="red"/>);expect(screen.queryByRole('button',{name:'Copiar join'})).not.toBeInTheDocument();post.mockRestore();
 });
+it.each([false,true])('explica la bidireccionalidad antes de crear y en la lista (edición: %s)',async canEdit=>{
+ const get=vi.spyOn(api,'GET').mockResolvedValue({data:[{id:device.id,src:{kind:'any'},dst:{kind:'any'},proto:6,port_min:22,port_max:22}],response:new Response()});
+ const user=userEvent.setup();wrap(<Policies net="red" canEdit={canEdit}/>);
+ await screen.findByText('Cualquiera → Cualquiera');
+ const notice=screen.getByRole('note',{name:'Bidireccionalidad de las políticas'});
+ expect(notice).toBeVisible();
+ expect(notice).toHaveTextContent('Una política A→B tcp/22 permite también a B iniciar tráfico TCP a A en cualquier puerto');
+ expect(notice).toHaveTextContent('no se limita a respuestas');
+ expect(screen.getAllByRole('note')).toHaveLength(1);
+ if(canEdit){
+  await user.click(screen.getByRole('button',{name:'Crear política'}));
+  const dialog=screen.getByRole('dialog',{name:'Crear política'});
+  expect(dialog).toHaveAccessibleDescription(/Una política A→B tcp\/22 permite también a B iniciar tráfico TCP a A en cualquier puerto/);
+  expect((await axe(dialog,{rules:{region:{enabled:false},'color-contrast':{enabled:false}}})).violations).toEqual([]);
+ }else{
+  expect(screen.queryByRole('button',{name:'Crear política'})).not.toBeInTheDocument();
+ }
+ get.mockRestore();
+});
 it('pantallas principales sin infracciones básicas de accesibilidad',async()=>{
  const get=vi.spyOn(api,'GET').mockResolvedValue({data:[],response:new Response()});
  const cases=[<Login/>,<Organizations org={{id:device.id,name:'Organización de prueba',role:'owner'}} choose={()=>{}}/>,<Devices devices={[device]} accessRole="member" net="red" elapsed={0} refresh={async()=>{}} />,<Enrollment net="red"/>,<Relays devices={[]} elapsed={0}/>,<Topology devices={[device]} elapsed={0}/>,<Policies net="red" canEdit/>,<Metrics net="red"/>,<Audit net="red"/>];

@@ -9,6 +9,7 @@ use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Relay {
+    pub relay_id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub udp: Option<String>,
@@ -108,7 +109,25 @@ impl Config {
         if self.relay_token_ttl_secs == 0 || self.relay_token_ttl_secs > 600 {
             return Err("relay_token_ttl_secs debe estar entre 1 y 600");
         }
+        if self.relays.len() > 4 {
+            return Err("relays admite como máximo cuatro entradas");
+        }
         for relay in &self.relays {
+            if relay.relay_id.len() != 32
+                || !relay
+                    .relay_id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || relay.relay_id.bytes().all(|b| b == b'0')
+            {
+                return Err("relay_id requiere 32 caracteres hex minúsculos y no puede ser cero");
+            }
+            if self.relays.iter().any(|other| {
+                !std::ptr::eq(relay, other)
+                    && (relay.relay_id == other.relay_id || relay.name == other.name)
+            }) {
+                return Err("los identificadores y nombres de relay deben ser únicos");
+            }
             if relay.name.trim().is_empty()
                 || (relay.udp.is_none() && relay.tls.is_none())
                 || relay.udp.as_deref().is_some_and(|v| !valid_endpoint(v))

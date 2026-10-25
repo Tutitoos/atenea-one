@@ -1,4 +1,4 @@
-//! Sesión establecida fija; contador y texto cifrado arbitrarios.
+//! Datagrama DATA v2 arbitrario contra sesión establecida; antirreplay sin cambios.
 //! Nunca pánico; un fallo no avanza la ventana (un paquete válido posterior sigue aceptándose).
 #![no_main]
 use atenea_crypto::{Error, Session, StaticKeypair, initiate, read_init};
@@ -24,8 +24,7 @@ fn valid(a: &mut Session, now: Instant, payload: &[u8]) -> (u64, Vec<u8>) {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let Some((ctr, ct)) = data.split_first_chunk::<8>() else { return };
-    let counter = u64::from_be_bytes(*ctr);
+    let Ok(Packet::Data {counter, ciphertext: ct, ..}) = parse(data) else { return };
     let now = Instant::now();
     let (mut a, mut b) = pair(now);
     // Tres válidos: 0, 1, 2 (el 0 también sirve de objetivo de colisión con el contador arbitrario).

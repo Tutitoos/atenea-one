@@ -355,7 +355,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             }
         })
     });
-    let engine = Engine::new(cfg.network_id, noise, unix_now());
+    let mut engine = Engine::new(cfg.network_id, noise, unix_now());
+    engine.set_cookie_threshold(cfg.handshake_cookie_threshold_per_second);
     let dual = cfg.listen.is_ipv6();
     let device = cfg.device_id;
 
@@ -459,6 +460,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         },
         identity.clone(),
         device,
+        cfg.network_id,
     );
     let mut stun = cfg.coordinator.as_ref().map(|c| Stun::new(c.stun.clone()));
     let mut stun_started: Option<Instant> = None;
@@ -716,27 +718,27 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                             let relays = crate::coord::vet_relays(grant.relays, &tunnel_only).await;
                             drop(permit);
                             if !relays.is_empty() {
-                                let _ = tx.send(CoordMsg::RelayVetted(peer, grant.token, relays)).await;
+                                let _ = tx.send(CoordMsg::RelayVetted(peer, relays)).await;
                             }
                         });
                     }
                     Vec::new()
                 }
-                CoordMsg::RelayVetted(peer, token, relays) => {
-                    if relay_on { relay.open(peer, token, relays); }
+                CoordMsg::RelayVetted(peer, relays) => {
+                    if relay_on && rt.engine.knows_peer(&peer) { relay.open(peer, relays); }
                     Vec::new()
                 }
             },
             Some(ev) = relay_rx.recv() => {
                 let now = Instant::now();
                 match ev {
-                    RelayEvent::Ready { peer, kind } => rt.engine.set_relay_ready(&peer, kind, true, now),
-                    RelayEvent::Down { peer, kind } => rt.engine.set_relay_ready(&peer, kind, false, now),
-                    RelayEvent::Rx { peer, kind, datagram } => {
-                        rt.engine.on_relay_rx(&peer, kind, &datagram, now, unix_now())
+                    RelayEvent::Ready { peer, relay_id, kind } => rt.engine.set_relay_ready(&peer, relay_id, kind, true, now),
+                    RelayEvent::Down { peer, relay_id, kind } => rt.engine.set_relay_ready(&peer, relay_id, kind, false, now),
+                    RelayEvent::Rx { peer, relay_id, kind, datagram } => {
+                        rt.engine.on_relay_rx(&peer, relay_id, kind, &datagram, now, unix_now())
                     }
-                    RelayEvent::Rtt { peer, kind, ms } => {
-                        rt.engine.set_relay_rtt(&peer, kind, ms);
+                    RelayEvent::Rtt { peer, relay_id, kind, ms } => {
+                        rt.engine.set_relay_rtt(&peer, relay_id, kind, ms);
                         Vec::new()
                     }
                 }
@@ -784,7 +786,12 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         tracing::debug!("escritura TUN: {e}");
                     }
                 }
-                Out::Relay { peer, kind, dg } => relay.send(peer, kind, dg),
+                Out::Relay {
+                    peer,
+                    relay_id,
+                    kind,
+                    dg,
+                } => relay.send(peer, relay_id, kind, dg),
             }
         }
     }
@@ -819,11 +826,7 @@ enum CoordMsg {
     /// Token de relay para un par (petición propia o aviso del coordinator).
     Relay(atenea_identity::DeviceId, crate::coord::RelayGrant),
     /// Relays de una concesión ya resueltos y verificados (IP literal).
-    RelayVetted(
-        atenea_identity::DeviceId,
-        Vec<u8>,
-        Vec<crate::relay::RelayEndpoint>,
-    ),
+    RelayVetted(atenea_identity::DeviceId, Vec<crate::relay::RelayEndpoint>),
 }
 
 #[derive(Clone, Default, serde::Serialize)]

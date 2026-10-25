@@ -28,17 +28,20 @@ pub struct State {
     pub config: Config,
     pub table: Table,
     pub counters: Counters,
+    relay_id: wire::RelayId,
     cookie: CookieMaker,
     rates: IpRates,
     issuers: Vec<[u8; 32]>,
 }
 impl State {
     pub fn new(config: Config, issuers: Vec<[u8; 32]>, secret: [u8; 32]) -> Self {
+        let relay_id = config.id().expect("relay_id validado");
         Self {
             config,
+            relay_id,
             table: Table::default(),
             counters: Counters::default(),
-            cookie: CookieMaker::new(secret),
+            cookie: CookieMaker::new(secret, relay_id),
             rates: IpRates::default(),
             issuers,
         }
@@ -56,34 +59,14 @@ impl State {
             Ok(m) => m,
             Err(_) => {
                 self.drop_packet("malformed");
-                if data.starts_with(&[wire::MAGIC, wire::ty::ALLOC]) {
-                    let validated = match b {
-                        Binding::Tcp(..) => true,
-                        Binding::Udp(a) => data
-                            .get(2..18)
-                            .and_then(|c| c.try_into().ok())
-                            .is_some_and(|c| self.cookie.verify(a, &c, sec)),
-                    };
-                    if validated {
-                        let code = if self.rates.take(
-                            b.ip(),
-                            true,
-                            self.config.alloc_per_second,
-                            self.config.max_rate_entries,
-                            now,
-                        ) {
-                            ErrCode::BadToken
-                        } else {
-                            ErrCode::RateLimited
-                        };
-                        return self.reject(b, code);
-                    }
-                }
                 return vec![];
             }
         };
         match msg {
-            Message::CookieReq => {
+            Message::CookieReq { relay_id } => {
+                if relay_id != self.relay_id {
+                    return vec![];
+                }
                 if let Binding::Udp(a) = b {
                     if self.rates.take(
                         b.ip(),
@@ -92,12 +75,16 @@ impl State {
                         self.config.max_rate_entries,
                         now,
                     ) {
-                        return vec![(b, wire::encode_cookie(&self.cookie.cookie(a, sec)))];
+                        return vec![(
+                            b,
+                            wire::encode_cookie(&relay_id, &self.cookie.cookie(a, sec)),
+                        )];
                     }
                     self.drop_packet("cookie_rate");
                 }
             }
             Message::Alloc {
+                relay_id,
                 cookie,
                 ts,
                 token,
@@ -108,7 +95,7 @@ impl State {
                         self.drop_packet("cookie");
                         return vec![];
                     }
-                    Binding::Tcp(..) if cookie != [0; 16] => {
+                    Binding::Tcp(..) if !wire::valid_tcp_cookie(&cookie) => {
                         return self.reject(b, ErrCode::BadCookie);
                     }
                     _ => {}
@@ -126,11 +113,16 @@ impl State {
                     Ok(t) => t,
                     Err(_) => return self.reject(b, ErrCode::BadToken),
                 };
+                if relay_id != self.relay_id || t.relay_id != relay_id {
+                    return self.reject(b, ErrCode::WrongRelay);
+                }
                 if let Err(e) = t.verify(&self.issuers, sec) {
                     return self.reject(
                         b,
                         match e {
-                            TokenError::Expired | TokenError::NotYetValid => ErrCode::Expired,
+                            TokenError::Expired | TokenError::NotYetValid | TokenError::TooLong => {
+                                ErrCode::Expired
+                            }
                             _ => ErrCode::BadToken,
                         },
                     );
@@ -138,7 +130,7 @@ impl State {
                 if ts.abs_diff(sec) > 30 {
                     return self.reject(b, ErrCode::Expired);
                 }
-                if !wire::verify_alloc(&t.src_identity_pub, &cookie, ts, token, &sig) {
+                if !wire::verify_alloc(&t.src_identity_pub, &relay_id, &cookie, ts, token, &sig) {
                     return self.reject(b, ErrCode::BadSignature);
                 }
                 if t.src_device == t.dst_device {
@@ -242,6 +234,7 @@ mod tests {
     fn alloc(s: &mut State, b: Binding, src: u8, dst: u8, now: u64) -> Vec<Output> {
         let token = RelayToken::issue(
             &key(1),
+            [0x11; 16],
             [7; 16],
             [src; 16],
             [dst; 16],
@@ -259,10 +252,11 @@ mod tests {
         s.process(
             b,
             &wire::encode_alloc(
+                &[0x11; 16],
                 &cookie,
                 ts,
                 &token,
-                &wire::sign_alloc(&key(src), &cookie, ts, &token),
+                &wire::sign_alloc(&key(src), &[0x11; 16], &cookie, ts, &token),
             ),
             now,
         )
@@ -270,7 +264,10 @@ mod tests {
     #[test]
     fn expired_cookie_sweep_and_peer_state() {
         let mut s = State::new(
-            Config::default(),
+            Config {
+                relay_id: "11".repeat(16),
+                ..Config::default()
+            },
             vec![key(1).verifying_key().to_bytes()],
             [8; 32],
         );
@@ -279,6 +276,7 @@ mod tests {
         let old = s.cookie.cookie("127.0.0.1:1".parse().unwrap(), 100);
         let t = RelayToken::issue(
             &key(1),
+            [0x11; 16],
             [7; 16],
             [2; 16],
             [3; 16],
@@ -288,7 +286,13 @@ mod tests {
             [1; 8],
         )
         .encode();
-        let req = wire::encode_alloc(&old, 240, &t, &wire::sign_alloc(&key(2), &old, 240, &t));
+        let req = wire::encode_alloc(
+            &[0x11; 16],
+            &old,
+            240,
+            &t,
+            &wire::sign_alloc(&key(2), &[0x11; 16], &old, 240, &t),
+        );
         assert!(s.process(a, &req, 240_000).is_empty());
         alloc(&mut s, a, 2, 3, 100_000);
         let out = alloc(&mut s, b, 3, 2, 110_000);
@@ -310,6 +314,7 @@ mod tests {
     fn allocation_ip_network_packet_and_byte_limits() {
         for (ip_limit, net_limit, total) in [(1, 10, 10), (10, 1, 10), (10, 10, 1)] {
             let c = Config {
+                relay_id: "11".repeat(16),
                 max_per_ip: ip_limit,
                 max_per_network: net_limit,
                 max_allocations: total,
@@ -328,8 +333,9 @@ mod tests {
             ));
         }
         let c = Config {
+            relay_id: "11".repeat(16),
             packets_per_second: 1,
-            bits_per_second: 16,
+            bits_per_second: 240,
             alloc_per_second: 1,
             ..Config::default()
         };
@@ -349,21 +355,35 @@ mod tests {
         ));
         alloc(&mut s, b, 3, 2, 100_000);
         assert_eq!(
-            s.process(a, &wire::encode_data(id, b"xx"), 100_000).len(),
+            s.process(
+                a,
+                &wire::encode_data(id, &[2, 3].into_iter().chain([0; 28]).collect::<Vec<_>>()),
+                100_000
+            )
+            .len(),
             1
         );
         assert!(
-            s.process(a, &wire::encode_data(id, b"xx"), 100_000)
-                .is_empty()
+            s.process(
+                a,
+                &wire::encode_data(id, &[2, 3].into_iter().chain([0; 28]).collect::<Vec<_>>()),
+                100_000
+            )
+            .is_empty()
         );
         assert!(
-            s.process(a, &wire::encode_data(id, b"xxx"), 101_000)
-                .is_empty()
+            s.process(
+                a,
+                &wire::encode_data(id, &[2, 3].into_iter().chain([0; 29]).collect::<Vec<_>>()),
+                101_000
+            )
+            .is_empty()
         );
     }
     #[test]
     fn per_ip_quota_covers_the_whole_ipv6_64() {
         let c = Config {
+            relay_id: "11".repeat(16),
             max_per_ip: 1,
             alloc_per_second: 100,
             ..Config::default()
@@ -386,5 +406,209 @@ mod tests {
             wire::parse(&alloc(&mut s, other, 4, 5, 100_000)[0].1),
             Ok(Message::AllocOk { .. })
         ));
+    }
+
+    #[test]
+    fn wrong_audience_never_creates_refreshes_or_moves_allocations() {
+        let config = |id: &str| Config {
+            relay_id: id.repeat(16),
+            alloc_per_second: 100,
+            ..Config::default()
+        };
+        let mut a = State::new(
+            config("11"),
+            vec![key(1).verifying_key().to_bytes()],
+            [8; 32],
+        );
+        let mut b = State::new(
+            config("12"),
+            vec![key(1).verifying_key().to_bytes()],
+            [8; 32],
+        );
+        for binding in [
+            Binding::Tcp(1, "127.0.0.1".parse().unwrap()),
+            Binding::Udp("127.0.0.1:7".parse().unwrap()),
+        ] {
+            let token = RelayToken::issue(
+                &key(1),
+                [0x11; 16],
+                [7; 16],
+                [2; 16],
+                [3; 16],
+                key(2).verifying_key().to_bytes(),
+                100,
+                400,
+                [1; 8],
+            )
+            .encode();
+            let cookie = match binding {
+                Binding::Udp(src) => b.cookie.cookie(src, 100),
+                _ => [0; 16],
+            };
+            let proof = wire::sign_alloc(&key(2), &[0x11; 16], &cookie, 100, &token);
+            for id in [[0x11; 16], [0x12; 16]] {
+                let req = wire::encode_alloc(&id, &cookie, 100, &token, &proof);
+                let out = b.process(binding, &req, 100_000);
+                assert_eq!(
+                    wire::parse(&out[0].1),
+                    Ok(Message::AllocErr {
+                        code: ErrCode::WrongRelay
+                    })
+                );
+                assert!(b.table.entries.is_empty());
+            }
+            let good_cookie = match binding {
+                Binding::Udp(src) => a.cookie.cookie(src, 100),
+                _ => [0; 16],
+            };
+            let good = wire::encode_alloc(
+                &[0x11; 16],
+                &good_cookie,
+                100,
+                &token,
+                &wire::sign_alloc(&key(2), &[0x11; 16], &good_cookie, 100, &token),
+            );
+            let first = a.process(binding, &good, 100_000);
+            assert!(matches!(
+                wire::parse(&first[0].1),
+                Ok(Message::AllocOk { .. })
+            ));
+            let before = a
+                .table
+                .entries
+                .values()
+                .map(|v| (v.id, v.binding, v.expires))
+                .collect::<Vec<_>>();
+            let mut changed = token;
+            changed[5] = 0x12;
+            let wrong = wire::encode_alloc(&[0x11; 16], &good_cookie, 100, &changed, &proof);
+            assert_eq!(
+                wire::parse(&a.process(binding, &wrong, 101_000)[0].1),
+                Ok(Message::AllocErr {
+                    code: ErrCode::WrongRelay
+                })
+            );
+            assert_eq!(
+                a.table
+                    .entries
+                    .values()
+                    .map(|v| (v.id, v.binding, v.expires))
+                    .collect::<Vec<_>>(),
+                before
+            );
+            // Repetición dentro de la misma audiencia está expresamente permitida.
+            assert!(matches!(
+                wire::parse(&a.process(binding, &good, 101_000)[0].1),
+                Ok(Message::AllocOk { .. })
+            ));
+            a.table = Table::default();
+        }
+    }
+
+    #[test]
+    fn alloc_time_edges_cookie_and_authorization_errors_do_not_change_state() {
+        let id = [0x11; 16];
+        let config = Config {
+            relay_id: "11".repeat(16),
+            alloc_per_second: 100,
+            ..Config::default()
+        };
+        let mut state = State::new(config, vec![key(1).verifying_key().to_bytes()], [8; 32]);
+        let binding = Binding::Tcp(1, "127.0.0.1".parse().unwrap());
+        let token = RelayToken::issue(
+            &key(1),
+            id,
+            [7; 16],
+            [2; 16],
+            [3; 16],
+            key(2).verifying_key().to_bytes(),
+            100,
+            400,
+            [1; 8],
+        )
+        .encode();
+        for ts in [70, 130] {
+            let req = wire::encode_alloc(
+                &id,
+                &[0; 16],
+                ts,
+                &token,
+                &wire::sign_alloc(&key(2), &id, &[0; 16], ts, &token),
+            );
+            assert!(matches!(
+                wire::parse(&state.process(binding, &req, 100_000)[0].1),
+                Ok(Message::AllocOk { .. })
+            ));
+        }
+        let before = state
+            .table
+            .entries
+            .values()
+            .map(|v| (v.id, v.binding, v.expires))
+            .collect::<Vec<_>>();
+        for (cookie, ts, code) in [
+            ([0; 16], 69, ErrCode::Expired),
+            ([0; 16], 131, ErrCode::Expired),
+            ([1; 16], 100, ErrCode::BadCookie),
+        ] {
+            let req = wire::encode_alloc(
+                &id,
+                &cookie,
+                ts,
+                &token,
+                &wire::sign_alloc(&key(2), &id, &cookie, ts, &token),
+            );
+            assert_eq!(
+                wire::parse(&state.process(binding, &req, 100_000)[0].1),
+                Ok(Message::AllocErr { code })
+            );
+        }
+        let req = wire::encode_alloc(
+            &id,
+            &[0; 16],
+            430,
+            &token,
+            &wire::sign_alloc(&key(2), &id, &[0; 16], 430, &token),
+        );
+        assert_eq!(
+            wire::parse(&state.process(binding, &req, 430_000)[0].1),
+            Ok(Message::AllocErr {
+                code: ErrCode::Expired
+            })
+        );
+        let same = RelayToken::issue(
+            &key(1),
+            id,
+            [7; 16],
+            [2; 16],
+            [2; 16],
+            key(2).verifying_key().to_bytes(),
+            100,
+            400,
+            [1; 8],
+        )
+        .encode();
+        let req = wire::encode_alloc(
+            &id,
+            &[0; 16],
+            100,
+            &same,
+            &wire::sign_alloc(&key(2), &id, &[0; 16], 100, &same),
+        );
+        assert_eq!(
+            wire::parse(&state.process(binding, &req, 100_000)[0].1),
+            Ok(Message::AllocErr {
+                code: ErrCode::Unauthorized
+            })
+        );
+        assert_eq!(
+            state
+                .table
+                .entries
+                .values()
+                .map(|v| (v.id, v.binding, v.expires))
+                .collect::<Vec<_>>(),
+            before
+        );
     }
 }

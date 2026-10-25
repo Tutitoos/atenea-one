@@ -29,6 +29,9 @@ if len(sys.argv) == 1:
     save('offline/dex-password', passwords['dex'], uid=0)
     save('secrets/issuer.key', secrets.token_hex(32))
     save('secrets/relay-signing.hex', secrets.token_hex(32))
+    relay_id = secrets.token_hex(16)
+    assert relay_id != '0' * 32
+    save('config/relay-id', relay_id, mode=0o444)
     save('secrets/postgres-init.sql', f"CREATE ROLE atenea_migrator LOGIN PASSWORD '{passwords['migrator']}';\nCREATE ROLE atenea_app LOGIN PASSWORD '{passwords['app']}';\nALTER DATABASE atenea OWNER TO atenea_migrator;\n\\connect atenea\nALTER SCHEMA public OWNER TO atenea_migrator;\n", uid=999)
     save('secrets/dex.yaml', f'''issuer: https://{panel}/dex
 storage:
@@ -59,17 +62,21 @@ staticPasswords:
 else:
     anchor = (root/'config/root.pub').read_text().strip()
     assert len(anchor) == 64 and len(os.environ['RELAY_PUB']) == 64
+    relay_id = (root/'config/relay-id').read_text().strip()
+    assert len(relay_id) == 32 and all(c in '0123456789abcdef' for c in relay_id) and int(relay_id, 16) != 0
     save('config/coordinator.toml', f'''listen = "0.0.0.0:8081"
 stun_bind = "0.0.0.0"
 stun_ports = [3478, 3479]
 anchors = ["{anchor}"]
 [[relays]]
+relay_id = "{relay_id}"
 name = "lab"
 udp = "{relay}:443"
 tls = "{relay}:443"
 tls_name = "{relay}"
 ''', mode=0o444)
-    save('config/relay.toml', f'''udp_listen = "0.0.0.0:443"
+    save('config/relay.toml', f'''relay_id = "{relay_id}"
+udp_listen = "0.0.0.0:443"
 tcp_listen = "127.0.0.1:8443"
 coordinator_keys = ["{os.environ['RELAY_PUB']}"]
 tls_cert_file = "/etc/atenea/relay.pem"

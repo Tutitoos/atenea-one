@@ -74,6 +74,13 @@ cargo run -p atenea-control-plane -- --migrate
 
 La emisión responde `503 issuer_unavailable` sin certificado adecuado o si este no cubre el lease completo. Renueve antes del vencimiento; no amplíe el lease para compensar una pérdida del canal de control. La configuración incluye solo dispositivos aprobados relacionados por políticas, junto con las reglas inversas necesarias para ACL sin estado.
 
+**Antes de crear políticas: ACL sin estado y bidireccionalidad efectiva.** Cada
+política genera una regla inversa con el mismo protocolo, selectores intercambiados
+y **sin restricción de puertos**. Una política A→B `tcp/22` permite también a B
+iniciar tráfico TCP a A en cualquier puerto, no solo responder a conexiones de A.
+Revise ambos sentidos (también para subredes): estas políticas no expresan acceso
+estrictamente unidireccional ni retorno limitado a conexiones ya iniciadas.
+
 Cree un token de enrolamiento desde la red y entregue `join` por un canal seguro: contiene URL, token de un uso y ancla de confianza. El operador genera las claves con `atenea device-init --dir DIR` y ejecuta `atenea enroll --url URL --token TOKEN --dir DIR --name NOMBRE`. Compare la huella del bundle por otro canal antes de aprobar. Nunca coloque tokens reales en historial compartido ni documentación.
 
 ## Panel, informes y métricas

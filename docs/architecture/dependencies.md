@@ -360,3 +360,22 @@ las comprobaciones de advisories ni de fuentes.
 Ambas excepciones dejan de ser válidas si se introduce uso de claves privadas
 RSA/ECDSA o DH con estas dependencias: revisar antes de cambiar el flujo.
 
+
+### Fase 11 — Wire v2
+
+`crates/crypto` hace directas dos dependencias ya presentes transitivamente en
+`Cargo.lock`, sin paquetes ni versiones nuevos:
+
+| Crate | Versión fijada | Licencia | Uso |
+| --- | --- | --- | --- |
+| `blake2` | 0.11.0 | MIT OR Apache-2.0 | `Blake2sMac<U16>` keyed, salida de 16 bytes parametrizada, MAC1/MAC2 y cookies |
+| `chacha20poly1305` | 0.10.1 | Apache-2.0 OR MIT | XChaCha20Poly1305 exclusivamente para COOKIE_REPLY; Noise conserva ChaChaPoly |
+
+
+### Fase 11 — Relay v2
+
+`crates/relay-core` hace directas `zeroize` (workspace, ya fijada) para borrar el
+secreto de cookies al destruirlo, y `subtle` 2.6.1 (BSD-3-Clause, ya transitiva de
+dalek) para comparar cookies en tiempo constante. No se añade ningún paquete,
+versión ni checksum al lock; solo listas de dependencias. Conserva
+`atenea-protocol` para reutilizar las constantes normativas de wire-v2 sin deriva.

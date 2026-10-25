@@ -1,9 +1,26 @@
 """Material efímero independiente para el segundo relay; CA del ensayo."""
 from pathlib import Path
+import json
 import os
+import secrets
 import subprocess
 
 root = Path('/runtime')
+primary_id = (root/'config/relay-id').read_text().strip()
+id_path = root/'config/relay2-id'
+if not id_path.exists():
+    id_path.write_text(secrets.token_hex(16))
+secondary_id = id_path.read_text().strip()
+assert all(len(value) == 32 and all(c in '0123456789abcdef' for c in value) and int(value, 16) != 0
+    for value in (primary_id, secondary_id))
+assert primary_id != secondary_id
+grants = [
+    {'relay_id': primary_id, 'name': 'principal', 'udp': 'relay.stack.test:443',
+     'tls': 'relay.stack.test:443', 'tls_name': 'relay.stack.test'},
+    {'relay_id': secondary_id, 'name': 'secundario', 'udp': 'relay2:443'},
+]
+with (root/'stack.env').open('a') as env:
+    env.write("\nATENEA_COORD_RELAYS='" + json.dumps(grants, separators=(',', ':')) + "'\n")
 # Backchannel privado del ensayo integrado existente.
 p = root/'secrets/dex.yaml'
 p.chmod(0o600)
@@ -21,5 +38,6 @@ p.chmod(0o400)
 os.chown(p, 65532, 65532)
 p = root/'config/relay2.toml'
 p.write_text((root/'config/relay.toml').read_text().replace('127.0.0.1:8443', '0.0.0.0:8443')
+    .replace(f'relay_id = "{primary_id}"', f'relay_id = "{secondary_id}"')
     .replace('/run/secrets/relay.key', '/run/secrets/relay2.key').replace('proxy_protocol = true', 'proxy_protocol = false'))
 p.chmod(0o444)

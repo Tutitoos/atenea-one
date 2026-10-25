@@ -93,7 +93,15 @@ run_case() {
     if ip netns exec a ping -c 1 -W 1 10.77.0.2 >/dev/null 2>&1; then connected=yes; break; fi
     sleep 1
   done
-  local path_a path_b ep_a ep_b map_a map_b
+  local path_a path_b ep_a ep_b map_a map_b waited=0
+  if [ "$expect" = direct ] && [ "$connected" = yes ]; then
+    # El estado de ruta se confirma con el primer paquete autenticado de cada sentido: se espera, no se supone.
+    for waited in $(seq 0 15); do
+      [ "$(field a peers.0.path)" = direct ] && [ "$(field b peers.0.path)" = direct ] && break
+      sleep 1
+    done
+    echo "       ambos extremos informan ruta directa tras ${waited} s adicionales al primer ping"
+  fi
   path_a=$(field a peers.0.path); path_b=$(field b peers.0.path)
   ep_a=$(field a peers.0.endpoint); ep_b=$(field b peers.0.endpoint)
   map_a=$(field a nat.mapping); map_b=$(field b nat.mapping)

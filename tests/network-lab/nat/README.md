@@ -161,6 +161,15 @@ resultado parcial: la expectativa de entrada bloqueada y punch correcto se manti
 
 ## Herramientas de relay (fase 5)
 
+Los fixtures actuales exigen wire-v2/relay-v2 sin compatibilidad v1.
+`e2e-relay.sh` genera una audiencia aleatoria del SO al preparar `/tmp/lab`,
+la persiste en `relay-id` y reutiliza el mismo valor al arrancar servicios:
+`ATENEA_RELAY_ID` y `ATENEA_COORD_RELAYS[].relay_id` deben coincidir
+(32 hex minúsculos, no cero). El montaje del panel en `tests/e2e-panel/lab.sh`
+aplica el mismo contrato. Relays distintos requieren IDs distintos y un token
+por audiencia; no se deriva el ID del certificado ni se renueva al reiniciar.
+
+
 ```sh
 tests/network-lab/nat/run.sh relay
 ```
@@ -221,7 +230,7 @@ start_haproxy 8443 8081
 
 `haproxy.cfg.tpl` escucha IPv4 e IPv6 en TCP 443, `mode tcp`,
 `tcp-request inspect-delay 5s`. Solo **SNI `relay.atenea.one` Y ALPN
-`atenea-relay/1`** van al relay por loopback con `send-proxy-v2`; cualquier otra
+`atenea-relay/2`** van al relay por loopback con `send-proxy-v2`; cualquier otra
 combinación, incluido SNI ausente, va al backend web **sin** PROXY protocol.
 No termina TLS. `fake-web.py <puerto>` escucha loopback y contesta `WEB` al
 aceptar la conexión; es TCP plano deliberadamente, no un servidor HTTP/TLS.
@@ -248,6 +257,11 @@ detectó esta diferencia de API del kernel, antes de adaptar la sonda; no se
 cambió el firewall ni se rebajaron las expectativas de conectividad.
 
 ### Resultado medido de fase 5
+
+**Evidencia histórica anterior al cutover.** Las mediciones siguientes usaban
+ALPN `/1`; no verifican `/2`, IDs ni tokens por audiencia. Los fixtures
+actualizados no se han vuelto a ejecutar durante este cambio.
+
 
 Validación final en Linux `7.0.12-linuxkit`, nftables `1.0.6`, Python `3.11.2`
 y HAProxy `2.6.12-1+deb12u4`:

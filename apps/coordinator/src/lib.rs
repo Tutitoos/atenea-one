@@ -64,7 +64,7 @@ struct Memory {
     device: Rates<DeviceId>,
     relay_pair: rate::Window<(DeviceId, DeviceId)>,
     relay_device: rate::Window<DeviceId>,
-    relay_tokens: rate::Window<(DeviceId, DeviceId)>,
+    relay_grants: rate::Window<(DeviceId, DeviceId)>,
     polls_device: HashMap<DeviceId, usize>,
     polls_network: HashMap<NetworkId, usize>,
     seq: u64,
@@ -127,8 +127,8 @@ impl Coordinator {
                 device: Rates::new(config.max_rate_entries),
                 relay_pair: rate::Window::new(config.max_rate_entries, 5, 1),
                 relay_device: rate::Window::new(config.max_rate_entries, 60, 10),
-                // Cada emisión genera dos tokens; el tope compartido es cuatro por minuto.
-                relay_tokens: rate::Window::new(config.max_rate_entries, 60, 2),
+                // Dos emisiones/minuto: cuatro concesiones direccionales, cada una con ≤4 tokens.
+                relay_grants: rate::Window::new(config.max_rate_entries, 60, 2),
                 polls_device: HashMap::new(),
                 polls_network: HashMap::new(),
                 seq: 0,
@@ -385,14 +385,18 @@ async fn relay(
     let network = own.config.network_id;
     let own_key = own.config.identity_pubkey;
     let target_key = target.config.identity_pubkey;
-    if !m.relay_pair.allow(pair, now) || !m.relay_tokens.allow(pair, now) {
+    if !m.relay_pair.allow(pair, now) || !m.relay_grants.allow(pair, now) {
         return Err(ApiError::rate());
     }
-    let issue = |src, dst, key| {
+    let issue = |relay: &config::Relay, src, dst, key| {
+        let mut relay_id = [0; 16];
+        hex::decode_to_slice(&relay.relay_id, &mut relay_id)
+            .expect("relay_id validado al arrancar");
         let random = atenea_identity::generate_seed();
         STANDARD.encode(
             atenea_relay_core::RelayToken::issue(
                 signer,
+                relay_id,
                 network,
                 src,
                 dst,
@@ -404,14 +408,27 @@ async fn relay(
             .encode(),
         )
     };
-    let token = issue(id, peer, own_key);
-    let inverse = issue(peer, id, target_key);
-    atenea_observability::event(atenea_observability::Event::RelayTokensIssued, 2);
+    let mut relays = Vec::with_capacity(s.config.relays.len());
+    let mut inverse = Vec::with_capacity(s.config.relays.len());
+    for relay in &s.config.relays {
+        relays.push(presence::RelayGrant {
+            relay: relay.clone(),
+            token: issue(relay, id, peer, own_key),
+        });
+        inverse.push(presence::RelayGrant {
+            relay: relay.clone(),
+            token: issue(relay, peer, id, target_key),
+        });
+    }
+    atenea_observability::event(
+        atenea_observability::Event::RelayTokensIssued,
+        (2 * s.config.relays.len()) as u64,
+    );
     m.seq = m.seq.wrapping_add(1);
     let event = Event::Relay {
         peer: hex::encode(id),
-        token: inverse,
-        relays: s.config.relays.clone(),
+        relays: inverse,
+        ttl_secs: s.config.relay_token_ttl_secs,
         seq: m.seq,
     };
     m.presences
@@ -419,7 +436,7 @@ async fn relay(
         .expect("par autorizado")
         .enqueue(event, now);
     Ok(Json(
-        json!({"token":token,"relays":s.config.relays,"ttl_secs":s.config.relay_token_ttl_secs}),
+        json!({"relays":relays,"ttl_secs":s.config.relay_token_ttl_secs}),
     ))
 }
 async fn events(

@@ -120,6 +120,8 @@ Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en
 - **Reglas:** por cada política relevante, la regla del contrato con selectores traducidos (`device` → `Device(id)`, `prefix` → `Prefix`, `any` → `Any`), más su **regla inversa** (misma `proto`, origen y destino intercambiados, sin puertos), porque las ACL del agente no tienen estado (contrato §8). Se eliminan duplicados; máximo 256 reglas (si se supera: `409 policy_overflow` al crear la política que lo provoca, comprobado con una emisión de prueba).
 - Respuesta `200 application/octet-stream` con el fichero `SignedConfig` completo y cabeceras `X-Config-Version` y `Cache-Control: no-store`. Actualiza `last_config_at`.
 
+**Bidireccionalidad efectiva (ACL sin estado).** Una política A→B `tcp/22` permite también a B iniciar tráfico TCP a A en **cualquier puerto**. La regla inversa no distingue respuestas de conexiones nuevas ni conserva el límite de puertos de la regla original; sí conserva el protocolo y los selectores intercambiados. No use una política de este tipo para expresar acceso estrictamente unidireccional o retorno limitado a conexiones iniciadas por A. Revise ambos sentidos antes de crearla, también cuando los selectores incluyen subredes.
+
 **Revocación (ADR-002).** Revocar un dispositivo (o quitar una política) tiene efecto inmediato en el servidor: ya no recibe configuración y deja de figurar entre los pares de los demás en su siguiente emisión. Los peers dejan de aceptarlo cuando recargan (≤ 60 s de sondeo más la recarga); el propio agente revocado se corta solo al caducar su última configuración (≤ 300 + 30 s) aunque pierda el canal de control.
 
 ## 7. Configuración y operación

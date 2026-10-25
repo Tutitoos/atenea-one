@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    pub relay_id: String,
     pub udp_listen: SocketAddr,
     pub tcp_listen: SocketAddr,
     pub metrics_listen: String,
@@ -34,6 +35,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            relay_id: String::new(),
             udp_listen: "0.0.0.0:443".parse().unwrap(),
             tcp_listen: "127.0.0.1:8443".parse().unwrap(),
             metrics_listen: "127.0.0.1:9103".into(),
@@ -66,11 +68,16 @@ impl Config {
         if let Ok(p) = std::env::var("ATENEA_RELAY_CONFIG") {
             f = f.merge(Toml::file(p));
         }
-        f.merge(Env::prefixed("ATENEA_RELAY_"))
-            .extract()
-            .map_err(Box::new)
+        let f = f.merge(Env::prefixed("ATENEA_RELAY_"));
+        let f = if let Ok(id) = std::env::var("ATENEA_RELAY_ID") {
+            f.merge(Serialized::default("relay_id", id))
+        } else {
+            f
+        };
+        f.extract().map_err(Box::new)
     }
     pub fn validate(&self) -> Result<Vec<[u8; 32]>, &'static str> {
+        self.id()?;
         if [
             self.max_allocations,
             self.max_per_network,
@@ -131,6 +138,24 @@ impl Config {
             })
             .collect()
     }
+    pub fn id(&self) -> Result<atenea_relay_core::RelayId, &'static str> {
+        let s = &self.relay_id;
+        if s.len() != 32
+            || !s
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("relay_id requiere 32 hex minúsculos");
+        }
+        let id: [u8; 16] = hex::decode(s)
+            .map_err(|_| "relay_id inválido")?
+            .try_into()
+            .map_err(|_| "relay_id inválido")?;
+        if id == [0; 16] {
+            return Err("relay_id no puede ser cero");
+        }
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
@@ -149,6 +174,7 @@ mod tests {
                 .to_bytes(),
         )];
         c.tls_cert_file = "test.pem".into();
+        c.relay_id = "11".repeat(16);
         c.tls_key_file = "test-key.pem".into();
         assert_eq!(c.max_per_ip, 64);
         assert!(c.validate().is_ok());
@@ -161,6 +187,7 @@ mod tests {
     #[test]
     fn proxy_never_binds_external_and_limits_are_validated() {
         let mut c = Config {
+            relay_id: "11".repeat(16),
             proxy_protocol: true,
             tcp_listen: "0.0.0.0:443".parse().unwrap(),
             coordinator_keys: vec![hex::encode(
@@ -177,5 +204,34 @@ mod tests {
         assert!(c.validate().is_ok());
         c.max_datagram = 1531;
         assert_eq!(c.validate(), Err("límites fuera de rango"));
+    }
+
+    #[test]
+    fn relay_id_is_mandatory_lower_hex_and_nonzero() {
+        assert!(Config::default().id().is_err());
+        for id in [
+            "00".repeat(16),
+            "AA".repeat(16),
+            "11".repeat(15),
+            "11".repeat(17),
+            "gg".repeat(16),
+        ] {
+            assert!(
+                Config {
+                    relay_id: id,
+                    ..Config::default()
+                }
+                .id()
+                .is_err()
+            );
+        }
+        assert_eq!(
+            Config {
+                relay_id: "11".repeat(16),
+                ..Config::default()
+            }
+            .id(),
+            Ok([0x11; 16])
+        );
     }
 }

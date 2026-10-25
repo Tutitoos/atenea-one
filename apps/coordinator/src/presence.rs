@@ -8,6 +8,13 @@ use std::{
 use tokio::sync::Notify;
 
 #[derive(Clone, Serialize)]
+pub struct RelayGrant {
+    #[serde(flatten)]
+    pub relay: crate::config::Relay,
+    pub token: String,
+}
+
+#[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
     Connect {
@@ -17,8 +24,8 @@ pub enum Event {
     },
     Relay {
         peer: String,
-        token: String,
-        relays: Vec<crate::config::Relay>,
+        relays: Vec<RelayGrant>,
+        ttl_secs: u64,
         seq: u64,
     },
 }

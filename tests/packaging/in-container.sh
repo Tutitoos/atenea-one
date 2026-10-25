@@ -117,6 +117,8 @@ assert_dns
 [ "$(status_field forwarding_ok)" = false ] || fail 'forwarding_ok no informa false con ip_forward=0'
 [ "$(cat /proc/sys/net/ipv4/ip_forward)" = 0 ] || fail 'el agente activó ip_forward'
 echo 1 > /proc/sys/net/ipv4/ip_forward
+# El estado del agente es una instantánea que se renueva cada segundo: se espera, no se supone.
+for _ in $(seq 1 10); do [ "$(status_field forwarding_ok)" = true ] && break; sleep 1; done
 [ "$(status_field forwarding_ok)" = true ] || fail 'forwarding_ok no se actualiza con ip_forward=1'
 echo 'DNS firmado v2 y forwarding declarado: OK'
 assert_mode /run/atenea '750 root atenea'

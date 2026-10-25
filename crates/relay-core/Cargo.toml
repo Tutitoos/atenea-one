@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Protocolo del relay v1: mensajes, tokens de asignación, cookies y tramado TCP"
+description = "Protocolo del relay v2: mensajes, tokens de asignación, cookies y tramado TCP"
 
 [lints]
 workspace = true
@@ -16,6 +16,8 @@ atenea-identity.workspace = true
 atenea-protocol.workspace = true
 blake2 = "0.11.0"
 ed25519-dalek = "3.0.0"
+zeroize.workspace = true
+subtle = "2.6"
 
 [dev-dependencies]
 proptest.workspace = true

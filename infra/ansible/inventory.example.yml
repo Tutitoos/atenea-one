@@ -16,9 +16,18 @@ all:
         principal.example.test:
           ansible_host: 192.0.2.10
           atenea_node_role: principal
+          # Configuración pública preparada; no generar IDs durante la convergencia.
+          atenea_config_source: /ruta/publica/principal
+          # config/relay.toml y coordinator.toml comparten el relay_id del principal:
+          # 32 hex minúsculos no cero, generados una vez con RNG del SO y persistidos.
+          # Cada entrada adicional de ATENEA_COORD_RELAYS lleva otro relay_id único.
     relays:
       hosts:
         relay2.example.test:
           ansible_host: 192.0.2.20
           atenea_node_role: relay
           atenea_secrets_source: /ruta/privada/relay.sops.yaml
+          atenea_config_source: /ruta/publica/relay2
+          # config/relay.toml: relay_id distinto del principal, copiado a su entrada
+          # del coordinator. No cambiarlo al reiniciar ni al rotar el certificado.
+          # Ambos relays negocian exclusivamente ALPN atenea-relay/2.

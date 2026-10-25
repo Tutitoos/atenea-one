@@ -1,6 +1,6 @@
 # ADR-003 — Transporte cifrado con snow, antirreplay y rekey propios
 
-- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto). Los límites de rekey y MTU siguen siendo parámetros a medir en la fase 2.
+- **Estado:** Aceptado (2026-10-24); cable v2 y relay-v2 aceptados por el responsable el 2026-10-25, pendientes de implementación. Los límites de rekey y MTU siguen siendo parámetros a medir.
 - **Fecha:** 2026-10-24
 - **Debe resolverse antes de:** fase 2
 - **Relacionados:** ADR-001, ADR-002
@@ -18,19 +18,21 @@ Usar `StatelessTransportState` tras el handshake de ADR-001 y **implementar en `
 - Cada handshake completado crea una **sesión** con `session_index (u32)` aleatorio elegido por cada lado para recibir. La **época** de un par de peers es la sesión vigente; una sesión nueva siempre parte de claves nuevas (efímeras frescas) y contador 0.
 - Estado de sesión **solo en memoria**. Tras reiniciar el proceso no hay sesiones: se hace un handshake nuevo con efímeras nuevas. **No se persisten contadores** y por construcción no se reutiliza (clave, nonce).
 
-### Formato de datagrama v1 (orden de red, big-endian)
+### Formato de datagrama v2 (orden de red, big-endian)
 
-| Tipo | Campos |
-| --- | --- |
-| Handshake init (1) | `version(1) type(1) sender_index(4) noise_msg1` |
-| Handshake resp (2) | `version(1) type(1) sender_index(4) receiver_index(4) noise_msg2` |
-| Datos (3) | `version(1) type(1) receiver_index(4) counter(8) ciphertext+tag(16)` |
+Contrato normativo de bytes, validación pre-DH, límites, cookies y vectores en [wire-v2](../protocol/wire-v2.md); relay y sus tokens en [relay-v2](../protocol/relay-v2.md).
 
-- Keepalive = datos con payload vacío. Sobrecarga de datos: 30 bytes.
-- Versión o tipo desconocidos: descartar sin responder.
-- Tamaño máximo de datagrama = MTU del túnel + 30. MTU por defecto del túnel: 1400 (conservador, 1500 − UDP/IPv6 − cabecera − margen); se mide en la fase 2. Mayor = descartar.
-- Sin compresión y sin relleno en v1 (el relleno no se promete; los tamaños son visibles).
-- Como snow no autentica cabecera: `receiver_index` selecciona la clave (alterarlo da fallo de autenticación) y `counter` es el nonce AEAD (alterarlo también). `version` y `type` solo sirven para despachar. Esto es un punto de revisión explícito para la puerta criptográfica.
+| Tipo | Campos | Bytes |
+| --- | --- | --- |
+| Handshake init (1) | `version=2(1) type(1) sender_index(4) noise_msg1(108) mac1(16) mac2(16)` | 146 |
+| Handshake resp (2) | `version=2(1) type(1) sender_index(4) receiver_index(4) noise_msg2(52)` | 62 |
+| Datos (3) | `version=2(1) type(1) receiver_index(4) counter(8) ciphertext+tag(16)` | payload + 30 |
+| Cookie reply (4) | `version=2(1) type(1) receiver_index(4) nonce(24) encrypted_cookie+tag(32)` | 62 |
+
+- INIT exige MAC1; bajo carga exige MAC2 o se devuelve una cookie cifrada sin DH. Una cookie no autentica ni confirma endpoint. MACs quedan fuera del transcript Noise; prólogo Noise pasa a `atenea-one/v2 || network_id`.
+- Keepalive = datos con payload vacío. Sobrecarga DATA 30 bytes; MTU por defecto 1400, máximo absoluto 1530 bytes por datagrama. Sin compresión ni relleno.
+- Versión o tipo desconocidos y v1: descartar sin responder. Relay/TCP informa incompatibilidad con ALPN `/2` o error definido en relay-v2 y cierre. Sin compatibilidad ni shims.
+- Como snow no admite AAD: `receiver_index` selecciona la clave y `counter` es el nonce AEAD; alterarlos impide autenticar. `version` y `type` despachan, sin autenticación AEAD adicional. MAC1/MAC2 solo protegen INIT, no alteran esta limitación DATA.
 
 ### Nonce por dirección
 
@@ -55,7 +57,7 @@ Usar `StatelessTransportState` tras el handshake de ADR-001 y **implementar en `
 | Rechazo de envío | 180 s o 2^40 mensajes (sesión inutilizable) |
 
 - Durante la transición se conserva la sesión anterior solo para **recibir** hasta su rechazo duro. El respondedor no envía datos hasta recibir el primer paquete válido del iniciador (confirmación de sesión).
-- **Roaming:** el endpoint de un peer solo se actualiza tras un paquete que **autentica**. La validación de retorno y los límites de amplificación se detallan en la fase 4.
+- **Roaming:** el endpoint solo se actualiza tras datos que autentican y pasan antirreplay, sin desafío adicional de retorno de la nueva dirección (comportamiento tipo WireGuard). Riesgo residual aceptado por el responsable el 2026-10-25; no se afirma validar posesión de la nueva dirección. La confirmación inicial de endpoint sigue exigiendo RESP autenticada o datos, nunca INIT ni cookie. Véase el modelo de amenazas, nota F7.
 
 ### Reinicio y clonación
 
@@ -77,4 +79,4 @@ Usar `StatelessTransportState` tras el handshake de ADR-001 y **implementar en `
 
 ## Verificación (fase 2)
 
-Duplicado, reordenado y fuera de ventana descartados; paquete alterado o con `receiver_index` falso no mueve la ventana; tras reinicio no se reutiliza (clave, nonce); cambio de camino sin romper la sesión ni aceptar replays; envío bloqueado en el límite duro; fuzzing del parser de datagramas y de la máquina de estados del handshake; tests de propiedades sobre la ventana.
+Duplicado, reordenado y fuera de ventana descartados; paquete alterado o con `receiver_index` falso no mueve la ventana; reinicio sin reutilizar (clave, nonce); cambio de camino sin romper sesión ni aceptar replays; límites duros; fuzzing de datagramas y handshake; propiedades de ventana. Añadir tamaños/versión v2, vectores MAC/cookie, rotación, no DH antes del retorno bajo carga, no consumo de cupos DH por desafíos y no confirmación por cookie (wire-v2 §7). Son criterios exigidos, no una declaración de verificación de v2.

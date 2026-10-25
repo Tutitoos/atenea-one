@@ -374,6 +374,38 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn cookie_threshold_cli_rejects_non_positive_or_out_of_range_values() {
+        for value in ["1", "100", "4294967295", "0", "-1", "4294967296", "1.5"] {
+            let result = Cli::try_parse_from([
+                "atenea",
+                "agent-config",
+                "--join",
+                "join.json",
+                "--dir",
+                "/device",
+                "--out",
+                "/config.toml",
+                "--handshake-cookie-threshold-per-second",
+                value,
+            ]);
+            assert_eq!(result.is_ok(), matches!(value, "1" | "100" | "4294967295"));
+        }
+        assert!(
+            Cli::try_parse_from([
+                "atenea",
+                "agent-config",
+                "--join",
+                "join.json",
+                "--dir",
+                "/device",
+                "--out",
+                "/config.toml",
+            ])
+            .is_ok()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn status_uses_either_socket_and_control_errors_propagate() {

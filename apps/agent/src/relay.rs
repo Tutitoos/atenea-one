@@ -1,4 +1,4 @@
-//! Cliente de relay del agente (docs/protocol/relay-v1.md §5.1).
+//! Cliente de relay del agente (docs/protocol/relay-v2.md §6).
 
 use atenea_identity::{DeviceId, SigningKey};
 use atenea_relay_core as wire;
@@ -28,6 +28,9 @@ pub enum RelayKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RelayEndpoint {
+    #[serde(with = "relay_id_hex")]
+    pub relay_id: [u8; 16],
+    pub token: String,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -38,23 +41,43 @@ pub struct RelayEndpoint {
     pub tls_name: Option<String>,
 }
 
+mod relay_id_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(id: &[u8; 16], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&atenea_crypto::hex::encode(id))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 16], D::Error> {
+        let text = String::deserialize(d)?;
+        let id = atenea_crypto::hex::decode::<16>(&text)
+            .filter(|id| *id != [0; 16] && atenea_crypto::hex::encode(id) == text)
+            .ok_or_else(|| serde::de::Error::custom("relay_id inválido"))?;
+        Ok(id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayEvent {
     Ready {
         peer: DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
     },
     Down {
         peer: DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
     },
     Rx {
         peer: DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
         datagram: Vec<u8>,
     },
     Rtt {
         peer: DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
         ms: u32,
     },
@@ -77,6 +100,7 @@ pub struct AllocationStatus {
     pub peer: String,
     pub transport: RelayKind,
     pub relay: String,
+    pub relay_id: String,
     pub state: String,
     pub peer_ready: bool,
     pub rtt_ms: Option<u32>,
@@ -92,8 +116,8 @@ pub struct AllocationStatus {
 
 struct Entry {
     status: Arc<Mutex<AllocationStatus>>,
-    token: watch::Sender<Vec<u8>>,
-    out: mpsc::Sender<(RelayKind, Vec<u8>)>,
+    grants: watch::Sender<Vec<RelayEndpoint>>,
+    out: mpsc::Sender<([u8; 16], RelayKind, Vec<u8>)>,
     task: JoinHandle<()>,
 }
 
@@ -137,6 +161,7 @@ impl Drop for Hub {
 pub struct RelayClient {
     identity: SigningKey,
     device: DeviceId,
+    network: [u8; 16],
     cfg: RelayClientConfig,
     events: mpsc::Sender<RelayEvent>,
     entries: Mutex<HashMap<DeviceId, Entry>>,
@@ -153,6 +178,16 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn alloc_error(code: wire::ErrCode) -> &'static str {
+    match code {
+        wire::ErrCode::UnsupportedVersion => "relay incompatible: se requiere relay-v2",
+        wire::ErrCode::Malformed => "mensaje de relay inválido",
+        wire::ErrCode::WrongRelay => "relay_id incorrecto",
+        wire::ErrCode::Expired => "token_expired",
+        _ => "alloc_rejected",
+    }
 }
 
 pub(crate) fn load_roots(path: Option<&Path>) -> Result<rustls::RootCertStore, String> {
@@ -180,12 +215,14 @@ impl RelayClient {
         cfg: RelayClientConfig,
         identity: SigningKey,
         device: DeviceId,
+        network: [u8; 16],
     ) -> (RelayClient, mpsc::Receiver<RelayEvent>) {
         let (events, rx) = mpsc::channel(QUEUE);
         (
             Self {
                 identity,
                 device,
+                network,
                 cfg,
                 events,
                 entries: Mutex::new(HashMap::new()),
@@ -197,18 +234,19 @@ impl RelayClient {
         )
     }
 
-    pub fn open(&self, peer: DeviceId, token: Vec<u8>, relays: Vec<RelayEndpoint>) {
+    pub fn open(&self, peer: DeviceId, grants: Vec<RelayEndpoint>) {
         let mut entries = self.entries.lock().unwrap();
         if let Some(entry) = entries.get(&peer).filter(|e| !e.task.is_finished()) {
-            entry.token.send_replace(token);
+            entry.grants.send_replace(grants);
             return;
         }
-        let (token_tx, token_rx) = watch::channel(token);
+        let (grants_tx, grants_rx) = watch::channel(grants);
         let (out, rx) = mpsc::channel(QUEUE);
         let status = Arc::new(Mutex::new(AllocationStatus {
             peer: atenea_crypto::hex::encode(&peer),
             transport: RelayKind::Udp,
             relay: String::new(),
+            relay_id: String::new(),
             state: "connecting".into(),
             peer_ready: false,
             rtt_ms: None,
@@ -224,6 +262,8 @@ impl RelayClient {
         let worker = Worker {
             peer,
             device: self.device,
+            network: self.network,
+            relay_id: [0; 16],
             identity: self.identity.clone(),
             cfg: self.cfg.clone(),
             events: self.events.clone(),
@@ -232,19 +272,19 @@ impl RelayClient {
             drops: self.drops.clone(),
             timing: self.timing,
         };
-        let task = tokio::spawn(worker.run(token_rx, relays, rx));
+        let task = tokio::spawn(worker.run(grants_rx, rx));
         entries.insert(
             peer,
             Entry {
                 status,
-                token: token_tx,
+                grants: grants_tx,
                 out,
                 task,
             },
         );
     }
 
-    pub fn send(&self, peer: DeviceId, kind: RelayKind, datagram: Vec<u8>) {
+    pub fn send(&self, peer: DeviceId, relay_id: [u8; 16], kind: RelayKind, datagram: Vec<u8>) {
         let entries = self.entries.lock().unwrap();
         let Some(entry) = entries.get(&peer) else {
             count(&mut self.drops.lock().unwrap(), "not_ready");
@@ -253,9 +293,14 @@ impl RelayClient {
         let mut s = entry.status.lock().unwrap();
         let reason = if datagram.len() > wire::MAX_RELAYED_DATAGRAM {
             Some("oversized")
-        } else if s.state != "ready" || s.transport != kind {
+        } else if s.state != "ready"
+            || s.transport != kind
+            || s.relay_id != atenea_crypto::hex::encode(&relay_id)
+        {
             Some("not_ready")
-        } else if entry.out.try_send((kind, datagram)).is_err() {
+        } else if atenea_protocol::parse(&datagram).is_err() {
+            Some("invalid_datagram")
+        } else if entry.out.try_send((relay_id, kind, datagram)).is_err() {
             Some("queue_full")
         } else {
             None
@@ -299,6 +344,8 @@ impl Drop for RelayClient {
 struct Worker {
     peer: DeviceId,
     device: DeviceId,
+    network: [u8; 16],
+    relay_id: [u8; 16],
     identity: SigningKey,
     cfg: RelayClientConfig,
     events: mpsc::Sender<RelayEvent>,
@@ -353,6 +400,27 @@ impl Link {
 }
 
 impl Worker {
+    fn grant_token(&self, grants: &[RelayEndpoint]) -> Result<Vec<u8>, &'static str> {
+        use base64::Engine as _;
+        if grants.is_empty()
+            || grants.len() > 4
+            || grants.iter().enumerate().any(|(i, r)| {
+                r.relay_id == [0; 16]
+                    || grants[..i].iter().any(|other| other.relay_id == r.relay_id)
+            })
+        {
+            return Err("concesión relay-v2 inválida");
+        }
+        let grant = grants
+            .iter()
+            .find(|r| r.relay_id == self.relay_id)
+            .ok_or("concesión relay-v2 retirada")?;
+        let token = base64::engine::general_purpose::STANDARD
+            .decode(&grant.token)
+            .map_err(|_| "token_malformed")?;
+        self.valid_token(&token)?;
+        Ok(token)
+    }
     fn event(&self, event: RelayEvent) {
         if self.events.try_send(event).is_err() {
             count(&mut self.status.lock().unwrap().drops, "event_queue_full");
@@ -361,15 +429,19 @@ impl Worker {
     fn alloc(&self, token: &[u8], cookie: &[u8; 16]) -> Vec<u8> {
         let ts = now();
         wire::encode_alloc(
+            &self.relay_id,
             cookie,
             ts,
             token,
-            &wire::sign_alloc(&self.identity, cookie, ts, token),
+            &wire::sign_alloc(&self.identity, &self.relay_id, cookie, ts, token),
         )
     }
     fn valid_token(&self, token: &[u8]) -> Result<u64, &'static str> {
         let t = wire::RelayToken::parse(token).map_err(|_| "token_malformed")?;
-        if t.src_device != self.device
+        if t.relay_id != self.relay_id
+            || t.network_id != self.network
+            || t.src_device != self.device
+            || t.src_device == t.dst_device
             || t.dst_device != self.peer
             || t.src_identity_pub != self.identity.verifying_key().to_bytes()
         {
@@ -466,7 +538,7 @@ impl Worker {
                 })
             })
             .await?;
-        // COOKIE/ALLOC_OK no llevan identificador: una negociación UDP a la vez por cliente.
+        // ALLOC_OK no lleva audiencia: una negociación UDP a la vez por cliente.
         let _guard = hub.gate.lock().await;
         let (tx, input) = mpsc::channel(QUEUE);
         hub.routes.lock().unwrap().insert(
@@ -486,7 +558,7 @@ impl Worker {
         };
         let mut cookie = None;
         for _ in 0..3 {
-            link.send(&wire::encode_cookie_req()).await?;
+            link.send(&wire::encode_cookie_req(&self.relay_id)).await?;
             let until = Instant::now() + self.timing.retry;
             loop {
                 let body = match tokio::time::timeout_at(until, link.recv()).await {
@@ -494,7 +566,10 @@ impl Worker {
                     _ => break,
                 };
                 match wire::parse(&body) {
-                    Ok(wire::Message::Cookie { cookie: c }) => {
+                    Ok(wire::Message::Cookie {
+                        relay_id,
+                        cookie: c,
+                    }) if relay_id == self.relay_id => {
                         cookie = Some(c);
                         link.send(&self.alloc(token, &c)).await?;
                     }
@@ -505,7 +580,9 @@ impl Worker {
                         route.awaiting = false;
                         return Ok((link, body, cookie));
                     }
-                    Ok(wire::Message::AllocErr { .. }) => return Err("alloc_rejected"),
+                    Ok(wire::Message::AllocErr { code }) if cookie.is_some() => {
+                        return Err(alloc_error(code));
+                    }
                     _ => count(&mut self.status.lock().unwrap().drops, "unexpected"),
                 }
             }
@@ -536,9 +613,15 @@ impl Worker {
         let stream = tokio_rustls::TlsConnector::from(Arc::new(cfg))
             .connect(name, stream)
             .await
-            .map_err(|_| "tls_handshake")?;
+            .map_err(|e| {
+                if e.to_string().contains("NoApplicationProtocol") {
+                    "relay incompatible: se requiere relay-v2"
+                } else {
+                    "tls_handshake"
+                }
+            })?;
         if stream.get_ref().1.alpn_protocol() != Some(wire::ALPN) {
-            return Err("tls_alpn");
+            return Err("relay incompatible: se requiere relay-v2");
         }
         let mut link = Link::Tls {
             stream: Box::new(stream),
@@ -550,25 +633,50 @@ impl Worker {
     }
 
     async fn run(
-        self,
-        mut token: watch::Receiver<Vec<u8>>,
-        relays: Vec<RelayEndpoint>,
-        mut out: mpsc::Receiver<(RelayKind, Vec<u8>)>,
+        mut self,
+        mut grants: watch::Receiver<Vec<RelayEndpoint>>,
+        mut out: mpsc::Receiver<([u8; 16], RelayKind, Vec<u8>)>,
     ) {
+        let relays = grants.borrow_and_update().clone();
+        if relays.is_empty()
+            || relays.len() > 4
+            || relays.iter().enumerate().any(|(i, r)| {
+                r.relay_id == [0; 16]
+                    || relays[..i].iter().any(|other| other.relay_id == r.relay_id)
+            })
+        {
+            self.down("concesión relay-v2 inválida");
+            return;
+        }
+        for endpoint in &relays {
+            self.relay_id = endpoint.relay_id;
+            if let Err(e) = self.grant_token(&relays) {
+                self.down(e);
+                return;
+            }
+        }
         let mut error = "relay_unavailable";
         for endpoint in relays {
-            let bytes = token.borrow_and_update().clone();
-            if let Err(e) = self.valid_token(&bytes) {
-                error = e;
-                break;
+            self.relay_id = endpoint.relay_id;
+            let bytes = match self.grant_token(&grants.borrow()) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    self.down(e);
+                    return;
+                }
+            };
+            {
+                let mut status = self.status.lock().unwrap();
+                status.relay = endpoint.name.clone();
+                status.relay_id = atenea_crypto::hex::encode(&self.relay_id);
+                status.state = "connecting".into();
             }
-            self.status.lock().unwrap().relay = endpoint.name.clone();
             if let Some(addr) = &endpoint.udp {
                 self.status.lock().unwrap().transport = RelayKind::Udp;
                 match self.udp(addr, &bytes).await {
                     Ok((link, first, cookie)) => {
                         error = self
-                            .connected(link, first, cookie, &mut token, &mut out)
+                            .connected(link, first, cookie, &mut grants, &mut out)
                             .await;
                         self.down(error);
                     }
@@ -580,7 +688,7 @@ impl Worker {
                 if let Some(hub) = self.hub.get() {
                     hub.routes.lock().unwrap().remove(&self.peer);
                 }
-                if matches!(error, "token_expired" | "token_identity" | "alloc_rejected") {
+                if matches!(error, "token_expired" | "token_identity") {
                     return;
                 }
             }
@@ -590,18 +698,24 @@ impl Worker {
                     s.transport = RelayKind::Tls;
                     s.state = "connecting".into();
                 }
-                let bytes = token.borrow().clone();
+                let bytes = match self.grant_token(&grants.borrow()) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        self.down(e);
+                        return;
+                    }
+                };
                 match timeout(self.timing.connect, self.tls(&endpoint, &bytes)).await {
                     Ok(Ok((link, first, cookie))) => {
                         error = self
-                            .connected(link, first, cookie, &mut token, &mut out)
+                            .connected(link, first, cookie, &mut grants, &mut out)
                             .await;
                     }
                     Ok(Err(e)) => error = e,
                     Err(_) => error = "tls_timeout",
                 }
                 self.down(error);
-                if matches!(error, "token_expired" | "token_identity" | "alloc_rejected") {
+                if matches!(error, "token_expired" | "token_identity") {
                     return;
                 }
             }
@@ -622,6 +736,7 @@ impl Worker {
         };
         self.event(RelayEvent::Down {
             peer: self.peer,
+            relay_id: self.relay_id,
             kind,
         });
     }
@@ -642,9 +757,12 @@ impl Worker {
                 .get_mut(&self.peer)
                 .ok_or("closed")?
                 .awaiting = true;
-            timeout(self.timing.connect, link.send(&wire::encode_cookie_req()))
-                .await
-                .map_err(|_| "renew_timeout")??;
+            timeout(
+                self.timing.connect,
+                link.send(&wire::encode_cookie_req(&self.relay_id)),
+            )
+            .await
+            .map_err(|_| "renew_timeout")??;
             Ok(Some(guard))
         } else {
             timeout(self.timing.connect, link.send(&self.alloc(bytes, &[0; 16])))
@@ -659,15 +777,15 @@ impl Worker {
         mut link: Link,
         first: Vec<u8>,
         _cookie: [u8; 16],
-        token: &mut watch::Receiver<Vec<u8>>,
-        out: &mut mpsc::Receiver<(RelayKind, Vec<u8>)>,
+        token: &mut watch::Receiver<Vec<RelayEndpoint>>,
+        out: &mut mpsc::Receiver<([u8; 16], RelayKind, Vec<u8>)>,
     ) -> &'static str {
         let (mut id, mut deadline) = match wire::parse(&first) {
             Ok(wire::Message::AllocOk {
                 alloc_id,
                 ttl_secs,
                 peer_ready,
-            }) => {
+            }) if ttl_secs > 0 && ttl_secs <= 120 => {
                 let mut s = self.status.lock().unwrap();
                 s.state = "ready".into();
                 s.peer_ready = peer_ready;
@@ -677,12 +795,13 @@ impl Worker {
                     Instant::now() + Duration::from_secs(ttl_secs.into()),
                 )
             }
-            Ok(wire::Message::AllocErr { .. }) => return "alloc_rejected",
+            Ok(wire::Message::AllocErr { code }) => return alloc_error(code),
             _ => return "alloc_response",
         };
         let kind = self.status.lock().unwrap().transport;
         self.event(RelayEvent::Ready {
             peer: self.peer,
+            relay_id: self.relay_id,
             kind,
         });
         let mut ping = tokio::time::interval(self.timing.ping);
@@ -693,7 +812,11 @@ impl Worker {
         let mut missed = 0;
         let mut renewal = None;
         loop {
-            let expiry = match self.valid_token(&token.borrow()) {
+            let bytes = match self.grant_token(&token.borrow()) {
+                Ok(bytes) => bytes,
+                Err(e) => return e,
+            };
+            let expiry = match self.valid_token(&bytes) {
                 Ok(t) => t,
                 Err(e) => return e,
             };
@@ -702,12 +825,13 @@ impl Worker {
                 _ = tokio::time::sleep_until(deadline) => return "allocation_expired",
                 changed = token.changed() => {
                     if changed.is_err() { return "closed"; }
-                    let bytes = token.borrow_and_update().clone();
+                    token.borrow_and_update();
+                    let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
                     if let Err(e) = self.valid_token(&bytes) { return e; }
                     if renewal.is_none() { match self.renew(&mut link, &bytes).await { Ok(guard) => renewal = guard, Err(e) => return e } }
                 }
                 _ = renew.tick() => {
-                    let bytes = token.borrow().clone();
+                    let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
                     if renewal.is_none() { match self.renew(&mut link, &bytes).await { Ok(guard) => renewal = guard, Err(e) => return e } }
                 }
                 _ = ping.tick() => {
@@ -717,34 +841,34 @@ impl Worker {
                     if missed >= 3 { return "ping_timeout"; }
                 }
                 data = out.recv() => {
-                    let Some((requested, data)) = data else { return "closed"; };
-                    if requested != kind { count(&mut self.status.lock().unwrap().drops, "not_ready"); continue; }
+                    let Some((relay_id, requested, data)) = data else { return "closed"; };
+                    if relay_id != self.relay_id || requested != kind { count(&mut self.status.lock().unwrap().drops, "not_ready"); continue; }
                     if timeout(self.timing.connect, link.send(&wire::encode_data(id, &data))).await != Ok(Ok(())) { return "data_write"; }
                     let mut s = self.status.lock().unwrap(); s.tx_packets += 1; s.tx_bytes += data.len() as u64;
                 }
                 body = link.recv() => {
                     let body = match body { Ok(b) => b, Err(e) => return e };
                     match wire::parse(&body) {
-                        Ok(wire::Message::Cookie { cookie }) if renewal.is_some() => {
-                            let bytes = token.borrow().clone();
+                        Ok(wire::Message::Cookie { relay_id, cookie }) if renewal.is_some() && relay_id == self.relay_id => {
+                            let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
                             if timeout(self.timing.connect, link.send(&self.alloc(&bytes, &cookie))).await != Ok(Ok(())) { return "renew_write"; }
                         }
-                        Ok(wire::Message::AllocOk { alloc_id, ttl_secs, peer_ready }) => {
+                        Ok(wire::Message::AllocOk { alloc_id, ttl_secs, peer_ready }) if ttl_secs > 0 && ttl_secs <= 120 => {
                             id = alloc_id; deadline = Instant::now() + Duration::from_secs(ttl_secs.into()); self.status.lock().unwrap().peer_ready = peer_ready;
                             if let Some(hub) = self.hub.get() && let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) { route.id = Some(id); route.awaiting = false; }
                             renewal = None;
                         }
-                        Ok(wire::Message::AllocErr { .. }) => return "alloc_rejected",
+                        Ok(wire::Message::AllocErr { code }) => return alloc_error(code),
                         Ok(wire::Message::Data { alloc_id, datagram }) if alloc_id == id && datagram.len() <= wire::MAX_RELAYED_DATAGRAM => {
                             { let mut s = self.status.lock().unwrap(); s.rx_packets += 1; s.rx_bytes += datagram.len() as u64; }
-                            self.event(RelayEvent::Rx { peer: self.peer, kind, datagram: datagram.to_vec() });
+                            self.event(RelayEvent::Rx { peer: self.peer, relay_id: self.relay_id, kind, datagram: datagram.to_vec() });
                         }
                         Ok(wire::Message::PeerState { alloc_id, ready }) if alloc_id == id => self.status.lock().unwrap().peer_ready = ready,
                         Ok(wire::Message::Pong { alloc_id, nonce }) if alloc_id == id => {
                             if let Some((expected, sent)) = pending { if expected == nonce {
                                 let measured = sent.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
                                 let ms = { let mut s = self.status.lock().unwrap(); let ms = s.rtt_ms.map_or(measured, |old| ((u64::from(old) * 7 + u64::from(measured)) / 8) as u32); s.rtt_ms = Some(ms); ms };
-                                pending = None; missed = 0; self.event(RelayEvent::Rtt { peer: self.peer, kind, ms });
+                                pending = None; missed = 0; self.event(RelayEvent::Rtt { peer: self.peer, relay_id: self.relay_id, kind, ms });
                             } else { count(&mut self.status.lock().unwrap().drops, "unexpected_pong"); } }
                         }
                         _ => count(&mut self.status.lock().unwrap().drops, "invalid_message_or_allocation"),
@@ -780,6 +904,7 @@ mod tests {
     fn token(peer: DeviceId) -> Vec<u8> {
         wire::RelayToken::issue(
             &SigningKey::from_bytes(&[3; 32]),
+            [6; 16],
             [1; 16],
             [2; 16],
             peer,
@@ -791,9 +916,186 @@ mod tests {
         .encode()
         .to_vec()
     }
+    fn token_b64(peer: DeviceId) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(token(peer))
+    }
+
+    fn datagram_bytes() -> Vec<u8> {
+        let mut bytes = vec![0; atenea_protocol::DATA_OVERHEAD];
+        bytes[0] = atenea_protocol::VERSION;
+        bytes[1] = atenea_protocol::TYPE_DATA;
+        bytes
+    }
+
+    #[tokio::test]
+    async fn grants_reject_incoherent_context_before_connecting() {
+        use base64::Engine as _;
+        let peer = [5; 16];
+        let good = RelayEndpoint {
+            relay_id: [6; 16],
+            token: token_b64(peer),
+            name: "lab".into(),
+            udp: Some("198.51.100.1:443".into()),
+            tls: None,
+            tls_name: None,
+        };
+        for offset in [4, 5, 21, 37, 53, 69] {
+            let (client, mut events) = client(None);
+            let mut bad = good.clone();
+            let mut bytes = token(peer);
+            bytes[offset] ^= 1;
+            bad.token = base64::engine::general_purpose::STANDARD.encode(bytes);
+            client.open(peer, vec![bad]);
+            event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
+            assert!(client.hub.get().is_none());
+        }
+        for grants in [Vec::new(), vec![good.clone(); 2], vec![good; 5]] {
+            let (client, mut events) = client(None);
+            client.open(peer, grants);
+            event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
+            assert!(client.hub.get().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_uses_the_next_relays_own_grant() {
+        use base64::Engine as _;
+        let (addr, _, server) = udp_server([9; 16], false).await;
+        let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (client, mut events) = client(None);
+        let second_token = wire::RelayToken::issue(
+            &SigningKey::from_bytes(&[3; 32]),
+            [9; 16],
+            [1; 16],
+            [2; 16],
+            [5; 16],
+            identity().verifying_key().to_bytes(),
+            now().saturating_sub(1),
+            now() + 300,
+            [4; 8],
+        )
+        .encode();
+        client.open(
+            [5; 16],
+            vec![
+                RelayEndpoint {
+                    relay_id: [6; 16],
+                    token: token_b64([5; 16]),
+                    name: "silencioso".into(),
+                    udp: Some(silent.local_addr().unwrap().to_string()),
+                    tls: None,
+                    tls_name: None,
+                },
+                RelayEndpoint {
+                    relay_id: [9; 16],
+                    token: base64::engine::general_purpose::STANDARD.encode(second_token),
+                    name: "segundo".into(),
+                    udp: Some(addr),
+                    tls: None,
+                    tls_name: None,
+                },
+            ],
+        );
+        event(
+            &mut events,
+            |e| matches!(e, RelayEvent::Ready { relay_id, .. } if *relay_id == [9; 16]),
+        )
+        .await;
+        client.send([5; 16], [6; 16], RelayKind::Udp, datagram_bytes());
+        assert_eq!(client.status().entries[0].drops["not_ready"], 1);
+        server.abort();
+    }
+
+    #[test]
+    fn allocation_errors_are_explicit() {
+        assert_eq!(
+            alloc_error(wire::ErrCode::WrongRelay),
+            "relay_id incorrecto"
+        );
+        assert_eq!(
+            alloc_error(wire::ErrCode::UnsupportedVersion),
+            "relay incompatible: se requiere relay-v2"
+        );
+        assert_eq!(
+            alloc_error(wire::ErrCode::Malformed),
+            "mensaje de relay inválido"
+        );
+    }
+
+    #[tokio::test]
+    async fn tls_reports_v2_errors_and_refuses_v1_alpn() {
+        for code in [
+            wire::ErrCode::WrongRelay,
+            wire::ErrCode::UnsupportedVersion,
+            wire::ErrCode::Malformed,
+        ] {
+            let (cfg, ca) = tls_config();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut stream = tokio_rustls::TlsAcceptor::from(cfg)
+                    .accept(tcp)
+                    .await
+                    .unwrap();
+                let mut length = [0; 2];
+                stream.read_exact(&mut length).await.unwrap();
+                let mut body = vec![0; usize::from(u16::from_be_bytes(length))];
+                stream.read_exact(&mut body).await.unwrap();
+                assert!(
+                    matches!(wire::parse(&body), Ok(wire::Message::Alloc { relay_id, .. }) if relay_id == [6; 16])
+                );
+                stream
+                    .write_all(&wire::encode_frame(&wire::encode_alloc_err(code)).unwrap())
+                    .await
+                    .unwrap();
+            });
+            let (client, mut events) = client(Some(ca.0.clone()));
+            client.open(
+                [5; 16],
+                vec![RelayEndpoint {
+                    relay_id: [6; 16],
+                    token: token_b64([5; 16]),
+                    name: "lab".into(),
+                    udp: None,
+                    tls: Some(addr),
+                    tls_name: Some("relay.test".into()),
+                }],
+            );
+            event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
+            assert_eq!(
+                client.status().entries[0].last_error.as_deref(),
+                Some(alloc_error(code))
+            );
+            server.await.unwrap();
+        }
+        let (cfg, ca) = tls_config();
+        let mut cfg = (*cfg).clone();
+        cfg.alpn_protocols = vec![b"atenea-relay/1".to_vec()];
+        let (addr, _, server) = tls_server(Arc::new(cfg), false).await;
+        let (client, mut events) = client(Some(ca.0.clone()));
+        client.open(
+            [5; 16],
+            vec![RelayEndpoint {
+                relay_id: [6; 16],
+                token: token_b64([5; 16]),
+                name: "lab".into(),
+                udp: None,
+                tls: Some(addr),
+                tls_name: Some("relay.test".into()),
+            }],
+        );
+        event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
+        assert_eq!(
+            client.status().entries[0].last_error.as_deref(),
+            Some("relay incompatible: se requiere relay-v2")
+        );
+        server.abort();
+    }
     fn client(ca_file: Option<std::path::PathBuf>) -> (RelayClient, mpsc::Receiver<RelayEvent>) {
         let (mut client, events) =
-            RelayClient::new(RelayClientConfig { ca_file }, identity(), [2; 16]);
+            RelayClient::new(RelayClientConfig { ca_file }, identity(), [2; 16], [1; 16]);
         client.timing = Timing {
             retry: Duration::from_millis(25),
             ping: Duration::from_millis(30),
@@ -818,19 +1120,39 @@ mod tests {
         .expect("relay event timeout")
     }
 
-    async fn udp_server(reject: bool) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+    async fn udp_server(
+        relay_id: [u8; 16],
+        reject: bool,
+    ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr = socket.local_addr().unwrap().to_string();
         let allocations = Arc::new(AtomicUsize::new(0));
         let count = allocations.clone();
         let task = tokio::spawn(async move {
-            let cookies = wire::CookieMaker::new([9; 32]);
+            let cookies = wire::CookieMaker::new([9; 32], relay_id);
             let mut buf = [0; wire::MAX_FRAME];
             loop {
                 let (n, src) = socket.recv_from(&mut buf).await.unwrap();
                 let response = match wire::parse(&buf[..n]).unwrap() {
-                    wire::Message::CookieReq => wire::encode_cookie(&cookies.cookie(src, now())),
+                    wire::Message::CookieReq {
+                        relay_id: requested,
+                    } => {
+                        assert_eq!(requested, relay_id);
+                        assert_eq!(n, 64);
+                        assert!(buf[19..n].iter().all(|b| *b == 0));
+                        socket
+                            .send_to(&wire::encode_cookie(&[99; 16], &[1; 16]), src)
+                            .await
+                            .unwrap();
+                        let attacker = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                        attacker
+                            .send_to(&wire::encode_cookie(&relay_id, &[1; 16]), src)
+                            .await
+                            .unwrap();
+                        wire::encode_cookie(&relay_id, &cookies.cookie(src, now()))
+                    }
                     wire::Message::Alloc {
+                        relay_id,
                         cookie,
                         ts,
                         token,
@@ -838,6 +1160,7 @@ mod tests {
                     } => {
                         assert!(cookies.verify(src, &cookie, now()));
                         let t = wire::RelayToken::parse(token).unwrap();
+                        assert_eq!(t.relay_id, relay_id);
                         t.verify(
                             &[SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes()],
                             now(),
@@ -845,6 +1168,7 @@ mod tests {
                         .unwrap();
                         assert!(wire::verify_alloc(
                             &t.src_identity_pub,
+                            &relay_id,
                             &cookie,
                             ts,
                             token,
@@ -863,12 +1187,12 @@ mod tests {
                     wire::Message::Data { alloc_id, datagram } => {
                         assert_eq!(alloc_id, 77);
                         socket
-                            .send_to(&wire::encode_data(999, b"foreign"), src)
+                            .send_to(&wire::encode_data(999, &datagram_bytes()), src)
                             .await
                             .unwrap();
                         let attacker = UdpSocket::bind("127.0.0.1:0").await.unwrap();
                         attacker
-                            .send_to(&wire::encode_data(77, b"spoof"), src)
+                            .send_to(&wire::encode_data(77, &datagram_bytes()), src)
                             .await
                             .unwrap();
                         socket
@@ -887,13 +1211,14 @@ mod tests {
 
     #[tokio::test]
     async fn udp_cookie_proof_data_rtt_renewal_and_close() {
-        let (addr, allocations, server) = udp_server(false).await;
+        let (addr, allocations, server) = udp_server([6; 16], false).await;
         let (client, mut events) = client(None);
         let peer = [5; 16];
         client.open(
             peer,
-            token(peer),
             vec![RelayEndpoint {
+                relay_id: [6; 16],
+                token: token_b64(peer),
                 name: "lab".into(),
                 udp: Some(addr),
                 tls: None,
@@ -910,16 +1235,21 @@ mod tests {
             )
         })
         .await;
-        client.send(peer, RelayKind::Udp, b"opaque ciphertext".to_vec());
+        client.send(peer, [6; 16], RelayKind::Udp, datagram_bytes());
         assert!(
-            matches!(event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await, RelayEvent::Rx { datagram, .. } if datagram == b"opaque ciphertext")
+            matches!(event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await, RelayEvent::Rx { relay_id, datagram, .. } if relay_id == [6; 16] && datagram == datagram_bytes())
         );
+        let mut legacy = datagram_bytes();
+        legacy[0] = 1;
+        client.send(peer, [6; 16], RelayKind::Udp, legacy);
+        client.send(peer, [6; 16], RelayKind::Udp, vec![2, 3]);
         client.send(
             peer,
+            [6; 16],
             RelayKind::Udp,
             vec![0; wire::MAX_RELAYED_DATAGRAM + 1],
         );
-        client.send(peer, RelayKind::Tls, vec![1, 2]);
+        client.send(peer, [6; 16], RelayKind::Tls, vec![1, 2]);
         timeout(Duration::from_secs(2), async {
             while allocations.load(Ordering::SeqCst) < 2 {
                 event(&mut events, |e| matches!(e, RelayEvent::Rtt { .. })).await;
@@ -934,6 +1264,7 @@ mod tests {
         assert_eq!(status.entries[0].rx_packets, 1);
         assert_eq!(status.entries[0].drops["oversized"], 1);
         assert_eq!(status.entries[0].drops["not_ready"], 1);
+        assert_eq!(status.entries[0].drops["invalid_datagram"], 2);
         assert!(status.drops["unknown_origin_or_allocation"] >= 2);
         assert!(serde_json::to_value(status).unwrap()["entries"][0]["peer"].is_string());
         client.close(peer);
@@ -944,12 +1275,13 @@ mod tests {
 
     #[tokio::test]
     async fn allocation_error_emits_down() {
-        let (addr, _, server) = udp_server(true).await;
+        let (addr, _, server) = udp_server([6; 16], true).await;
         let (client, mut events) = client(None);
         client.open(
             [5; 16],
-            token([5; 16]),
             vec![RelayEndpoint {
+                relay_id: [6; 16],
+                token: token_b64([5; 16]),
                 name: "lab".into(),
                 udp: Some(addr),
                 tls: None,
@@ -1037,6 +1369,7 @@ mod tests {
                     }
                     let response = match message {
                         wire::Message::Alloc {
+                            relay_id,
                             cookie,
                             ts,
                             token,
@@ -1045,6 +1378,7 @@ mod tests {
                             assert_eq!(cookie, [0; 16]);
                             assert!(wire::verify_alloc(
                                 &identity().verifying_key().to_bytes(),
+                                &relay_id,
                                 &cookie,
                                 ts,
                                 token,
@@ -1063,7 +1397,7 @@ mod tests {
                         wire::Message::Data { alloc_id, datagram } => {
                             if stream
                                 .write_all(
-                                    &wire::encode_frame(&wire::encode_data(999, b"foreign"))
+                                    &wire::encode_frame(&wire::encode_data(999, &datagram_bytes()))
                                         .unwrap(),
                                 )
                                 .await
@@ -1102,8 +1436,9 @@ mod tests {
         client.timing.ping = Timing::default().ping;
         client.open(
             [5; 16],
-            token([5; 16]),
             vec![RelayEndpoint {
+                relay_id: [6; 16],
+                token: token_b64([5; 16]),
                 name: "lab".into(),
                 udp: Some(silent.local_addr().unwrap().to_string()),
                 tls: Some(addr),
@@ -1120,12 +1455,12 @@ mod tests {
             )
         })
         .await;
-        client.send([5; 16], RelayKind::Tls, b"opaque ciphertext".to_vec());
+        client.send([5; 16], [6; 16], RelayKind::Tls, datagram_bytes());
         assert!(
-            matches!(event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await, RelayEvent::Rx { datagram, .. } if datagram == b"opaque ciphertext")
+            matches!(event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await, RelayEvent::Rx { relay_id, datagram, .. } if relay_id == [6; 16] && datagram == datagram_bytes())
         );
         for _ in 0..QUEUE + 10 {
-            client.send([5; 16], RelayKind::Tls, vec![1, 2]);
+            client.send([5; 16], [6; 16], RelayKind::Tls, datagram_bytes());
         }
         assert!(client.status().entries[0].drops["queue_full"] >= 10);
         timeout(
@@ -1162,8 +1497,9 @@ mod tests {
             let (client, mut events) = client(trusted.then(|| ca.0.clone()));
             client.open(
                 [5; 16],
-                token([5; 16]),
                 vec![RelayEndpoint {
+                    relay_id: [6; 16],
+                    token: token_b64([5; 16]),
                     name: "lab".into(),
                     udp: None,
                     tls: Some(addr),
@@ -1181,17 +1517,19 @@ mod tests {
 
     #[tokio::test]
     async fn token_refresh_keeps_allocation_and_expiry_emits_down() {
-        let (addr, allocations, server) = udp_server(false).await;
+        let (addr, allocations, server) = udp_server([6; 16], false).await;
         let (client, mut events) = client(None);
-        let endpoint = RelayEndpoint {
+        let mut endpoint = RelayEndpoint {
+            relay_id: [6; 16],
+            token: token_b64([5; 16]),
             name: "lab".into(),
             udp: Some(addr),
             tls: None,
             tls_name: None,
         };
-        client.open([5; 16], token([5; 16]), vec![endpoint.clone()]);
+        client.open([5; 16], vec![endpoint.clone()]);
         event(&mut events, |e| matches!(e, RelayEvent::Ready { .. })).await;
-        client.open([5; 16], token([5; 16]), vec![endpoint.clone()]);
+        client.open([5; 16], vec![endpoint.clone()]);
         timeout(Duration::from_secs(2), async {
             while allocations.load(Ordering::SeqCst) < 2 {
                 event(&mut events, |e| matches!(e, RelayEvent::Rtt { .. })).await;
@@ -1202,6 +1540,7 @@ mod tests {
         assert_eq!(client.status().allocations, 1);
         let expired = wire::RelayToken::issue(
             &SigningKey::from_bytes(&[3; 32]),
+            [6; 16],
             [1; 16],
             [2; 16],
             [5; 16],
@@ -1212,7 +1551,9 @@ mod tests {
         )
         .encode()
         .to_vec();
-        client.open([5; 16], expired, vec![endpoint]);
+        use base64::Engine as _;
+        endpoint.token = base64::engine::general_purpose::STANDARD.encode(expired);
+        client.open([5; 16], vec![endpoint]);
         event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
         assert_eq!(
             client.status().entries[0].last_error.as_deref(),

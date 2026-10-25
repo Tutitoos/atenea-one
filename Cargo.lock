@@ -254,6 +254,8 @@ name = "atenea-crypto"
 version = "0.1.0"
 dependencies = [
  "atenea-protocol",
+ "blake2 0.11.0",
+ "chacha20poly1305",
  "getrandom 0.3.4",
  "proptest",
  "snow",
@@ -331,6 +333,8 @@ dependencies = [
  "blake2 0.11.0",
  "ed25519-dalek 3.0.0",
  "proptest",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -834,6 +838,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
+ "rand_core 0.6.4",
  "typenum",
 ]
 

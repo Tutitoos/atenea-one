@@ -1,12 +1,12 @@
 # Coordinator y conexión directa v1 (fase 4)
 
-- **Estado:** Aceptado (2026-10-24, por el responsable del proyecto); implementado y verificado en laboratorio (ver §9 y [resultados](../operations/e2e-fase4.md)). Pendiente la revisión criptográfica externa.
+- **Estado:** Base aceptada e implementada (2026-10-24); evolución wire-v2/relay-v2 de §4/§10 aceptada el 2026-10-25, pendiente de implementación y verificación. Los [resultados históricos](../operations/e2e-fase4.md) no verifican esa evolución. Pendiente la revisión criptográfica externa.
 - **Fecha:** 2026-10-24
 - **Relacionados:** ADR-001 (Noise IK), ADR-003 (sesión y roaming), ADR-004 (puertos), `docs/protocol/signed-config-v1.md`, `docs/api/control-plane-v1.md` §3.3 (autenticación de dispositivo), modelo de amenazas T3, T9 y T10.
 
 ## 1. Principios
 
-- **Un endpoint anunciado no es una ruta autenticada.** Los candidatos que llegan de STUN, del coordinator o de la configuración son **pistas**. Una ruta directa existe solo cuando un paquete Noise **autenticado** (respuesta de handshake o datos) llega desde ese endpoint. El agente nunca envía tráfico significativo a un candidato sin validar el retorno.
+- **Un endpoint anunciado no es una ruta autenticada.** Los candidatos de STUN/coordinator/configuración son pistas. En el establecimiento inicial, la ruta se confirma solo con respuesta de handshake o datos Noise autenticados, nunca con INIT ni respuesta de cookie. El roaming de una sesión establecida sigue actualizando el endpoint con datos autenticados sin desafío de retorno adicional (riesgo residual aceptado, ADR-003); no confundir autenticación de sesión con posesión de la nueva dirección.
 - El coordinator **no es de confianza para confidencialidad ni integridad**: solo entrega candidatos y avisos. No ve claves privadas ni tráfico. Si miente, el handshake autenticado falla (mismo modelo que un relay hostil, T2/T3).
 - El coordinator **no consulta la base de datos del control plane**: es sin estado duradero. Su autorización es la **configuración firmada** que el dispositivo presenta (misma cadena de confianza que el agente, sin estado anti-rollback): raíz → certificado de emisor → configuración.
 - No depende de STUN público: el STUN lo sirve el propio coordinator (UDP 3478 y 3479, ADR-004).
@@ -49,7 +49,7 @@ stun = ["host:3478", "host:3479"] # dos puertos del mismo servidor, en este orde
 - **Presencia:** `announce` cada 20 s (TTL 60 s) mientras haya configuración vigente; sin lease no se anuncia.
 - **Aviso de pares:** long-poll continuo a `/v1/events`. Un evento solo se atiende si `peer` figura en la configuración vigente; si no, se ignora y se cuenta.
 - **Iniciar una conexión** (hay tráfico hacia un par sin ruta directa confirmada): `rendezvous` (≤ 1 cada 5 s por par). Con los candidatos del par más los endpoints de la configuración, se inicia el sondeo.
-- **Sondeo (hole punching):** se envía el **mismo mensaje 1 de Noise** a cada candidato (≤ 8 más los configurados) cada ~1 s con jitter ±25 %, durante ≤ 10 s por intento (≤ 12 envíos por candidato). Ambos lados sondean a la vez al recibir el aviso. Si ambos inician, gana la clave pública menor (ADR-001). Al fallar un intento se espera 30 s (con retardo creciente hasta 5 min) antes de otro `rendezvous`; el estado del par es `probing` y luego `none` (a la espera del relay de la fase 5).
+- **Sondeo (hole punching):** se conserva el mismo mensaje 1 de Noise e índice pendiente por intento; cada datagrama [wire-v2](wire-v2.md) de **146 bytes** incluye MAC1 y el MAC2 de su propio candidato/camino (cero si no tiene cookie). Se envía cada ~1 s con jitter ±25 %, durante ≤10 s y ≤12 envíos por candidato, a ≤8 candidatos más los configurados. Una COOKIE_REPLY válida permite reemplazar MAC2 y reintentar solo en su ruta dentro del presupuesto, sin confirmar endpoint ni ampliar sondeo. Ambos lados sondean al recibir aviso; en simultáneo gana la pública menor (ADR-001). Tras fallo, retardo desde 30 s creciente hasta 5 min antes de otro rendezvous.
 - Recibir más candidatos durante un intento pendiente adelanta el próximo envío, pero **no reinicia** su ventana de 10 s ni sus 12 rondas. Los avisos repetidos del coordinator no pueden mantener indefinidamente el mismo mensaje 1 en `probing`.
 - **Confirmación (validar el retorno):** `peer.endpoint` solo cambia cuando **autentica** un paquete: respuesta de handshake del iniciador o datos de una sesión. El **respondedor ya no actualiza el endpoint al aceptar un mensaje 1** (un mensaje 1 repetido dentro de la ventana de 30 s ya no puede redirigirle tráfico); responde a la dirección de origen sin cambiar el endpoint confirmado, que se fija con el primer paquete autenticado de la sesión.
 - **Keepalive:** con ruta directa y sesión confirmada, un paquete vacío cada 15 s de inactividad (los mapeos UDP de los NAT suelen caducar a ~30 s). Si no se recibe nada del par durante 45 s, la ruta se da por perdida: se vacía el endpoint confirmado y se vuelve a `rendezvous`.
@@ -65,7 +65,7 @@ La lista de coordinators y STUN de una red se distribuirá en la configuración 
 
 | Riesgo | Mitigación |
 | --- | --- |
-| Coordinator hostil entrega candidatos de una víctima ("reflexión") | Solo para pares de la propia configuración; ≤ 8 candidatos, ≤ 12 sondeos de 114 bytes por candidato y ≤ 1 intento cada 30 s (backoff): ≈ 1 paquete/s por candidato durante 10 s. Residual aceptado: tráfico acotado hacia terceros |
+| Coordinator hostil entrega candidatos de una víctima («reflexión») | Solo para pares de la propia configuración; ≤8 candidatos, ≤12 sondeos de 146 bytes por candidato y ≤1 intento cada 30 s (backoff); las cookies no amplían el presupuesto. Residual aceptado: tráfico acotado hacia terceros |
 | Coordinator hostil desvía a un par | Imposible sin las claves: el handshake falla (IK con la clave del par de la configuración) |
 | Un tercero obtiene candidatos de un dispositivo | `rendezvous` exige firma del dispositivo y autorización mutua; respuesta uniforme `peer_unavailable` |
 | Mensaje 1 repetido desde otra IP redirige el tráfico del respondedor | El endpoint solo se confirma con un paquete autenticado de la sesión (§4) |
@@ -96,9 +96,36 @@ Implementación: `crates/nat-traversal` (STUN y candidatos), `apps/coordinator` 
 
 ## 10. Relay (fase 5)
 
-Contrato completo en [`relay-v1.md`](relay-v1.md) §4. El coordinator firma los tokens con una clave propia (`RELAY_SIGNING_KEY_FILE`, semilla hex de 32 bytes, 0600; `--print-relay-key` imprime la pública para configurar el relay).
+Contrato normativo en [relay-v2](relay-v2.md), que sustituye v1 sin compatibilidad. `/v1` HTTP y `AtDevice v1` no cambian por la versión de cable. El coordinator firma con clave propia (`RELAY_SIGNING_KEY_FILE`, semilla hex de 32 bytes, 0600; `--print-relay-key` imprime la pública).
 
-- `POST /v1/relay` `{"peer":"<32 hex>"}` (firmada con `AtDevice`; autorización mutua igual que `rendezvous`) → `{"token":"<base64, 173 bytes>","relays":[{"name","udp","tls","tls_name"}],"ttl_secs":300}`.
-- Evento `relay` al par: `{"kind":"relay","peer":"<solicitante>","token":"<token inverso>","relays":[…],"seq":N}`, en la misma cola acotada (16 eventos, 30 s) que `connect`.
-- Límites independientes del rendezvous: 2 emisiones HTTP por par y minuto (4 tokens) y 10 peticiones por dispositivo y minuto. Sin relay configurado: `503`.
-- El coordinator sigue sin ser de confianza para integridad ni confidencialidad: un token solo autoriza una asignación; los datos siguen cifrados extremo a extremo por Noise.
+- Cada entrada de `ATENEA_COORD_RELAYS` exige `relay_id` de 16 bytes (32 hex minúsculos, no cero), `name`, `udp` y/o `tls` y `tls_name` si hay TLS. Máximo cuatro entradas, IDs/nombres únicos; datos inválidos impiden arrancar. El operador configura el mismo ID en `ATENEA_RELAY_ID` del relay. No derivarlo de un nombre o IP mutable.
+- `POST /v1/relay` `{"peer":"<32 hex>"}` (firmada, presencia vigente, autorización mutua) → `{"relays":[{"relay_id":"<32 hex>","name":"…","udp":"host:443","tls":"host:443","tls_name":"…","token":"<base64 de 189 bytes>"}],"ttl_secs":300}`. `udp`/`tls` son opcionales según la entrada configurada. **No existe token raíz compartido**: cada token autoriza solicitante→par exclusivamente en el relay de su entrada.
+- Token binario: `AORT[4] || version=2[1] || relay_id[16] || network_id[16] || src[16] || dst[16] || src_identity_pub[32] || not_before u64 || not_after u64 || token_id[8] || sig[64]`. Dominio de firma `"atenea-one/relay-token/v2\0"` sobre los primeros 125 bytes. Vida por defecto 300 s, máximo 600 s, tolerancia ±30 s. No cambia ningún formato de configuración firmada.
+- Evento al par: `{"kind":"relay","peer":"<solicitante>","relays":[…],"ttl_secs":300,"seq":N}` con un token inverso par→solicitante por cada relay_id, en la cola existente (16 eventos, TTL30 s). `src_identity_pub` de cada dirección procede de su propia presencia vigente; token_id aleatorio independiente por token.
+- Límites: una emisión por 5 s/par, dos emisiones por minuto/par y diez solicitudes por dispositivo/minuto. Una emisión produce 2×R tokens con R≤4. El antiguo máximo de cuatro tokens se interpreta ahora como cuatro **concesiones direccionales** por par/minuto (≤16 tokens de audiencia), no cuatro firmas totales ni cuatro por relay sin límite global.
+- Errores uniformes: 401 invalid_signature, 409 not_announced, 404 peer_unavailable, 429 rate_limited; sin firma configurada o sin relays: 503 relay_unavailable. El cliente rechaza JSON antiguo/incoherente como error de protocolo, no usa un token en varios relays. Relay/TCP añade WrongRelay(9), UnsupportedVersion(10), Malformed(11), definidos en relay-v2; no son códigos HTTP.
+- El coordinator no es confiable para integridad/confidencialidad E2E: sus tokens autorizan recursos de relay, no descifran Noise. La audiencia evita reutilización entre IDs de relay diferentes, no retransmisiones de ALLOC dentro de la misma audiencia y frescura.
+
+### Cliente del agente: concesiones por audiencia
+
+`coord.rs` deserializa `relay_id` como 16 bytes desde hex minúsculo no cero y
+exige `token` en cada endpoint. Rechaza listas vacías, de más de cuatro entradas,
+IDs repetidos, tokens que no sean v2 o cuya audiencia no coincida con su entrada;
+no trunca una lista excesiva. `vet_relays` conserva el plazo DNS de tres segundos,
+los filtros de destinos y la conexión posterior a una IP literal ya verificada.
+
+`RelayClient::open(peer, grants)` no recibe token global. Antes de conectar,
+comprueba red, dispositivos origen/destino, audiencia y pública de identidad
+local, además de estructura y vigencia. La comprobación no autentica al
+coordinator: la firma del token se sigue verificando en el servidor relay.
+Cada candidato usa su propio token para UDP y TLS y para renovar; retirar su
+audiencia de una concesión actualizada cierra la asignación. La cola de salida
+conserva el ID para no reenviar un INIT con cookie de otra audiencia al conmutar.
+
+Los eventos `Ready`, `Down`, `Rx` y `Rtt` entregan `relay_id: [u8;16]` junto con
+par/transporte al engine; el estado IPC expone el ID en hex, sin token ni cookie.
+Se mantienen tres intentos UDP de un segundo, ALPN exclusivo `/2`, renovación
+cada 60 segundos y PING cada cinco segundos. Las pruebas internas cubren
+incoherencias de concesión, fallback entre audiencias, COOKIE de otro ID/origen,
+prueba de posesión v2, renovación y propagación del ID; su ejecución corresponde
+a la integración, no se afirma verificación por esta descripción.

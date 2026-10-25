@@ -21,6 +21,8 @@ Al abrir el socket imprime y vacía `ready` en stdout. Al terminar la escucha im
 
 La dirección UDP se fija al primer handshake fresco de la clave autorizada: no admite migración de endpoint, candidatos externos ni relays. El agente inicia el handshake al ver tráfico para el par y también inicia el rekey; este par responde, conserva la sesión anterior durante la transición y no transmite hasta confirmar la nueva mediante un paquete autenticado. Envía keepalives cada 15 segundos sin otro envío; las sesiones respetan la caducidad dura de `atenea-crypto`.
 
+El cable es exclusivamente [wire-v2](../../docs/protocol/wire-v2.md), con prólogo Noise `atenea-one/v2`: INIT mide 146 bytes y se valida MAC1 con la pública local antes de llamar a `read_init`, también al retransmitir. Descarta v1, versiones desconocidas y respuestas COOKIE_REPLY no solicitadas. Este par de laboratorio no implementa umbral de carga, no exige cookie/MAC2 y no emite desafíos de cookie; no sustituye la protección bajo carga del agente.
+
 Solo responde a peticiones de eco completas, con checksums válidos, destino propio y origen exacto del agente. Descarta todo lo demás, incluidos fragmentos IPv4, opciones IPv4 y extensiones/fragmentos IPv6. No reensambla paquetes, no inicia conexiones y no interpreta ACL/configuración firmada. Los contadores de eco no prueban recepción de la respuesta por el agente.
 
 Pruebas sin red real ni privilegios:
@@ -31,4 +33,4 @@ cargo clippy -p atenea-testpeer --all-targets -- -D warnings
 cargo test -p atenea-testpeer
 ```
 
-Cubren handshake, confirmación, rekey, keepalives, eco cifrado IPv4/IPv6 (verificación independiente de checksums), antirreplay, autenticación, longitudes malformadas y orígenes no autorizados. El ping por `utun` y la integración privilegiada pertenecen al runner macOS de CI, no a estas pruebas.
+Cubren handshake wire-v2 con MAC1, rechazo de versiones/longitudes/MAC1 inválidos y COOKIE_REPLY no solicitadas, aceptación sin cookie, confirmación, rekey, keepalives, eco cifrado IPv4/IPv6 (verificación independiente de checksums), antirreplay, autenticación y orígenes no autorizados. El ping por `utun` y la integración privilegiada pertenecen al runner macOS de CI, no a estas pruebas.

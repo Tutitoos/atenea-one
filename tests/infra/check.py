@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 role = sys.argv[1]
 relay = role == 'relay'
@@ -12,6 +13,18 @@ root = Path('/opt/atenea-relay' if relay else '/opt/atenea')
 if len(sys.argv) == 3:
     text = Path(sys.argv[2]).read_text()
     assert re.search(r'localhost\s+:.*changed=0\s+unreachable=0\s+failed=0', text), text
+
+relay_config = tomllib.loads((root/'config/relay.toml').read_text())
+relay_id = relay_config['relay_id']
+assert re.fullmatch('[0-9a-f]{32}', relay_id) and int(relay_id, 16) != 0
+source_config = tomllib.loads(Path('/lab/public/config/relay.toml').read_text())
+assert relay_id == source_config['relay_id']
+if relay:
+    assert relay_id != Path('/runtime/config/relay-id').read_text().strip()
+else:
+    coordinator_config = tomllib.loads((root/'config/coordinator.toml').read_text())
+    assert coordinator_config['relays'][0]['relay_id'] == relay_id
+    assert relay_id == Path('/runtime/config/relay-id').read_text().strip()
 
 base = ['docker', 'compose', '--project-directory', str(root)]
 ids = subprocess.check_output(base + ['ps', '--all', '-q'], text=True).split()

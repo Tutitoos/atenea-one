@@ -119,7 +119,7 @@ systemctl disable --now atenea-stack.service
 docker compose --project-directory /opt/atenea down -v
 # Mismo nodo desechable, sin representar otro proveedor; reutiliza solo certificado/clave relay.
 python3 - <<'PY'
-import json, yaml
+import json, secrets, yaml
 from pathlib import Path
 inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
 inv['all']['children'] = {'relays': {'hosts': {'localhost': {'ansible_connection': 'local'}}}}
@@ -128,7 +128,11 @@ v.update(atenea_node_role='relay', atenea_stack_dir='/opt/atenea-relay', atenea_
 v['atenea_env']['ATENEA_RUNTIME_DIR'] = '/opt/atenea-relay'
 v['atenea_stack_images'] = {'relay': v['atenea_stack_images']['relay'], 'stun': v['atenea_stack_images']['coordinator']}
 p = Path('/lab/public/config/relay.toml')
-p.write_text(p.read_text().replace('127.0.0.1:8443', '0.0.0.0:443').replace('proxy_protocol = true', 'proxy_protocol = false'))
+primary_id = Path('/runtime/config/relay-id').read_text().strip()
+secondary_id = secrets.token_hex(16)
+assert secondary_id != primary_id and int(secondary_id, 16) != 0
+p.write_text(p.read_text().replace(f'relay_id = "{primary_id}"', f'relay_id = "{secondary_id}"').replace('127.0.0.1:8443', '0.0.0.0:443').replace('proxy_protocol = true', 'proxy_protocol = false'))
+Path('/lab/public/config/relay-id').write_text(secondary_id)
 Path('/lab/public/config/stun.toml').write_text('listen = "127.0.0.1:8081"\nstun_bind = "0.0.0.0"\nstun_ports = [3478, 3479]\nanchors = ["' + Path('/runtime/config/root.pub').read_text().strip() + '"]\n')
 Path('/lab/relay-inventory.yml').write_text(yaml.safe_dump(inv))
 Path('/lab/relay-plain.yaml').write_text(json.dumps({'files': {'relay.key': Path('/runtime/secrets/relay.key').read_text()}}))

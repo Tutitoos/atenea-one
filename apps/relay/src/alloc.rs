@@ -61,6 +61,12 @@ impl Table {
         now: u64,
         c: &Config,
     ) -> Result<u64, ErrCode> {
+        let expires = now
+            .saturating_add(120_000)
+            .min(t.not_after.saturating_add(30).saturating_mul(1000));
+        if expires <= now {
+            return Err(ErrCode::Expired);
+        }
         let key = (t.network_id, t.src_device, t.dst_device);
         let old = self.keys.get(&key).copied();
         let old_ip = old
@@ -88,9 +94,6 @@ impl Table {
             *self.networks.entry(key.0).or_default() += 1;
         }
         *self.ips.entry(binding.ip()).or_default() += 1;
-        let expires = now
-            .saturating_add(120_000)
-            .min(t.not_after.saturating_add(30).saturating_mul(1000));
         if let Some(a) = self.entries.get_mut(&id) {
             a.binding = binding;
             a.expires = expires;
@@ -132,7 +135,7 @@ mod tests {
     fn refresh_rebind_pair_and_expire() {
         let signer = atenea_identity::SigningKey::from_bytes(&[1; 32]);
         let mut t = RelayToken::issue(
-            &signer, [1; 16], [2; 16], [3; 16], [4; 32], 100, 400, [5; 8],
+            &signer, [0x11; 16], [1; 16], [2; 16], [3; 16], [4; 32], 100, 400, [5; 8],
         );
         let mut table = Table::default();
         let c = Config::default();
