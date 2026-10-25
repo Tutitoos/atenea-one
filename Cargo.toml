@@ -8,6 +8,7 @@ members = [
     "crates/nat-traversal",
     "crates/relay-core",
     "crates/tunnel",
+    "crates/testpeer",
     "apps/agent",
     "apps/control-plane",
     "apps/coordinator",

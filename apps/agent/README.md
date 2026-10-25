@@ -1,8 +1,8 @@
-# Agente Linux: subredes, DNS y control local
+# Agente: subredes, DNS y control local
 
 El agente aplica únicamente rutas y DNS de una configuración firmada vigente. Declarar una ruta no la autoriza: un administrador debe aprobarla y elegir explícitamente su valor de SNAT. No hay nodo de salida ni tránsito entre pares. Véanse [ADR-007](../../docs/architecture/ADR-007-subredes-dns-privilegios.md) y [configuración v2](../../docs/protocol/signed-config-v2.md).
 
-La integración con el host se delimita en `src/platform`: `TunDevice` (IP puro), `HostNetwork` (enlace, rutas, DNS, SNAT, forwarding y candidatos), `LocalIpc` (transporte y credenciales), `PrivateFiles` (secretos y persistencia duradera) y `Lifecycle` (parada). Linux conserva su backend. macOS compila, pero `run` falla explícitamente con «plataforma sin backend todavía»: no es todavía un cliente utilizable. `advertise_routes` se rechaza en plataformas sin capacidad de servir subredes; un `advertised` firmado se informa como `routes: unsupported` y `forwarding_ok: false`, sin instalar SNAT.
+La integración con el host se delimita en `src/platform`: `TunDevice` (IP puro), `HostNetwork` (enlace, rutas, DNS, SNAT, forwarding y candidatos), `LocalIpc` (transporte y credenciales), `PrivateFiles` (secretos y persistencia duradera) y `Lifecycle` (parada). Linux conserva su backend. macOS dispone de utun y backend nativo de cliente; Windows sigue rechazando `run` sin backend. `advertise_routes` se rechaza en plataformas sin capacidad de servir subredes; un `advertised` firmado se informa como `routes: unsupported` y `forwarding_ok: false`, sin instalar SNAT.
 
 ## Configuración local
 
@@ -58,3 +58,11 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 ## Pruebas sin privilegios
 
 La política de `netconf` usa un backend `HostNetwork` en memoria para probar rutas, diferencias, conflictos, DNS y capacidades en cualquier plataforma, sin procesos ni privilegios. Las pruebas adicionales del backend Linux inyectan las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls; usan ejecutables simulados y ficheros temporales y no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.
+
+## macOS
+
+Solo cliente: utun normaliza la cabecera de familia a IP puro; `ifconfig`, `route` y `netstat` aplican direcciones/MTU/rutas con la política común de conflictos. `interface = "utun"` elige un índice libre, `utunN` solicita uno concreto; no usar `atenea0`. IPv6 desactiva DAD exclusivamente en la utun. El descubrimiento de candidatos parsea `ifconfig`, sin libc en el agente.
+
+DNS dividido usa `/etc/resolver/<dominio>`, con marca de propiedad, sin dominio raíz ni cambios al DNS global. Solo retira ficheros propios al parar, arrancar o ejecutar `cleanup`. IPC, permisos privados y señales reutilizan los backends Unix. Las órdenes nativas y el directorio de resolutores son inyectables en pruebas sin privilegios.
+
+El paquete sin firmar de `packaging/macos/build-pkg.sh` instala un demonio launchd root, pero no lo habilita sin configuración. Las rutas orientativas son `/Library/Application Support/Atenea` y `/var/run/atenea`; no cambian los valores del código. Véase [instalación macOS](../../docs/operations/instalacion-macos.md) para configuración, arranque, desinstalación, firma/notarización pendiente y alcance de CI. La prueba privilegiada solo se ejecuta en la VM desechable de GitHub, nunca en el Mac del propietario.

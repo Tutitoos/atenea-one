@@ -252,7 +252,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
         .as_ref()
         .map(|p| crate::ipc::bind(p, cfg.status_gid, true))
         .transpose()?;
-    let mut netconf = crate::netconf::NetConf::new(cfg.interface.clone(), Default::default());
+    let mut netconf = crate::netconf::NetConf::new(tun.name().into(), Default::default());
     netconf.cleanup()?;
     let resolved_endpoints = if cfg.sync.is_none() && cfg.coordinator.is_none() {
         Some(Vec::new())
@@ -512,7 +512,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
                     if s.complete() || now.duration_since(started) >= Duration::from_secs(3) {
                         stun_started = None;
                         let (mapping, reflexive) = s.result();
-                        let mut cands = net::local_addrs(&rt.cfg.interface, rt.cfg.listen.port(), &rt.candidate_exclusions).await;
+                        let mut cands = net::local_addrs(rt.tun.name(), rt.cfg.listen.port(), &rt.candidate_exclusions).await;
                         if let Some(r) = reflexive && !cands.contains(&r) {
                             cands.push(r);
                         }

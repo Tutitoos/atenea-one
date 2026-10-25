@@ -318,6 +318,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "atenea-testpeer"
+version = "0.1.0"
+dependencies = [
+ "atenea-crypto",
+ "atenea-identity",
+ "atenea-protocol",
+ "clap",
+ "zeroize",
+]
+
+[[package]]
 name = "atenea-tunnel"
 version = "0.1.0"
 dependencies = [

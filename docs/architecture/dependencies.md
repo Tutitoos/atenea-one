@@ -206,3 +206,9 @@ Referencias oficiales de implementación: [React](https://react.dev/reference/re
 [ESLint](https://eslint.org/docs/latest/use/configure/configuration-files),
 [typescript-eslint](https://typescript-eslint.io/getting-started/),
 [jsx-a11y](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y).
+
+### Fase 8 — Cliente macOS
+
+Sin dependencias externas nuevas. `atenea-tunnel` reutiliza `libc` 0.2 y Tokio ya resueltos en `Cargo.lock` (MIT OR Apache-2.0 y MIT, respectivamente), ahora también en macOS. El único código unsafe permanece en ese crate: socket de control utun, ioctl, connect, getsockopt, fcntl y readv/writev; sin copia ni asignación por paquete. El agente reutiliza permisos, credenciales Unix y persistencia existentes.
+
+Integración mediante herramientas incluidas en macOS (`ifconfig`, `route`, `netstat`, launchd, `pkgbuild`, `productbuild`, `pkgutil`); no se redistribuyen. Las pruebas privilegiadas usan Python 3 del runner y el par Rust del workspace, no bibliotecas Python externas. Firma/notarización Apple Developer ID pendiente de decisión del responsable.

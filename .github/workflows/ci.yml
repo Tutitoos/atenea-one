@@ -42,3 +42,26 @@ jobs:
       - run: pnpm -r run typecheck
       - run: pnpm -r run test
       - run: pnpm -r run build
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar Rust estable
+        run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
+      - name: Formato, clippy y pruebas sin privilegios
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy -p atenea-tunnel -p atenea-agent -p atenea-cli -p atenea-testpeer --all-targets -- -D warnings
+          cargo test -p atenea-tunnel -p atenea-agent -p atenea-cli -p atenea-testpeer
+          cargo check --workspace
+      - name: Compilar cliente y par de pruebas
+        run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+      - name: Construir paquete sin firmar (sin instalar)
+        run: |
+          ATENEA_BIN_DIR="$PWD/target/debug" packaging/macos/build-pkg.sh
+          pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
+      - name: Aceptación privilegiada en VM desechable
+        run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh

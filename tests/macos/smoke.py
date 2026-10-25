@@ -1,0 +1,195 @@
+"""Aceptación real: ejecutar exclusivamente mediante run.sh en el runner desechable."""
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import stat
+import subprocess
+import tempfile
+import time
+
+REPO = Path(__file__).resolve().parents[2]
+BIN = REPO / "target/debug"
+CLI = BIN / "atenea"
+AGENT = BIN / "atenea-agent"
+NETWORK = "77777777777777777777777777777777"
+RESOLVER = Path("/etc/resolver/lab.internal")
+OWNER = "# Atenea One: resolver administrado\n"
+assert os.getuid() == 0 and os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def call(*args, **kwargs):
+    return subprocess.check_output([str(a) for a in args], text=True, **kwargs).strip()
+
+
+def until(check, seconds=30):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            result = check()
+            if result:
+                return result
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(0.2)
+    raise AssertionError("No se cumplió la condición dentro del plazo")
+
+
+def defaults():
+    return "\n".join(line for family in ("inet", "inet6")
+                     for line in call("/usr/sbin/netstat", "-rn", "-f", family).splitlines()
+                     if line.split() and line.split()[0] == "default")
+
+
+def route_iface(address):
+    return call("/sbin/route", "-n", "get", address)
+
+
+def ask(path, command):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(3)
+        client.connect(str(path))
+        client.sendall((command + "\n").encode())
+        return json.loads(client.recv(65536))
+
+
+with tempfile.TemporaryDirectory(prefix="atenea-macos-") as temp:
+    work = Path(temp)
+    # El directorio permite llegar al socket al usuario ajeno: se prueba el socket, no solo el padre.
+    work.chmod(0o755)
+    before = defaults()
+    assert not RESOLVER.exists(), "El runner ya contiene lab.internal; no se sobrescribe"
+    root = work / "root.key"
+    anchor = call(CLI, "root-init", "--out", root)
+    call(CLI, "issuer-init", "--root", root, "--network-id", NETWORK, "--serial", "1", "--out-dir", work / "issuer")
+    device = call(CLI, "device-init", "--dir", work / "device")
+    device_id = re.search(r"device_id=([0-9a-f]+)", device)[1]
+    call(CLI, "device-init", "--dir", work / "peer")
+    config = work / "agent.toml"
+    config.write_text(f'''interface = "utun"
+listen = "127.0.0.1:51820"
+ipc_socket = "{work}/control.sock"
+status_socket = "{work}/status.sock"
+status_gid = 0
+noise_key_file = "{work}/device/noise.key"
+identity_key_file = "{work}/device/identity.key"
+config_file = "{work}/config.bin"
+state_dir = "{work}/state"
+network_id = "{NETWORK}"
+device_id = "{device_id}"
+trust_anchor = "{anchor}"
+''')
+    config.chmod(0o600)
+
+    def issue(version, extended):
+        spec = work / "spec.toml"
+        spec.write_text(f'''network_id = "{NETWORK}"
+device_bundle = "{work}/device/bundle.bin"
+config_version = {version}
+validity_secs = 3600
+mtu = 1280
+tunnel_addrs = ["10.77.0.2", "fd77::2"]
+network_prefixes = ["10.77.0.0/24", "fd77::/64"]
+[[peer]]
+bundle = "{work}/peer/bundle.bin"
+addrs = ["10.77.0.1", "fd77::1"]
+endpoints = ["127.0.0.1:51821"]
+routes = {('["10.88.0.0/24", "fd88::/64"]' if extended else '[]')}
+[[rule]]
+src = "any"
+dst = "any"
+''' + ('[dns]\nservers = ["10.77.0.1"]\ndomains = ["lab.internal"]\n' if extended else ''))
+        call(CLI, "issue", "--issuer-key", work / "issuer/issuer.key", "--issuer-cert", work / "issuer/issuer.cert", "--spec", spec, "--out", work / "config.bin")
+
+    agent = None
+    peer = None
+    log = (work / "agent.log").open("w+")
+    peerlog = (work / "peer.log").open("w+")
+    interface = None
+    try:
+        issue(1, False)  # Sin extensiones: wire v1; v2 añade rutas y DNS en caliente.
+        peer = subprocess.Popen([str(BIN / "atenea-testpeer"), "--device-dir", str(work / "peer"), "--agent-bundle", str(work / "device/bundle.bin"), "--listen", "127.0.0.1:51821", "--own-addr", "10.77.0.1", "--own-addr6", "fd77::1", "--agent-addr", "10.77.0.2", "--agent-addr6", "fd77::2", "--network-id", NETWORK, "--count", "2", "--timeout-secs", "90"], stdout=peerlog, stderr=subprocess.STDOUT)
+        until(lambda: "ready" in (work / "peer.log").read_text())
+
+        def start():
+            return subprocess.Popen([str(AGENT), "run", "--config", str(config)], stdout=log, stderr=subprocess.STDOUT)
+
+        agent = start()
+        until(lambda: (work / "control.sock").exists())
+        until(lambda: "inet 10.77.0.2" in call("/sbin/ifconfig"))
+        interface = next(line.split(":")[0] for line in call("/sbin/ifconfig").splitlines()
+                         if line.startswith("utun") and "mtu 1280" in line
+                         and "inet 10.77.0.2" in call("/sbin/ifconfig", line.split(":")[0]))
+        assert "fd77::2" in call("/sbin/ifconfig", interface)
+        assert stat.S_IMODE((work / "control.sock").stat().st_mode) == 0o600
+        assert stat.S_IMODE((work / "status.sock").stat().st_mode) == 0o660
+        assert stat.S_IMODE((work / "state/state.bin").stat().st_mode) == 0o600
+        assert (work / "state/state.bin").stat().st_uid == 0
+        # drop uid/gid en proceso hijo; el intento debe fallar aun pudiendo atravesar el directorio.
+        probe = 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"stop\\n"); print(s.recv(1024))'
+        def nobody():
+            os.setgroups([])
+            os.setgid(65534)
+            os.setuid(65534)
+        blocked = subprocess.run(["/usr/bin/python3", "-c", probe, str(work / "control.sock")], preexec_fn=nobody, capture_output=True)
+        assert blocked.returncode != 0, "Un usuario ajeno pudo conectar al control"
+        assert agent.poll() is None
+        assert "error" in ask(work / "status.sock", "stop")
+        issue(2, True)
+        call(CLI, "reload", "--socket", work / "control.sock")
+        until(lambda: ask(work / "control.sock", "status").get("dns") == "applied")
+        status = ask(work / "status.sock", "status")
+        assert {r["prefix"] for r in status["routes"] if r["state"] == "installed"} == {"10.88.0.0/24", "fd88::/64"}, status
+        for address in ("10.88.0.1", "fd88::1"):
+            assert re.search(r"interface:\s+" + interface + r"\b", route_iface(address))
+        assert "mtu 1280" in call("/sbin/ifconfig", interface)
+        assert RESOLVER.read_text() == OWNER + "nameserver 10.77.0.1\n"
+        assert not Path("/etc/resolver/.").is_file()
+        assert defaults() == before
+        # Ambos ecos atraviesan la utun real y Noise; reintento solo para esperar el handshake.
+        until(lambda: subprocess.run(["/sbin/ping", "-c", "1", "-W", "1000", "10.77.0.1"], capture_output=True).returncode == 0, 40)
+        until(lambda: subprocess.run(["/sbin/ping6", "-c", "1", "fd77::1"], capture_output=True, timeout=8).returncode == 0, 30)
+        assert peer.wait(timeout=15) == 0
+        assert "echo_replies=2" in (work / "peer.log").read_text()
+        call(CLI, "down", "--socket", work / "control.sock")
+        assert agent.wait(timeout=10) == 0
+        assert subprocess.run(["/sbin/ifconfig", interface], capture_output=True).returncode != 0
+        assert not RESOLVER.exists()
+        assert defaults() == before
+        # Reinicio carga v2 persistida; SIGKILL prueba la limpieza de arranque y cleanup offline.
+        agent = start()
+        until(lambda: RESOLVER.exists())
+        text = call("/sbin/ifconfig")
+        interface = next(line.split(":")[0] for line in text.splitlines() if line.startswith("utun") and "mtu 1280" in line and "inet 10.77.0.2" in call("/sbin/ifconfig", line.split(":")[0]))
+        agent.kill()
+        agent.wait(timeout=10)
+        call(AGENT, "cleanup", "--config", config)
+        assert subprocess.run(["/sbin/ifconfig", interface], capture_output=True).returncode != 0
+        assert not RESOLVER.exists()
+        for family in ("inet", "inet6"):
+            assert not any(interface in line.split() for line in call("/usr/sbin/netstat", "-rn", "-f", family).splitlines())
+        assert defaults() == before
+        # También se retira un residuo propio al arrancar, antes de reaplicar la configuración.
+        RESOLVER.write_text(OWNER + "nameserver 192.0.2.53\n")
+        issue(3, False)
+        agent = start()
+        until(lambda: not RESOLVER.exists())
+        until(lambda: ask(work / "control.sock", "status").get("dns") == "none")
+        call(CLI, "down", "--socket", work / "control.sock")
+        assert agent.wait(timeout=10) == 0
+        print("macOS: utun, v1/v2, IPv4/IPv6 Noise, rutas, DNS, IPC y limpieza correctos")
+    except BaseException:
+        log.flush()
+        peerlog.flush()
+        print((work / "agent.log").read_text())
+        print((work / "peer.log").read_text())
+        raise
+    finally:
+        for process in (agent, peer):
+            if process and process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+        subprocess.run([str(AGENT), "cleanup", "--config", str(config)], check=False)
+        log.close()
+        peerlog.close()

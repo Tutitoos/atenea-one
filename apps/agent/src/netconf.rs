@@ -1,7 +1,9 @@
 //! Cambios por enlace: nunca modifica rutas por defecto, sysctls ni resolv.conf.
 #[cfg(target_os = "linux")]
 pub use crate::platform::linux::Binaries;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub use crate::platform::macos::Binaries;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub use crate::platform::unsupported::Binaries;
 use crate::platform::{HostNetwork, Platform};
 use atenea_identity::{AdvertisedRoute, DeviceConfig, DnsConfig, Prefix};

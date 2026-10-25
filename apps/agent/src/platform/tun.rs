@@ -2,23 +2,23 @@
 
 use std::io;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct TunDevice {
     inner: atenea_tunnel::Tun,
 }
 
 // No puede existir un dispositivo sin un backend real.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub enum TunDevice {}
 
 impl TunDevice {
     /// Abre el adaptador dentro del runtime Tokio.
     pub fn open(name: &str) -> io::Result<Self> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             atenea_tunnel::Tun::create(name).map(|inner| Self { inner })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = name;
             Err(io::Error::new(
@@ -32,21 +32,21 @@ impl TunDevice {
     }
 
     pub fn name(&self) -> &str {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             self.inner.name()
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         match *self {}
     }
 
     /// Recibe un paquete IP completo; no incluye cabecera PI ni de familia.
     pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             self.inner.read_packet(buf).await
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = buf;
             match *self {}
@@ -55,11 +55,11 @@ impl TunDevice {
 
     /// Envía un paquete IP completo, sin añadir cabeceras de plataforma.
     pub async fn send(&self, packet: &[u8]) -> io::Result<usize> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             self.inner.write_packet(packet).await
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = packet;
             match *self {}
@@ -67,7 +67,7 @@ impl TunDevice {
     }
 }
 
-#[cfg(all(test, not(target_os = "linux")))]
+#[cfg(all(test, not(any(target_os = "linux", target_os = "macos"))))]
 mod tests {
     use super::TunDevice;
     use std::io;

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Solo construye: no instala, no crea interfaces y no requiere sudo.
+set -eu
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+bins=${ATENEA_BIN_DIR:-"$repo/target/release"}
+out="$repo/target/macos-package"
+mkdir -p "$out"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+root="$work/root"
+mkdir -p "$root/usr/local/bin" "$root/usr/local/libexec" "$root/Library/LaunchDaemons" "$work/scripts"
+for bin in atenea atenea-agent; do
+    install -m 0755 "$bins/$bin" "$root/usr/local/bin/$bin"
+done
+install -m 0755 "$repo/packaging/macos/atenea-uninstall.sh" "$root/usr/local/bin/atenea-uninstall.sh"
+install -m 0755 "$repo/packaging/macos/atenea-launchd.sh" "$root/usr/local/libexec/atenea-launchd.sh"
+install -m 0644 "$repo/packaging/macos/one.atenea.agent.plist" "$root/Library/LaunchDaemons/one.atenea.agent.plist"
+install -m 0755 "$repo/packaging/macos/postinstall" "$work/scripts/postinstall"
+pkgbuild --root "$root" --scripts "$work/scripts" --identifier one.atenea.client --version 0.1.0 --install-location / --ownership recommended "$work/component.pkg"
+productbuild --package "$work/component.pkg" "$out/atenea-client-unsigned.pkg"
+printf '%s\n' "$out/atenea-client-unsigned.pkg"

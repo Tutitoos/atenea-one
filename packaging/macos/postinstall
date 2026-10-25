@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+# No habilitar servicios en un volumen distinto del sistema arrancado.
+[ "${3:-/}" = / ] || exit 0
+install -d -o root -g wheel -m 0700 '/Library/Application Support/Atenea' /var/run/atenea
+if [ -f '/Library/Application Support/Atenea/agent.toml' ]; then
+    launchctl bootout system/one.atenea.agent 2>/dev/null || :
+    launchctl bootstrap system /Library/LaunchDaemons/one.atenea.agent.plist
+fi
