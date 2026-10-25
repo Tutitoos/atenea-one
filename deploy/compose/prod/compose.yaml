@@ -1,0 +1,157 @@
+name: atenea
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 256m
+  cpus: 0.5
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+x-health: &health
+  interval: 3s
+  timeout: 2s
+  retries: 30
+  start_period: 10s
+services:
+  haproxy:
+    <<: *hardening
+    image: haproxy:3.2-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
+    user: '99:99'
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      RELAY_HOST: ${RELAY_HOST:?}
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - '${ATENEA_BIND_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443/tcp'
+      - '${ATENEA_BIND_IP:-0.0.0.0}:${RELAY_UDP_PORT:-443}:443/udp'
+    networks:
+      backend: {}
+      edge:
+        aliases: ['${PANEL_HOST:?}', '${RELAY_HOST:?}']
+    healthcheck:
+      <<: *health
+      test: [CMD, haproxy, -c, -f, /usr/local/etc/haproxy/haproxy.cfg]
+    depends_on:
+      caddy: {condition: service_healthy}
+  caddy:
+    <<: *hardening
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      PANEL_HOST: ${PANEL_HOST:?}
+      CADDY_TLS: ${CADDY_TLS:?internal o correo ACME}
+      XDG_CONFIG_HOME: /tmp/config
+    ports: ['${ATENEA_BIND_IP:-0.0.0.0}:${HTTP_PORT:-80}:80/tcp']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks: [backend, edge]
+    healthcheck:
+      <<: *health
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:2019/config/]
+    depends_on:
+      control-plane: {condition: service_healthy}
+      dex: {condition: service_healthy}
+      coordinator: {condition: service_healthy}
+  postgres:
+    <<: *hardening
+    image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+    user: '999:999'
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      POSTGRES_DB: atenea
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      PGDATA: /var/lib/postgresql/data
+    secrets:
+      - postgres-password
+      - source: postgres-init
+        target: /docker-entrypoint-initdb.d/10-roles.sql
+    volumes: [pgdata:/var/lib/postgresql/data]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m', '/var/run/postgresql:rw,noexec,nosuid,size=8m,uid=999,gid=999']
+    networks: [backend]
+    healthcheck:
+      <<: *health
+      test: [CMD, pg_isready, -U, postgres, -d, atenea]
+  dex:
+    <<: *hardening
+    image: ghcr.io/dexidp/dex:v2.41.1@sha256:bc7cfce7c17f52864e2bb2a4dc1d2f86a41e3019f6d42e81d92a301fad0c8a1d
+    command: [dex, serve, /run/secrets/dex.yaml]
+    user: '65532:65532'
+    secrets: [dex.yaml]
+    volumes: [atenea-state:/var/lib/atenea]
+    networks: [backend]
+    healthcheck:
+      <<: *health
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:5556/dex/healthz]
+  control-plane:
+    <<: *hardening
+    image: ${CONTROL_PLANE_IMAGE:?digest de imagen requerido}
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      ATENEA_CP_LISTEN: 0.0.0.0:8080
+      ATENEA_CP_DATABASE_URL_FILE: /run/secrets/app-database-url
+      ATENEA_CP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc-client-secret
+      ATENEA_CP_OIDC_ISSUER: https://${PANEL_HOST:?}/dex
+      ATENEA_CP_OIDC_CLIENT_ID: atenea-control-plane
+      ATENEA_CP_OIDC_REDIRECT_URL: https://${PANEL_HOST:?}/auth/callback
+      ATENEA_CP_PUBLIC_URL: https://${PANEL_HOST:?}
+      ATENEA_CP_ISSUER_KEY_FILE: /run/secrets/issuer.key
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      RUST_LOG: info
+    secrets: [app-database-url, oidc-client-secret, issuer.key]
+    networks: [backend, edge]
+    healthcheck:
+      <<: *health
+      test: [CMD, /usr/local/bin/healthcheck, http, '127.0.0.1:8080']
+    depends_on:
+      postgres: {condition: service_healthy}
+  coordinator:
+    <<: *hardening
+    image: ${COORDINATOR_IMAGE:?digest de imagen requerido}
+    environment:
+      ATENEA_COORD_CONFIG: /etc/atenea/coordinator.toml
+      ATENEA_COORD_RELAY_SIGNING_KEY_FILE: /run/secrets/relay-signing.hex
+      RUST_LOG: info
+    secrets: [relay-signing.hex]
+    volumes: ['${ATENEA_RUNTIME_DIR:?}/config/coordinator.toml:/etc/atenea/coordinator.toml:ro']
+    ports: ['${ATENEA_BIND_IP:-0.0.0.0}:${STUN_PORT:-3478}:3478/udp']
+    networks: [backend, edge]
+    healthcheck:
+      <<: *health
+      test: [CMD, /usr/local/bin/healthcheck, http, '127.0.0.1:8081']
+  relay:
+    <<: *hardening
+    image: ${RELAY_IMAGE:?digest de imagen requerido}
+    network_mode: service:haproxy
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      ATENEA_RELAY_CONFIG: /etc/atenea/relay.toml
+      RUST_LOG: info
+    secrets: [relay.key]
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/config/relay.toml:/etc/atenea/relay.toml:ro'
+      - '${ATENEA_RUNTIME_DIR:?}/certs/relay.pem:/etc/atenea/relay.pem:ro'
+    healthcheck:
+      <<: *health
+      test: [CMD, /usr/local/bin/healthcheck, unix, /tmp/relay.sock]
+    depends_on:
+      haproxy: {condition: service_healthy}
+secrets:
+  postgres-password: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/postgres-password'}
+  postgres-init: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/postgres-init.sql'}
+  app-database-url: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/app-database-url'}
+  oidc-client-secret: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/oidc-client-secret'}
+  issuer.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/issuer.key'}
+  relay-signing.hex: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay-signing.hex'}
+  relay.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay.key'}
+  dex.yaml: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/dex.yaml'}
+volumes:
+  pgdata: {}
+  caddy-data: {}
+  atenea-state: {}
+networks:
+  backend: {internal: true}
+  edge: {}

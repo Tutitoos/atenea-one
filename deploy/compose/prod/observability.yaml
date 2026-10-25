@@ -1,0 +1,99 @@
+# Combinar desde la raíz con -f deploy/compose/prod/compose.yaml -f deploy/compose/prod/observability.yaml.
+services:
+  control-plane:
+    environment:
+      ATENEA_CP_METRICS_LISTEN: 0.0.0.0:9100
+    networks: [backend, edge, monitoring]
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+        labels: com.docker.compose.service
+  coordinator:
+    environment:
+      ATENEA_COORD_METRICS_LISTEN: 0.0.0.0:9100
+    networks: [backend, edge, monitoring]
+    logging: *logs
+  relay:
+    environment:
+      ATENEA_RELAY_METRICS_LISTEN: 0.0.0.0:9100
+    logging: *logs
+  haproxy:
+    networks: [backend, edge, monitoring]
+  caddy:
+    networks: [backend, edge, monitoring]
+    environment:
+      ATENEA_GRAFANA_HOST: ${ATENEA_GRAFANA_HOST:?Configure el nombre DNS privado de Grafana}
+    volumes:
+      - ../../observability/grafana.caddy:/etc/caddy/extra/grafana.caddy:ro
+  prometheus:
+    image: prom/prometheus@sha256:6927e0919a144aa7616fd0137d4816816d42f6b816de3af269ab065250859a62
+    command: ['--config.file=/etc/prometheus/prometheus.yaml', '--storage.tsdb.path=/prometheus', '--storage.tsdb.retention.time=7d']
+    volumes:
+      - ../../observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ../../observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    networks: [monitoring]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  loki:
+    image: grafana/loki@sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
+    command: ['-config.file=/etc/loki/config.yaml']
+    volumes:
+      - ../../observability/loki.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    networks: [monitoring]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  alloy:
+    image: grafana/alloy@sha256:ab04df3936e4d71d31b6f55e0c58a7e749091f59635dd8c2bc731ba1b6c93701
+    command: ['run', '--storage.path=/var/lib/alloy', '/etc/alloy/config.alloy']
+    volumes:
+      - ../../observability/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy-data:/var/lib/alloy
+    networks: [monitoring]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  grafana:
+    image: grafana/grafana@sha256:62d2b9d20a19714ebfe48d1bb405086081bc602aa053e28cf6d73c7537640dfb
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: https://${ATENEA_GRAFANA_HOST}/
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+    secrets: [grafana_admin_password]
+    volumes:
+      - ../../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs: [/tmp]
+    networks: [monitoring]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  node-exporter:
+    image: prom/node-exporter@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
+    command: ['--path.rootfs=/host', '--collector.disable-defaults', '--collector.filesystem', '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($$|/)']
+    volumes: ['/:/host:ro,rslave']
+    networks: [monitoring]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+networks:
+  monitoring:
+    internal: true
+volumes:
+  prometheus-data:
+  loki-data:
+  alloy-data:
+  grafana-data:
+secrets:
+  grafana_admin_password:
+    file: ${ATENEA_RUNTIME_DIR:?Directorio runtime}/secrets/grafana-admin-password

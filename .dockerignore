@@ -1,0 +1,14 @@
+.git
+**/node_modules
+**/target
+**/.runtime
+**/.runtime-*
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.age
+**/test-results
+**/playwright-report
+**/build
+**/dist

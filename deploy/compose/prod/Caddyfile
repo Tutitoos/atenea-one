@@ -1,0 +1,21 @@
+{
+  admin 127.0.0.1:2019
+  auto_https disable_redirects
+}
+{$PANEL_HOST} {
+  tls {$CADDY_TLS}
+  handle /dex/* {
+    reverse_proxy dex:5556
+  }
+  handle /coord/* {
+    uri strip_prefix /coord
+    reverse_proxy coordinator:8081
+  }
+  handle {
+    reverse_proxy control-plane:8080
+  }
+}
+http://{$PANEL_HOST} {
+  redir https://{$PANEL_HOST}{uri} permanent
+}
+import /etc/caddy/extra/*.caddy

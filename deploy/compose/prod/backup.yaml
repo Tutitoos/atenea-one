@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: ${ATENEA_BACKUP_IMAGE:?digest de imagen backup requerido}
+    secrets:
+      - pgbackrest_cipher
+    volumes:
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - pg-socket:/var/run/postgresql
+    tmpfs: !override
+      - /run/pgbackrest:uid=999,gid=999,mode=0700
+      - /tmp:rw,noexec,nosuid,size=64m
+  backup:
+    image: ${ATENEA_BACKUP_IMAGE:?digest de imagen backup requerido}
+    user: postgres
+    read_only: true
+    restart: unless-stopped
+    command: [backup-schedule]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - pgbackrest_cipher
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - pg-socket:/var/run/postgresql
+    tmpfs:
+      - /run/pgbackrest:uid=999,gid=999,mode=0700
+      - /tmp
+    networks: [backend]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  pgbackrest-repo:
+  pg-socket:
+secrets:
+  pgbackrest_cipher:
+    file: ${ATENEA_SECRETS_DIR:?Defina directorio de secretos}/pgbackrest-cipher

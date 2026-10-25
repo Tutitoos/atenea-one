@@ -1,0 +1,15 @@
+services:
+  haproxy:
+    ports: !override []
+  caddy:
+    ports: !override []
+    environment:
+      CADDY_TLS: /etc/atenea/relay.pem /run/secrets/relay.key
+    secrets: [relay.key]
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/certs/relay.pem:/etc/atenea/relay.pem:ro'
+  control-plane:
+    environment:
+      ATENEA_CP_OIDC_ISSUER: http://dex:5556/dex
+  coordinator:
+    ports: !override []
