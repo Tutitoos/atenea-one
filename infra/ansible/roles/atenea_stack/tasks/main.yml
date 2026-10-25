@@ -1,4 +1,6 @@
 ---
+- name: Aplicar cambios del motor antes de desplegar y medir salud
+  ansible.builtin.meta: flush_handlers
 - name: Exigir mapa de imágenes inmutables
   ansible.builtin.assert:
     that:
@@ -92,6 +94,13 @@
       - item.key in atenea_stack_images
       - item.value.build is not defined
   loop: "{{ (atenea_compose_config.stdout | from_json).services | dict2items }}"
+- name: Exigir namespace estable en el nodo principal
+  ansible.builtin.assert:
+    that:
+      - "'netns' in (atenea_compose_config.stdout | from_json).services"
+      - (atenea_compose_config.stdout | from_json).services.haproxy.network_mode == 'service:netns'
+      - (atenea_compose_config.stdout | from_json).services.relay.network_mode == 'service:netns'
+  when: atenea_node_role == 'principal'
 - name: Impedir servicios del principal en el relay secundario antes del arranque
   ansible.builtin.assert:
     that:
@@ -102,5 +111,21 @@
   when: >-
     atenea_stack_distribution.changed or atenea_stack_manifest.changed or
     atenea_stack_config.changed or atenea_stack_env_file.changed or atenea_stack_secrets.changed
+- name: Instalar reconvergencia tras reiniciar Docker en el principal
+  ansible.builtin.template:
+    src: atenea-stack.service.j2
+    dest: /etc/systemd/system/atenea-stack.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: atenea_stack_unit
+  when: atenea_node_role == 'principal'
+- name: Activar stack ligado al ciclo de vida de Docker
+  ansible.builtin.systemd_service:
+    name: atenea-stack
+    daemon_reload: "{{ atenea_stack_unit.changed }}"
+    enabled: true
+    state: "{{ 'restarted' if atenea_stack_unit.changed else 'started' }}"
+  when: atenea_node_role == 'principal'
 - name: Comprobar salud incluso sin cambios
   ansible.builtin.include_tasks: health.yml

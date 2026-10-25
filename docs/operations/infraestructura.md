@@ -161,9 +161,32 @@ Arranca PostgreSQL, ejecuta un contenedor efímero `control-plane --migrate` con
 `migration-database-url` montado y `ATENEA_CP_APPLICATION_ROLE=atenea_app`, igual que
 `deploy/compose/prod/migrate.sh`, **antes** de sustituir las aplicaciones.
 Después ejecuta `up -d --wait --wait-timeout 180` y exige todos los healthchecks
-(siete servicios en el principal; dos en el secundario). El plazo es configurable
+(ocho servicios en el principal, incluido `netns`; dos en el secundario). El plazo es configurable
 mediante `atenea_stack_health_timeout`. En error publica el estado de Compose;
 los logs se consultan localmente para no volcar secretos en la salida de Ansible.
+El mapa por digest `atenea_stack_images` debe incluir `netns` explícitamente en el
+principal; normalmente reutiliza la referencia de `haproxy`. Las mediciones
+históricas de siete servicios que siguen abajo preceden a esta corrección del
+namespace, documentada en [Caídas y leases](caidas-y-leases.md).
+
+El principal instala `atenea-stack.service` ligado por `PartOf/Requires/After` a
+`docker.service`, habilitado en `docker.service.wants`. Espera la capa Caddy/BD/
+control plane/Dex/coordinator y recrea netns/HAProxy/relay en orden Compose después
+de cada arranque del motor. Detiene sus tres compartidores antes de parar Docker;
+no elimina datos ni ejecuta migraciones en un reinicio. Ansible ejecuta los
+handlers de Docker antes de desplegar y verificar salud, evitando un reinicio
+diferido **después** de declarar el stack sano. Para retirar el principal,
+deshabilite primero esta unidad; para reparar la entrada, reiníciela.
+
+Se midieron tres `systemctl restart docker` fríos en el nodo anidado con la
+unidad instalada: **36,753 / 36,817 / 37,038 s** hasta ocho servicios healthy,
+probes correctos y mismo inode de namespace en netns/HAProxy/relay. Antes del
+arreglo, uno de tres reinicios dejó los dos consumidores `exited/unhealthy`;
+dockerd registró `cannot join network of a non running container`. El daemon de
+esta reproducción fue Docker **26.1.5**, almacén clásico **vfs** (overlay2 no pudo
+montarse), no se atribuye el fallo a overlay2. `live-restore=false` se usó solo
+para forzar una restauración fría en diagnóstico; el rol conserva `true`, que
+no sustituye la reconvergencia tras reboot/primer cambio del daemon.
 
 Si falla, restaura ambos ficheros, vuelve a arrancar los digests anteriores,
 comprueba todos sus healthchecks y termina **con error**, aunque el rollback
@@ -186,6 +209,11 @@ El Dockerfile incluye los paquetes base y Docker anidado para que los roles
 encuentren todo instalado; el inventario de ensayo desactiva solo la actualización
 de índices APT (`atenea_apt_update_cache=false`). Producción mantiene esa
 actualización activada por defecto.
+Las imágenes deben corresponder a las fuentes actuales, incluido el healthcheck
+Rust del relay. `INFRA_RELAY_IMAGE` permite cargar una imagen local alternativa
+para comprobarlo sin modificar la etiqueta protegida `atenea/relay:local`.
+Los alias `atenea-infra-pin/haproxy:pinned` y `atenea-infra-pin/caddy:pinned` deben
+estar preaprovisionados: el runner ya no crea ni cambia etiquetas del host.
 
 Usa un único Debian 13 con systemd, privilegios y cgroup v2, `--network none`,
 sin socket del anfitrión. Transfiere imágenes **locales** mediante
@@ -198,11 +226,15 @@ El ensayo implementado comprueba:
 - SOPS/age real y rotación con equivalencia del contenido descifrado.
 - Syntax-check, `ansible-lint --offline --profile production`, yamllint y
   Tofu `fmt -check`, `init`, `validate`, `plan` local sin providers externos.
-- Convergencia de `site.yml`, migraciones y siete servicios reales healthy.
+- Convergencia de `site.yml`, migraciones y ocho servicios reales healthy.
 - Panel HTTPS verificado contra la CA interna de Caddy a través de HAProxy.
 - SSH endurecido, nftables deny-by-default y puertos publicados exactos de
   Docker (`docker compose ps` + `docker inspect`), secretos 0400 con UID/GID
   999 o 65532 y segunda convergencia `changed=0`.
+- Namespace obsoleto provocado por reiniciar solo netns: HAProxy/relay deben ser
+  unhealthy y sus probes fallar; la unidad reconstruye los tres compartidores.
+  Después, tres reinicios reales consecutivos de Docker exigen ocho healthy,
+  mismo inode de red en los tres y probes correctos, sin recreación manual.
 - Upgrade feliz a un digest local distinto (misma aplicación, metadatos nuevos).
   Otro digest existente pero incompatible como coordinator fuerza fallo de salud;
   exige error del playbook, restauración exacta del mapa/entorno y salud recuperada.
@@ -212,7 +244,7 @@ El ensayo implementado comprueba:
 El contenedor exterior y sus volúmenes anónimos se eliminan al salir; todos
 los contenedores/redes/volúmenes del Docker anidado desaparecen con él. No se
 tocan recursos de otros laboratorios ni se publica en GHCR.
-Para diagnóstico, `KEEP_INFRA=1` conserva el contenedor únicamente si falla;
+Para diagnóstico, `KEEP_INFRA=1` conserva el contenedor tanto si falla como si pasa;
 su nombre aparece en la salida. Eliminarlo después con `docker rm -fv NOMBRE`;
 no usar esa opción como almacenamiento de secretos o copias.
 
@@ -267,3 +299,40 @@ bloqueos, consola/SSH remoto, NTP real del VPS, firewall externo, alcanzabilidad
 IPv4/IPv6 UDP/TCP 443 y UDP 3478, ACME público y su renovación, conmutación entre
 proveedores, y actualización desde un release publicado firmado.
 No se ha tocado ninguna infraestructura real ni publicado imágenes.
+
+### Revalidación tras gestionar el ciclo Docker (2026-10-25)
+
+Dos ejecuciones completas **consecutivas y secuenciales** de
+`INFRA_RELAY_IMAGE=atenea-stack-relay-health:local INFRA_IMAGE=atenea-infra:local bash tests/infra/run.sh`
+terminaron con **código 0**, en **487 s / 476 s** según el runner
+(488,57 / 476,16 s de pared exterior). Convergencia inicial: **57 / 55 s**.
+Ambas segundas convergencias del principal y relay devolvieron
+`ok=33 changed=0 failed=0`; ambas exigieron ocho servicios healthy en el principal,
+upgrade feliz, fallo forzado con rollback, HTTPS verificado y relay+STUN.
+
+Cada ejecución reinició solo netns para dejar los consumidores en la red vieja:
+HAProxy y relay se volvieron **unhealthy**, sus probes devolvieron **1**, y
+`systemctl restart atenea-stack.service` recuperó los ocho. Se observaron a
+**170,036 / 168,235 s**, incluyendo los 30 reintentos de salud existentes y probes
+finales; no son tiempos de detección instantánea ni de recuperación.
+Los tres reinicios posteriores de Docker (`live-restore=true` productivo)
+convergieron a ocho healthy en **26,205 / 26,222 / 26,149 s** y
+**25,922 / 25,996 / 25,936 s**. Se comprobaron inodos iguales en los tres
+compartidores y probes 0 en cada repetición; la unidad, no el script, recreó la entrada.
+
+Salida final literal en las dos pasadas:
+
+```text
+PASS namespace obsoleto: probes fallan; unidad reconstruye entrada
+PASS Docker restart after: 3 repeticiones reales
+PASS panel HTTPS tras HAProxy/Caddy con CA interna
+PASS upgrade feliz y upgrade fallido con rollback al mapa anterior
+PASS relay: 2 healthy; docker ps/inspect y nftables puertos exactos; secretos 0400/UID; SSH; idempotencia si se solicita
+INFRA OK: stack real, migraciones, HTTPS, digests, upgrade/rollback, relay+STUN, secretos e idempotencia.
+```
+
+Ambos contenedores y sus volúmenes anónimos se eliminaron, igual que el nodo
+retenido de diagnóstico. No se descargaron ni instalaron imágenes, crates,
+paquetes o herramientas; Docker anidado estuvo `--network none`. No se alteraron
+tags protegidos del host. El detalle frío antes/después y las limitaciones están
+en [Caídas y leases](caidas-y-leases.md#ampliación-reinicio-del-motor-docker).

@@ -21,7 +21,7 @@ La fase 9 convierte el código en algo instalable, recuperable y actualizable. N
 | Componente | HA en v1 | Comportamiento ante caída |
 | --- | --- | --- |
 | Relay | **Sí** (dos relays de proveedores distintos) | El agente conmuta de relay con el coordinator; caminos directos no se interrumpen |
-| Coordinator | **No** (instancia única, estado efímero en memoria) | P2P ya establecido sigue; no hay nuevos rendezvous ni relay hasta volver; presencia se reconstruye en ≤ un ciclo de announce |
+| Coordinator | **No** (instancia única, estado efímero en memoria) | P2P y relay ya establecidos siguen mientras duren sus autorizaciones; no hay nuevos rendezvous ni nuevas asignaciones/tokens de relay hasta volver; presencia se reconstruye en ≤ un ciclo de announce (20 s en el agente actual) |
 | Control plane + PostgreSQL | **No** (instancia única; restauración, no failover) | Los túneles siguen mientras la configuración firmada esté vigente (lease de 300 s en piloto); al caducar sin renovación el tráfico se corta (diseño de ADR-002). Es **fail-closed** y se mide |
 | HAProxy/Caddy | **No** | Caen panel y relay TLS; UDP sigue |
 

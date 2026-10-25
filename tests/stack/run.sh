@@ -32,7 +32,7 @@ bash deploy/compose/prod/migrate.sh "$ENV_FILE"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 150
 echo "PASS stack saludable en $((SECONDS-START)) s (incluye migraciones)"
 EDGE_NETWORK="$PROJECT"_edge
-EDGE_IP=$(docker inspect "$(${COMPOSE[@]} ps -q haproxy)" --format "{{(index .NetworkSettings.Networks \"$EDGE_NETWORK\").IPAddress}}")
+EDGE_IP=$(docker inspect "$(${COMPOSE[@]} ps -q netns)" --format "{{(index .NetworkSettings.Networks \"$EDGE_NETWORK\").IPAddress}}")
 CP_IP=$(docker inspect "$(${COMPOSE[@]} ps -q control-plane)" --format "{{(index .NetworkSettings.Networks \"$EDGE_NETWORK\").IPAddress}}")
 COORD_IP=$(docker inspect "$(${COMPOSE[@]} ps -q coordinator)" --format "{{(index .NetworkSettings.Networks \"$EDGE_NETWORK\").IPAddress}}")
 export EDGE_IP CP_IP COORD_IP
@@ -44,7 +44,7 @@ docker run -d --rm --name "$PROJECT-run" --privileged --network "$EDGE_NETWORK" 
   atenea/stack-runner:local sleep infinity >/dev/null
 RUNNER_IP=$(docker inspect "$PROJECT-run" --format "{{(index .NetworkSettings.Networks \"$EDGE_NETWORK\").IPAddress}}")
 # Retorno a las NAT simuladas sin un segundo SNAT que falsee los candidatos STUN.
-for service in coordinator haproxy; do
+for service in coordinator netns; do
   docker run --rm --privileged --network "container:$(${COMPOSE[@]} ps -q "$service")" \
     atenea-panel-lab ip route add 198.51.100.0/24 via "$RUNNER_IP"
 done

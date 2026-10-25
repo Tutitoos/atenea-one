@@ -1,0 +1,20 @@
+# Gestionado por Ansible: Docker no conserva el orden de namespaces al reiniciar.
+[Unit]
+Description=Atenea stack y namespace compartido
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ atenea_stack_dir }}
+ExecStart=/usr/bin/docker compose up -d --wait --wait-timeout {{ atenea_stack_health_timeout }} caddy
+ExecStart=/usr/bin/docker compose up -d --force-recreate --wait --wait-timeout {{ atenea_stack_health_timeout }} netns haproxy relay
+# Si Docker ya murió, la próxima activación recrea los tres contenedores igualmente.
+ExecStop=-/usr/bin/docker compose stop relay haproxy netns
+TimeoutStartSec={{ atenea_stack_health_timeout | int * 2 + 30 }}
+TimeoutStopSec=60
+
+[Install]
+WantedBy=docker.service

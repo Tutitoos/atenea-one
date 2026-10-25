@@ -31,7 +31,7 @@ start-agent)
   join=$(python3 -c 'import json,sys; x=json.loads(sys.argv[1]);x["url"]="http://"+sys.argv[2]+":8080";print(json.dumps(x))' "$3" "$CP_IP")
   atenea agent-config --join "$join" --dir "/tmp/lab/$n" --out "/tmp/lab/$n.toml" --state-dir "/tmp/lab/$n.state" --config-file "/tmp/lab/$n.cfg" --ipc-socket "/tmp/lab/$n.sock" >/dev/null
   cat >> "/tmp/lab/$n.toml" <<TOML
-interval_secs = 10
+interval_secs = ${DRILL_REISSUE:-10}
 [coordinator]
 url = "http://$COORD_IP:8081"
 stun = ["$COORD_IP:3478", "$COORD_IP:3479"]

@@ -19,9 +19,9 @@ listener público del relay no habla HTTP. El endpoint por red
 Si un puerto de métricas no se puede abrir, el servicio falla al arrancar.
 
 El overlay utiliza `0.0.0.0:9100` dentro de contenedores sin `ports`, con red
-`monitoring` interna. Relay comparte el namespace de HAProxy para conservar la
-frontera loopback de PROXYv2; Prometheus lo scrapea en `haproxy:9100`, **no** en el
-listener 443 de HAProxy. Solo procesos de confianza deben unirse a las redes de
+`monitoring` interna. Relay y HAProxy comparten el namespace estable de `netns`
+para conservar la frontera loopback de PROXYv2; Prometheus scrapea relay en
+`netns:9100`, **no** en el listener 443 de HAProxy. Solo procesos de confianza deben unirse a las redes de
 estos contenedores: Docker permite alcanzar también las interfaces `edge/backend`
 entre sus miembros. Un firewall de host debe denegar accesos a subredes Docker
 desde redes externas. Este aislamiento no sustituye autenticación si se despliega

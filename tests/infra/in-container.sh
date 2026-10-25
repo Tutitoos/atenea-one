@@ -34,6 +34,7 @@ python3 - <<'PY'
 import json, shutil, yaml
 from pathlib import Path
 images = dict(line.split() for line in Path('/tmp/infra-images').read_text().splitlines())
+images['netns'] = images['haproxy']
 Path('/lab/plain.yaml').write_text(json.dumps({'files': {p.name: p.read_text() for p in Path('/runtime/secrets').iterdir()}}))
 public = Path('/lab/public')
 public.mkdir()
@@ -67,6 +68,7 @@ ansible-playbook -i /lab/inventory.yml site.yml
 echo "PASS convergencia real en $((SECONDS-start)) s"
 ansible-playbook -i /lab/inventory.yml site.yml | tee /lab/second.log
 python3 /src/tests/infra/check.py principal /lab/second.log
+python3 /src/tests/infra/restart-docker.py
 # CA interna copiada desde Caddy: verificación TLS, nunca --insecure.
 caddy=$(docker compose --project-directory /opt/atenea ps -q caddy)
 docker cp "$caddy:/data/caddy/pki/authorities/local/root.crt" /lab/caddy-root.crt
@@ -113,6 +115,7 @@ cmp /lab/previous-map /opt/atenea/compose.override.yaml
 cmp /lab/previous-env /opt/atenea/.env
 python3 /src/tests/infra/check.py principal
 echo 'PASS upgrade feliz y upgrade fallido con rollback al mapa anterior'
+systemctl disable --now atenea-stack.service
 docker compose --project-directory /opt/atenea down -v
 # Mismo nodo desechable, sin representar otro proveedor; reutiliza solo certificado/clave relay.
 python3 - <<'PY'

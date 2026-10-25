@@ -16,7 +16,7 @@ if len(sys.argv) == 3:
 base = ['docker', 'compose', '--project-directory', str(root)]
 ids = subprocess.check_output(base + ['ps', '--all', '-q'], text=True).split()
 containers = json.loads(subprocess.check_output(['docker', 'inspect', *ids], text=True))
-expected = {'relay', 'stun'} if relay else {'haproxy', 'caddy', 'postgres', 'dex', 'control-plane', 'coordinator', 'relay'}
+expected = {'relay', 'stun'} if relay else {'netns', 'haproxy', 'caddy', 'postgres', 'dex', 'control-plane', 'coordinator', 'relay'}
 assert {c['Config']['Labels']['com.docker.compose.service'] for c in containers} == expected
 assert all(c['State'].get('Health', {}).get('Status') == 'healthy' for c in containers)
 assert len(containers) == len(expected)
@@ -26,6 +26,13 @@ for container in containers:
     reference = config['services'][service]['image']
     digest = subprocess.check_output(['docker', 'image', 'inspect', reference, '--format', '{{.Id}}'], text=True).strip()
     assert container['Image'] == digest, (service, container['Image'], digest)
+if not relay:
+    by_service = {c['Config']['Labels']['com.docker.compose.service']: c for c in containers}
+    owner = by_service['netns']
+    assert set(owner['HostConfig']['PortBindings']) == {'443/tcp', '443/udp'}
+    for service in ('haproxy', 'relay'):
+        assert by_service[service]['HostConfig']['NetworkMode'] == 'container:'+owner['Id']
+        assert not by_service[service]['HostConfig']['PortBindings']
 ports = set()
 for container in containers:
     for key, bindings in container['NetworkSettings']['Ports'].items():

@@ -114,6 +114,12 @@ def wait_path(path):
         time.sleep(3)
     raise AssertionError(f'No se alcanzó {path}: ' + lab('field', 'a', 'peers.0.path'))
 
+# El simulacro reutiliza el alta real sin repetir el recorrido destructivo de revocación.
+if __import__('os').environ.get('ATENEA_STACK_DRILLS') == '1':
+    import runpy
+    runpy.run_path('/src/tests/stack/drills/scenarios.py', init_globals=globals())
+    raise SystemExit(0)
+
 for block, path in (('none', 'direct'), ('p2p', 'relay-udp'), ('udp', 'relay-tls')):
     lab('block', block)
     wait_path(path)

@@ -8,7 +8,7 @@ start=$SECONDS
 cleanup() {
     rc=$?
     trap - EXIT
-    if (( rc != 0 )) && [[ ${KEEP_INFRA:-0} == 1 ]]; then
+    if [[ ${KEEP_INFRA:-0} == 1 ]]; then
         echo "Conservado para diagnóstico: $name (KEEP_INFRA=1); código=$rc"
         exit "$rc"
     fi
@@ -27,10 +27,8 @@ docker image inspect "$image" >/dev/null 2>&1 || {
     echo "Falta $image: preaprovisionar tests/infra/Dockerfile con autorización de red; no se descarga automáticamente." >&2
     exit 1
 }
-# Un digest sin etiqueta no se importa en el Docker anidado: se etiqueta (solo metadatos locales) antes de save.
-docker tag haproxy@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b atenea-infra-pin/haproxy:pinned
-docker tag caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d atenea-infra-pin/caddy:pinned
-images=(atenea/control-plane:local atenea/coordinator:local atenea/relay:local atenea/tools:local postgres:17
+# Los alias fijados deben estar preaprovisionados: el ensayo no modifica etiquetas del host.
+images=(atenea/control-plane:local atenea/coordinator:local "${INFRA_RELAY_IMAGE:-atenea/relay:local}" atenea/tools:local postgres:17
     atenea-infra-pin/haproxy:pinned
     atenea-infra-pin/caddy:pinned
     ghcr.io/dexidp/dex:v2.41.1)
@@ -47,7 +45,8 @@ docker exec "$name" systemctl start docker
 docker save "${images[@]}" | docker exec -i "$name" docker load
 for service in control-plane coordinator relay tools postgres haproxy caddy dex; do
     case "$service" in
-        control-plane|coordinator|relay|tools) ref="atenea/$service:local" ;;
+        control-plane|coordinator|tools) ref="atenea/$service:local" ;;
+        relay) ref=${images[2]} ;;
         postgres) ref=postgres:17 ;;
         haproxy) ref=${images[5]} ;;
         caddy) ref=${images[6]} ;;

@@ -1,0 +1,25 @@
+services:
+  control-plane:
+    environment:
+      ATENEA_CP_CONFIG_VALIDITY_SECS: ${DRILL_LEASE:-60}
+  coordinator:
+    environment:
+      ATENEA_COORD_RELAYS: '[{"name":"principal","udp":"relay.stack.test:443","tls":"relay.stack.test:443","tls_name":"relay.stack.test"},{"name":"secundario","udp":"relay2:443"}]'
+  relay2:
+    image: ${RELAY_IMAGE:?}
+    pull_policy: never
+    user: '65532:65532'
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+    environment:
+      ATENEA_RELAY_CONFIG: /etc/atenea/relay.toml
+    secrets: [relay2.key]
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/config/relay2.toml:/etc/atenea/relay.toml:ro'
+      - '${ATENEA_RUNTIME_DIR:?}/certs/relay2.pem:/etc/atenea/relay.pem:ro'
+    networks: [edge]
+secrets:
+  relay2.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay2.key'}

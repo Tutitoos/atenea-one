@@ -13,15 +13,13 @@ x-health: &health
   retries: 30
   start_period: 10s
 services:
-  haproxy:
+  # El namespace sobrevive al reinicio independiente de HAProxy y relay.
+  netns:
     <<: *hardening
     image: haproxy:3.2-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
     user: '99:99'
-    cap_add: [NET_BIND_SERVICE]
-    environment:
-      RELAY_HOST: ${RELAY_HOST:?}
-    volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    entrypoint: [/bin/sleep]
+    command: [infinity]
     ports:
       - '${ATENEA_BIND_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443/tcp'
       - '${ATENEA_BIND_IP:-0.0.0.0}:${RELAY_UDP_PORT:-443}:443/udp'
@@ -31,9 +29,23 @@ services:
         aliases: ['${PANEL_HOST:?}', '${RELAY_HOST:?}']
     healthcheck:
       <<: *health
-      test: [CMD, haproxy, -c, -f, /usr/local/etc/haproxy/haproxy.cfg]
+      test: [CMD, /bin/true]
+  haproxy:
+    <<: *hardening
+    image: haproxy:3.2-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
+    user: '99:99'
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      RELAY_HOST: ${RELAY_HOST:?}
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    network_mode: service:netns
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'test "$$(readlink /proc/self/ns/net)" = "$$(readlink /proc/1/ns/net)" && haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg && nc -z -w 1 netns 443']
     depends_on:
       caddy: {condition: service_healthy}
+      netns: {condition: service_healthy}
   caddy:
     <<: *hardening
     image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
@@ -125,7 +137,7 @@ services:
   relay:
     <<: *hardening
     image: ${RELAY_IMAGE:?digest de imagen requerido}
-    network_mode: service:haproxy
+    network_mode: service:netns
     cap_add: [NET_BIND_SERVICE]
     environment:
       ATENEA_RELAY_CONFIG: /etc/atenea/relay.toml
@@ -136,9 +148,10 @@ services:
       - '${ATENEA_RUNTIME_DIR:?}/certs/relay.pem:/etc/atenea/relay.pem:ro'
     healthcheck:
       <<: *health
-      test: [CMD, /usr/local/bin/healthcheck, unix, /tmp/relay.sock]
+      test: [CMD, /usr/local/bin/healthcheck, unix, /tmp/relay.sock, 'netns:443']
     depends_on:
       haproxy: {condition: service_healthy}
+      netns: {condition: service_healthy}
 secrets:
   postgres-password: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/postgres-password'}
   postgres-init: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/postgres-init.sql'}

@@ -19,7 +19,7 @@ services:
     environment:
       ATENEA_RELAY_METRICS_LISTEN: 0.0.0.0:9100
     logging: *logs
-  haproxy:
+  netns:
     networks: [backend, edge, monitoring]
   caddy:
     networks: [backend, edge, monitoring]

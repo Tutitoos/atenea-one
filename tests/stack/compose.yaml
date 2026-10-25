@@ -1,5 +1,5 @@
 services:
-  haproxy:
+  netns:
     ports: !override []
   caddy:
     ports: !override []
