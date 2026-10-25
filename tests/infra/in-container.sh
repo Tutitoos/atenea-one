@@ -1,134 +1,143 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 mkdir -p /lab
 cp -a /src/infra /lab/
 cd /lab/infra/ansible
-# Claves desechables: ninguna sale de este contenedor.
-umask 077
-age-keygen -o /lab/identity.age 2>/lab/age-public
+# Todo el material privado vive en el filesystem desechable del nodo.
+age-keygen -o /lab/identity.age
 export SOPS_AGE_KEY_FILE=/lab/identity.age
 recipient=$(age-keygen -y "$SOPS_AGE_KEY_FILE")
 ssh-keygen -q -t ed25519 -N '' -f /lab/admin
+mkdir /runtime
+export PANEL_HOST=panel.stack.test RELAY_HOST=relay.stack.test
+python3 /src/deploy/compose/prod/bootstrap.py
+image() { while read -r service digest; do [[ $service != "$1" ]] || { echo "$digest"; return; }; done < /tmp/infra-images; return 1; }
+password=$(cat /runtime/offline/dex-password)
+hash=$(docker run --rm --pull never --network none "$(image caddy)" caddy hash-password --plaintext "$password")
+export DEX_HASH=$hash
+unset password hash
 python3 - <<'PY'
-import json, secrets
+import os
 from pathlib import Path
-names = ['issuer.key', 'relay-signing.hex', 'postgres-password', 'postgres-init.sql',
-         'app-database-url', 'migration-database-url', 'oidc-client-secret', 'relay.key', 'dex.yaml']
-# Solo se comprueban montaje y permisos: estos valores no arrancan aplicaciones.
-Path('/lab/plain.yaml').write_text(json.dumps({'files': {name: secrets.token_hex(32) for name in names}}))
+p = Path('/runtime/secrets/dex.yaml')
+p.chmod(0o600)
+p.write_text(p.read_text().replace('BCRYPT_RUNTIME', os.environ['DEX_HASH']))
+p.chmod(0o400)
 PY
-sops encrypt --age "$recipient" --input-type yaml --output-type yaml /lab/plain.yaml > /lab/secrets.sops.yaml
-sops decrypt /lab/secrets.sops.yaml > /lab/roundtrip.yaml
+unset DEX_HASH
+docker run --rm --pull never --network none --user 0 -v /runtime:/runtime "$(image tools)" root-init --out /runtime/offline/root.key > /runtime/config/root.pub
+RELAY_PUB=$(docker run --rm --pull never --network none --user 0 -v /runtime:/runtime:ro -e ATENEA_COORD_RELAY_SIGNING_KEY_FILE=/runtime/secrets/relay-signing.hex --entrypoint /usr/local/bin/atenea-coordinator "$(image tools)" --print-relay-key)
+export RELAY_PUB
+python3 /src/deploy/compose/prod/bootstrap.py config
 python3 - <<'PY'
-import yaml
-assert yaml.safe_load(open('/lab/plain.yaml')) == yaml.safe_load(open('/lab/roundtrip.yaml'))
-PY
-printf 'creation_rules:\n  - path_regex: .*[.]sops[.]yaml$\n    age: %s\n' "$recipient" > /lab/rotation.yaml
-bash /lab/infra/secrets/rotate.sh /lab/secrets.sops.yaml /lab/rotation.yaml
-sops decrypt /lab/secrets.sops.yaml > /lab/rotated.yaml
-python3 - <<'PY'
-import yaml
-assert yaml.safe_load(open('/lab/plain.yaml')) == yaml.safe_load(open('/lab/rotated.yaml'))
-PY
-# No ejecuta las imágenes de producción: valida el Compose real si ya existe.
-# Las imágenes Atenea aún no están publicadas por digest; dry-run no hace pull/up.
-python3 - <<'PY'
-import yaml
+import json, shutil, yaml
 from pathlib import Path
-digest = 'debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308'
-env = {'ATENEA_RUNTIME_DIR': '/opt/atenea', 'PANEL_HOST': 'panel.example.test',
-       'RELAY_HOST': 'relay.example.test', 'CADDY_TLS': 'internal',
-       'CONTROL_PLANE_IMAGE': digest, 'COORDINATOR_IMAGE': digest, 'RELAY_IMAGE': digest}
-source = '/src/deploy/compose/prod'
-if not Path(source + '/compose.yaml').exists():
- source = '/lab/compose'
- Path(source).mkdir()
- Path(source + '/compose.yaml').write_text(yaml.safe_dump({'services': {'test': {'image': digest}}}))
- print('AVISO: Compose mínimo; falta integrar StackImages')
-else:
- print('Compose producción presente: validación estructural dry-run, imágenes de ensayo; NO arranque')
-inventory = {'all': {'children': {'principal': {'hosts': {'localhost': {'ansible_connection': 'local'}}}, 'relays': {'hosts': {}}}, 'vars': {
- 'atenea_node_role': 'principal', 'atenea_admin_user': 'operador',
+images = dict(line.split() for line in Path('/tmp/infra-images').read_text().splitlines())
+Path('/lab/plain.yaml').write_text(json.dumps({'files': {p.name: p.read_text() for p in Path('/runtime/secrets').iterdir()}}))
+public = Path('/lab/public')
+public.mkdir()
+for name in ['config', 'certs']:
+ shutil.copytree(Path('/runtime')/name, public/name)
+vars = {'atenea_node_role': 'principal', 'atenea_admin_user': 'operador',
  'atenea_admin_public_key': Path('/lab/admin.pub').read_text().strip(),
  'atenea_ssh_sources': ['192.0.2.0/24', '2001:db8::/32'],
- 'atenea_secrets_source': '/lab/secrets.sops.yaml', 'atenea_stack_mode': 'dry-run',
- 'atenea_compose_source': source, 'atenea_env': env}}}
-Path('/lab/inventory.yml').write_text(yaml.safe_dump(inventory))
+ 'atenea_apt_update_cache': False,
+ 'atenea_secrets_source': '/lab/secrets.sops.yaml', 'atenea_config_source': str(public),
+ 'atenea_compose_source': '/src/deploy/compose/prod',
+ 'atenea_stack_images': {k: v for k,v in images.items() if k != 'tools'},
+ 'atenea_env': {'ATENEA_RUNTIME_DIR': '/opt/atenea', 'PANEL_HOST': 'panel.stack.test',
+                'RELAY_HOST': 'relay.stack.test', 'CADDY_TLS': 'internal'}}
+inv = {'all': {'children': {'principal': {'hosts': {'localhost': {'ansible_connection': 'local'}}}, 'relays': {'hosts': {}}}, 'vars': vars}}
+Path('/lab/inventory.yml').write_text(yaml.safe_dump(inv))
+PY
+sops encrypt --age "$recipient" --input-type yaml --output-type yaml /lab/plain.yaml > /lab/secrets.sops.yaml
+printf 'creation_rules:\n  - path_regex: .*[.]sops[.]yaml$\n    age: %s\n' "$recipient" > /lab/rotation.yaml
+bash /lab/infra/secrets/rotate.sh /lab/secrets.sops.yaml /lab/rotation.yaml
+sops decrypt --output-type json /lab/secrets.sops.yaml > /lab/rotated.json
+python3 - <<'PY'
+import json
+assert json.load(open('/lab/plain.yaml')) == json.load(open('/lab/rotated.json'))
 PY
 for playbook in site relay upgrade; do ansible-playbook -i /lab/inventory.yml "$playbook.yml" --syntax-check; done
-ansible-lint --offline -p site.yml relay.yml upgrade.yml
-# yamllint coincide con Ansible: documentos YAML, no plantillas Jinja.
+ansible-lint --offline --profile production -p site.yml relay.yml upgrade.yml
 yamllint -c /src/tests/infra/yamllint.yml /lab/infra/ansible /lab/infra/secrets
+start=$SECONDS
 ansible-playbook -i /lab/inventory.yml site.yml
+echo "PASS convergencia real en $((SECONDS-start)) s"
 ansible-playbook -i /lab/inventory.yml site.yml | tee /lab/second.log
-python3 - <<'PY'
-import re
-text = open('/lab/second.log').read()
-assert re.search(r'localhost\s+:.*changed=0\s+unreachable=0\s+failed=0', text), text
-PY
-nft -j list table inet atenea_host > /lab/firewall.json
-sshd -T > /lab/sshd.txt
-python3 - <<'PY'
-import json, os
-rules=json.load(open('/lab/firewall.json'))['nftables']
-chains=[r['chain'] for r in rules if 'chain' in r]
-assert all(c['policy']=='drop' for c in chains if c['name'] in ['input','forward'])
-text=open('/lab/sshd.txt').read()
-for expected in ['permitrootlogin no', 'passwordauthentication no', 'kbdinteractiveauthentication no', 'allowtcpforwarding no']:
- assert expected in text, expected
+python3 /src/tests/infra/check.py principal /lab/second.log
+# CA interna copiada desde Caddy: verificación TLS, nunca --insecure.
+caddy=$(docker compose --project-directory /opt/atenea ps -q caddy)
+docker cp "$caddy:/data/caddy/pki/authorities/local/root.crt" /lab/caddy-root.crt
+curl --fail --silent --show-error --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 https://panel.stack.test/ > /lab/panel.html
+test -s /lab/panel.html
+echo 'PASS panel HTTPS tras HAProxy/Caddy con CA interna'
+# Nuevo digest real de la misma aplicación: solo metadatos de imagen, sin compilación/red.
+docker create --pull never --network none --name infra-next-build "$(image coordinator)" >/dev/null
+docker commit --change 'LABEL atenea.infra.upgrade=next' infra-next-build atenea-infra-next >/dev/null
+docker rm infra-next-build >/dev/null
+next=$(docker image inspect atenea-infra-next --format '{{.Id}}')
+test "$next" != "$(image coordinator)"
+python3 - "$next" <<'PY'
+import sys, yaml
 from pathlib import Path
-for secret in Path('/opt/atenea/secrets').iterdir():
- assert secret.stat().st_mode & 0o777 == 0o400, secret
-ports = {'tcp': set(), 'udp': set()}
-for entry in rules:
- for expr in entry.get('rule', {}).get('expr', []):
-  match = expr.get('match', {})
-  payload = match.get('left', {}).get('payload', {})
-  if payload.get('field') == 'dport':
-   value = match['right']
-   ports[payload['protocol']].update(value['set'] if isinstance(value, dict) else [value])
-assert ports == {'tcp': {22, 80, 443}, 'udp': {443, 3478}}, ports
-print('SSH, nftables deny-by-default, secretos 0400 e idempotencia: OK')
+inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
+inv['all']['vars']['atenea_stack_images']['coordinator'] = sys.argv[1]
+inv['all']['vars']['atenea_backup_verified'] = True
+Path('/lab/upgrade.yml').write_text(yaml.safe_dump(inv))
 PY
-docker info --format '{{.ServerVersion}}'
-docker compose version
-# Ensayar también el rol secundario en el mismo laboratorio: no es otra máquina real.
-python3 - <<'PY'
-import json, yaml, secrets
+ansible-playbook -i /lab/upgrade.yml upgrade.yml
+python3 /src/tests/infra/check.py principal
+cp /opt/atenea/compose.override.yaml /lab/previous-map
+cp /opt/atenea/.env /lab/previous-env
+# Caddy existe localmente pero no puede arrancar como coordinator; falla salud, no pull.
+python3 - "$(image caddy)" <<'PY'
+import sys, yaml
 from pathlib import Path
-inventory = yaml.safe_load(Path('/lab/inventory.yml').read_text())
-inventory['all']['children'] = {'relays': {'hosts': {'localhost': {'ansible_connection': 'local'}}}}
-variables = inventory['all']['vars']
-variables.update(atenea_node_role='relay', atenea_stack_dir='/opt/atenea-relay', atenea_secrets_source='/lab/relay.sops.yaml')
-variables['atenea_env']['ATENEA_RUNTIME_DIR'] = '/opt/atenea-relay'
-Path('/lab/relay-inventory.yml').write_text(yaml.safe_dump(inventory))
-Path('/lab/relay-plain.yaml').write_text(json.dumps({'files': {'relay.key': secrets.token_hex(32)}}))
+inv = yaml.safe_load(Path('/lab/upgrade.yml').read_text())
+inv['all']['vars']['atenea_stack_images']['coordinator'] = sys.argv[1]
+inv['all']['vars']['atenea_stack_health_timeout'] = 25
+Path('/lab/failure.yml').write_text(yaml.safe_dump(inv))
+PY
+if ansible-playbook -i /lab/failure.yml upgrade.yml | tee /lab/failure.log; then
+ echo 'ERROR: upgrade forzado debía fallar' >&2; exit 1
+fi
+python3 - <<'PY'
+from pathlib import Path
+text = Path('/lab/failure.log').read_text()
+assert 'rollback al mapa de digests anterior saludable' in text, text
+assert 'El stack no alcanzó salud' in text, text
+PY
+cmp /lab/previous-map /opt/atenea/compose.override.yaml
+cmp /lab/previous-env /opt/atenea/.env
+python3 /src/tests/infra/check.py principal
+echo 'PASS upgrade feliz y upgrade fallido con rollback al mapa anterior'
+docker compose --project-directory /opt/atenea down -v
+# Mismo nodo desechable, sin representar otro proveedor; reutiliza solo certificado/clave relay.
+python3 - <<'PY'
+import json, yaml
+from pathlib import Path
+inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
+inv['all']['children'] = {'relays': {'hosts': {'localhost': {'ansible_connection': 'local'}}}}
+v = inv['all']['vars']
+v.update(atenea_node_role='relay', atenea_stack_dir='/opt/atenea-relay', atenea_secrets_source='/lab/relay.sops.yaml')
+v['atenea_env']['ATENEA_RUNTIME_DIR'] = '/opt/atenea-relay'
+v['atenea_stack_images'] = {'relay': v['atenea_stack_images']['relay'], 'stun': v['atenea_stack_images']['coordinator']}
+p = Path('/lab/public/config/relay.toml')
+p.write_text(p.read_text().replace('127.0.0.1:8443', '0.0.0.0:443').replace('proxy_protocol = true', 'proxy_protocol = false'))
+Path('/lab/public/config/stun.toml').write_text('listen = "127.0.0.1:8081"\nstun_bind = "0.0.0.0"\nstun_ports = [3478, 3479]\nanchors = ["' + Path('/runtime/config/root.pub').read_text().strip() + '"]\n')
+Path('/lab/relay-inventory.yml').write_text(yaml.safe_dump(inv))
+Path('/lab/relay-plain.yaml').write_text(json.dumps({'files': {'relay.key': Path('/runtime/secrets/relay.key').read_text()}}))
 PY
 sops encrypt --age "$recipient" --input-type yaml --output-type yaml /lab/relay-plain.yaml > /lab/relay.sops.yaml
 ansible-playbook -i /lab/relay-inventory.yml relay.yml
 ansible-playbook -i /lab/relay-inventory.yml relay.yml | tee /lab/relay-second.log
-nft -j list table inet atenea_host > /lab/relay-firewall.json
-python3 - <<'PY'
-import json, re
-from pathlib import Path
-assert re.search(r'localhost\s+:.*changed=0\s+unreachable=0\s+failed=0', Path('/lab/relay-second.log').read_text())
-ports = {'tcp': set(), 'udp': set()}
-for entry in json.load(open('/lab/relay-firewall.json'))['nftables']:
- for expr in entry.get('rule', {}).get('expr', []):
-  match = expr.get('match', {})
-  payload = match.get('left', {}).get('payload', {})
-  if payload.get('field') == 'dport':
-   value = match['right']
-   ports[payload['protocol']].update(value['set'] if isinstance(value, dict) else [value])
-assert ports == {'tcp': {22, 443}, 'udp': {443, 3478}}, ports
-assert {p.name for p in Path('/opt/atenea-relay/secrets').iterdir()} == {'relay.key'}
-assert Path('/opt/atenea-relay/secrets/relay.key').stat().st_mode & 0o777 == 0o400
-print('Relay secundario: puertos limitados, sin secretos de firma, segunda convergencia changed=0: OK')
-PY
+python3 /src/tests/infra/check.py relay /lab/relay-second.log
 cd /lab/infra/tofu
 tofu fmt -check -recursive
 cd examples/local
 tofu init -input=false
 tofu validate
 tofu plan -input=false -out=/lab/local.plan
-printf '\nINFRA OK: SOPS/age real, lint, base+Docker real, Compose dry-run; imágenes de aplicación NO arrancadas.\n'
+printf '\nINFRA OK: stack real, migraciones, HTTPS, digests, upgrade/rollback, relay+STUN, secretos e idempotencia.\n'

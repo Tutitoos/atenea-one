@@ -1,0 +1,7 @@
+# Generado desde el manifiesto de release; no contiene secretos.
+services:
+{% for service, image in atenea_stack_images | dictsort %}
+  {{ service }}:
+    image: {{ image }}
+    pull_policy: never
+{% endfor %}

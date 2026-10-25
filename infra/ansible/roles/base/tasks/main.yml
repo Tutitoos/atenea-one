@@ -9,8 +9,9 @@
   ansible.builtin.apt:
     name: [openssh-server, sudo, nftables, chrony, unattended-upgrades, ca-certificates]
     state: present
-    update_cache: true
-    cache_valid_time: 86400
+    update_cache: "{{ atenea_apt_update_cache | default(true) }}"
+    # cache_valid_time implica update_cache=yes: se omite cuando la actualización está desactivada (ensayo sin red).
+    cache_valid_time: "{{ 86400 if (atenea_apt_update_cache | default(true) | bool) else omit }}"
 - name: Crear administrador
   ansible.builtin.user:
     name: "{{ base_admin_user }}"

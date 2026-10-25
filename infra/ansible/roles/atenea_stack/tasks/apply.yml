@@ -1,0 +1,62 @@
+---
+- name: Migrar antes de reemplazar aplicaciones
+  when: atenea_node_role != 'relay'
+  block:
+    - name: Arrancar PostgreSQL y esperar disponibilidad
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ atenea_stack_dir }}"
+          - up
+          - -d
+          - --wait
+          - --wait-timeout
+          - "{{ atenea_stack_health_timeout | string }}"
+          - postgres
+      changed_when: true
+    - name: Ejecutar migrador efímero con credencial separada
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ atenea_stack_dir }}"
+          - run
+          - --rm
+          - --no-deps
+          - -v
+          - "{{ atenea_stack_dir }}/secrets/migration-database-url:/run/secrets/migration-database-url:ro"
+          - -e
+          - ATENEA_CP_DATABASE_URL_FILE=/run/secrets/migration-database-url
+          - -e
+          - ATENEA_CP_APPLICATION_ROLE=atenea_app
+          - control-plane
+          - --migrate
+      changed_when: true
+- name: Arrancar distribución y esperar todos los healthchecks
+  block:
+    - name: Aplicar Compose con plazo de salud
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", up, -d, --wait, --wait-timeout, "{{ atenea_stack_health_timeout | string }}"]
+      changed_when: true
+  rescue:
+    - name: Obtener estado de todos los servicios
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", ps, --all]
+      register: atenea_failed_status
+      changed_when: false
+    - name: Obtener últimas líneas de registro
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", logs, --no-color, --tail, "15"]
+      register: atenea_failed_logs
+      changed_when: false
+      failed_when: false
+    - name: Informar servicios que no alcanzaron salud
+      ansible.builtin.fail:
+        msg: >-
+          El stack no alcanzó salud en {{ atenea_stack_health_timeout }} s.
+          {{ atenea_failed_status.stdout }}.
+          Últimos registros: {{ atenea_failed_logs.stdout | default('') }}.
+          Consultar docker compose logs en {{ atenea_stack_dir }}.

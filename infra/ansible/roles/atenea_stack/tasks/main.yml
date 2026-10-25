@@ -1,27 +1,46 @@
 ---
-- name: Validar modo de instalación
+- name: Exigir mapa de imágenes inmutables
   ansible.builtin.assert:
     that:
-      - atenea_stack_mode in ['compose', 'dry-run']
+      - atenea_stack_images is defined
+      - atenea_stack_images | length > 0
+- name: Validar referencias del manifiesto
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[a-z][a-z0-9-]*$')
+      - item.value is match('^(.*@)?sha256:[0-9a-f]{64}$')
+  loop: "{{ atenea_stack_images | dict2items }}"
 - name: Crear directorios privados del stack
   ansible.builtin.file:
     path: "{{ atenea_stack_dir }}/{{ item }}"
     state: directory
     mode: '0700'
   loop: ['', secrets]
-- name: Copiar distribución Compose sin modificar origen
+- name: Copiar únicamente ficheros públicos de la distribución
   ansible.builtin.copy:
-    src: "{{ atenea_stack_source }}/"
+    src: "{{ item }}"
     dest: "{{ atenea_stack_dir }}/"
     mode: preserve
-  notify: Aplicar stack
+  with_fileglob:
+    - "{{ atenea_stack_source }}/*.yaml"
+    - "{{ atenea_stack_source }}/*.cfg"
+    - "{{ atenea_stack_source }}/Caddyfile"
+  register: atenea_stack_distribution
+- name: Fijar todas las imágenes por digest
+  ansible.builtin.template:
+    src: images.j2
+    dest: "{{ atenea_stack_dir }}/compose.override.yaml"
+    mode: '0600'
+  register: atenea_stack_manifest
 - name: Copiar configuración pública y certificados preparados por el operador
   ansible.builtin.copy:
     src: "{{ atenea_config_source }}/"
     dest: "{{ atenea_stack_dir }}/"
-    mode: preserve
+    # El certificado es público; preservar umask 077 del controlador lo haría ilegible para UID 65532.
+    mode: '0644'
+    directory_mode: '0755'
   when: atenea_config_source is defined
-  notify: Aplicar stack
+  register: atenea_stack_config
 - name: Validar variables de entorno sin inyección de líneas
   ansible.builtin.assert:
     that:
@@ -34,7 +53,7 @@
     src: env.j2
     dest: "{{ atenea_stack_dir }}/.env"
     mode: '0600'
-  notify: Aplicar stack
+  register: atenea_stack_env_file
 - name: Descifrar secretos solo en el controlador
   ansible.builtin.command:
     argv: [sops, --decrypt, --output-type, json, "{{ atenea_secrets_source }}"]
@@ -60,7 +79,7 @@
     mode: '0400'
   loop: "{{ (atenea_decrypted.stdout | from_json).files | dict2items }}"
   no_log: true
-  notify: Aplicar stack
+  register: atenea_stack_secrets
 - name: Validar imágenes y Compose resuelto
   ansible.builtin.command:
     argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", config, --format, json]
@@ -69,7 +88,8 @@
 - name: Exigir referencias por digest sin builds locales
   ansible.builtin.assert:
     that:
-      - item.value.image is match('^.+@sha256:[0-9a-f]{64}$')
+      - item.value.image is match('^(.*@)?sha256:[0-9a-f]{64}$')
+      - item.key in atenea_stack_images
       - item.value.build is not defined
   loop: "{{ (atenea_compose_config.stdout | from_json).services | dict2items }}"
 - name: Impedir servicios del principal en el relay secundario antes del arranque
@@ -77,5 +97,10 @@
     that:
       - (atenea_compose_config.stdout | from_json).services.keys() | difference(['relay', 'stun']) | length == 0
   when: atenea_node_role == 'relay'
-- name: Aplicar cambios pendientes antes de comprobar salud
-  ansible.builtin.meta: flush_handlers
+- name: Aplicar distribución modificada
+  ansible.builtin.include_tasks: apply.yml
+  when: >-
+    atenea_stack_distribution.changed or atenea_stack_manifest.changed or
+    atenea_stack_config.changed or atenea_stack_env_file.changed or atenea_stack_secrets.changed
+- name: Comprobar salud incluso sin cambios
+  ansible.builtin.include_tasks: health.yml

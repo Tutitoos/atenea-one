@@ -1,6 +1,6 @@
 ---
 atenea_stack_dir: /opt/atenea
-atenea_stack_mode: compose
+atenea_stack_health_timeout: 180
 atenea_stack_source: >-
   {{ playbook_dir + '/relay-compose' if atenea_node_role == 'relay'
      else atenea_compose_source | default(playbook_dir + '/../../deploy/compose/prod') }}

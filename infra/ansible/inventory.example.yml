@@ -8,6 +8,8 @@ all:
     atenea_secrets_source: /ruta/privada/principal.sops.yaml
     atenea_compose_source: "{{ playbook_dir }}/../../deploy/compose/prod"
     atenea_env: {}
+    # Mapa completo del manifiesto firmado; el rol rechaza tags y servicios sin digest.
+    atenea_stack_images: {}
   children:
     principal:
       hosts:

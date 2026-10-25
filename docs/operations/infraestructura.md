@@ -51,15 +51,16 @@ no se instala nada en el anfitrión de administración.
   copia a `atenea_stack_dir` (predeterminado `/opt/atenea`) sin modificar el origen.
 - `atenea_config_source`: directorio **público** que contiene `config/` y `certs/`;
   en el principal: `coordinator.toml`, `relay.toml`, `certs/relay.pem`.
-- `atenea_env`: mapa de valores no secretos para `.env`, incluidos
-  `ATENEA_RUNTIME_DIR` igual a `atenea_stack_dir`, `PANEL_HOST`, `RELAY_HOST`,
-  `CADDY_TLS` (correo ACME en producción), `CONTROL_PLANE_IMAGE`,
-  `COORDINATOR_IMAGE`, `RELAY_IMAGE`. Estas últimas referencias deben incluir digest.
-- `atenea_secrets_source`: fichero SOPS local del controlador, esquema
-  `infra/secrets/secrets.example.yaml`. La plantilla no es un fichero desplegable:
-  sustituir sus marcadores, generar material de verdad y cifrarlo.
-- `atenea_stack_mode=compose`: despliega; `dry-run` copia/renderiza/descifra y
-  ejecuta `docker compose config` pero **nunca hace pull/up**. No simula salud.
+- `atenea_env`: mapa no secreto para `.env`: `ATENEA_RUNTIME_DIR` igual a
+  `atenea_stack_dir`, `PANEL_HOST`, `RELAY_HOST` y `CADDY_TLS` (correo ACME en producción).
+- `atenea_stack_images`: mapa **completo servicio → referencia inmutable**:
+  `haproxy`, `caddy`, `postgres`, `dex`, `control-plane`, `coordinator`, `relay`.
+  El secundario recibe únicamente `relay` y `stun`. Se genera
+  `compose.override.yaml`; `.env` recibe las referencias requeridas por Compose.
+  Un release usa `repositorio@sha256:...`; el laboratorio admite IDs locales
+  `sha256:...` obtenidos con `docker image inspect`, como `tests/stack/upgrade.sh`.
+  No hay modo dry-run. Las imágenes deben estar precargadas en el nodo;
+  `pull_policy: never` impide descargas implícitas y falla si falta una imagen.
 
 SOPS descifra en memoria del controlador (`no_log`); cada secreto se copia a
 `secrets/` con modo **0400**, uid/gid 65532 salvo los secretos PostgreSQL
@@ -68,6 +69,11 @@ SOPS descifra en memoria del controlador (`no_log`); cada secreto se copia a
 `--diff` ni depuración de Ansible con material real. El esquema no acepta nombres
 con barras ni nombres que incluyan `root`; sigue siendo responsabilidad del
 operador no disfrazar una raíz como otro secreto.
+La configuración y los certificados **públicos** se instalan 0644 y sus
+directorios 0755: no se preserva el umask privado del controlador. Un certificado
+`relay.pem` 0600 de root provoca un fallo de arranque bajo UID 65532 aunque la
+clave privada tenga dueño/modo correctos; la clave permanece exclusivamente en
+`secrets/relay.key` 0400.
 
 ### Relay secundario
 
@@ -81,7 +87,8 @@ segundo coordinator público. Se publica solo UDP 3478; su segundo puerto STUN
 
 Preparar `config/stun.toml`, `config/relay.toml` a partir de los `.example`,
 `certs/relay.pem` y un SOPS separado cuyo único secreto sea `files.relay.key`.
-En `atenea_env` necesita `RELAY_IMAGE`, `COORDINATOR_IMAGE` y `ATENEA_RUNTIME_DIR`.
+En `atenea_env` necesita `ATENEA_RUNTIME_DIR`; `atenea_stack_images` fija `relay`
+y `stun` por digest y el rol deriva `RELAY_IMAGE` y `COORDINATOR_IMAGE`.
 El rol rechaza los servicios del principal y otros secretos **antes de arrancar**.
 Los certificados de relay2 requieren renovación del operador, por DNS-01 u otro
 canal que no abra puertos adicionales; no hay automatización ACME del secundario.
@@ -148,68 +155,115 @@ son secretos; guardar el del proveedor elegido tras resolverlo y revisar hashes.
 ## Actualización y rollback
 
 Ejecutar `upgrade.yml` serialmente con `atenea_backup_verified=true` únicamente
-tras verificar una copia restaurable, nuevas referencias por digest en `atenea_env`
-y `atenea_health_url` accesible desde el nodo (endpoint interno, no puerto público
-adicional). Guarda el `.env` realmente desplegado, aplica `pull` y
-`up -d --wait --wait-timeout 180`, y exige HTTP 200. Si falla, restaura el manifiesto
-anterior, hace `up -d --wait`, vuelve a comprobar HTTP y termina con error para no
-ocultar la actualización fallida. En relay, elegir un endpoint de salud interno
-realmente alcanzable desde el host; no habilitar HTTP de coordinator hacia Internet.
+tras verificar una copia restaurable y precargar los nuevos digests de
+`atenea_stack_images`. Guarda `.env` y `compose.override.yaml` realmente desplegados.
+Arranca PostgreSQL, ejecuta un contenedor efímero `control-plane --migrate` con
+`migration-database-url` montado y `ATENEA_CP_APPLICATION_ROLE=atenea_app`, igual que
+`deploy/compose/prod/migrate.sh`, **antes** de sustituir las aplicaciones.
+Después ejecuta `up -d --wait --wait-timeout 180` y exige todos los healthchecks
+(siete servicios en el principal; dos en el secundario). El plazo es configurable
+mediante `atenea_stack_health_timeout`. En error publica el estado de Compose;
+los logs se consultan localmente para no volcar secretos en la salida de Ansible.
 
+Si falla, restaura ambos ficheros, vuelve a arrancar los digests anteriores,
+comprueba todos sus healthchecks y termina **con error**, aunque el rollback
+haya recuperado salud. No exige un puerto HTTP público adicional para medir salud.
 El rollback cambia **digests**, no deshace datos, configuración pública ni secretos.
-No combinar una rotación incompatible con un cambio de versión. El rol no inventa
-migraciones: ejecutar las del release con credencial administrativa separada y
-respetar expand/contract; no borrar columnas hasta retirar la versión anterior.
-La salud HTTP/Compose no demuestra compatibilidad de datos: usar además el ensayo
-de upgrade/restauración de operaciones. No se afirma haber ensayado este playbook
-contra un release publicado.
+No combinar una rotación incompatible con un cambio de versión. Respetar
+expand/contract; no borrar columnas hasta retirar la versión anterior.
+La salud Compose no demuestra compatibilidad de datos: el ensayo específico de
+`tests/stack/upgrade.sh` cubre migración 0003 y datos entre binarios N/N+1;
+el ensayo Ansible usa imágenes locales y no prueba un release publicado.
 
 ## Ensayo reproducible y límites
 
-Ejecutar `bash tests/infra/run.sh`. Usa Debian 13 con systemd, contenedor
-privilegiado, cgroup v2, directorios efímeros y Docker anidado; no monta el socket
-del anfitrión ni usa sus volúmenes de laboratorio. Genera inventario y claves SSH/age
-en runtime, cifra/descifra/rota con SOPS real, aplica roles base+docker+atenea_stack,
-comprueba configuración SSH efectiva, nftables, modo 0400 y segunda convergencia
-con `changed=0`. Ejecuta syntax-check, ansible-lint, yamllint y Tofu
-`fmt -check`, `init`, `validate`, `plan` local.
-Después configura el rol `relay_node` en el mismo contenedor (no representa otro
-proveedor), comprueba que TCP 80 desaparece de las reglas cargadas, solo instala
-`relay.key` en su directorio y vuelve a exigir una segunda convergencia sin cambios.
+Ejecutar `bash tests/infra/run.sh` con `atenea-infra:local` ya preaprovisionada
+(o `INFRA_IMAGE` apuntando a otra imagen local construida con
+`tests/infra/Dockerfile`). El runner no construye ni descarga herramientas:
+si falta la imagen falla antes de arrancar el nodo. Construirla puede requerir
+APT y registros; en un entorno sin red requiere autorización/preparación previa.
+El Dockerfile incluye los paquetes base y Docker anidado para que los roles
+encuentren todo instalado; el inventario de ensayo desactiva solo la actualización
+de índices APT (`atenea_apt_update_cache=false`). Producción mantiene esa
+actualización activada por defecto.
 
-Resultado real del ensayo final (2026-10-25, Docker Desktop, 82,41 s):
+Usa un único Debian 13 con systemd, privilegios y cgroup v2, `--network none`,
+sin socket del anfitrión. Transfiere imágenes **locales** mediante
+`docker save | docker exec -i ... docker load`, resuelve sus IDs SHA-256 en el
+host y genera claves SSH/age, secretos válidos y certificados dentro del nodo.
+La raíz offline nunca se copia al directorio desplegado.
+
+El ensayo implementado comprueba:
+
+- SOPS/age real y rotación con equivalencia del contenido descifrado.
+- Syntax-check, `ansible-lint --offline --profile production`, yamllint y
+  Tofu `fmt -check`, `init`, `validate`, `plan` local sin providers externos.
+- Convergencia de `site.yml`, migraciones y siete servicios reales healthy.
+- Panel HTTPS verificado contra la CA interna de Caddy a través de HAProxy.
+- SSH endurecido, nftables deny-by-default y puertos publicados exactos de
+  Docker (`docker compose ps` + `docker inspect`), secretos 0400 con UID/GID
+  999 o 65532 y segunda convergencia `changed=0`.
+- Upgrade feliz a un digest local distinto (misma aplicación, metadatos nuevos).
+  Otro digest existente pero incompatible como coordinator fuerza fallo de salud;
+  exige error del playbook, restauración exacta del mapa/entorno y salud recuperada.
+- Tras apagar el principal, `relay.yml` con relay+STUN reales, sus puertos
+  restringidos, único secreto `relay.key` y segunda convergencia sin cambios.
+
+El contenedor exterior y sus volúmenes anónimos se eliminan al salir; todos
+los contenedores/redes/volúmenes del Docker anidado desaparecen con él. No se
+tocan recursos de otros laboratorios ni se publica en GHCR.
+Para diagnóstico, `KEEP_INFRA=1` conserva el contenedor únicamente si falla;
+su nombre aparece en la salida. Eliminarlo después con `docker rm -fv NOMBRE`;
+no usar esa opción como almacenamiento de secretos o copias.
+
+### Resultado real (2026-10-25)
+
+Una ejecución completa de
+`KEEP_INFRA=1 INFRA_IMAGE=atenea-infra:local bash tests/infra/run.sh`
+terminó con código **0** en **182,82 s** de pared (183 s en el contador del
+script); la primera convergencia real consumió **44 s**, incluidas migraciones.
+Se usó la imagen de herramientas preaprovisionada con autorización previa;
+esa preparación no forma parte del tiempo del ensayo offline.
 
 ```text
-ansible-lint: Passed: 0 failure(s), 0 warning(s); profile production
-principal segunda ejecución: changed=0 unreachable=0 failed=0
-relay segunda ejecución:     changed=0 unreachable=0 failed=0
-SSH, nftables deny-by-default, secretos 0400 e idempotencia: OK
-Relay secundario: puertos limitados, sin secretos de firma: OK
-Docker: 26.1.5+dfsg1; Docker Compose: 2.26.1-4
-tofu validate: Success! The configuration is valid.
-tofu plan: Plan: 2 to add, 0 to change, 0 to destroy.
-INFRA OK: SOPS/age real, lint, base+Docker real, Compose dry-run;
-imágenes de aplicación NO arrancadas.
+Passed: 0 failure(s), 0 warning(s) on 15 files. Profile 'production' was required, and it passed.
+principal inicial:       ok=37 changed=20 unreachable=0 failed=0
+principal convergencia:  ok=30 changed=0  unreachable=0 failed=0
+PASS principal: 7 healthy; docker ps/inspect y nftables puertos exactos; secretos 0400/UID; SSH
+PASS panel HTTPS tras HAProxy/Caddy con CA interna
+upgrade feliz:           ok=23 changed=5  unreachable=0 failed=0
+upgrade forzado:         ok=26 changed=6  unreachable=0 failed=1 rescued=2
+Actualización fallida; rollback al mapa de digests anterior saludable.
+PASS principal: 7 healthy
+PASS upgrade feliz y upgrade fallido con rollback al mapa anterior
+relay inicial:           ok=36 changed=9  unreachable=0 failed=0
+relay convergencia:      ok=33 changed=0  unreachable=0 failed=0
+PASS relay: 2 healthy; docker ps/inspect y nftables puertos exactos; secretos 0400/UID; SSH
+Success! The configuration is valid.
+Plan: 2 to add, 0 to change, 0 to destroy.
+INFRA OK: stack real, migraciones, HTTPS, digests, upgrade/rollback, relay+STUN, secretos e idempotencia.
+Ensayo terminado: 183 s; código=0; red externa deshabilitada
 ```
 
-`ansible-playbook --syntax-check` de los tres playbooks, yamllint y
-`tofu fmt -check -recursive` terminaron también con código cero. Se consumió el
-Compose de producción presente en el repo, no el fallback mínimo. El primer plan
-crea exclusivamente dos recursos `terraform_data` locales, no servidores ni DNS.
-Hubo intentos previos abortados al descargar paquetes de `deb.debian.org` con
-`Unable to connect`; un reintento limpio completó el ensayo sin modificar las
-reglas ni suprimir errores. La causa de esos fallos intermitentes de descarga
-no está establecida: el ensayo necesita conectividad con los registros y APT,
-y no se afirma estabilidad offline ni una tasa de éxito de instalaciones.
+Syntax-check de los tres playbooks, yamllint, comprobación de modos públicos
+0644/directorios 0755 y `tofu fmt -check -recursive` también terminaron sin error.
+El fallo del upgrade forzado es intencionado: el runner exige tanto ese error
+como la recuperación saludable y la restauración exacta de ambos manifiestos.
+No se modificó el Compose productivo ni el mensaje genérico de error del relay.
+El diagnóstico previo aisló `relay.pem` 0600 de root como causa del fallo:
+cambiar únicamente su modo a 0644 recuperó los siete servicios; el rol corrige
+ahora esos permisos explícitamente, sin relajar los secretos.
 
-El modo del stack en este ensayo es **dry-run**: consume la estructura del Compose
-de producción si está presente, pero utiliza referencias de imagen sintéticas de
-ensayo, no ejecuta aplicaciones, ACME ni migraciones. Si falta Compose muestra
-expresamente el fallback mínimo y falta de integración. Docker sí se instala y
-arranca realmente; se comprueba `docker info` y `docker compose version`.
+**Descargas durante esta ejecución: ninguna.** El nodo exterior tiene
+`--network none`, los procesos auxiliares offline también y Compose prohíbe pull.
+La imagen de herramientas (1,15 GB locales) y las etiquetas
+`atenea-infra-pin/haproxy:pinned`, `atenea-infra-pin/caddy:pinned` se conservan
+para repetir el ensayo; no son despliegues. Los dos contenedores propios usados
+para diagnóstico y ejecución final se eliminaron; no quedan sus redes, volúmenes
+ni contenedores anidados.
 
 **SIN COMPROBAR:** contratación/proveedor real, DNS real/RFC2136, backend remoto y
 bloqueos, consola/SSH remoto, NTP real del VPS, firewall externo, alcanzabilidad
-IPv4/IPv6 UDP/TCP 443 y UDP 3478, ACME público y su renovación, arranque/health y
-rollback del stack de producción desde Ansible, conmutación entre proveedores.
+IPv4/IPv6 UDP/TCP 443 y UDP 3478, ACME público y su renovación, conmutación entre
+proveedores, y actualización desde un release publicado firmado.
 No se ha tocado ninguna infraestructura real ni publicado imágenes.

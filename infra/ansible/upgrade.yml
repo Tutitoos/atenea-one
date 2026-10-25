@@ -3,45 +3,39 @@
   hosts: principal:relays
   become: true
   serial: 1
+  vars:
+    atenea_stack_dir: /opt/atenea
+    atenea_stack_health_timeout: 180
   tasks:
     - name: Exigir backup verificado antes de actualizar
       ansible.builtin.assert:
         that:
           - atenea_backup_verified | default(false) | bool
-          - atenea_health_url is defined
-    - name: Guardar manifiesto desplegado antes de reemplazar digests
+    - name: Guardar manifiesto y entorno realmente desplegados
       ansible.builtin.slurp:
-        src: "{{ atenea_stack_dir | default('/opt/atenea') }}/.env"
+        src: "{{ atenea_stack_dir }}/{{ item }}"
+      loop: [.env, compose.override.yaml]
       register: atenea_previous_manifest
       no_log: true
     - name: Desplegar y comprobar salud
       block:
-        - name: Aplicar nueva distribución
+        - name: Aplicar nueva distribución y migraciones
           ansible.builtin.include_role:
             name: atenea_stack
-        - name: Comprobar salud HTTP desde el nodo
-          ansible.builtin.uri:
-            url: "{{ atenea_health_url }}"
-            status_code: 200
-          register: atenea_health
-          retries: 12
-          delay: 5
-          until: atenea_health.status == 200
       rescue:
-        - name: Recuperar referencias por digest realmente desplegadas
+        - name: Recuperar referencias por digest y entorno anteriores
           ansible.builtin.copy:
-            content: "{{ atenea_previous_manifest.content | b64decode }}"
-            dest: "{{ atenea_stack_dir | default('/opt/atenea') }}/.env"
+            content: "{{ item.content | b64decode }}"
+            dest: "{{ atenea_stack_dir }}/{{ item.item }}"
             mode: '0600'
+          loop: "{{ atenea_previous_manifest.results }}"
           no_log: true
-        - name: Arrancar los digests anteriores y esperar salud
+        - name: Arrancar digests anteriores sin deshacer migraciones
           ansible.builtin.command:
-            argv: [docker, compose, --project-directory, "{{ atenea_stack_dir | default('/opt/atenea') }}", up, -d, --wait, --wait-timeout, '180']
+            argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", up, -d, --wait, --wait-timeout, "{{ atenea_stack_health_timeout | string }}"]
           changed_when: true
-        - name: Comprobar salud recuperada
-          ansible.builtin.uri:
-            url: "{{ atenea_health_url }}"
-            status_code: 200
+        - name: Comprobar salud recuperada de todos los servicios
+          ansible.builtin.include_tasks: roles/atenea_stack/tasks/health.yml
         - name: Informar fallo aunque rollback haya terminado
           ansible.builtin.fail:
-            msg: Actualización fallida; se ha aplicado el manifiesto anterior. Revisar migraciones expand/contract.
+            msg: Actualización fallida; rollback al mapa de digests anterior saludable. Revisar el fallo y las migraciones expand/contract.

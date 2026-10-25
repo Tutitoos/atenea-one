@@ -1,0 +1,17 @@
+---
+- name: Exigir todos los servicios presentes y healthy
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import json, subprocess, sys
+        base = ['docker', 'compose', '--project-directory', sys.argv[1]]
+        expected = set(subprocess.check_output(base + ['config', '--services'], text=True).split())
+        ids = subprocess.check_output(base + ['ps', '--all', '-q'], text=True).split()
+        states = json.loads(subprocess.check_output(['docker', 'inspect', *ids], text=True)) if ids else []
+        actual = {s['Config']['Labels']['com.docker.compose.service']: s['State'].get('Health', {}).get('Status', s['State']['Status']) for s in states}
+        assert set(actual) == expected and all(v == 'healthy' for v in actual.values()), f'Salud incompleta: esperados={sorted(expected)}, estado={actual}'
+        print(f'{len(actual)} servicios healthy: {sorted(actual)}')
+      - "{{ atenea_stack_dir }}"
+  changed_when: false
