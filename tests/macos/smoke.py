@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -62,7 +63,8 @@ def terminate(process):
 
 def background(args, log, work, name, seconds=240):
     phase(f"arrancando {name} (vida máxima {seconds}s)")
-    process = subprocess.Popen([str(a) for a in args], stdout=log,
+    env = dict(os.environ, NO_COLOR="1", CLICOLOR="0", FORCE_COLOR="0")
+    process = subprocess.Popen([str(a) for a in args], stdout=log, env=env,
                                stderr=subprocess.STDOUT, start_new_session=True)
     (work / f"{name}.pid").write_text(str(process.pid))
     def expired():
@@ -80,7 +82,11 @@ def diagnostics(work):
         path = work / f"{name}.log"
         phase(f"log {name}")
         if path.is_file():
-            print(path.read_text(errors="replace"), file=sys.stderr, flush=True)
+            text = path.read_text(errors="replace")
+            text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+            phase(f"inicio log completo {name}: {len(text)} caracteres")
+            print(text, file=sys.stderr, flush=True)
+            phase(f"fin log completo {name}")
     for command in (["/sbin/ifconfig"], ["/usr/sbin/netstat", "-rn"],
                     ["/bin/ls", "-la", "/etc/resolver"]):
         phase("diagnóstico " + " ".join(command))
@@ -117,6 +123,13 @@ def defaults():
 
 def route_iface(address):
     return call("/sbin/route", "-n", "get", address)
+
+
+def echo(command):
+    result = run(command, capture_output=True, text=True, timeout=8)
+    phase(f"{Path(command[0]).name}: exit={result.returncode}\n"
+          f"{result.stdout}{result.stderr}")
+    return result.returncode == 0
 
 
 def ask(path, command):
@@ -204,13 +217,26 @@ dst = "any"
         assert stat.S_IMODE((work / "status.sock").stat().st_mode) == 0o660
         assert stat.S_IMODE((work / "state/state.bin").stat().st_mode) == 0o600
         assert (work / "state/state.bin").stat().st_uid == 0
-        # drop uid/gid en proceso hijo; el intento debe fallar aun pudiendo atravesar el directorio.
-        probe = 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(sys.argv[1]); s.sendall(b"stop\\n"); print(s.recv(1024))'
-        phase("comprobando aislamiento del socket con otro usuario")
-        # No ejecutar Python entre fork y exec: preexec_fn puede bloquear con hilos activos.
-        blocked = run(["/usr/bin/python3", "-c", probe, str(work / "control.sock")],
-                      user=65534, group=65534, extra_groups=[], capture_output=True, timeout=8)
-        assert blocked.returncode != 0, "Un usuario ajeno pudo conectar al control"
+        phase("comprobando aislamiento del socket con sonda Rust")
+        probe = work / "atenea-ipc-probe"
+        shutil.copyfile(BIN / "atenea-ipc-probe", probe)
+        probe.chmod(0o755)
+        def check_probe(path, expected, foreign=False):
+            identity = dict(user=65534, group=65534, extra_groups=[]) if foreign else {}
+            result = run([str(probe), str(path), expected], capture_output=True,
+                         text=True, timeout=5, **identity)
+            phase(f"sonda {path.name} {expected}, foreign={foreign}: "
+                  f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
+            result.check_returncode()
+            assert result.stdout.strip() == ("permission_denied" if expected == "deny" else "connected")
+        # Control positivo como nobody: verifica ejecución, recorrido de padres y socket Unix real.
+        with socket.socket(socket.AF_UNIX) as public:
+            public.bind(str(work / "public.sock"))
+            (work / "public.sock").chmod(0o666)
+            public.listen(1)
+            check_probe(work / "public.sock", "allow", foreign=True)
+        check_probe(work / "control.sock", "allow")
+        check_probe(work / "control.sock", "deny", foreign=True)
         assert agent.poll() is None
         assert "error" in ask(work / "status.sock", "stop")
         phase("aplicando configuración v2")
@@ -218,6 +244,7 @@ dst = "any"
         call(CLI, "reload", "--socket", work / "control.sock")
         until(lambda: ask(work / "control.sock", "status").get("dns") == "applied", description="rutas y DNS v2", process=agent)
         status = ask(work / "status.sock", "status")
+        phase("estado v2: " + json.dumps(status, sort_keys=True))
         assert {r["prefix"] for r in status["routes"] if r["state"] == "installed"} == {"10.88.0.0/24", "fd88::/64"}, status
         for address in ("10.88.0.1", "fd88::1"):
             assert re.search(r"interface:\s+" + interface + r"\b", route_iface(address))
@@ -226,8 +253,10 @@ dst = "any"
         assert not Path("/etc/resolver/.").is_file()
         assert defaults() == before
         # Ambos ecos atraviesan la utun real y Noise; reintento solo para esperar el handshake.
-        until(lambda: run(["/sbin/ping", "-n", "-t", "3", "-c", "1", "-W", "1000", "10.77.0.1"], capture_output=True, timeout=5).returncode == 0, 40, description="eco IPv4", process=agent)
-        until(lambda: run(["/sbin/ping6", "-n", "-c", "1", "fd77::1"], capture_output=True, timeout=8).returncode == 0, 30, description="eco IPv6", process=agent)
+        until(lambda: echo(["/sbin/ping", "-n", "-t", "3", "-c", "1", "-W", "1000", "10.77.0.1"]), 40, description="eco IPv4", process=agent)
+        phase("eco IPv4 confirmado")
+        until(lambda: echo(["/sbin/ping6", "-n", "-c", "1", "fd77::1"]), 30, description="eco IPv6", process=agent)
+        phase("eco IPv6 confirmado")
         assert peer.wait(timeout=15) == 0
         assert "echo_replies=2" in (work / "peer.log").read_text()
         phase("parada limpia del agente")
@@ -260,6 +289,12 @@ dst = "any"
         call(CLI, "down", "--socket", work / "control.sock")
         assert agent.wait(timeout=10) == 0
         print("macOS: utun, v1/v2, IPv4/IPv6 Noise, rutas, DNS, IPC y limpieza correctos")
+    except BaseException:
+        # Volcar mientras el agente sigue vivo; trap repetirá el diagnóstico si aquí hay otro fallo.
+        log.flush()
+        peerlog.flush()
+        diagnostics(work)
+        raise
     finally:
         for timer in timers:
             timer.cancel()

@@ -12,9 +12,10 @@ $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitect
 }
 $work = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $work | Out-Null
+$failure = $null
 try {
     $zip = Join-Path $work 'wintun.zip'
-    Invoke-WebRequest -Uri $uri -OutFile $zip
+    Invoke-WebRequest -Uri $uri -OutFile $zip -UseBasicParsing -TimeoutSec 60
     if ((Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant() -ne $sha256) {
         throw 'SHA256 de Wintun incorrecto; no se instala ningún fichero.'
     }
@@ -25,6 +26,13 @@ try {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-Item -LiteralPath $dll -Destination (Join-Path $Destination 'wintun.dll')
     Copy-Item -LiteralPath (Join-Path $work 'wintun/LICENSE.txt') -Destination (Join-Path $Destination 'WINTUN-LICENSE.txt')
+} catch {
+    $failure = $_
+    throw
 } finally {
-    Remove-Item -LiteralPath $work -Recurse -Force
+    try { Remove-Item -LiteralPath $work -Recurse -Force }
+    catch {
+        Write-Warning "Falló la retirada de la descarga temporal: $_"
+        if (-not $failure) { throw }
+    }
 }

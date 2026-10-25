@@ -33,7 +33,9 @@ try {
         -BinaryPathName ('"{0}" run --service --config "{1}"' -f (Join-Path $bin 'atenea-agent.exe'), $config) `
         -Description 'Cliente Atenea: túnel cifrado, rutas firmadas y DNS dividido.' | Out-Null
 } catch {
-    Remove-Item -LiteralPath $bin -Recurse -Force
-    throw
+    $failure = $_
+    try { Remove-Item -LiteralPath $bin -Recurse -Force }
+    catch { Write-Warning "No se pudo retirar la instalación incompleta: $_" }
+    throw $failure
 }
 Write-Output "Instalado sin arrancar. Configure $data\agent.toml y sus claves; después: Start-Service AteneaAgent"

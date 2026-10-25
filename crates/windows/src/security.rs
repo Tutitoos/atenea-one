@@ -158,6 +158,49 @@ pub fn create_private(path: &Path) -> io::Result<File> {
     }
     Ok(unsafe { File::from_raw_handle(handle) })
 }
+/// Abre un diagnóstico privado en append y valida el objeto sin seguir enlaces.
+pub fn append_private(path: &Path) -> io::Result<File> {
+    if !privileged(process_token(unsafe { GetCurrentProcess() })?.0)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "el diagnóstico privado exige SYSTEM o Administrator elevado",
+        ));
+    }
+    let sd = descriptor("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)")?;
+    let attrs = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let path = wide(path.as_os_str())?;
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            FILE_APPEND_DATA | READ_CONTROL,
+            FILE_SHARE_READ,
+            &attrs,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(last());
+    }
+    let file = unsafe { File::from_raw_handle(handle) };
+    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(last());
+    }
+    if info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "se exige diagnóstico privado regular",
+        ));
+    }
+    validate_dacl(&file)?;
+    Ok(file)
+}
 /// Valida el mismo objeto abierto que se leerá; rechaza enlaces y ACL públicas.
 pub fn read_private(path: &Path) -> io::Result<Vec<u8>> {
     let path = wide(path.as_os_str())?;
@@ -487,6 +530,19 @@ mod tests {
         );
         replace_private(&path, b"secret").unwrap();
         assert_eq!(read_private(&path).unwrap(), b"secret");
+        let log = dir.join("agent.log");
+        {
+            let mut file = append_private(&log).unwrap();
+            file.write_all(b"inicio\n").unwrap();
+            // El lector comparte escritura; el servicio sólo comparte lectura.
+            let reader = std::fs::OpenOptions::new().read(true).open(&log);
+            assert!(reader.is_ok());
+        }
+        append_private(&log)
+            .unwrap()
+            .write_all(b"parada\n")
+            .unwrap();
+        assert_eq!(read_private(&log).unwrap(), b"inicio\nparada\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -514,6 +570,10 @@ mod tests {
         drop(unsafe { File::from_raw_handle(handle) });
         assert_eq!(
             read_private(&path).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            append_private(&path).unwrap_err().kind(),
             io::ErrorKind::PermissionDenied
         );
         std::fs::remove_file(path).unwrap();

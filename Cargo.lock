@@ -345,6 +345,7 @@ name = "atenea-windows"
 version = "0.1.0"
 dependencies = [
  "tokio",
+ "tracing",
  "windows-service",
  "windows-sys 0.61.2",
 ]

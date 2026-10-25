@@ -2,7 +2,7 @@
 
 ## Alcance y requisitos
 
-Windows x64 o ARM64, PowerShell y una sesión elevada de Administrador. Solo **cliente**: consume rutas privadas y DNS dividido firmados; no anuncia ni sirve subredes, no instala NAT/RRAS, no cambia el forwarding, las rutas por defecto ni el DNS global. El router de subred sigue siendo Linux (ADR-007).
+Windows x64 o ARM64, **Windows PowerShell 5.1** con sus módulos nativos y una sesión elevada de Administrador. No se necesita instalar PowerShell 7 (`pwsh`). Solo **cliente**: consume rutas privadas y DNS dividido firmados; no anuncia ni sirve subredes, no instala NAT/RRAS, no cambia el forwarding, las rutas por defecto ni el DNS global. El router de subred sigue siendo Linux (ADR-007).
 
 El responsable aceptó **Wintun como única excepción de controlador el 2026-10-25**. No se usa el protocolo WireGuard ni otro componente suyo. Atenea carga la API de Wintun sin modificar la DLL. Los binarios de Atenea y sus scripts se entregan **sin firma**: no confundirlo con el controlador Wintun, cuya distribución oficial sí está firmada. Faltan el certificado de firma de código de Atenea y la validación en máquinas reales del responsable; no se declara una entrega firmada ni toda la matriz de interoperabilidad verificada.
 
@@ -29,6 +29,8 @@ atenea-agent.exe run --service --config C:\ProgramData\Atenea\agent.toml
 ```
 
 La ruta real se deriva de las variables del sistema: no se presupone la unidad C. No se arranca durante la instalación, incluso si existe una configuración anterior. No se sobrescribe una instalación registrada; para actualizar, parar y desinstalar primero, conservando los datos.
+
+El servicio escribe desde el arranque en `%ProgramData%\Atenea\agent.log`, en modo anexado y sin secuencias ANSI. El fichero tiene propietario Administradores y DACL protegida que solo admite SYSTEM/Administradores; se puede leer mientras el servicio está activo. Si no puede abrirlo de forma privada, el arranque falla: no se cambia a una salida insegura. Conservar este registro antes de una retirada con `-Purge`, que también lo elimina.
 
 ### Procedencia y hash de Wintun
 
@@ -79,10 +81,18 @@ Stop-Service AteneaAgent
 
 Las direcciones, MTU y rutas se aplican exclusivamente al adaptador Wintun mediante los cmdlets nativos NetTCPIP; el DNS dividido usa `Add-DnsClientNrptRule`, no claves de registro escritas a mano. Nunca se captura el dominio raíz. La parada SCM espera la limpieza normal; `cleanup` recupera rutas y NRPT propios y retira el dispositivo Wintun huérfano identificado de forma estricta, sin retirar reglas ajenas. Un fallo de limpieza aborta la retirada para permitir su reparación. Por defecto la desinstalación conserva `%ProgramData%\Atenea` para no destruir la identidad ni el estado antirrollback accidentalmente; `-Purge` elimina también todos esos datos de forma **irreversible**. No borra otros adaptadores ni fuerza la retirada global del controlador compartido Wintun.
 
+La parada SCM publica `StopPending` con checkpoint inicial 1 y una indicación de espera de 30 segundos; no es una terminación forzada ni progreso ficticio. Solo publica `Stopped` después de la limpieza y del cierre del runtime; un fallo devuelve código de servicio 1. El desinstalador solicita la parada y espera como máximo 30 segundos, limita `cleanup` a 30 segundos y `sc.exe` a 10 segundos. Si falla la parada, muestra la excepción y el estado/códigos de SCM y **no fuerza la muerte del servicio ni borra la instalación**. Revisar `agent.log` y los eventos de **Service Control Manager** en el registro System antes de reparar; «Cannot stop» por sí solo no identifica la causa. La descarga oficial de Wintun tiene un plazo de 60 segundos.
+
 ## Aceptación de CI y pendientes
 
 El trabajo `windows` compila cliente y `atenea-testpeer`, ejecuta pruebas y clippy, construye el ZIP y ejecuta `tests/windows/run.ps1` en el runner elevado desechable de GitHub. Instala realmente la DLL descargada/verificada y el servicio; comprueba arranque manual hasta configurar, configuraciones firmadas v1 y v2, direcciones IPv4/IPv6, MTU 1280, rutas del adaptador, NRPT por dominio, ausencia de cambios de rutas por defecto/DNS global, DACL de las canalizaciones reales, rechazo de control por la canalización de estado, parada SCM, caída forzada, limpieza offline, reinicio y desinstalación. Los ecos ICMP IPv4/IPv6 atraviesan Wintun y Noise hacia el par Rust de usuario; no son respuestas simuladas de un backend de red.
 
 La aceptación intenta crear un usuario estándar temporal y prueba su acceso real: control denegado, estado legible y órdenes mutantes rechazadas. Solo si el runner impide crear o iniciar esa cuenta se registra el motivo y se conserva la comprobación de las DACL de los objetos reales; un fallo de una prueba ya iniciada no se oculta.
+
+El runner lanza los scripts hijos mediante el ejecutable nativo de Windows PowerShell 5.1, con `PSModulePath` limitado a sus módulos de sistema y sin `PSHOME` heredado de PowerShell 7: evita que `Get-Acl` intente cargar `Microsoft.PowerShell.Security` de otra edición. Cada orden del smoke tiene plazo (30 segundos por defecto) y cada petición de canalización se aísla en un proceso con límite de 5 segundos. Un watchdog exterior de 360 segundos cubre también bloqueos en llamadas nativas/ctypes; instalación y desinstalación tienen límites exteriores de 90 y 60 segundos. El presupuesto del runner, incluidos diagnósticos y retirada, permanece por debajo del paso de CI de 12 minutos.
+
+Los bloques `finally` conservan el error original y muestran siempre la ruta de `agent.log`, el registro del par, estado/códigos SCM, adaptadores, direcciones, rutas, NRPT y eventos de servicio. Cada consulta nativa de diagnóstico tiene límite de 2 segundos y registra su timeout sin saltarse las restantes; cada lote tiene un límite exterior de 25 segundos. Los errores de limpieza se informan y convierten una aceptación aparentemente correcta en fallo. Antes de retirar el directorio temporal se termina y espera al par, se cierra su fichero de registro y se intenta parar el agente; solo en esta VM desechable se fuerza y espera su terminación si SCM falla. Esa recuperación de pruebas no es la política del desinstalador de producción.
+
+Las pruebas portables de las ayudas de entorno, errores y límites se pueden ejecutar sin Windows: `python3 -m unittest discover -s tests/windows -p 'test_*.py'`. No sustituyen la aceptación elevada.
 
 No ejecutar esa prueba en la máquina del responsable: requiere `GITHUB_ACTIONS=true` y elevación. La definición de CI no es un resultado observado: hasta ejecutarla en un push no se afirma que haya pasado. Pendientes: certificado de firma de código, instalación firmada y matriz Linux↔Windows↔macOS en máquinas reales, P2P/relay, suspensión/reanudación y cambios de Wi-Fi. El runner Windows no sustituye pruebas ARM64 ni dispositivos físicos.

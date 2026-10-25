@@ -24,6 +24,7 @@ pub struct Network {
     bins: Binaries,
 }
 const PRELUDE: &str = "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); ";
+#[cfg(target_os = "windows")]
 const COMMANDS: &str = "Get-NetIPInterface,Set-NetIPInterface,Get-NetRoute,New-NetRoute,Remove-NetRoute,Get-NetIPAddress,New-NetIPAddress,Remove-NetIPAddress,Get-DnsClientNrptRule,Add-DnsClientNrptRule,Remove-DnsClientNrptRule";
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
@@ -33,7 +34,9 @@ fn command(bin: &Path, script: &str) -> Result<Command, String> {
         return Err("PowerShell requiere una ruta absoluta".into());
     }
     let mut cmd = Command::new(bin);
-    cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+    // Windows PowerShell no debe cargar módulos heredados de pwsh (PowerShell 7).
+    cmd.env_remove("PSModulePath")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
         .arg(format!("{PRELUDE}{script}"));
     Ok(cmd)
 }
@@ -141,6 +144,7 @@ impl Network {
     pub fn new(interface: String, bins: Binaries) -> Self {
         Self { interface, bins }
     }
+    #[cfg(target_os = "windows")]
     pub fn ensure_available() -> Result<(), String> {
         run(
             &Binaries::default().powershell,
@@ -392,6 +396,12 @@ mod tests {
         assert!(!host.supports_subnet_routing());
         assert!(!host.forwarding(false));
         assert!(command(Path::new("powershell"), "").is_err());
+        assert!(
+            command(&std::env::current_exe().unwrap(), "")
+                .unwrap()
+                .get_envs()
+                .any(|(key, value)| key == "PSModulePath" && value.is_none())
+        );
         assert!(
             host.dns_cleanup_script()
                 .contains("$_.Comment -ceq 'Atenea One: NRPT administrado (Atenea''One)'")

@@ -6,6 +6,7 @@ $password = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + '!aA8') -A
 $work = Join-Path $env:PUBLIC $name
 $created = $false
 $process = $null
+$failure = $null
 try {
     New-Item -ItemType Directory -Path $work | Out-Null
     $output = Join-Path $work 'result'
@@ -35,15 +36,28 @@ try {
         Write-Output ('fallback_dacl: el runner no permite crear/iniciar usuario estándar: ' + $_.Exception.Message)
         return
     }
-    if (-not $process.WaitForExit(20000)) { throw 'Timeout del usuario estándar.' }
+    if (-not $process.WaitForExit(30000)) { throw 'Timeout del usuario estándar.' }
     if (-not (Test-Path -LiteralPath $result)) { throw 'El usuario estándar no produjo resultado.' }
     $response = Get-Content -LiteralPath $result -Raw | ConvertFrom-Json
     if ($process.ExitCode -ne 0 -or -not $response.ok) {
         throw ('Falló el aislamiento real de IPC: ' + (Get-Content -LiteralPath $result -Raw))
     }
     Write-Output 'standard_user: control denegado, estado permitido y stop rechazado'
+} catch {
+    $failure = $_
+    throw
 } finally {
-    if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-    if ($created) { Remove-LocalUser -Name $name }
-    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+    $cleanupErrors = @()
+    if ($process) {
+        try {
+            if (-not $process.HasExited) { $process.Kill() }
+            if (-not $process.WaitForExit(10000)) { throw 'El proceso del usuario no terminó.' }
+        } catch { $cleanupErrors += $_; Write-Warning "Reap del usuario: $_" }
+        finally { $process.Dispose() }
+    }
+    try { if ($created) { Remove-LocalUser -Name $name } }
+    catch { $cleanupErrors += $_; Write-Warning "Retirada del usuario: $_" }
+    try { if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force } }
+    catch { $cleanupErrors += $_; Write-Warning "Retirada de ficheros del usuario: $_" }
+    if ($cleanupErrors.Count -and -not $failure) { throw ($cleanupErrors -join '; ') }
 }

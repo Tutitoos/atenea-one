@@ -8,6 +8,8 @@ import re
 import subprocess
 import tempfile
 import time
+import sys
+from smoke_support import ask, call, ps
 import zipfile
 
 REPO = Path(__file__).resolve().parents[2]
@@ -28,13 +30,6 @@ with zipfile.ZipFile(REPO / 'target/windows-package/atenea-client-unsigned.zip')
     assert {'atenea.exe', 'atenea-agent.exe', 'install.ps1', 'uninstall.ps1', 'get-wintun.ps1'} <= set(names), names
 
 
-def call(*args):
-    return subprocess.check_output([str(a) for a in args], text=True).strip()
-
-
-def ps(script):
-    return call('powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
-                "$ErrorActionPreference='Stop'; " + script)
 
 
 def until(check, seconds=30):
@@ -44,7 +39,7 @@ def until(check, seconds=30):
             result = check()
             if result:
                 return result
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
         time.sleep(0.2)
     raise AssertionError('Condición no cumplida dentro del plazo')
@@ -54,10 +49,6 @@ def snapshot():
     return ps("@{routes=@(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')} | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric | Sort-Object DestinationPrefix,InterfaceIndex,NextHop);dns=@(Get-DnsClientServerAddress | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | Sort-Object InterfaceIndex,AddressFamily)} | ConvertTo-Json -Depth 5 -Compress")
 
 
-def ask(pipe, command):
-    with open(pipe, 'r+b', buffering=0) as stream:
-        stream.write((command + '\n').encode())
-        return json.loads(stream.readline())
 
 
 def pipe_sddl(pipe):
@@ -94,8 +85,23 @@ def root_nrpt():
     return ps("@(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.' -or $_.Namespace -contains ''}) | ConvertTo-Json -Depth 5 -Compress")
 
 
-with tempfile.TemporaryDirectory(prefix='atenea-windows-') as temp:
-    work = Path(temp)
+temp = tempfile.TemporaryDirectory(prefix='atenea-windows-')
+work = Path(temp.name)
+peer = None
+peerlog = None
+config = DATA / 'agent.toml'
+cleanup_errors = []
+
+
+def cleanup_step(label, action):
+    try:
+        action()
+    except Exception as error:
+        cleanup_errors.append(f'{label}: {error}')
+        print(f'ERROR DE LIMPIEZA {label}: {error}', file=sys.stderr, flush=True)
+
+
+try:
     # Las claves, el TOML y el estado nunca heredan acceso de usuarios ajenos.
     ps(f"icacls '{work}' /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null; if ($LASTEXITCODE) {{throw 'icacls'}}")
     assert not nrpt(), 'No se sobrescribe una regla NRPT existente'
@@ -167,7 +173,7 @@ dst = "any"
             sddl = pipe_sddl(pipe)
             allowed = re.findall(r'\(A;[^)]*;;;([^;)]+)\)', sddl)
             assert set(allowed) == readers, sddl
-        print(ps(f"& '{REPO / 'tests/windows/probe-access.ps1'}'"))
+        print(ps(f"& '{REPO / 'tests/windows/probe-access.ps1'}'", timeout=45))
         assert ask(CONTROL, 'status'), 'El intento sin privilegios no debe parar el servicio'
         assert 'error' in ask(STATUS, 'stop')
         assert ask(CONTROL, 'status')['dns'] == 'none'
@@ -190,11 +196,11 @@ dst = "any"
         current['dns'] = [r for r in current['dns'] if r['InterfaceIndex'] != own_index]
         assert current == original, (current, original)
         for family, address in (('-4', '10.77.0.1'), ('-6', 'fd77::1')):
-            until(lambda: subprocess.run(['ping.exe', family, '-n', '1', '-w', '1000', address], capture_output=True).returncode == 0, 40)
+            until(lambda: subprocess.run(['ping.exe', family, '-n', '1', '-w', '1000', address], capture_output=True, timeout=5).returncode == 0, 40)
         assert peer.wait(timeout=15) == 0
         assert 'echo_replies=2' in (work / 'peer.log').read_text()
         # SCM entrega stop al Lifecycle; se espera limpieza antes de declarar Stopped.
-        ps('Stop-Service AteneaAgent; (Get-Service AteneaAgent).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))')
+        ps('Stop-Service AteneaAgent; (Get-Service AteneaAgent).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))', timeout=40)
         assert not nrpt()
         assert not ps('Get-NetAdapter -Name atenea0 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name')
         assert snapshot() == before
@@ -212,13 +218,26 @@ dst = "any"
         ps('Stop-Service AteneaAgent')
         assert not nrpt()
         assert snapshot() == before
-        print('Windows: servicio, Wintun, v1/v2, IPv4/IPv6 Noise, rutas, NRPT, DACL IPC y limpieza correctos')
     finally:
-        ps('Stop-Service AteneaAgent -ErrorAction SilentlyContinue')
-        if peer and peer.poll() is None:
-            peer.kill()
-            peer.wait(timeout=10)
+        # No se permite que un fallo de SCM tape el error de aceptación ni salte el reap.
+        cleanup_step('diagnóstico previo', lambda: print(ps(f"& '{REPO / 'tests/windows/diagnostics.ps1'}' -PeerLog '{work / 'peer.log'}'", timeout=25), flush=True))
+        cleanup_step('Stop-Service', lambda: ps('$s=Get-Service AteneaAgent; if ($s.Status -ne "Stopped") {$s.Stop(); $s.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))}', timeout=40))
+        # Solo en esta VM desechable: si SCM falla, se mata y espera al proceso real.
+        cleanup_step('reap agente', lambda: ps("$s=Get-CimInstance Win32_Service -Filter \"Name='AteneaAgent'\"; if ($s.ProcessId) {$p=Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue; if ($p) {$p.Kill(); if (-not $p.WaitForExit(10000)) {throw 'El agente no terminó'}}}"))
         if peer:
-            peerlog.close()
-            print((work / 'peer.log').read_text())
-        call(AGENT, 'cleanup', '--config', config)
+            def reap_peer():
+                if peer.poll() is None:
+                    peer.kill()
+                peer.wait(timeout=10)
+            cleanup_step('reap testpeer', reap_peer)
+        if peerlog:
+            cleanup_step('cerrar peer.log', peerlog.close)
+        cleanup_step('diagnóstico final', lambda: print(ps(f"& '{REPO / 'tests/windows/diagnostics.ps1'}' -PeerLog '{work / 'peer.log'}'", timeout=25), flush=True))
+        cleanup_step('cleanup offline', lambda: call(AGENT, 'cleanup', '--config', config))
+finally:
+    # Diagnóstico también si fallan las precondiciones anteriores al arranque.
+    cleanup_step('diagnóstico de salida', lambda: print(ps(f"& '{REPO / 'tests/windows/diagnostics.ps1'}' -PeerLog '{work / 'peer.log'}'", timeout=25), flush=True))
+    cleanup_step('directorio temporal', temp.cleanup)
+    if cleanup_errors and sys.exc_info()[0] is None:
+        raise RuntimeError('Falló la limpieza: ' + '; '.join(cleanup_errors))
+print('Windows: servicio, Wintun, v1/v2, IPv4/IPv6 Noise, rutas, NRPT, DACL IPC y limpieza correctos')

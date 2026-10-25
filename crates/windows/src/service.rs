@@ -1,7 +1,7 @@
 //! Adaptador SCM: el bucle compartido conserva la responsabilidad de limpiar la red.
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 use windows_service::{
     define_windows_service,
@@ -9,7 +9,7 @@ use windows_service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
         ServiceType,
     },
-    service_control_handler::{self, ServiceControlHandlerResult},
+    service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
     service_dispatcher,
 };
 
@@ -49,48 +49,101 @@ fn service_main(_arguments: Vec<OsString>) {
         *slot = Some(result);
     }
 }
+fn service_status(state: ServiceState, exit_code: ServiceExitCode) -> ServiceStatus {
+    ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: state,
+        controls_accepted: if state == ServiceState::Running {
+            ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN
+        } else {
+            ServiceControlAccept::empty()
+        },
+        exit_code,
+        checkpoint: u32::from(state == ServiceState::StopPending),
+        wait_hint: if state == ServiceState::StopPending {
+            Duration::from_secs(30)
+        } else {
+            Duration::ZERO
+        },
+        process_id: None,
+    }
+}
 fn serve() -> Result<(), String> {
-    let stop = STOP.clone();
+    // Serializa STOP con Running/Stopped para no publicar estados fuera de orden.
+    let shared = Arc::new(Mutex::new(None::<ServiceStatusHandle>));
+    let handler_status = Arc::clone(&shared);
     let status = service_control_handler::register(NAME, move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
-            stop.send_replace(true);
+            tracing::info!(?control, "SCM solicita parada");
+            let slot = match handler_status.lock() {
+                Ok(slot) => slot,
+                Err(error) => {
+                    tracing::error!("SCM estado bloqueado: {error}");
+                    return ServiceControlHandlerResult::Other(1);
+                }
+            };
+            if let Some(status) = *slot
+                && let Err(error) = status.set_service_status(service_status(
+                    ServiceState::StopPending,
+                    ServiceExitCode::Win32(0),
+                ))
+            {
+                tracing::error!("SCM StopPending: {error}");
+            }
+            STOP.send_replace(true);
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
         _ => ServiceControlHandlerResult::NotImplemented,
     })
     .map_err(|e| format!("SCM handler: {e}"))?;
-    let report = |state, exit_code| {
-        status
-            .set_service_status(ServiceStatus {
-                service_type: ServiceType::OWN_PROCESS,
-                current_state: state,
-                controls_accepted: if state == ServiceState::Running {
-                    ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN
-                } else {
-                    ServiceControlAccept::empty()
-                },
-                exit_code,
-                checkpoint: 0,
-                wait_hint: Duration::ZERO,
-                process_id: None,
-            })
-            .map_err(|e| format!("SCM estado: {e}"))
-    };
     let result = (|| {
-        report(ServiceState::Running, ServiceExitCode::Win32(0))?;
+        let mut slot = shared.lock().map_err(|_| "estado SCM bloqueado")?;
+        *slot = Some(status);
+        status
+            .set_service_status(service_status(
+                ServiceState::Running,
+                ServiceExitCode::Win32(0),
+            ))
+            .map_err(|e| format!("SCM Running: {e}"))?;
+        drop(slot);
+        tracing::info!("SCM Running; iniciando el agente");
         let config = CONFIG.get().ok_or("configuración SCM ausente")?.clone();
         RUN.get().ok_or("callback SCM ausente")?(config)
     })();
-    report(
-        ServiceState::Stopped,
-        ServiceExitCode::Win32(if result.is_ok() { 0 } else { 1 }),
-    )?;
+    if let Err(error) = &result {
+        tracing::error!("servicio terminado con error: {error}");
+    }
+    let mut slot = shared.lock().map_err(|_| "estado SCM bloqueado")?;
+    status
+        .set_service_status(service_status(
+            ServiceState::Stopped,
+            ServiceExitCode::Win32(if result.is_ok() { 0 } else { 1 }),
+        ))
+        .map_err(|e| format!("SCM Stopped: {e}"))?;
+    *slot = None;
+    tracing::info!(
+        success = result.is_ok(),
+        "SCM Stopped; runtime y limpieza terminados"
+    );
     result
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_stop_has_bounded_hint_and_no_accepted_controls() {
+        let status = service_status(ServiceState::StopPending, ServiceExitCode::Win32(0));
+        assert_eq!(status.checkpoint, 1);
+        assert_eq!(status.wait_hint, Duration::from_secs(30));
+        assert!(status.controls_accepted.is_empty());
+        let stopped = service_status(ServiceState::Stopped, ServiceExitCode::Win32(1));
+        assert_eq!(stopped.checkpoint, 0);
+        assert_eq!(stopped.wait_hint, Duration::ZERO);
+    }
+
     #[tokio::test]
     async fn stop_before_subscription_is_retained() {
         let (tx, _) = tokio::sync::watch::channel(false);

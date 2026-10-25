@@ -44,8 +44,19 @@ enum Cmd {
 }
 
 pub fn main() -> ExitCode {
+    let cmd = Cli::parse().cmd;
+    #[cfg(target_os = "windows")]
+    if matches!(&cmd, Cmd::Run { service: true, .. }) {
+        if let Err(error) = crate::platform::service::init_logging(log_level()) {
+            eprintln!("diagnóstico del servicio: {error}");
+            return ExitCode::FAILURE;
+        }
+    } else {
+        tracing_subscriber::fmt().with_max_level(log_level()).init();
+    }
+    #[cfg(not(target_os = "windows"))]
     tracing_subscriber::fmt().with_max_level(log_level()).init();
-    let config = match Cli::parse().cmd {
+    let config = match cmd {
         Cmd::Run { config, service } => {
             #[cfg(target_os = "windows")]
             if service {
@@ -708,7 +719,10 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 }
                 continue;
             }
-            _ = lifecycle.wait() => break,
+            _ = lifecycle.wait() => {
+                tracing::info!("parada recibida por el bucle del agente");
+                break;
+            },
         };
         for o in outs {
             match o {
@@ -744,6 +758,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
     #[cfg(target_os = "windows")]
     rt.netconf.cleanup()?;
+    tracing::info!("limpieza de red terminada");
     let _ = state::save(&rt.cfg.state_dir, &rt.state);
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
     if let Some(path) = &rt.cfg.status_socket {

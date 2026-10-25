@@ -1,6 +1,24 @@
 # Se ejecuta sin elevación; el resultado se recoge desde probe-access.ps1.
 param([Parameter(Mandatory)][string]$ResultPath)
 $ErrorActionPreference = 'Stop'
+function Invoke-Cli([string]$Verb) {
+    $stdout = "$ResultPath.$Verb.out"
+    $stderr = "$ResultPath.$Verb.err"
+    $process = Start-Process -FilePath (Join-Path $env:ProgramFiles 'Atenea/atenea.exe') `
+        -ArgumentList @($Verb, '--socket', '\\.\pipe\atenea-status') -PassThru -NoNewWindow `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    try {
+        if (-not $process.WaitForExit(5000)) {
+            $process.Kill()
+            if (-not $process.WaitForExit(5000)) { throw 'La CLI no terminó.' }
+            throw "Timeout de la CLI: $Verb"
+        }
+        return @{Code=$process.ExitCode; Output=(Get-Content -LiteralPath $stdout -Raw); Error=(Get-Content -LiteralPath $stderr -Raw)}
+    } finally {
+        $process.Dispose()
+        Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction Continue
+    }
+}
 try {
     $control = [IO.Pipes.NamedPipeClientStream]::new('.', 'atenea-control', [IO.Pipes.PipeDirection]::InOut)
     try {
@@ -12,16 +30,13 @@ try {
         }
     } finally { $control.Dispose() }
     # La CLI pide ReadData/WriteData, no GENERIC_WRITE (que incluye crear instancias).
-    $cli = Join-Path $env:ProgramFiles 'Atenea/atenea.exe'
-    $status = & $cli status --socket '\\.\pipe\atenea-status' | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or -not ($status.PSObject.Properties.Name -contains 'dns')) {
+    $status = Invoke-Cli 'status'
+    $response = $status.Output | ConvertFrom-Json
+    if ($status.Code -ne 0 -or -not ($response.PSObject.Properties.Name -contains 'dns')) {
         throw 'El usuario no pudo leer el estado.'
     }
-    $ErrorActionPreference = 'Continue'
-    $reply = & $cli down --socket '\\.\pipe\atenea-status' 2>&1
-    $code = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
-    if ($code -eq 0 -or "$reply" -notmatch 'solo se permite status') {
+    $reply = Invoke-Cli 'down'
+    if ($reply.Code -eq 0 -or $reply.Error -notmatch 'solo se permite status') {
         throw 'La canalización de estado no rechazó stop mediante su política de solo lectura.'
     }
     @{ok=$true} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath

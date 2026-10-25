@@ -69,7 +69,7 @@ jobs:
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
   windows:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     defaults:
       run:
         shell: pwsh
@@ -93,4 +93,5 @@ jobs:
       - name: Construir ZIP sin firmar y sin DLL
         run: packaging/windows/build-zip.ps1 -BinDir "$PWD/target/debug"
       - name: Aceptación elevada en VM desechable
+        timeout-minutes: 12
         run: tests/windows/run.ps1

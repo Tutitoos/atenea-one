@@ -5,7 +5,8 @@ set -euo pipefail
   echo 'Solo se ejecuta como root en una VM macOS de GitHub Actions' >&2; exit 1;
 }
 cd "$(dirname "$0")/../.."
-work=$(mktemp -d -t atenea-macos)
+# /private/tmp es atravesable por nobody; el TMPDIR de root puede tener padres 0700.
+work=$(mktemp -d /private/tmp/atenea-macos.XXXXXXXX)
 smoke=''
 watchdog=''
 finish() {

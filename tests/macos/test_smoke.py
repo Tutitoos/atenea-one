@@ -58,7 +58,7 @@ class Deadlines(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             for name in ("agent", "peer"):
-                (work / f"{name}.log").write_text(name + " evidencia")
+                (work / f"{name}.log").write_text("\x1b[32m" + name + " evidencia\x1b[0m\nfinal completo")
             (work / "agent.toml").write_text("configuración simulada")
             output = io.StringIO()
             result = subprocess.CompletedProcess([], 0, stdout="estado", stderr="")
@@ -67,8 +67,22 @@ class Deadlines(unittest.TestCase):
                     smoke.diagnostics(work)
             self.assertIn("agent evidencia", output.getvalue())
             self.assertIn("peer evidencia", output.getvalue())
+            self.assertNotIn("\x1b", output.getvalue())
+            self.assertEqual(output.getvalue().count("final completo"), 2)
+            self.assertIn("fin log completo agent", output.getvalue())
             self.assertEqual([c.kwargs["timeout"] for c in command.call_args_list], [5, 5, 5, 10])
             self.assertIn("cleanup", command.call_args.args[0])
+
+    def test_echo_reports_actual_result_and_never_counts_failure_as_success(self):
+        for code in (0, 2):
+            result = subprocess.CompletedProcess([], code, stdout="estadísticas completas", stderr="detalle")
+            output = io.StringIO()
+            with mock.patch.object(smoke, "run", return_value=result) as command:
+                with contextlib.redirect_stderr(output):
+                    self.assertEqual(smoke.echo(["/sbin/ping", "-n"]), code == 0)
+            self.assertEqual(command.call_args.kwargs["timeout"], 8)
+            self.assertIn("estadísticas completas", output.getvalue())
+            self.assertIn("detalle", output.getvalue())
 
 
 if __name__ == "__main__":
