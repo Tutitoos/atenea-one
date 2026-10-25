@@ -22,28 +22,37 @@ if ($service) {
     }
 }
 if (Test-Path -LiteralPath $config) {
-    $cleanup = Start-Process -FilePath (Join-Path $bin 'atenea-agent.exe') `
-        -ArgumentList @('cleanup', '--config', "`"$config`"") -NoNewWindow -PassThru
+    # Process.Start conserva el handle y ExitCode; Start-Process falla con #5421.
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = Join-Path $bin 'atenea-agent.exe'
+    $info.Arguments = 'cleanup --config "{0}"' -f $config
+    $info.UseShellExecute = $false
+    $cleanup = [Diagnostics.Process]::Start($info)
     try {
         if (-not $cleanup.WaitForExit(30000)) {
             $cleanup.Kill()
             if (-not $cleanup.WaitForExit(5000)) { throw 'cleanup no terminó tras la terminación forzada.' }
             throw 'Timeout de cleanup; se conserva la instalación para poder repararla.'
         }
-        if ($cleanup.ExitCode -ne 0) { throw 'Falló cleanup; se conserva la instalación para poder repararla.' }
+        $code = $cleanup.ExitCode
+        if ($null -eq $code -or $code -ne 0) { throw "Falló cleanup (salida '$code'); se conserva la instalación para poder repararla." }
     } finally { $cleanup.Dispose() }
 }
 if ($service) {
     $service.Dispose()
-    $delete = Start-Process -FilePath "$env:SystemRoot/System32/sc.exe" `
-        -ArgumentList @('delete', 'AteneaAgent') -NoNewWindow -PassThru
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = "$env:SystemRoot/System32/sc.exe"
+    $info.Arguments = 'delete AteneaAgent'
+    $info.UseShellExecute = $false
+    $delete = [Diagnostics.Process]::Start($info)
     try {
         if (-not $delete.WaitForExit(10000)) {
             $delete.Kill()
             $delete.WaitForExit(2000) | Out-Null
             throw 'Timeout al eliminar el servicio.'
         }
-        if ($delete.ExitCode -ne 0) { throw 'No se pudo eliminar el servicio.' }
+        $code = $delete.ExitCode
+        if ($null -eq $code -or $code -ne 0) { throw "No se pudo eliminar el servicio (salida '$code'); se conserva la instalación." }
     } finally { $delete.Dispose() }
 }
 Remove-Item -LiteralPath $bin -Recurse -Force

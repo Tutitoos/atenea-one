@@ -63,7 +63,9 @@ Comprobar el código de salida de cada orden antes de continuar. El token se pas
 
 `status_gid = 545` autoriza a **BUILTIN\Users** a consultar el estado; no es un GID Unix ni el SID de un grupo local personalizado. `544` limita a BUILTIN\Administrators; sin el campo solo SYSTEM/Administradores. La canalización de control acepta únicamente SYSTEM/Administradores; la de estado rechaza `stop`, `reload` y `cleanup` aunque el cliente pueda conectarse. Se rechazan clientes remotos. Las rutas de ambas canalizaciones deben ser distintas.
 
-Con `545`, la lectura positiva de un usuario estándar es obligatoria: no se acepta cambiar la sonda para exigir rechazo de ambos canales. El estado permite escribir la palabra `status` y leer su respuesta, no modificar el agente ni crear instancias de la canalización. La CLI pide esos derechos concretos; el control conserva la DACL SYSTEM/Administradores y su comprobación por impersonación.
+Con `545`, la lectura positiva de un usuario estándar es obligatoria: no se acepta cambiar la sonda para exigir rechazo de ambos canales. El estado concede y la CLI solicita `FILE_GENERIC_READ | FILE_WRITE_DATA` (`0x12008b`): permite leer datos y metadatos, sincronizar y enviar la palabra `status`, no modificar el agente ni crear instancias de la canalización. Se excluyen expresamente `GENERIC_WRITE`, `FILE_CREATE_PIPE_INSTANCE`, `WRITE_DAC` y `WRITE_OWNER`; el control conserva la DACL SYSTEM/Administradores y su comprobación por impersonación. El diagnóstico imprime el descriptor real de ambos pipes, incluidos owner y máscaras ACE.
+
+El pipe de estado con `545` lleva una etiqueta obligatoria Medium/No-Write-Up para admitir al lector estándar de integridad media; no permite escritura de procesos Low/Untrusted. El canal de control y el estado privado no reciben esta etiqueta rebajada.
 
 Wintun se busca junto al ejecutable; para una ejecución administrativa controlada también se admite `ATENEA_WINTUN_DLL` con una ruta absoluta protegida. No cargar DLLs de un directorio descargable o modificable por usuarios sin privilegios.
 

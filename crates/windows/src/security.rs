@@ -28,6 +28,24 @@ fn wide(value: &std::ffi::OsStr) -> io::Result<Vec<u16>> {
 fn last() -> io::Error {
     io::Error::last_os_error()
 }
+#[derive(Debug)]
+struct PipeOperationError {
+    operation: &'static str,
+    source: io::Error,
+}
+impl std::fmt::Display for PipeOperationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.operation, self.source)
+    }
+}
+impl std::error::Error for PipeOperationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+fn pipe_error(operation: &'static str, source: io::Error) -> io::Error {
+    io::Error::new(source.kind(), PipeOperationError { operation, source })
+}
 struct Local(*mut c_void);
 impl Drop for Local {
     fn drop(&mut self) {
@@ -358,8 +376,9 @@ pub fn create_pipe(
     validate_pipe_path(path)?;
     let extra = match group {
         None | Some(544) => String::new(),
-        // No FILE_CREATE_PIPE_INSTANCE: un lector no puede suplantar al servidor.
-        Some(545) => "(A;;0x120003;;;BU)".into(),
+        // Lectura Win32 y escritura de consultas, nunca FILE_CREATE_PIPE_INSTANCE.
+        // Medium hace explícito el contrato Users aun si crea el pipe SYSTEM.
+        Some(545) => "(A;;0x12008b;;;BU)S:(ML;;NW;;;ME)".into(),
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -411,7 +430,7 @@ pub fn connect_pipe(path: &Path) -> io::Result<File> {
     let handle = unsafe {
         CreateFileW(
             path.as_ptr(),
-            FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL,
+            FILE_GENERIC_READ | FILE_WRITE_DATA,
             0,
             null(),
             OPEN_EXISTING,
@@ -420,11 +439,11 @@ pub fn connect_pipe(path: &Path) -> io::Result<File> {
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(last());
+        return Err(pipe_error("CreateFileW(pipe)", last()));
     }
     let file = unsafe { File::from_raw_handle(handle) };
-    // Leer el token de LocalSystem exigiría SeDebugPrivilege al lector de estado.
-    // El propietario BA fijado al crear el pipe no lo puede suplantar un usuario estándar.
+    // READ_CONTROL permite consultar el propietario sin abrir el token de LocalSystem.
+    // Un usuario estándar no puede asignar BA como propietario de un pipe impostor.
     let mut owner = null_mut();
     let mut sd = null_mut();
     let code = unsafe {
@@ -440,7 +459,10 @@ pub fn connect_pipe(path: &Path) -> io::Result<File> {
         )
     };
     if code != 0 {
-        return Err(io::Error::from_raw_os_error(code as i32));
+        return Err(pipe_error(
+            "GetSecurityInfo(pipe owner)",
+            io::Error::from_raw_os_error(code as i32),
+        ));
     }
     let _sd = Local(sd);
     if owner.is_null() || sid_string(owner)? != "S-1-5-32-544" {
@@ -475,11 +497,13 @@ pub fn pipe_reply(mut file: File, timeout: std::time::Duration) -> io::Result<St
             )
         } == 0
         {
-            return Err(last());
+            return Err(pipe_error("PeekNamedPipe", last()));
         }
         if available > 0 {
             let mut buffer = [0u8; 4096];
-            let count = file.read(&mut buffer[..(available as usize).min(4096)])?;
+            let count = file
+                .read(&mut buffer[..(available as usize).min(4096)])
+                .map_err(|error| pipe_error("ReadFile(pipe)", error))?;
             if count == 0 {
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "pipe cerrada"));
             }
@@ -506,6 +530,215 @@ pub fn pipe_reply(mut file: File, timeout: std::time::Duration) -> io::Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn as_restricted_user<T>(token: HANDLE, action: impl FnOnce() -> T) -> T {
+        struct Restore(Option<Handle>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let restored = unsafe {
+                    match &self.0 {
+                        Some(token) => SetThreadToken(null(), token.0),
+                        None => RevertToSelf(),
+                    }
+                };
+                if restored == 0 {
+                    std::process::abort();
+                }
+            }
+        }
+        let mut previous = null_mut();
+        let previous = if unsafe {
+            OpenThreadToken(
+                GetCurrentThread(),
+                TOKEN_QUERY | TOKEN_IMPERSONATE,
+                1,
+                &mut previous,
+            )
+        } != 0
+        {
+            Some(Handle(previous))
+        } else {
+            assert_eq!(last().raw_os_error(), Some(ERROR_NO_TOKEN as i32));
+            None
+        };
+        assert_ne!(unsafe { ImpersonateLoggedOnUser(token) }, 0, "{}", last());
+        let _restore = Restore(previous);
+        action()
+    }
+
+    #[test]
+    fn medium_restricted_user_can_query_status_but_not_control() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
+
+        let mut source = null_mut();
+        assert_ne!(
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE | TOKEN_ADJUST_DEFAULT,
+                    &mut source,
+                )
+            },
+            0,
+            "{}",
+            last()
+        );
+        let source = Handle(source);
+        if !privileged(source.0).unwrap() {
+            eprintln!(
+                "se requiere runner Windows elevado para crear pipes de prueba propiedad de BA"
+            );
+            return;
+        }
+        let mut admin_sid = [0usize; 16];
+        let mut sid_len = std::mem::size_of_val(&admin_sid) as u32;
+        assert_ne!(
+            unsafe {
+                CreateWellKnownSid(
+                    WinBuiltinAdministratorsSid,
+                    null_mut(),
+                    admin_sid.as_mut_ptr().cast(),
+                    &mut sid_len,
+                )
+            },
+            0,
+            "{}",
+            last()
+        );
+        let disabled = SID_AND_ATTRIBUTES {
+            Sid: admin_sid.as_mut_ptr().cast(),
+            Attributes: 0,
+        };
+        let mut restricted = null_mut();
+        assert_ne!(
+            unsafe {
+                CreateRestrictedToken(
+                    source.0,
+                    DISABLE_MAX_PRIVILEGE,
+                    1,
+                    &disabled,
+                    0,
+                    null(),
+                    0,
+                    null(),
+                    &mut restricted,
+                )
+            },
+            0,
+            "{}",
+            last()
+        );
+        let restricted = Handle(restricted);
+        let medium = wide(std::ffi::OsStr::new("S-1-16-8192")).unwrap();
+        let mut medium_sid = null_mut();
+        assert_ne!(
+            unsafe { ConvertStringSidToSidW(medium.as_ptr(), &mut medium_sid) },
+            0,
+            "{}",
+            last()
+        );
+        let medium_sid = Local(medium_sid);
+        let label = TOKEN_MANDATORY_LABEL {
+            Label: SID_AND_ATTRIBUTES {
+                Sid: medium_sid.0,
+                Attributes: SE_GROUP_INTEGRITY as u32,
+            },
+        };
+        assert_ne!(
+            unsafe {
+                SetTokenInformation(
+                    restricted.0,
+                    TokenIntegrityLevel,
+                    (&label as *const TOKEN_MANDATORY_LABEL).cast(),
+                    std::mem::size_of_val(&label) as u32 + GetLengthSid(medium_sid.0),
+                )
+            },
+            0,
+            "{}",
+            last()
+        );
+        assert!(!privileged(restricted.0).unwrap());
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let status = std::path::PathBuf::from(format!(
+            r"\\.\pipe\atenea-restricted-status-{}",
+            std::process::id()
+        ));
+        let mut server = create_pipe(&status, Some(545), true).unwrap();
+        for (suffix, group) in [("control", None), ("private-status", Some(544))] {
+            let path = std::path::PathBuf::from(format!(
+                r"\\.\pipe\atenea-restricted-{suffix}-{}",
+                std::process::id()
+            ));
+            let _private = create_pipe(&path, group, true).unwrap();
+            as_restricted_user(restricted.0, || {
+                let error = connect_pipe(&path).unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                let context = error
+                    .get_ref()
+                    .unwrap()
+                    .downcast_ref::<PipeOperationError>()
+                    .unwrap();
+                assert_eq!(context.operation, "CreateFileW(pipe)");
+                assert_eq!(
+                    context.source.raw_os_error(),
+                    Some(ERROR_ACCESS_DENIED as i32)
+                );
+            });
+        }
+        // Apertura CreateFileW y consulta real del propietario con GetSecurityInfo.
+        let client = as_restricted_user(restricted.0, || {
+            let name = wide(status.as_os_str()).unwrap();
+            for forbidden in [
+                FILE_CREATE_PIPE_INSTANCE,
+                WRITE_DAC,
+                WRITE_OWNER,
+                GENERIC_WRITE,
+            ] {
+                let handle = unsafe {
+                    CreateFileW(
+                        name.as_ptr(),
+                        FILE_GENERIC_READ | FILE_WRITE_DATA | forbidden,
+                        0,
+                        null(),
+                        OPEN_EXISTING,
+                        SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                        null_mut(),
+                    )
+                };
+                if handle != INVALID_HANDLE_VALUE {
+                    drop(Handle(handle));
+                    panic!("Users obtuvo un derecho de pipe prohibido: {forbidden:#x}");
+                }
+                assert_eq!(last().raw_os_error(), Some(ERROR_ACCESS_DENIED as i32));
+            }
+            let mut client = connect_pipe(&status).unwrap();
+            client.write_all(b"status\n").unwrap();
+            client
+        });
+        runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                server.connect().await.unwrap();
+                let mut request = [0u8; 7];
+                server.read_exact(&mut request).await.unwrap();
+                assert_eq!(&request, b"status\n");
+                server.write_all(b"ok\n").await.unwrap();
+            })
+            .await
+            .unwrap();
+        });
+        as_restricted_user(restricted.0, || {
+            assert_eq!(
+                pipe_reply(client, std::time::Duration::from_secs(2)).unwrap(),
+                "ok"
+            );
+        });
+    }
+
     #[test]
     fn rejects_remote_and_nested_names() {
         assert!(validate_pipe_path(Path::new(r"\\.\pipe\atenea-control")).is_ok());

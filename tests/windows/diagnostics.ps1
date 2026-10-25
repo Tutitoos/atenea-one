@@ -1,7 +1,10 @@
 param([string]$PeerLog)
 $ErrorActionPreference = 'Continue'
-function Show-Diagnostic([string]$Name, [scriptblock]$Read, [switch]$Local) {
+$diagnosticClock = [Diagnostics.Stopwatch]::StartNew()
+function Show-Diagnostic([string]$Name, [scriptblock]$Read, [switch]$Local, [string]$Executable, [string]$Arguments) {
     Write-Output "=== $Name ==="
+    $remaining = 23000 - [int]$diagnosticClock.ElapsedMilliseconds
+    if ($remaining -lt 750) { Write-Output 'Plazo global de diagnóstico agotado.'; return }
     if ($Local) {
         try { & $Read | Out-String -Width 240 | Write-Output } catch { Write-Output ($_ | Out-String) }
         return
@@ -15,22 +18,45 @@ function Show-Diagnostic([string]$Name, [scriptblock]$Read, [switch]$Local) {
     $info.EnvironmentVariables['PSModulePath'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules'
     $info.EnvironmentVariables.Remove('PSHOME')
     $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& { $Read } | Out-String -Width 240"))
+    if ($Executable) {
+        $info.FileName = $Executable
+        $info.Arguments = $Arguments
+    }
     $process = $null
     try {
         $process = [Diagnostics.Process]::Start($info)
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(2000)) {
-            Write-Output 'Timeout de diagnóstico (2s).'
-            $process.Kill()
-            if (-not $process.WaitForExit(250)) { Write-Output 'El diagnóstico no confirmó su terminación.' }
+        if (-not $process.WaitForExit([Math]::Min(2000, $remaining - 750))) {
+            Write-Output 'Timeout de diagnóstico (máximo 2s).'
+            $previousPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Stop'
+                if (-not $process.HasExited) { $process.Kill() }
+                if (-not $process.WaitForExit(250)) { Write-Output 'El diagnóstico no confirmó su terminación.' }
+            } catch { Write-Output "No se pudo terminar el diagnóstico; se continúa: $_" }
+            finally { $ErrorActionPreference = $previousPreference }
         }
-        [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 100) | Out-Null
-        if ($stdout.IsCompleted) { Write-Output $stdout.Result }
-        if ($stderr.IsCompleted) { Write-Output $stderr.Result }
+        try { [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 100) | Out-Null }
+        catch { Write-Output "Falló la captura del diagnóstico; se continúa: $_" }
+        foreach ($stream in @($stdout, $stderr)) {
+            if ($stream.Status -eq [Threading.Tasks.TaskStatus]::RanToCompletion) {
+                Write-Output $stream.GetAwaiter().GetResult()
+            } elseif ($stream.IsFaulted) {
+                Write-Output "Falló la lectura del diagnóstico: $($stream.Exception)"
+            } elseif ($stream.IsCanceled) {
+                Write-Output 'Lectura de diagnóstico cancelada.'
+            } else {
+                Write-Output 'Captura incompleta; no se espera fuera del plazo.'
+            }
+        }
     } catch { Write-Output ($_ | Out-String) }
     finally { if ($process) { $process.Dispose() } }
 }
+# El mismo lector nativo que smoke imprime ambos objetos incluso si falla antes del probe.
+try {
+    Show-Diagnostic 'propietario, DACL, MIC y máscaras ACE de ambos pipes activos' -Executable (Get-Command python -ErrorAction Stop).Source -Arguments ('-u "{0}" --pipe-sddl' -f (Join-Path $PSScriptRoot 'smoke.py'))
+} catch { Write-Output "No se pudo iniciar el lector de descriptores; se continúa: $_" }
 $agentLog = Join-Path $env:ProgramData 'Atenea/agent.log'
 Write-Output "Registro del agente: $agentLog"
 Show-Diagnostic 'agent.log' { if (Test-Path -LiteralPath $agentLog) { Get-Content -LiteralPath $agentLog -Tail 200 } else { 'No existe todavía.' } } -Local

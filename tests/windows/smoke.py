@@ -12,6 +12,61 @@ import sys
 from smoke_support import ask, call, ps
 import zipfile
 
+def pipe_sddl(pipe):
+    # Propietario, DACL y etiqueta MIC: READ_CONTROL basta, sin leer la SACL completa.
+    advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    handle = kernel.CreateFileW(pipe, 0x20000, 3, None, 3, 0, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    descriptor = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    text = wintypes.LPWSTR()
+    advapi.GetSecurityInfo.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR), ctypes.c_void_p]
+    advapi.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    security_info = 0x1 | 0x4 | 0x10  # OWNER | DACL | LABEL, no SACL_SECURITY_INFORMATION.
+    try:
+        code = advapi.GetSecurityInfo(handle, 1, security_info, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor))
+        if code:
+            raise ctypes.WinError(code)
+        if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, security_info, ctypes.byref(text), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        sddl = text.value
+        print(f'{pipe}: owner+DACL+MIC={sddl}', flush=True)
+        if dacl:
+            # ACL.AceCount está en offset 4; cada ACE empieza por tipo, flags y tamaño.
+            count = ctypes.c_ushort.from_address(dacl.value + 4).value
+            for index in range(count):
+                ace = ctypes.c_void_p()
+                if not advapi.GetAce(dacl, index, ctypes.byref(ace)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                header = (ctypes.c_ubyte * 4).from_address(ace.value)
+                mask = wintypes.DWORD.from_address(ace.value + 4).value
+                print(f'  ACE[{index}] type={header[0]} flags=0x{header[1]:02x} mask=0x{mask:08x}', flush=True)
+        return sddl
+    finally:
+        if text:
+            kernel.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+        if descriptor:
+            kernel.LocalFree(descriptor)
+        kernel.CloseHandle(handle)
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['--pipe-sddl']:
+    # diagnostics.ps1 ejecuta este lector en un hijo acotado, antes de parar SCM.
+    for pipe in (r'\\.\pipe\atenea-control', r'\\.\pipe\atenea-status'):
+        try:
+            pipe_sddl(pipe)
+        except OSError as error:
+            print(f'{pipe}: descriptor no disponible: {error}', flush=True)
+    sys.exit(0)
+
+
 REPO = Path(__file__).resolve().parents[2]
 BIN = Path(os.environ['ProgramFiles']) / 'Atenea'
 CLI = BIN / 'atenea.exe'
@@ -51,30 +106,6 @@ def snapshot():
 
 
 
-def pipe_sddl(pipe):
-    # Se consulta la DACL del objeto real, no una cadena esperada del código.
-    advapi = ctypes.WinDLL('advapi32', use_last_error=True)
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-    kernel.CreateFileW.restype = wintypes.HANDLE
-    handle = kernel.CreateFileW(pipe, 0x20000, 3, None, 3, 0, None)
-    assert handle != wintypes.HANDLE(-1).value, ctypes.get_last_error()
-    descriptor = ctypes.c_void_p()
-    text = wintypes.LPWSTR()
-    advapi.GetSecurityInfo.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR), ctypes.c_void_p]
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel.LocalFree.argtypes = [ctypes.c_void_p]
-    try:
-        assert advapi.GetSecurityInfo(handle, 1, 4, None, None, None, None, ctypes.byref(descriptor)) == 0
-        assert advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, 4, ctypes.byref(text), None)
-        return text.value
-    finally:
-        if text:
-            kernel.LocalFree(ctypes.cast(text, ctypes.c_void_p))
-        if descriptor:
-            kernel.LocalFree(descriptor)
-        kernel.CloseHandle(handle)
 
 
 def nrpt():
