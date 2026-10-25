@@ -94,7 +94,7 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 
 - Wintun: excepción de controlador aceptada por el responsable el 2026-10-25; licencia de binarios oficiales revisada, véase fase 8 Windows abajo. `utoipa` 5.5.0 declara MIT OR Apache-2.0 en su manifiesto descargado.
 - `tun` (WTFPL) **no se adoptó**: `atenea-tunnel` usa `/dev/net/tun` directamente con `libc` (código `unsafe` acotado y comentado).
-- Escaneo de dependencias en CI (job `supply-chain`, también semanal): `cargo deny check advisories bans licenses sources` con `deny.toml` (solo grafo de producción; licencias permitidas: Apache-2.0, MIT, ISC, BSD-2/3-Clause, Unicode-3.0, Zlib, CDLA-Permissive-2.0, BSL-1.0, Unlicense, 0BSD; fuentes solo crates.io) y `pnpm audit --prod`. Dependabot propone actualizaciones de cargo, npm, GitHub Actions y Docker. Una excepción de advisory exige `reason` y caducidad en `deny.toml`. Wintun no es un crate: su licencia y hash se revisan aparte (arriba) y figuran en el SBOM de Windows. Los resultados reales del primer escaneo no se han visto: `cargo-deny` no está instalado en la estación de trabajo y CI no se ha ejecutado.
+- Escaneo de dependencias en CI (job `supply-chain`, también semanal): `cargo deny check advisories bans licenses sources` con `deny.toml` (solo grafo de producción; licencias permitidas: Apache-2.0, MIT, ISC, BSD-2/3-Clause, Unicode-3.0, Zlib, CDLA-Permissive-2.0, BSL-1.0, Unlicense; fuentes solo crates.io) y `pnpm audit --prod`. Dependabot propone actualizaciones de cargo, npm, GitHub Actions y Docker. Las excepciones requieren razón, responsable y fecha de revisión (véase abajo). Wintun no es un crate: su licencia y hash se revisan aparte y figuran en el SBOM de Windows. La auditoría usa el toolchain de `rust-toolchain.toml` tanto para instalarlo como para seleccionarlo dentro del contenedor de la acción. Todos los paquetes internos declaran `publish = false`: admiten dependencias por ruta sin versión sin permitir comodines externos.
 - pnpm se instala con `scripts/install-pnpm.sh`, que verifica el SHA-512 del tarball de npm de la versión fijada (CI y Dockerfile del control plane); al subir de versión hay que actualizar el script y `packageManager`.
 - **`ring` 0.17.14 llega a través de `snow` 0.10.0** con las características por defecto (visible con `cargo tree -p atenea-crypto -e features -i ring`). Su licencia es propia (mezcla ISC/OpenSSL). **Aceptado por el responsable "por ahora" (2026-10-24)**; se revisará el texto de la licencia antes del primer release.
 - Resueltas y en uso (versiones del `Cargo.lock`): `snow` 0.10.0, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0, `blake2` 0.11.0 (identity) y 0.10 (dentro de snow), `getrandom` 0.3, `zeroize`, `tokio` 1.54, `clap` 4.6, `serde`/`serde_json`/`toml` 0.9, `tracing`, `proptest` 1, `libc` 0.2. No se han leído las licencias de las dependencias transitivas.
@@ -125,7 +125,7 @@ acotadas a 256 mensajes; los descartes se contabilizan sin registrar secretos.
 | --- | --- | --- | --- |
 | `rustls` | 0.23 | Apache-2.0 OR ISC OR MIT | TLS 1.3 exclusivamente, proveedor `ring`, sin características por defecto; `tls12` solo en pruebas de rechazo |
 | `tokio-rustls` | 0.26 | MIT OR Apache-2.0 | TLS asíncrono, proveedor `ring`, sin características por defecto |
-| `rustls-pemfile` | 2 | Apache-2.0 OR ISC OR MIT | Certificado y clave PEM |
+| `rustls::pki_types` | 1.15.1 (reexportado por rustls) | MIT OR Apache-2.0 | `pem::PemObject` para certificado y clave PEM; sin dependencia adicional |
 | `rand` | 0.8 | MIT OR Apache-2.0 | `OsRng`: secreto de cookies e identificadores impredecibles |
 | `figment`, `hex` | 0.10, 0.4 | MIT OR Apache-2.0 | Configuración TOML/entorno y claves públicas hex |
 | `serde`, `serde_json` | 1, 1 | MIT OR Apache-2.0 | Estado y configuración |
@@ -323,4 +323,40 @@ CycloneDX 1.5 y el manifiesto. OpenSSL 3 (Apache-2.0) firma/verifica Ed25519 con
 El parser propio admite exclusivamente el formato pnpm lock v9; no inventa
 licencias npm ausentes del lock ni versiones de ejecutables estáticos.
 Las acciones upload/download-artifact v4 solo intervienen en runners de GitHub.
+
+
+## Excepciones temporales de auditoría (2026-10-25)
+
+Responsable: responsable de seguridad de Atenea One. Revisar **antes de 2027-01-23**
+(máximo tres meses); las entradas concretas están en `deny.toml`. No se deshabilitan
+las comprobaciones de advisories ni de fuentes.
+
+- **RUSTSEC-2026-0387 — `crypto-bigint` 0.5.5.**
+  [Advisory](https://rustsec.org/advisories/RUSTSEC-2026-0387). El problema es
+  variabilidad temporal con enteros secretos. El grafo de producción
+  (`cargo tree --offline --locked -e normal,build -i crypto-bigint`) solo llega
+  por `openidconnect` → `p256`/`p384` → `elliptic-curve`. En
+  `apps/control-plane/src/auth.rs::callback` se verifica el ID token; operaciones
+  afectadas solo sobre enteros públicos (verificación); sin secretos ECDSA en el
+  proceso. `openidconnect::core::crypto::verify_ec_signature` usa
+  `p256::ecdsa::VerifyingKey` y `p384::ecdsa::VerifyingKey` con la clave pública del
+  IdP, la firma y el mensaje. No hay firma, generación de claves ni DH con estos
+  crates en producción. La versión corregida es ≥ 0.7.6, incompatible con
+  `elliptic-curve` 0.13.8 (`crypto-bigint ^0.5`). El índice consultado el
+  2026-10-25 solo publica `openidconnect` estable hasta 4.0.1, que exige `p256
+  ^0.13.2` y `p384 ^0.13.0`; los últimos compatibles siguen en 0.13.
+  **Salida:** openidconnect estable con p256/p384 0.14, siempre que el grafo
+  resultante resuelva crypto-bigint ≥ 0.7.6; retirar la excepción tras verificarlo.
+- **RUSTSEC-2023-0071 — `rsa` 0.9.10.**
+  [Advisory](https://rustsec.org/advisories/RUSTSEC-2023-0071). El flujo de
+  producción es el mismo callback OIDC y solo verifica firmas con la clave pública
+  del IdP (`openidconnect::core::crypto::verify_rsa_signature` construye
+  `rsa::RsaPublicKey` y llama a `verify`); no hay operaciones con clave privada RSA.
+  La clave privada de `apps/control-plane/tests/oidc.rs` es efímera y solo del
+  proveedor de pruebas. Upstream no publica una versión corregida.
+  **Salida:** versión corregida de rsa compatible con openidconnect, o retirada
+  upstream de esa dependencia; retirar la excepción después de la actualización.
+
+Ambas excepciones dejan de ser válidas si se introduce uso de claves privadas
+RSA/ECDSA o DH con estas dependencias: revisar antes de cambiar el flujo.
 

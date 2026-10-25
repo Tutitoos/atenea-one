@@ -1,8 +1,9 @@
 use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group, now};
 use atenea_relay_core::{ALPN, FrameDecoder, MAGIC, Message, encode_frame, parse, ty};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem};
 use std::{
     fs::File,
-    io::{self, BufReader},
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -15,11 +16,20 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 
+fn pem_error(error: pem::Error) -> io::Error {
+    match error {
+        pem::Error::Io(error) => error,
+        pem::Error::NoItemsFound => io::Error::other("falta clave PEM"),
+        error => io::Error::new(io::ErrorKind::InvalidData, error),
+    }
+}
+
 pub fn tls_config(c: &Config) -> io::Result<TlsAcceptor> {
-    let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(&c.tls_cert_file)?))
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(&c.tls_key_file)?))?
-        .ok_or_else(|| io::Error::other("falta clave PEM"))?;
+    use pem::PemObject;
+    let certs = CertificateDer::pem_reader_iter(File::open(&c.tls_cert_file)?)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(pem_error)?;
+    let key = PrivateKeyDer::from_pem_reader(File::open(&c.tls_key_file)?).map_err(pem_error)?;
     let mut config =
         rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()

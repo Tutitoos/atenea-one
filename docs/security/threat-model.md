@@ -67,3 +67,42 @@ Ataques físicos al dispositivo; compromiso del núcleo del SO; canales laterale
 - Las claves privadas de dispositivo no salen del dispositivo.
 - El relay y el coordinator no reciben claves de peers distintas de las públicas.
 - No hay auditoría independiente del protocolo: este modelo es un punto de partida, no una garantía (fase 11).
+
+## Riesgos aceptados temporalmente (dependencias)
+
+### DEP-2026-01 — crypto-bigint 0.5.5 / RUSTSEC-2026-0387
+
+- **Estado:** excepción temporal autorizada el 2026-10-25; revisar **antes de
+  2027-01-23**. Propietario: responsable de seguridad de Atenea One.
+- **Motivo:** [el advisory](https://rustsec.org/advisories/RUSTSEC-2026-0387)
+  describe variabilidad temporal al operar con enteros secretos. El grafo de
+  producción solo llega por `openidconnect` → `p256`/`p384` → `elliptic-curve`.
+  `apps/control-plane/src/auth.rs::callback` verifica ID tokens: operaciones
+  afectadas solo sobre enteros públicos (verificación); sin secretos ECDSA en el
+  proceso. No se usa esta cadena para firmar, generar claves ni hacer DH.
+- **Condición de salida:** openidconnect estable con p256/p384 0.14 y
+  crypto-bigint ≥ 0.7.6 resuelto; retirar la excepción de `deny.toml`. La versión
+  estable actual de openidconnect (4.0.1) exige todavía las curvas 0.13.
+- **Invalidación anticipada:** introducir claves privadas ECDSA o DH mediante
+  estos crates exige retirar esta aceptación y revisar la exposición.
+
+### DEP-2026-02 — rsa 0.9.10 / RUSTSEC-2023-0071
+
+- **Estado:** excepción temporal autorizada el 2026-10-25; revisar **antes de
+  2027-01-23**. Propietario: responsable de seguridad de Atenea One.
+- **Motivo:** [el advisory](https://rustsec.org/advisories/RUSTSEC-2023-0071)
+  afecta a operaciones con clave privada RSA. En producción el mismo callback
+  solo verifica ID tokens con la clave pública RSA del IdP, mediante
+  `openidconnect::core::crypto::verify_rsa_signature` (`RsaPublicKey::verify`).
+  La clave privada de `apps/control-plane/tests/oidc.rs` es efímera y exclusiva
+  del IdP de pruebas; no forma parte del servicio desplegado.
+- **Condición de salida:** versión corregida de rsa compatible con openidconnect
+  o retirada upstream de la dependencia; eliminar la excepción tras actualizar.
+  Actualmente upstream no publica una versión corregida.
+- **Invalidación anticipada:** cualquier firma o descifrado con clave privada RSA
+  en producción exige retirar esta aceptación y revisar la exposición.
+
+Estas excepciones se limitan a esos dos IDs; el resto de advisories y las
+restricciones de licencias y fuentes siguen activas. Análisis de compatibilidad:
+`docs/architecture/dependencies.md`, sección de excepciones temporales.
+

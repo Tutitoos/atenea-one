@@ -1,6 +1,7 @@
 use atenea_identity::SigningKey;
 use atenea_relay::{Relay, config::Config};
 use atenea_relay_core::{self as w, Message, RelayToken};
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -467,7 +468,7 @@ async fn tls12_and_connection_limits() {
     let lab = Lab::start(|_| {}).await;
     let mut roots = rustls::RootCertStore::empty();
     let pem = std::fs::read(lab.dir.join("cert.pem")).unwrap();
-    for cert in rustls_pemfile::certs(&mut &pem[..]) {
+    for cert in CertificateDer::pem_slice_iter(&pem) {
         roots.add(cert.unwrap()).unwrap();
     }
     let mut c = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
