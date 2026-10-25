@@ -15,6 +15,9 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $stage
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../../docs/operations/instalacion-windows.md') -Destination $stage
+    $commit = if ($env:ATENEA_BUILD_COMMIT) { $env:ATENEA_BUILD_COMMIT } else { 'unknown' }
+    $version = if ($env:ATENEA_VERSION) { $env:ATENEA_VERSION } else { '0.1.0' }
+    @{ commit = $commit; version = $version } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stage 'BUILD-INFO.json')
     $zip = Join-Path $out 'atenea-client-unsigned.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
     Write-Output $zip

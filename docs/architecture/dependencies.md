@@ -312,3 +312,14 @@ Fuentes: [Prometheus](https://github.com/prometheus/prometheus),
 [Grafana](https://github.com/grafana/grafana),
 [Loki](https://github.com/grafana/loki) y [Alloy](https://github.com/grafana/alloy).
 Se ejecutan como procesos independientes: no se enlazan con los binarios Atenea.
+
+### Fase 9 — release
+
+Sin nuevos crates, paquetes npm ni herramientas descargadas. Python 3.11+
+(PSF-2.0, biblioteca estándar `tomllib`, `tarfile`, `hashlib`, `json`) genera
+CycloneDX 1.5 y el manifiesto. OpenSSL 3 (Apache-2.0) firma/verifica Ed25519 con
+`pkeyutl -rawin`; Docker exporta imágenes locales y dpkg construye el `.deb`.
+El parser propio admite exclusivamente el formato pnpm lock v9; no inventa
+licencias npm ausentes del lock ni versiones de ejecutables estáticos.
+Las acciones upload/download-artifact v4 solo intervienen en runners de GitHub.
+

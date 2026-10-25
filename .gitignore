@@ -21,6 +21,7 @@ captures/
 
 # Rust
 target/
+__pycache__/
 
 # Node
 node_modules/

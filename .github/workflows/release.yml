@@ -1,0 +1,193 @@
+name: Release verificable
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Identidad y toolchain
+        run: |
+          echo "ATENEA_BUILD_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "ATENEA_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("apps/cli/Cargo.toml","rb"))["package"]["version"])')" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+          rustup toolchain install 1.99.1 --profile minimal
+      - name: Construir binarios, Debian e inventarios
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "${GITHUB_REF#refs/tags/v}" = "$ATENEA_VERSION"; fi
+          cargo fetch --locked
+          cargo build --offline --locked --release -p atenea-cli -p atenea-agent -p atenea-control-plane -p atenea-coordinator -p atenea-relay
+          mkdir dist
+          for name in atenea atenea-agent atenea-control-plane atenea-coordinator atenea-relay; do
+            test "$(target/release/$name --version)" = "$name $ATENEA_VERSION ($ATENEA_BUILD_COMMIT)"
+            cp "target/release/$name" "dist/$name-linux"
+          done
+          cargo metadata --offline --locked --format-version 1 > dist/cargo-metadata.json
+          python3 scripts/release/build-info.py > dist/BUILD-INFO.json
+          python3 -c 'import json, subprocess; p="dist/BUILD-INFO.json"; d=json.load(open(p)); d["toolchain"]=subprocess.check_output(["rustc","--version"],text=True).strip(); open(p,"w").write(json.dumps(d,sort_keys=True)+"\n")'
+          packaging/deb/build.sh target/release "$ATENEA_VERSION" "$(dpkg --print-architecture)" dist/atenea.deb
+          python3 scripts/release/sbom.py rust dist/cargo-metadata.json dist/rust.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT"
+          python3 scripts/release/sbom.py panel pnpm-lock.yaml dist/panel.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT"
+      - name: Activar exportación OCI en el runner desechable
+        run: |
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config.setdefault('features', {})['containerd-snapshotter'] = True
+          path.write_text(json.dumps(config))
+          PY
+          sudo systemctl restart docker
+      - name: Construir imágenes sin publicar
+        run: |
+          set -euo pipefail
+          for service in control-plane coordinator relay; do
+            docker build --build-arg "ATENEA_BUILD_COMMIT=$GITHUB_SHA" -t "atenea-release/$service:build" -f "deploy/images/$service/Dockerfile" .
+            test "$(docker run --rm --network none "atenea-release/$service:build" --version)" = "atenea-$service $ATENEA_VERSION ($GITHUB_SHA)"
+          done
+          python3 scripts/release/images.py dist "$GITHUB_SHA" "$ATENEA_VERSION" control-plane=atenea-release/control-plane:build coordinator=atenea-release/coordinator:build relay=atenea-release/relay:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  native:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Preparar identidad y toolchain
+        run: |
+          echo "ATENEA_BUILD_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "ATENEA_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("apps/cli/Cargo.toml","rb"))["package"]["version"])')" >> "$GITHUB_ENV"
+          rustup toolchain install 1.99.1 --profile minimal
+      - name: Construir cliente nativo
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -euo pipefail
+          cargo fetch --locked
+          cargo build --offline --locked --release -p atenea-cli -p atenea-agent
+          mkdir dist
+          suffix=''
+          if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
+          for name in atenea atenea-agent; do
+            test "$(target/release/$name$suffix --version | tr -d '\r')" = "$name $ATENEA_VERSION ($GITHUB_SHA)"
+            cp "target/release/$name$suffix" "dist/$name-$RUNNER_OS$suffix"
+          done
+          cargo metadata --offline --locked --format-version 1 > "$RUNNER_TEMP/native-metadata.json"
+          python3 scripts/release/sbom.py rust "$RUNNER_TEMP/native-metadata.json" "dist/rust-$RUNNER_OS.cdx.json" --version "$ATENEA_VERSION" --commit "$GITHUB_SHA"
+          python3 scripts/release/build-info.py > "dist/$RUNNER_OS.build-info.json"
+      - name: Construir PKG sin firmar
+        if: runner.os == 'macOS'
+        run: |
+          packaging/macos/build-pkg.sh
+          pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
+          cp target/macos-package/*.pkg dist/
+      - name: Construir ZIP sin firmar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          packaging/windows/build-zip.ps1
+          Copy-Item target/windows-package/*.zip dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  assemble:
+    needs: [linux, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-unsigned
+          path: dist/*
+          if-no-files-found: error
+
+  # Única frontera con permisos de escritura, secreto y aprobación manual.
+  # Configurar revisores obligatorios en Settings > Environments > release.
+  publish:
+    needs: assemble
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-unsigned
+          path: dist
+      - name: Activar carga OCI en el runner desechable
+        run: |
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config.setdefault('features', {})['containerd-snapshotter'] = True
+          path.write_text(json.dumps(config))
+          PY
+          sudo systemctl restart docker
+      - name: Exigir tag existente del mismo commit
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
+          git fetch --no-tags --depth=1 origin "refs/tags/v$version:refs/tags/v$version"
+          test "$(git rev-parse "v$version^{commit}")" = "$GITHUB_SHA"
+      - name: Publicar imágenes en GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          python3 scripts/release/publish-images.py dist "ghcr.io/${GITHUB_REPOSITORY,,}"
+      - name: Firmar manifiesto y publicar release
+        env:
+          ATENEA_RELEASE_KEY: ${{ secrets.ATENEA_RELEASE_ED25519_PEM }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key=$(mktemp)
+          pub=$(mktemp)
+          trap 'rm -f "$key" "$pub"; docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          printf '%s\n' "$ATENEA_RELEASE_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
+          python3 scripts/release/manifest.py create dist "$key" "$GITHUB_SHA" "$version"
+          bash scripts/release/verify.sh dist "$pub" "$GITHUB_SHA" "$version"
+          gh release create "v$version" dist/* --target "$GITHUB_SHA" --verify-tag --title "Atenea $version" --notes 'Manifiesto Ed25519; verifique con la clave pública del responsable por canal independiente. PKG/ZIP sin firma nativa.'

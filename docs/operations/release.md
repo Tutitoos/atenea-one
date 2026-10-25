@@ -1,0 +1,177 @@
+# Releases verificables — fase 9
+
+Un release es el manifiesto Ed25519 de ADR-009 §6, no una etiqueta Docker.
+La clave de releases **no es la raíz** de configuración de ADR-005. El
+responsable debe decidir su identidad, custodia y canal de distribución de la
+clave pública antes de publicar. No hay clave real ni clave privada de prueba en
+el repositorio; las pruebas generan claves efímeras fuera del árbol.
+
+## Ensayo local sin red
+
+Requisitos ya instalados: Python 3.11+, OpenSSL 3 con Ed25519, Docker Linux con
+cgroup v2, imágenes `atenea-lab`, `atenea-infra:local`,
+`atenea/{control-plane,coordinator,relay}:local`, volúmenes `atenea-lab-target`
+y `atenea-cargo-registry`. No se instala ninguna herramienta externa de SBOM o
+firma. El ensayo no usa syft, cosign, minisign ni cargo-cyclonedx.
+
+```sh
+# dist/ debe estar vacío o no existir; archivar el ensayo anterior, no mezclarlo.
+bash tests/release/run.sh
+```
+
+El runner compila los cinco binarios Linux con Rust 1.99.1 ya instalado,
+`CARGO_BUILD_JOBS=2`, `--offline --locked` y Docker `--network none`. Los binarios
+imprimen `nombre versión (commit)` con `--version`/`-V`; sin
+`ATENEA_BUILD_COMMIT` una compilación de desarrollo informa `unknown`.
+La versión del release se toma de `apps/cli/Cargo.toml`; la comprobación de los
+cinco ejecutables impide mezclar versiones de los paquetes. El commit se toma
+de HEAD. **El ensayo admite el árbol de trabajo sin commit**: demuestra el
+mecanismo con las fuentes actuales, no certifica que un árbol modificado sea
+idéntico a HEAD. Los runners construyen el checkout del commit del evento.
+
+`build-local.sh` reutiliza las imágenes runtime locales, copia los ejecutables
+recién compilados y añade `org.opencontainers.image.revision`. Conserva el panel
+y las capas de las bases locales: **no demuestra una recompilación del panel**.
+Las imágenes originales no se retaggean ni borran. Los tres Dockerfile de
+`deploy/images/` también reciben `ARG ATENEA_BUILD_COMMIT`, lo propagan al
+compilador y etiquetan la revisión para las compilaciones completas del runner.
+En local se ensaya el corte offline mediante Dockerfiles efímeros; no se ejecutan
+las etapas npm/pnpm de los Dockerfile completos, que podrían necesitar red.
+
+Se construye un `.deb` real con compresión xz mediante
+`packaging/deb/build.sh`. Su control contiene `Version` y `X-Atenea-Commit`.
+`tests/packaging/run.sh --release DIST COMMIT` instala exactamente ese `.deb`
+en Debian con systemd, comprueba el commit/versiones de los dos binarios
+instalados y la unidad. No inicia el servicio: la configuración privada aún no
+existe. La base de infraestructura no incluye systemd-resolved; no se descarga.
+Este modo no sustituye el ensayo completo de DNS/TUN de `tests/packaging/run.sh`
+sin argumentos, ni afirma haberlo repetido.
+
+**No se fabrican `.pkg` ni ZIP de Windows en local.** Esos instaladores se
+construyen en sus runners. El `.pkg` contiene
+`/usr/local/share/atenea/BUILD-INFO.json`; el ZIP contiene `BUILD-INFO.json`.
+Los runners comprueban `--version` antes de empaquetar y adjuntan binarios,
+metadatos y SBOM de cada plataforma. Es posible aportar esos ficheros a `dist/`
+antes de generar el manifiesto. No copiar paquetes de otro commit ni añadir
+ficheros después de firmar.
+
+El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
+y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de
+BuildKit; no ejecuta prune ni toca recursos de otros ensayos. Las claves efímeras
+se eliminan tras verificar: ese manifiesto no es una atestación de producción
+reutilizable ni debe distribuirse como tal.
+
+## SBOM e identidad de las imágenes
+
+`scripts/release/sbom.py` produce CycloneDX **1.5 JSON** y comprueba sus campos
+obligatorios, identidades únicas, hashes y referencias de dependencias:
+
+- Rust: `cargo metadata --offline --locked --format-version 1`, junto con
+  `Cargo.lock`, aporta nombres, versiones, checksums SHA-256 del registro,
+  expresiones de licencia declaradas y grafo de dependencias. Los crates locales
+  no tienen checksum de registro. Es un inventario del código resuelto, no una
+  afirmación de que todas las features/targets se enlacen en cada ejecutable.
+- Panel: parser propio del lock pnpm v9, sin ejecutar pnpm; incluye versiones,
+  integridades SHA-512/SHA-256 y dependencias/optionalDependencies de snapshots.
+  No inventa licencias ausentes del lock; se consulta el inventario de licencias
+  del proyecto por separado. Otro formato de lock requiere adaptar el parser.
+- Imágenes: `docker create --network none` + `docker export`, leyendo
+  `/var/lib/dpkg/status`, `status.d` de distroless o `/lib/apk/db/installed`.
+  Añade hashes de ejecutables regulares en los directorios binarios; los
+  ejecutables sin metadata declaran `unversioned`, no una versión inventada.
+  Los componentes Rust/panel de una imagen se vinculan también por sus SBOM
+  de fuentes en el manifiesto. No descarga ni arranca la imagen para inventariar.
+
+`scripts/release/images.py` requiere exportación Docker con layout OCI
+(`index.json` y `blobs/`). Conserva el archivo Docker y extrae **los bytes del
+manifiesto OCI real** de la plataforma y las capas observadas en Docker. Distingue:
+
+- `id`: ID observado por Docker (según el motor puede identificar el índice
+  containerd, no necesariamente la configuración);
+- `config_digest`: digest de la configuración referida por el manifiesto;
+- `manifest_digest`: digest del manifiesto de la plataforma exportado, verificado
+  contra el blob del archivo OCI; no es un hash inventado a partir de una etiqueta;
+- `registry_digest`: `null` mientras no se haya publicado. El job protegido lo
+  sustituye por `repositorio@sha256:…` tras push. Puede ser un índice de registro,
+  distinto del manifiesto de plataforma local. Para desplegar use esta referencia
+  completa por digest, nunca el ID como si fuera digest de registro.
+
+## Firmar y verificar con clave aportada
+
+Conservar la clave privada fuera del repo y pasarla por fichero con permisos
+restrictivos. `SOURCE_DATE_EPOCH` es obligatorio al crear el manifiesto: su fecha
+UTC depende solo de ese valor. La serialización JSON y el orden de hashes son
+estables para los mismos ficheros de entrada; **no se afirma reproducibilidad
+bit a bit de compiladores, instaladores o archivos Docker**.
+
+```sh
+export ATENEA_BUILD_COMMIT=$(git rev-parse HEAD)
+export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+# Con dist/ ensamblado y, si procede, los paquetes de los runners ya presentes:
+python3 scripts/release/manifest.py create dist /ruta/privada/release.key "$ATENEA_BUILD_COMMIT" 0.1.0
+bash scripts/release/verify.sh dist /ruta/confiable/release.pub "$ATENEA_BUILD_COMMIT" 0.1.0
+```
+
+La firma binaria es `release-manifest.json.sig`, Ed25519 con
+`openssl pkeyutl -rawin`. El verificador exige una clave Ed25519 externa, la
+versión y el commit **esperados por el consumidor**, verifica primero la firma y
+luego todos los tamaños/SHA-256 de artefactos y SBOM, identidades de SBOM y
+BUILD-INFO, identidad del control Debian y del ZIP, digests de imágenes y
+`SHA256SUMS`. Rechaza ficheros extra, rutas fuera de dist y enlaces simbólicos.
+No ejecute Python con `-O`/`PYTHONOPTIMIZE`: el comprobador lo rechaza.
+
+`SHA256SUMS` se deriva de los hashes firmados; no incluye el propio manifiesto ni
+su firma (evita una referencia circular). Cambiarlo también hace fallar la
+verificación. La clave pública recibida junto al artefacto **no es confianza**:
+obtenga su huella por un canal independiente controlado por el responsable.
+
+La integración de un token hardware compatible con Ed25519 queda **pendiente**
+de elección por el responsable (ADR-005). El fichero actual no se sustituye por
+una clave de raíz, ni se inventa un provider PKCS#11: tras elegir token/provider
+se deberá adaptar exclusivamente la operación de firma y ensayar su semántica
+raw Ed25519. La verificación por clave pública seguirá siendo independiente.
+
+## Workflow, aprobación y publicación
+
+`.github/workflows/release.yml` solo se dispara manualmente o por tags `v*`, no
+por pushes normales a ramas. Los jobs Linux/macOS/Windows construyen y suben
+artefactos internos sin publicar. El runner Linux sí puede descargar dependencias
+para el build completo; esto no es parte del ensayo offline del Mac.
+
+Antes de usarlo, configurar el environment **release**, sus **revisores
+obligatorios**, protección de tags y secreto `ATENEA_RELEASE_ED25519_PEM` con una
+clave elegida por el responsable. `environment: release` por sí solo no configura
+la aprobación en GitHub. Dar al secreto acceso solo a ese environment.
+
+**Solo `publish`** tiene `packages: write`, `contents: write`, login GHCR,
+`docker push`, firma y `gh release create`. Primero publica imágenes, captura sus
+digests reales, ensambla y firma el manifiesto final incluyendo esos digests,
+verifica y adjunta todos los ficheros a GitHub Releases. No muta un manifiesto ya
+firmado. Requiere un tag `vVERSION` existente (`--verify-tag`), también al
+invocarlo manualmente; el tag debe apuntar al mismo commit y versión del release,
+comprobados antes de hacer push de las imágenes.
+Una interrupción entre push y creación del release puede dejar imágenes por
+commit en GHCR sin release: no desplegarlas hasta tener el manifiesto firmado.
+
+## Evidencia y límites
+
+El ensayo cubre compilación Linux offline, `.deb` instalado en Debian/systemd,
+tres imágenes locales, SBOM validados, firma/verificación positiva y cinco
+rechazos: byte de artefacto cambiado, SBOM alterado, otra clave, commit distinto y
+manifiesto truncado. La salida real completa se entrega con la ejecución final.
+
+Ejecución final local: salida 0, **37,12 s**, versión `0.1.0`, commit de ensayo
+`9195241c4310bc97a14736af2488ce5bfa7bc9f4`. Firma Ed25519 y reproducción exacta
+de manifiesto/firma correctas; cada imagen inventarió **14 paquetes Debian** más
+sus ejecutables. Los cinco casos negativos fueron rechazados y se instaló el
+`.deb` recién construido. No se detectaron descargas; el inventario Docker al
+terminar no mostró contenedores ni etiquetas `atenea-release-*`.
+En macOS: `cargo fmt --all`, clippy de los cinco paquetes con
+`--offline --locked --all-targets -- -D warnings` y **155 pruebas correctas**,
+con `CARGO_BUILD_JOBS=2`. No se repitió clippy/test Linux del workspace.
+
+**SIN COMPROBAR:** ejecución del workflow en GitHub, publicación real en
+GHCR/Releases, digest real de registro, reconstrucción completa del panel en el
+ensayo local, firmas de plataforma/notarización macOS y Authenticode Windows,
+ensamblado de `.pkg`/ZIP en runners durante este ensayo, clave real del responsable
+y token hardware. No se ha publicado nada, creado tags, hecho commit ni push.

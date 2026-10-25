@@ -1,6 +1,11 @@
+#[path = "../../agent/src/build_info.rs"]
+mod build_info;
 use atenea_control_plane::{AppState, config::Config};
 #[tokio::main]
 async fn main() {
+    if build_info::print_version("atenea-control-plane") {
+        return;
+    }
     if run().await.is_err() {
         eprintln!("Fallo del control plane; compruebe configuración, base de datos y listeners");
         std::process::exit(1);

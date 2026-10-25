@@ -2,6 +2,9 @@
 # Requiere Docker Linux con cgroup v2; no ejecutar sobre el host Proxmox.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
+if [ "${1:-}" = "--release" ]; then
+    exec bash "$root/tests/release/install-deb.sh" "$2" "$3"
+fi
 name="atenea-packaging-$$"
 image="atenea-packaging:$$"
 cleanup() {

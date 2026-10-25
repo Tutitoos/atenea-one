@@ -1,5 +1,7 @@
 //! CLI sin privilegios de red: claves, emisión de configuraciones firmadas y control del agente por su socket Unix.
 
+#[path = "../../agent/src/build_info.rs"]
+mod build_info;
 mod enroll;
 mod ipc;
 mod issue;
@@ -125,6 +127,9 @@ enum Cmd {
 }
 
 fn main() -> ExitCode {
+    if build_info::print_version("atenea") {
+        return ExitCode::SUCCESS;
+    }
     match run(Cli::parse().cmd) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

@@ -8,6 +8,8 @@ fi
 bin=$(cd "$1" && pwd)
 version=$2
 arch=$3
+commit=${ATENEA_BUILD_COMMIT:-unknown}
+[[ "$commit" =~ ^([0-9a-f]{40}|unknown)$ ]] || { echo 'Commit inválido' >&2; exit 2; }
 output=$4
 case "$arch" in amd64|arm64) ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
 [[ "$version" =~ ^[0-9][a-zA-Z0-9.+:~\-]*$ ]] || { echo 'Versión Debian inválida' >&2; exit 2; }
@@ -30,6 +32,7 @@ cat > "$stage/DEBIAN/control" <<EOF
 Package: atenea
 Version: $version
 Architecture: $arch
+X-Atenea-Commit: $commit
 Maintainer: Equipo Atenea One <maintainers@example.invalid>
 Section: net
 Priority: optional
@@ -38,4 +41,4 @@ Recommends: systemd-resolved
 Description: Agente y CLI de Atenea One
  Red privada con configuración firmada, rutas aprobadas y DNS dividido.
 EOF
-dpkg-deb --root-owner-group --build "$stage" "$output"
+dpkg-deb --root-owner-group --compression=xz --build "$stage" "$output"
