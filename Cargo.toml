@@ -9,6 +9,7 @@ members = [
     "crates/relay-core",
     "crates/tunnel",
     "crates/testpeer",
+    "crates/windows",
     "apps/agent",
     "apps/control-plane",
     "apps/coordinator",
@@ -37,6 +38,7 @@ atenea-policies = { path = "crates/policies" }
 atenea-nat-traversal = { path = "crates/nat-traversal" }
 atenea-relay-core = { path = "crates/relay-core" }
 atenea-tunnel = { path = "crates/tunnel" }
+atenea-windows = { path = "crates/windows" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"

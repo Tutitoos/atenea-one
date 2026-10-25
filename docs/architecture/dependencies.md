@@ -92,7 +92,7 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 
 ## Pendiente
 
-- Wintun (licencia propia, redistribución; fase 8): revisar el texto de la licencia antes de adoptarlo. `utoipa` 5.5.0 declara MIT OR Apache-2.0 en su manifiesto descargado.
+- Wintun: excepción de controlador aceptada por el responsable el 2026-10-25; licencia de binarios oficiales revisada, véase fase 8 Windows abajo. `utoipa` 5.5.0 declara MIT OR Apache-2.0 en su manifiesto descargado.
 - `tun` (WTFPL) **no se adoptó**: `atenea-tunnel` usa `/dev/net/tun` directamente con `libc` (código `unsafe` acotado y comentado).
 - Añadir `cargo deny` / auditoría de dependencias (RustSec) al CI. Ya hay un `Cargo.lock` real: queda pendiente.
 - **`ring` 0.17.14 llega a través de `snow` 0.10.0** con las características por defecto (visible con `cargo tree -p atenea-crypto -e features -i ring`). Su licencia es propia (mezcla ISC/OpenSSL). **Aceptado por el responsable "por ahora" (2026-10-24)**; se revisará el texto de la licencia antes del primer release.
@@ -212,3 +212,33 @@ Referencias oficiales de implementación: [React](https://react.dev/reference/re
 Sin dependencias externas nuevas. `atenea-tunnel` reutiliza `libc` 0.2 y Tokio ya resueltos en `Cargo.lock` (MIT OR Apache-2.0 y MIT, respectivamente), ahora también en macOS. El único código unsafe permanece en ese crate: socket de control utun, ioctl, connect, getsockopt, fcntl y readv/writev; sin copia ni asignación por paquete. El agente reutiliza permisos, credenciales Unix y persistencia existentes.
 
 Integración mediante herramientas incluidas en macOS (`ifconfig`, `route`, `netstat`, launchd, `pkgbuild`, `productbuild`, `pkgutil`); no se redistribuyen. Las pruebas privilegiadas usan Python 3 del runner y el par Rust del workspace, no bibliotecas Python externas. Firma/notarización Apple Developer ID pendiente de decisión del responsable.
+
+### Fase 8 — Windows
+
+| Dependencia | Versión fijada | Licencia | Uso |
+| --- | --- | --- | --- |
+| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | DACL, canalizaciones, eventos Wintun y API Win32, solo Windows |
+| `windows-service` | 0.8.0 | MIT OR Apache-2.0 | Integración SCM y notificaciones de parada/apagado |
+| `libloading` | 0.8.9 | ISC | Carga de la API de Wintun en ejecución |
+| `atenea-windows` | workspace | Apache-2.0 del proyecto | Frontera Win32 con `unsafe` acotado para permisos/IPC |
+| Wintun, DLL oficial | 0.14.1 | **Prebuilt Binaries License**, propia de WireGuard LLC | Única excepción de controlador aceptada por el responsable el 2026-10-25 |
+
+Fuentes de las licencias Rust: metadatos oficiales de
+[`windows-sys`](https://crates.io/crates/windows-sys/0.61.2),
+[`windows-service`](https://crates.io/crates/windows-service/0.8.0) y
+[`libloading`](https://crates.io/crates/libloading/0.8.9).
+La licencia del código fuente Wintun (GPL-2.0) no sustituye la licencia propia de
+las DLL precompiladas. Se descargó y leyó `wintun/LICENSE.txt` del
+[ZIP oficial 0.14.1](https://www.wintun.net/builds/wintun-0.14.1.zip)
+el 2026-10-25: concede uso mediante la API, prohíbe modificar la DLL, retirar avisos
+o usar la marca como aval; la redistribución solo se permite junto al software que
+la utiliza mediante la API (u otro consentimiento escrito). No se usa el protocolo WireGuard.
+
+El repositorio y el ZIP de Atenea **no incluyen la DLL**. El instalador la descarga
+desde HTTPS oficial, valida SHA256
+`07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`
+antes de extraer, valida Authenticode y conserva `WINTUN-LICENSE.txt`.
+El hash publicado en [wintun.net](https://www.wintun.net/) se contrastó mediante
+descarga y cálculo independiente el 2026-10-25. Sin alternativas de controlador,
+hash configurable ni descarga desde terceros. Certificado de firma de Atenea y
+validación en máquinas reales pendientes; la firma oficial de Wintun no firma el cliente.

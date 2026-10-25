@@ -163,9 +163,13 @@ fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<Stri
         ),
         (
             "ipc_socket",
-            args.ipc_socket
-                .clone()
-                .unwrap_or_else(|| args.dir.join("agent.sock")),
+            args.ipc_socket.clone().unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"\\.\pipe\atenea-control")
+                } else {
+                    args.dir.join("agent.sock")
+                }
+            }),
         ),
     ] {
         table.insert(key.into(), path.to_str().ok_or("ruta no UTF-8")?.into());
@@ -233,8 +237,15 @@ mod tests {
             config_file: None,
             ipc_socket: None,
             advertise_routes: vec!["192.168.10.0/24".into(), "fd12:3456::/32".into()],
-            status_socket: Some("/run/atenea/status.sock".into()),
-            status_gid: Some(42),
+            status_socket: Some(
+                if cfg!(windows) {
+                    r"\\.\pipe\atenea-status"
+                } else {
+                    "/run/atenea/status.sock"
+                }
+                .into(),
+            ),
+            status_gid: Some(545),
         };
         let text = render(&join, &args, &[2; 16]).unwrap();
         let cfg = agent_config_contract::Config::parse(&text).unwrap();
@@ -242,7 +253,7 @@ mod tests {
         assert_eq!(cfg.device_id, [2; 16]);
         assert_eq!(cfg.advertise_routes, args.advertise_routes);
         assert_eq!(cfg.status_socket, args.status_socket);
-        assert_eq!(cfg.status_gid, Some(42));
+        assert_eq!(cfg.status_gid, Some(545));
         assert_eq!(cfg.sync.unwrap().interval_secs, 60);
         assert!(!text.contains("NO_GUARDAR"));
         args.advertise_routes.clear();

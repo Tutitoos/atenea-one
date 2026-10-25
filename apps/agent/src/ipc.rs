@@ -16,6 +16,7 @@ pub enum Action {
 pub fn bind(path: &Path, status_gid: Option<u32>, read_only: bool) -> Result<Listener, String> {
     LocalIpc::bind(path, status_gid, read_only)
 }
+#[cfg(unix)]
 fn allowed(uid: u32, owner: u32) -> bool {
     uid == 0 || uid == owner
 }
@@ -31,14 +32,16 @@ fn action(command: &str, read_only: bool) -> Result<Action, &'static str> {
 }
 pub async fn handle(
     stream: Stream,
-    socket: &Path,
+    _socket: &Path,
     read_only: bool,
     status: serde_json::Value,
 ) -> Action {
+    #[cfg(unix)]
     if !read_only {
+        #[cfg(unix)]
         let authorized = LocalIpc::peer_uid(&stream)
             .ok()
-            .zip(LocalIpc::socket_owner(socket).ok())
+            .zip(LocalIpc::socket_owner(_socket).ok())
             .is_some_and(|(uid, owner)| allowed(uid, owner));
         if !authorized {
             return Action::None;
@@ -68,6 +71,11 @@ pub async fn handle(
     if !matches!(read, Ok(Ok(()))) {
         return Action::None;
     }
+    // Windows vincula la impersonación al último mensaje leído del cliente.
+    #[cfg(windows)]
+    if !read_only && !LocalIpc::authorized(reader.get_ref()) {
+        return Action::None;
+    }
     let command = String::from_utf8_lossy(&line);
     let (reply, result) = match action(command.trim(), read_only) {
         Ok(Action::None) => (status, Action::None),
@@ -85,9 +93,12 @@ mod tests {
     use super::*;
     #[test]
     fn foreign_uid_cannot_control_and_status_cannot_stop() {
-        assert!(allowed(0, 100));
-        assert!(allowed(100, 100));
-        assert!(!allowed(101, 100));
+        #[cfg(unix)]
+        {
+            assert!(allowed(0, 100));
+            assert!(allowed(100, 100));
+            assert!(!allowed(101, 100));
+        }
         assert!(action("stop", true).is_err());
         assert!(action("cleanup", true).is_err());
         assert!(action("reload", true).is_err());

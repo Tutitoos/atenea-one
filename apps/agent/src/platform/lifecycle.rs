@@ -10,7 +10,15 @@ pub struct Lifecycle {
     int: Signal,
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub struct Lifecycle {
+    interrupt: tokio::signal::windows::CtrlC,
+    close: tokio::signal::windows::CtrlClose,
+    shutdown: tokio::signal::windows::CtrlShutdown,
+    stop: tokio::sync::watch::Receiver<bool>,
+}
+
+#[cfg(not(any(unix, windows)))]
 pub enum Lifecycle {}
 
 impl Lifecycle {
@@ -23,7 +31,16 @@ impl Lifecycle {
                 int: signal(SignalKind::interrupt())?,
             })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                interrupt: tokio::signal::windows::ctrl_c()?,
+                close: tokio::signal::windows::ctrl_close()?,
+                shutdown: tokio::signal::windows::ctrl_shutdown()?,
+                stop: super::service::stop_receiver(),
+            })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -42,12 +59,24 @@ impl Lifecycle {
             _ = self.term.recv() => {},
             _ = self.int.recv() => {},
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            if *self.stop.borrow_and_update() {
+                return;
+            }
+            tokio::select! {
+                _ = self.interrupt.recv() => {},
+                _ = self.close.recv() => {},
+                _ = self.shutdown.recv() => {},
+                _ = self.stop.changed() => {},
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
         match *self {}
     }
 }
 
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, not(any(unix, windows))))]
 mod tests {
     use super::Lifecycle;
     use std::io;

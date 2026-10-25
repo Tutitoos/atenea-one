@@ -32,8 +32,11 @@ enum Cmd {
     Run {
         #[arg(short, long)]
         config: PathBuf,
+        /// Se conecta al Service Control Manager de Windows.
+        #[arg(long, hide = !cfg!(target_os = "windows"))]
+        service: bool,
     },
-    /// Elimina exclusivamente la tabla nftables del agente.
+    /// Elimina exclusivamente rutas y DNS propiedad del agente.
     Cleanup {
         #[arg(short, long)]
         config: PathBuf,
@@ -43,10 +46,31 @@ enum Cmd {
 pub fn main() -> ExitCode {
     tracing_subscriber::fmt().with_max_level(log_level()).init();
     let config = match Cli::parse().cmd {
-        Cmd::Run { config } => config,
+        Cmd::Run { config, service } => {
+            #[cfg(target_os = "windows")]
+            if service {
+                return match crate::platform::service::run_service(config) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        tracing::error!("{error}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
+            #[cfg(not(target_os = "windows"))]
+            if service {
+                tracing::error!("--service sólo está disponible en Windows");
+                return ExitCode::FAILURE;
+            }
+            config
+        }
         Cmd::Cleanup { config } => {
             return match Config::load(&config).and_then(|cfg| {
-                crate::netconf::NetConf::new(cfg.interface, Default::default()).cleanup()
+                let mut netconf = crate::netconf::NetConf::new(cfg.interface, Default::default());
+                netconf.cleanup()?;
+                #[cfg(target_os = "windows")]
+                netconf.remove_orphan_adapter()?;
+                Ok(())
             }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -217,7 +241,7 @@ impl Runtime {
     }
 }
 
-async fn run(path: PathBuf) -> Result<(), String> {
+pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let cfg = Config::load(&path)?;
     if !cfg.advertise_routes.is_empty()
         && !Platform::new(cfg.interface.clone(), Default::default()).supports_subnet_routing()
@@ -652,7 +676,18 @@ async fn run(path: PathBuf) -> Result<(), String> {
                     match crate::ipc::handle(stream, &rt.cfg.ipc_socket, false, status).await {
                         crate::ipc::Action::Stop => break,
                         crate::ipc::Action::Reload => {
-                            if let Ok(cfg) = Config::load(&path) { rt.cfg.advertise_routes = cfg.advertise_routes; }
+                            match Config::load(&path) {
+                                Ok(cfg) => {
+                                    if cfg.advertise_routes.is_empty()
+                                        || Platform::new(cfg.interface, Default::default()).supports_subnet_routing()
+                                    {
+                                        rt.cfg.advertise_routes = cfg.advertise_routes;
+                                    } else {
+                                        tracing::warn!("advertise_routes rechazado: esta plataforma sólo admite clientes");
+                                    }
+                                }
+                                Err(error) => tracing::warn!("recarga local rechazada: {error}"),
+                            }
                             rt.seen = None; rt.routes_changed = true;
                         }
                         crate::ipc::Action::Cleanup => { let _ = rt.netconf.cleanup(); rt.seen = None; }
@@ -707,6 +742,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
         t.abort();
     }
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
+    #[cfg(target_os = "windows")]
+    rt.netconf.cleanup()?;
     let _ = state::save(&rt.cfg.state_dir, &rt.state);
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
     if let Some(path) = &rt.cfg.status_socket {

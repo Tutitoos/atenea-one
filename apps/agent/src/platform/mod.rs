@@ -5,24 +5,30 @@ use std::net::{IpAddr, SocketAddr};
 pub mod lifecycle;
 #[cfg(any(target_os = "linux", test))]
 pub mod linux;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 pub mod local_ipc;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 pub mod macos;
 pub mod private_files;
+#[cfg(target_os = "windows")]
+pub mod service;
 pub mod tun;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub mod unsupported;
+#[cfg(any(target_os = "windows", test))]
+pub mod windows;
 pub use lifecycle::Lifecycle;
 #[cfg(target_os = "linux")]
 pub use linux::Network as Platform;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 pub use local_ipc::LocalIpc;
 #[cfg(target_os = "macos")]
 pub use macos::Network as Platform;
 pub use tun::TunDevice;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use unsupported::Network as Platform;
+#[cfg(target_os = "windows")]
+pub use windows::Network as Platform;
 
 /// El identificador del enlace pertenece al backend (nombre Unix o índice/LUID Windows).
 pub(crate) trait HostNetwork {

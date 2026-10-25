@@ -21,13 +21,15 @@ mod relay {
 }
 
 use clap::{Parser, Subcommand};
+#[cfg(any(unix, windows))]
+use std::io::Write;
 #[cfg(unix)]
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::process::{Command, Stdio};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -201,17 +203,34 @@ fn ask(socket: &Path, request: &str) -> Result<String, String> {
     Ok(line.trim().to_string())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn ask(socket: &Path, request: &str) -> Result<String, String> {
+    let mut stream = ipc::LocalIpc::connect(socket)?;
+    writeln!(stream, "{request}").map_err(|e| e.to_string())?;
+    let line =
+        atenea_windows::pipe_reply(stream, Duration::from_secs(5)).map_err(|e| e.to_string())?;
+    let reply: serde_json::Value =
+        serde_json::from_str(&line).map_err(|_| "respuesta IPC vacía o JSON inválido")?;
+    if let Some(error) = reply.get("error") {
+        return Err(format!(
+            "agente: {}",
+            error.as_str().unwrap_or("orden rechazada")
+        ));
+    }
+    Ok(line)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn ask(_socket: &Path, _request: &str) -> Result<String, String> {
     Err(ipc::LocalIpc::unsupported())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn up(_config: &Path, _agent: Option<PathBuf>, _log: &Path) -> Result<(), String> {
     Err("arranque local no soportado: backend de servicio e IPC pendiente".into())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let value: toml::Table =
@@ -226,7 +245,11 @@ fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
         Some(a) => a,
         None => std::env::current_exe()
             .map_err(|e| e.to_string())?
-            .with_file_name("atenea-agent"),
+            .with_file_name(if cfg!(windows) {
+                "atenea-agent.exe"
+            } else {
+                "atenea-agent"
+            }),
     };
     let logf = std::fs::OpenOptions::new()
         .create(true)
@@ -269,7 +292,7 @@ fn up(config: &Path, agent: Option<PathBuf>, log: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn unsupported_local_backend_fails_explicitly() {
         let path = Path::new("unused");

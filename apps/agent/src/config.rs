@@ -210,7 +210,7 @@ fn resolve_key_path(path: &Path, directory: Option<&Path>) -> Result<PathBuf, St
     else {
         return Ok(path.to_owned());
     };
-    if name.is_empty() || name.contains('/') || name.contains("..") {
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
         return Err("credential: nombre vacío o inseguro".into());
     }
     let directory = directory
@@ -384,7 +384,17 @@ mod phase7_tests {
         );
         assert!(resolve_key_path(Path::new("credential:key"), None).is_err());
         assert!(resolve_key_path(Path::new("credential:key"), Some(Path::new(""))).is_err());
-        for name in ["", "../key", "/key", "key/name", "key..name", ".."] {
+        for name in [
+            "",
+            "../key",
+            "/key",
+            "key/name",
+            "key..name",
+            "..",
+            r"key\name",
+            r"C:\key",
+            "key:stream",
+        ] {
             assert!(
                 resolve_key_path(Path::new(&format!("credential:{name}")), Some(directory))
                     .is_err()

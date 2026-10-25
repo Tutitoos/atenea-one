@@ -39,7 +39,16 @@ pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
     writeln!(f, "{content}").map_err(|e| e.to_string())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
+    let mut file =
+        atenea_windows::create_private(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(file, "{content}")
+        .and_then(|()| file.sync_all())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn write_secret(_path: &Path, _content: &str) -> Result<(), String> {
     Err("custodia de claves no soportada: backend de permisos privados pendiente".into())
 }
@@ -79,7 +88,17 @@ fn read_seed(path: &Path) -> Result<SigningKey, String> {
     })?))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn read_seed(path: &Path) -> Result<SigningKey, String> {
+    let text =
+        atenea_windows::read_private(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::str::from_utf8(&text).map_err(|e| e.to_string())?;
+    Ok(signing_key(hex::decode::<32>(text).ok_or_else(|| {
+        format!("{}: se esperan 64 dígitos hex", path.display())
+    })?))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn read_seed(_path: &Path) -> Result<SigningKey, String> {
     Err("lectura de claves no soportada: backend de permisos privados pendiente".into())
 }
@@ -411,7 +430,7 @@ pub fn issue(issuer_key: &Path, issuer_cert: &Path, spec: &Path, out: &Path) -> 
 mod spec_tests {
     use super::*;
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn private_keys_require_a_supported_permissions_backend() {
         let path = std::env::temp_dir().join(format!(
@@ -426,6 +445,31 @@ mod spec_tests {
         );
         assert!(read_seed(&path).is_err());
         assert!(!path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_signing_keys_use_private_custody() {
+        let path = std::env::temp_dir().join(format!(
+            "atenea-signing-{}-{}.key",
+            std::process::id(),
+            now_millis()
+        ));
+        let seed = generate_seed();
+        match write_secret(&path, &hex::encode(&seed)) {
+            Ok(()) => {
+                assert_eq!(
+                    read_seed(&path).unwrap().verifying_key(),
+                    signing_key(seed).verifying_key()
+                );
+                assert!(write_secret(&path, "no sobrescribir").is_err());
+                std::fs::remove_file(path).unwrap();
+            }
+            Err(error) => {
+                assert!(error.contains("elevado"), "{error}");
+                assert!(!path.exists());
+            }
+        }
     }
 
     const BASE: &str = r#"

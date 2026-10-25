@@ -87,7 +87,29 @@ impl PrivateFiles {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+impl PrivateFiles {
+    pub(crate) fn read(path: &Path) -> io::Result<Vec<u8>> {
+        atenea_windows::read_private(path)
+    }
+    pub(crate) fn read_secret(path: &Path) -> Result<String, String> {
+        Self::read(path)
+            .and_then(|bytes| String::from_utf8(bytes).map_err(io::Error::other))
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+    pub(crate) fn create_new(path: &Path) -> io::Result<File> {
+        atenea_windows::create_private(path)
+    }
+    pub(crate) fn replace_state(dir: &Path, body: &[u8]) -> io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        atenea_windows::replace_private(&dir.join("state.bin"), body)
+    }
+    pub(crate) fn replace(path: &Path, body: &[u8]) -> Result<(), &'static str> {
+        atenea_windows::replace_private(path, body).map_err(|_| "no se pudo guardar config_file")
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 impl PrivateFiles {
     const UNSUPPORTED: &'static str =
         "ficheros privados no soportados: backend con DACL restrictiva pendiente";
@@ -166,7 +188,41 @@ mod tests {
     }
 }
 
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn private_wrappers_replace_or_reject_unelevated_access() {
+        let suffix = atenea_crypto::hex::encode(&atenea_identity::generate_seed()[..16]);
+        let dir = std::env::temp_dir().join(format!("atenea-private-{suffix}"));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("secret");
+        match PrivateFiles::create_new(&path) {
+            Ok(file) => {
+                drop(file);
+                assert_eq!(
+                    PrivateFiles::create_new(&path).unwrap_err().kind(),
+                    io::ErrorKind::AlreadyExists
+                );
+                PrivateFiles::replace(&path, b"secret").unwrap();
+                assert_eq!(PrivateFiles::read_secret(&path).unwrap(), "secret");
+                PrivateFiles::replace_state(&dir, b"state").unwrap();
+                assert_eq!(
+                    PrivateFiles::read(&dir.join("state.bin")).unwrap(),
+                    b"state"
+                );
+            }
+            Err(error) => {
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                assert!(!path.exists());
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(all(test, not(any(unix, windows))))]
 mod tests {
     use super::*;
 

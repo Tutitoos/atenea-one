@@ -3,8 +3,10 @@
 pub use crate::platform::linux::Binaries;
 #[cfg(target_os = "macos")]
 pub use crate::platform::macos::Binaries;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use crate::platform::unsupported::Binaries;
+#[cfg(target_os = "windows")]
+pub use crate::platform::windows::Binaries;
 use crate::platform::{HostNetwork, Platform};
 use atenea_identity::{AdvertisedRoute, DeviceConfig, DnsConfig, Prefix};
 use atenea_policies::prefix_contains;
@@ -73,6 +75,10 @@ impl NetConf<Platform> {
     pub fn new(interface: String, bins: Binaries) -> Self {
         Self::with_host(Platform::new(interface, bins))
     }
+    #[cfg(target_os = "windows")]
+    pub fn remove_orphan_adapter(&self) -> Result<(), String> {
+        self.host.remove_orphan_adapter()
+    }
 }
 impl<H: HostNetwork> NetConf<H> {
     pub fn with_host(host: H) -> Self {
@@ -112,6 +118,12 @@ impl<H: HostNetwork> NetConf<H> {
     pub fn cleanup(&mut self) -> Result<(), String> {
         self.host.cleanup()?;
         self.snat = None;
+        #[cfg(target_os = "windows")]
+        {
+            // Windows retira rutas y NRPT; una recarga debe volver a instalarlos.
+            self.installed.clear();
+            self.dns = None;
+        }
         Ok(())
     }
     pub fn apply(&mut self, cfg: &DeviceConfig, protected: &[IpAddr]) -> Result<(), String> {

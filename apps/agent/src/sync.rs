@@ -72,7 +72,7 @@ fn write_changed(path: &Path, body: &[u8]) -> Result<bool, &'static str> {
         Ok(current) if current == body => return Ok(false),
         Ok(_) => (),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
             return Err("ficheros privados no soportados: backend con DACL restrictiva pendiente");
         }

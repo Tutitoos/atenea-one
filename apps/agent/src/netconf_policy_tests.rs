@@ -101,6 +101,25 @@ fn peer_endpoint_inside_route_installs_but_control_endpoint_conflicts() {
     assert!(net.status().routes.is_empty());
     assert!(net.host.routes.borrow().is_empty());
 }
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_cleanup_forgets_removed_routes_and_nrpt_before_reload() {
+    let mut net = NetConf::with_host(MemoryHost::default());
+    let mut cfg = config();
+    cfg.dns = DnsConfig {
+        servers: vec!["10.77.0.53".parse().unwrap()],
+        domains: vec!["internal.example".into()],
+    };
+    net.apply(&cfg, &[]).unwrap();
+    net.host.routes.borrow_mut().clear();
+    net.host.dns.replace(None);
+    net.cleanup().unwrap();
+    assert!(net.installed.is_empty());
+    assert!(net.dns.is_none());
+    net.apply(&cfg, &[]).unwrap();
+    assert!(net.host.routes.borrow().contains("192.168.40.0/24"));
+    assert!(net.host.dns.borrow().is_some());
+}
 #[test]
 fn host_conflict_pending_and_recovery_without_commands() {
     let mut net = NetConf::with_host(MemoryHost::default());

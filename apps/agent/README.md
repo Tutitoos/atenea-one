@@ -2,7 +2,7 @@
 
 El agente aplica únicamente rutas y DNS de una configuración firmada vigente. Declarar una ruta no la autoriza: un administrador debe aprobarla y elegir explícitamente su valor de SNAT. No hay nodo de salida ni tránsito entre pares. Véanse [ADR-007](../../docs/architecture/ADR-007-subredes-dns-privilegios.md) y [configuración v2](../../docs/protocol/signed-config-v2.md).
 
-La integración con el host se delimita en `src/platform`: `TunDevice` (IP puro), `HostNetwork` (enlace, rutas, DNS, SNAT, forwarding y candidatos), `LocalIpc` (transporte y credenciales), `PrivateFiles` (secretos y persistencia duradera) y `Lifecycle` (parada). Linux conserva su backend. macOS dispone de utun y backend nativo de cliente; Windows sigue rechazando `run` sin backend. `advertise_routes` se rechaza en plataformas sin capacidad de servir subredes; un `advertised` firmado se informa como `routes: unsupported` y `forwarding_ok: false`, sin instalar SNAT.
+La integración con el host se delimita en `src/platform`: `TunDevice` (IP puro), `HostNetwork` (enlace, rutas, DNS, SNAT, forwarding y candidatos), `LocalIpc` (transporte y credenciales), `PrivateFiles` (secretos y persistencia duradera) y `Lifecycle` (parada). Linux conserva su backend. macOS dispone de utun y Windows de Wintun como clientes nativos. `advertise_routes` se rechaza en plataformas sin capacidad de servir subredes; un `advertised` firmado se informa como `routes: unsupported` y `forwarding_ok: false`, sin instalar SNAT.
 
 ## Configuración local
 
@@ -66,3 +66,13 @@ Solo cliente: utun normaliza la cabecera de familia a IP puro; `ifconfig`, `rout
 DNS dividido usa `/etc/resolver/<dominio>`, con marca de propiedad, sin dominio raíz ni cambios al DNS global. Solo retira ficheros propios al parar, arrancar o ejecutar `cleanup`. IPC, permisos privados y señales reutilizan los backends Unix. Las órdenes nativas y el directorio de resolutores son inyectables en pruebas sin privilegios.
 
 El paquete sin firmar de `packaging/macos/build-pkg.sh` instala un demonio launchd root, pero no lo habilita sin configuración. Las rutas orientativas son `/Library/Application Support/Atenea` y `/var/run/atenea`; no cambian los valores del código. Véase [instalación macOS](../../docs/operations/instalacion-macos.md) para configuración, arranque, desinstalación, firma/notarización pendiente y alcance de CI. La prueba privilegiada solo se ejecuta en la VM desechable de GitHub, nunca en el Mac del propietario.
+
+## Windows
+
+Solo cliente: adaptador Wintun (tipo `Atenea`, alias `interface`, por ejemplo `atenea0`), direcciones/MTU/rutas mediante los cmdlets nativos NetTCPIP y DNS dividido mediante NRPT por dominio. No instala NAT ni forwarding, no sirve subredes, no modifica rutas predeterminadas ni DNS global. Wintun es la única excepción de controlador aceptada por el responsable el 2026-10-25; no se usa el protocolo WireGuard.
+
+El ZIP sin firmar de `packaging/windows/build-zip.ps1` registra `AteneaAgent` como LocalSystem con arranque manual; no lo arranca hasta configurar. Los binarios y `wintun.dll` están en `%ProgramFiles%\Atenea`, los datos privados en `%ProgramData%\Atenea`. El instalador descarga Wintun 0.14.1 del sitio oficial con SHA256 fijado y conserva su licencia: no hay DLL versionada ni incluida en el ZIP. El servicio usa `atenea-agent run --service --config RUTA_ABSOLUTA`; `cleanup --config RUTA_ABSOLUTA` limpia residuos propios tras una caída.
+
+Configurar `ipc_socket = '\\.\pipe\atenea-control'` y `status_socket = '\\.\pipe\atenea-status'` (literales TOML). Control: DACL SYSTEM/Administradores; estado: solo consultas, con `status_gid = 545` para BUILTIN\Users o `544` para Administradores; omitido limita a SYSTEM/Administradores. No son grupos Unix ni SIDs de grupos locales personalizados. Se rechazan clientes remotos y los ficheros privados usan DACL protegida, no permisos Unix emulados.
+
+Véase [instalación Windows](../../docs/operations/instalacion-windows.md) para enrolamiento, configuración con rutas absolutas, arranque/parada SCM, limpieza, desinstalación, procedencia/hash/licencia de Wintun y aceptación real de CI. Pendientes: certificado de firma de código de Atenea y máquinas reales para la matriz de interoperabilidad; el trabajo definido en CI no se declara ejecutado desde este entorno.

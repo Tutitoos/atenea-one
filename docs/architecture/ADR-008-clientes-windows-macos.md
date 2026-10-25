@@ -1,6 +1,6 @@
 # ADR-008: Clientes macOS y Windows (fase 8)
 
-- **Estado:** Propuesto (2026-10-25). Las decisiones marcadas «Decisión del responsable» bloquean partes concretas y no se asumen.
+- **Estado:** Clientes macOS/Windows implementados con paquetes sin firmar y aceptación privilegiada definida en CI (2026-10-25; resultados del push pendientes). Excepción Wintun aceptada por el responsable el 2026-10-25. Firma y máquinas reales siguen pendientes.
 - **Relacionados:** ADR-003 (sesión), ADR-007 (subredes, DNS, privilegios).
 
 ## Contexto
@@ -13,7 +13,7 @@ El protocolo, la identidad, el motor de caminos, STUN, relays y la verificación
 
 Se introducen cinco interfaces pequeñas (módulo `platform` del agente; la implementación Linux actual es el comportamiento de referencia y no cambia): **túnel L3** (`TunDevice`), **red del host** (rutas, direcciones, DNS, forwarding y direcciones locales), **IPC local** (escucha y cliente con identidad del par), **ficheros privados** (lectura de secretos y reemplazo duradero) y **ciclo de vida** (parada solicitada). La **política** (conflictos de rutas, estados, diferencias, protección del plano de control, formato del IPC, verificación de configuración) vive en código común: solo cambia cómo se ejecuta cada operación en el host.
 
-El refactor de preparación está en `apps/agent/src/platform`: despacho estático de `HostNetwork`, `TunDevice`, `LocalIpc`, `PrivateFiles` y `Lifecycle`; `netconf` mantiene la política y admite un backend en memoria. Linux conserva las órdenes y permisos existentes, incluidos los dos protocolos de reemplazo duradero de estado/configuración. macOS implementa utun, rutas y DNS dividido, con paquete sin firmar y aceptación privilegiada definida en CI (resultado pendiente del push); Windows sigue rechazando `run` explícitamente. No se añadieron dependencias para macOS.
+El refactor de preparación está en `apps/agent/src/platform`: despacho estático de `HostNetwork`, `TunDevice`, `LocalIpc`, `PrivateFiles` y `Lifecycle`; `netconf` mantiene la política y admite un backend en memoria. Linux conserva las órdenes y permisos existentes, incluidos los dos protocolos de reemplazo duradero de estado/configuración. macOS implementa utun, rutas y DNS dividido; Windows implementa Wintun, NetTCPIP, NRPT, canalizaciones con nombre y ciclo SCM. Ambos tienen paquete sin firmar y aceptación privilegiada definida en CI (resultado pendiente del push). No se añadieron dependencias para macOS.
 
 ### 2. Alcance de macOS y Windows en v1: solo clientes
 
@@ -25,7 +25,11 @@ Adaptador `utun` creado con el socket de control del kernel (`com.apple.net.utun
 
 ### 4. Windows: Wintun, servicio de Windows y canalizaciones con nombre
 
-Adaptador **Wintun** (DLL cargada en tiempo de ejecución; no se vincula ni se modifica). Direcciones, MTU y rutas por la API IP Helper (`windows-sys`, en un crate propio que permite `unsafe`, como `crates/tunnel`); DNS dividido con reglas **NRPT** por dominio (sin DNS global ni ruta DNS por defecto); IPC por **canalización con nombre** con DACL distinta para control (SYSTEM y Administradores) y estado (solo lectura, grupo local); ciclo de vida con el Administrador de control de servicios. Claves y estado con DACL restrictiva desde la creación (no se emula `0600`).
+Adaptador **Wintun** (DLL oficial cargada en tiempo de ejecución junto al ejecutable; no se vincula ni se modifica). Es la **única excepción de controlador aceptada por el responsable el 2026-10-25**; no implica aceptar el protocolo WireGuard ni otros componentes. Direcciones, MTU, rutas y direcciones locales usan los cmdlets nativos **NetTCPIP** en vez de duplicar IP Helper mediante FFI: mantienen el alcance por índice de interfaz, ofrecen JSON independiente del idioma y permiten probar órdenes con un ejecutable inyectado. PowerShell se invoca por ruta absoluta, sin perfiles ni interacción. DNS dividido con **Add-DnsClientNrptRule** por dominio, sin DNS global ni espacio de nombres raíz; se elige esta API soportada frente a escribir claves de registro sin contrato. Cada regla lleva una marca exacta de propiedad por interfaz, usada para limpiar únicamente las propias al arrancar, al parar y en `cleanup`.
+
+IPC por **canalización con nombre** local con DACL distinta para control (SYSTEM y Administradores) y estado (solo consultas; `status_gid` 545 permite BUILTIN\Users, 544 limita a Administradores, omitido mantiene SYSTEM/Administradores). No se admiten grupos locales personalizados ni se emulan UID/GID Unix: la autorización de control usa impersonación y el token real del cliente, con reversión antes de volver a Tokio. La DACL de estado no concede creación de instancias del pipe. Claves y estado tienen propietario Administrators y DACL protegida SYSTEM/Administrators desde la creación; su manejo exige elevación y la lectura valida el mismo handle que consume (no se emula `0600`). La FFI de seguridad/SCM está confinada a `atenea-windows`, no se permite `unsafe` en el agente.
+
+El ZIP **sin firmar** de Atenea no contiene Wintun: el instalador descarga [Wintun 0.14.1 oficial](https://www.wintun.net/builds/wintun-0.14.1.zip), valida SHA256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51` publicado en [wintun.net](https://www.wintun.net/) y contrastado por descarga independiente el 2026-10-25, comprueba la firma de la DLL y conserva su licencia. No se versiona la DLL. `AteneaAgent` se registra como LocalSystem con arranque **manual**, sin arrancar durante la instalación; usa `%ProgramData%\Atenea` para datos y `%ProgramFiles%\Atenea` para binarios. La parada SCM limpia normalmente; `cleanup` recupera residuos propios tras terminación forzada. Véase [instalación Windows](../operations/instalacion-windows.md).
 
 ### 5. Verificación: runners reales de CI y un par de usuario
 
@@ -33,11 +37,11 @@ Adaptador **Wintun** (DLL cargada en tiempo de ejecución; no se vincula ni se m
 - Un **par de usuario** de pruebas (el `Engine` del repositorio en proceso, sin TUN) responde a ICMP dentro del túnel: permite un `ping` real contra el adaptador del agente en cada sistema.
 - **Pendiente de máquinas reales del responsable:** la matriz Linux↔Windows↔macOS con tráfico IPv4/IPv6 por P2P y relays, suspensión/reanudación, Wi-Fi, y la instalación firmada. Los runners de CI no se conectan entre sí.
 
-### Decisiones del responsable (no se asumen)
+### Decisiones del responsable y pendientes
 
-1. **Wintun** pertenece a WireGuard LLC (es un controlador TUN, no el protocolo WireGuard; licencia de binarios precompilados con condiciones de redistribución). ¿Se acepta como excepción a «sin componentes de WireGuard»? Alternativa: TAP-Windows6 (L2, GPL con excepciones), más pesado y sin ventajas.
-2. **Firma y notarización:** un Apple Developer ID (macOS, notarización) y un certificado de firma de código (Windows). Sin ellos solo se entregan paquetes **sin firmar**, aptos para pruebas, y se documenta.
-3. **Máquinas reales** (Windows y macOS) para la matriz de interoperabilidad y la instalación firmada.
+1. **Aceptado el 2026-10-25:** Wintun, propiedad de WireGuard LLC, únicamente como controlador TUN mediante su API. Se revisó la licencia de binarios precompilados del ZIP oficial: no modificar ni retirar avisos; redistribución limitada junto al software que usa la API. Se conserva la licencia en instalación y no se aloja la DLL en el repositorio.
+2. **Firma y notarización pendientes:** un Apple Developer ID (macOS, notarización) y un certificado de firma de código (Windows). Sin ellos solo se entregan paquetes **sin firmar**, aptos para pruebas. La firma del controlador oficial Wintun no firma Atenea.
+3. **Máquinas reales pendientes** (Windows y macOS) para la matriz de interoperabilidad y la instalación firmada. Definir un trabajo en CI no equivale a observar su resultado.
 
 ## Consecuencias
 

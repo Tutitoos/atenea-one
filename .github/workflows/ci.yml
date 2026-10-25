@@ -65,3 +65,30 @@ jobs:
           pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
       - name: Aceptación privilegiada en VM desechable
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar Rust estable
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add clippy
+      - name: Clippy y pruebas sin privilegios
+        run: |
+          cargo clippy -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer --all-targets -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Compilar cliente y par real de pruebas
+        run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+      - name: Construir ZIP sin firmar y sin DLL
+        run: packaging/windows/build-zip.ps1 -BinDir "$PWD/target/debug"
+      - name: Aceptación elevada en VM desechable
+        run: tests/windows/run.ps1

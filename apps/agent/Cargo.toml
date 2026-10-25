@@ -38,5 +38,8 @@ clap.workspace = true
 [dev-dependencies]
 rcgen = "0.14"
 
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
 atenea-tunnel.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+atenea-windows.workspace = true

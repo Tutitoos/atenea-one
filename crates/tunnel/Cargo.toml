@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Interfaz TUN L3 para Linux y macOS"
+description = "Interfaz TUN L3 para Linux, macOS y Windows"
 
 # Único crate con unsafe (ioctl/read/write sobre /dev/net/tun).
 [lints.rust]
@@ -17,3 +17,8 @@ all = { level = "deny", priority = -1 }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 libc = "0.2"
 tokio.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libloading = "=0.8.9"
+tokio.workspace = true
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }

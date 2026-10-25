@@ -10,7 +10,12 @@ impl LocalIpc {
             .map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    pub fn connect(path: &Path) -> Result<std::fs::File, String> {
+        atenea_windows::connect_pipe(path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn unsupported() -> String {
         "IPC local no soportado: backend de canalizaciones con nombre pendiente".into()
     }
