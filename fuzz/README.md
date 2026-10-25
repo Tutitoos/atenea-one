@@ -42,6 +42,15 @@ en `fuzz/regressions/<objetivo>/` (procedimiento en `fuzz/regressions/README.md`
   reproducirse bit a bit; las aserciones no dependen de valores aleatorios. `relay.rs` no se compila (arrastra
   TLS); se sustituye únicamente `RelayKind` por una copia de dos variantes.
 
+## Última ejecución completa
+
+`fuzz/run.sh 90` (13 objetivos, 90 s cada uno, sin red, Docker en Mac arm64, commit `151d3d7`): **0 fallos,
+0 artefactos** (`fuzz/artifacts/` vacío). Ejecuciones por objetivo, en millones: `datagram_parse` 117,5;
+`stun_parse` 118,9; `ip_classify` 64,0; `hex_decode` 32,4; `relay_parse` 28,9; `device_config_parse` 27,1;
+`config_v2_parse` 23,5; `cert_bundle_state_parse` 3,7; `handshake_init` 1,3; `signed_config_verify` 0,26;
+`replay_window` 0,21; `agent_engine` 0,06; `session_decrypt` 0,04. Es una prueba de humo de 20 minutos, no una
+campaña: el criterio de salida de la fase 11 pide fuzzing continuado (horas/días) con corpus persistente.
+
 ## Reproducir un fallo
 
 ```sh

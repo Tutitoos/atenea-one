@@ -30,7 +30,8 @@ done
 exit $rc
 '
 
-docker run --rm \
+# Sin red: las dependencias salen del volumen de caché; si falta alguna, falla en vez de descargar.
+docker run --rm --network none -e CARGO_NET_OFFLINE=true \
   -e SECS="$SECS" -e TARGET="$ONLY" \
   -v "$ROOT":/work \
   -v atenea-fuzz-target:/work/fuzz/target \
