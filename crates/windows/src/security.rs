@@ -565,6 +565,100 @@ mod tests {
         action()
     }
 
+    fn actual_pipe_descriptor(pipe: &impl AsRawHandle) -> Local {
+        let mut sd = null_mut();
+        let flags = OWNER_SECURITY_INFORMATION
+            | GROUP_SECURITY_INFORMATION
+            | DACL_SECURITY_INFORMATION
+            | LABEL_SECURITY_INFORMATION;
+        let code = unsafe {
+            GetSecurityInfo(
+                pipe.as_raw_handle(),
+                SE_FILE_OBJECT,
+                flags,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sd,
+            )
+        };
+        assert_eq!(code, 0, "GetSecurityInfo del pipe real: {code}");
+        let sd = Local(sd);
+        let mut text = null_mut();
+        assert_ne!(
+            unsafe {
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    sd.0,
+                    1,
+                    flags,
+                    &mut text,
+                    null_mut(),
+                )
+            },
+            0,
+            "{}",
+            last(),
+        );
+        let _text = Local(text.cast());
+        let mut len = 0;
+        unsafe {
+            while *text.add(len) != 0 {
+                len += 1;
+            }
+        }
+        eprintln!(
+            "SDDL real del pipe: {}",
+            String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) })
+        );
+        sd
+    }
+
+    fn assert_effective_access_denied(sd: &Local, mut desired: u32) {
+        let mut token = null_mut();
+        assert_ne!(
+            unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) },
+            0,
+            "{}",
+            last(),
+        );
+        let token = Handle(token);
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ,
+            GenericWrite: FILE_GENERIC_WRITE,
+            GenericExecute: FILE_GENERIC_EXECUTE,
+            GenericAll: FILE_ALL_ACCESS,
+        };
+        unsafe {
+            MapGenericMask(&mut desired, &mapping);
+        }
+        let mut privileges = [0usize; 32];
+        let mut privilege_len = std::mem::size_of_val(&privileges) as u32;
+        let mut granted = 0;
+        let mut allowed = 0;
+        assert_ne!(
+            unsafe {
+                AccessCheck(
+                    sd.0,
+                    token.0,
+                    desired,
+                    &mapping,
+                    privileges.as_mut_ptr().cast(),
+                    &mut privilege_len,
+                    &mut granted,
+                    &mut allowed,
+                )
+            },
+            0,
+            "AccessCheck: {}",
+            last(),
+        );
+        assert_eq!(
+            allowed, 0,
+            "AccessCheck concedió {desired:#x}, máscara efectiva {granted:#x}"
+        );
+    }
+
     #[test]
     fn medium_restricted_user_can_query_status_but_not_control() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -669,6 +763,15 @@ mod tests {
             std::process::id()
         ));
         let mut server = create_pipe(&status, Some(545), true).unwrap();
+        let sd = actual_pipe_descriptor(&server);
+        // Prueba de control: los parámetros sí permiten otra instancia al administrador.
+        drop(
+            unsafe {
+                tokio::net::windows::named_pipe::ServerOptions::new()
+                    .create_with_security_attributes_raw(&status, null_mut())
+            }
+            .expect("el administrador debe poder crear la siguiente instancia"),
+        );
         for (suffix, group) in [("control", None), ("private-status", Some(544))] {
             let path = std::path::PathBuf::from(format!(
                 r"\\.\pipe\atenea-restricted-{suffix}-{}",
@@ -692,13 +795,24 @@ mod tests {
         }
         // Apertura CreateFileW y consulta real del propietario con GetSecurityInfo.
         let client = as_restricted_user(restricted.0, || {
-            let name = wide(status.as_os_str()).unwrap();
+            // El bit 0x4 en CreateFile es FILE_APPEND_DATA del extremo cliente.
+            // La creación de servidores se comprueba con CreateNamedPipe, no por ese alias.
             for forbidden in [
                 FILE_CREATE_PIPE_INSTANCE,
                 WRITE_DAC,
                 WRITE_OWNER,
                 GENERIC_WRITE,
             ] {
+                assert_effective_access_denied(&sd, forbidden);
+            }
+            let error = unsafe {
+                tokio::net::windows::named_pipe::ServerOptions::new()
+                    .create_with_security_attributes_raw(&status, null_mut())
+            }
+            .expect_err("Users no debe crear otra instancia del servidor");
+            assert_eq!(error.raw_os_error(), Some(ERROR_ACCESS_DENIED as i32));
+            let name = wide(status.as_os_str()).unwrap();
+            for forbidden in [WRITE_DAC, WRITE_OWNER] {
                 let handle = unsafe {
                     CreateFileW(
                         name.as_ptr(),
