@@ -29,7 +29,7 @@ try {
         }
         $info = [Diagnostics.ProcessStartInfo]::new()
         $info.FileName = "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe"
-        $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -ResultPath "{1}"' -f $probe,$result
+        $info.Arguments = '-NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -File "{0}" -ResultPath "{1}"' -f $probe,$result
         $info.UseShellExecute = $false
         $info.WorkingDirectory = $work
         $info.Domain = $env:COMPUTERNAME
@@ -43,11 +43,14 @@ try {
     }
     if (-not $process.WaitForExit(30000)) { throw 'Timeout del usuario estándar.' }
     if (-not (Test-Path -LiteralPath $result)) { throw 'El usuario estándar no produjo resultado.' }
-    $response = Get-Content -LiteralPath $result -Raw | ConvertFrom-Json
+    $response = Get-Content -LiteralPath $result -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -eq $response -or $null -eq $response.PSObject.Properties['ok'] -or $response.ok -isnot [bool]) {
+        throw 'El usuario estándar devolvió un resultado sin el campo booleano ok.'
+    }
     $code = $process.ExitCode
     if ($null -eq $code) { throw 'No se obtuvo un código de salida del usuario estándar.' }
     if ($code -ne 0 -or -not $response.ok) {
-        throw ('Falló el aislamiento real de IPC (salida ' + $code + '): ' + (Get-Content -LiteralPath $result -Raw))
+        throw ('Falló el aislamiento real de IPC (salida ' + $code + '): ' + (Get-Content -LiteralPath $result -Raw -Encoding UTF8))
     }
     Write-Output 'standard_user: control denegado, estado permitido y stop rechazado'
 } catch {
@@ -66,5 +69,5 @@ try {
     catch { $cleanupErrors += $_; Write-Warning "Retirada del usuario: $_" }
     try { if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force } }
     catch { $cleanupErrors += $_; Write-Warning "Retirada de ficheros del usuario: $_" }
-    if ($cleanupErrors.Count -and -not $failure) { throw ($cleanupErrors -join '; ') }
+    if (@($cleanupErrors).Count -gt 0 -and -not $failure) { throw ($cleanupErrors -join '; ') }
 }

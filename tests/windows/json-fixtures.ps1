@@ -13,10 +13,13 @@ if (-not $outputPath.StartsWith($target + [IO.Path]::DirectorySeparatorChar, [St
 }
 $cases = [Collections.Generic.List[object]]::new()
 function Add-Fixture([string]$Name, [string]$Parser, [object]$Value, [string]$Expected) {
-    $json = [string](ConvertTo-Json -InputObject $Value -Depth 12 -Compress)
+    # PS5.1 no emite ningún objeto al serializar $null; capturarlo siempre como array.
+    $parts = @(ConvertTo-Json -InputObject $Value -Depth 12 -Compress)
+    [string]$json = [string]::Join("`n", [string[]]$parts)
     $cases.Add([pscustomobject]@{name = $Name; parser = $Parser; json = $json; expected = $Expected})
     # Conserva la evidencia nativa sin volcar objetos o documentos ilimitados.
-    Write-Output ('PS5.1 {0}/{1}: {2}' -f $Parser, $Name, $json.Substring(0, [Math]::Min(1000, $json.Length)))
+    $bounded = [regex]::Match($json, '\A[\s\S]{0,1000}').Value
+    Write-Output ('PS5.1 {0}/{1}: {2}' -f $Parser, $Name, $bounded)
 }
 $rule = [pscustomobject]@{
     Name = 'regla'; Namespace = [string[]]@('.lab.internal');

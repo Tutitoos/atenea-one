@@ -23,7 +23,7 @@ pub struct Network {
     interface: String,
     bins: Binaries,
 }
-const PRELUDE: &str = "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); ";
+const PRELUDE: &str = "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); ";
 #[cfg(target_os = "windows")]
 const COMMANDS: &str = "Get-NetIPInterface,Set-NetIPInterface,Get-NetRoute,New-NetRoute,Remove-NetRoute,Get-NetIPAddress,New-NetIPAddress,Remove-NetIPAddress,Get-DnsClientNrptRule,Add-DnsClientNrptRule,Remove-DnsClientNrptRule";
 fn quote(value: &str) -> String {
@@ -36,7 +36,14 @@ fn command(bin: &Path, script: &str) -> Result<Command, String> {
     let mut cmd = Command::new(bin);
     // Windows PowerShell no debe cargar módulos heredados de pwsh (PowerShell 7).
     cmd.env_remove("PSModulePath")
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-OutputFormat",
+            "Text",
+            "-Command",
+        ])
         .arg(format!("{PRELUDE}{script}"));
     Ok(cmd)
 }
@@ -475,6 +482,7 @@ mod command_tests {
         for expected in [
             "-NoProfile",
             "-NonInteractive",
+            "-OutputFormat\nText",
             "Set-NetIPInterface -InterfaceIndex $i",
             "-NlMtuBytes 1280",
             "-RouterDiscovery Disabled",

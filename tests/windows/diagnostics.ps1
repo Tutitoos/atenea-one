@@ -15,9 +15,11 @@ function Show-Diagnostic([string]$Name, [scriptblock]$Read, [switch]$Local, [str
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $info.EnvironmentVariables['PSModulePath'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules'
     $info.EnvironmentVariables.Remove('PSHOME')
-    $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& { $Read } | Out-String -Width 240"))
+    $info.Arguments = '-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false); & { $Read } | Out-String -Width 240"))
     if ($Executable) {
         $info.FileName = $Executable
         $info.Arguments = $Arguments
@@ -59,10 +61,10 @@ try {
 } catch { Write-Output "No se pudo iniciar el lector de descriptores; se continúa: $_" }
 $agentLog = Join-Path $env:ProgramData 'Atenea/agent.log'
 Write-Output "Registro del agente: $agentLog"
-Show-Diagnostic 'agent.log' { if (Test-Path -LiteralPath $agentLog) { Get-Content -LiteralPath $agentLog -Tail 200 } else { 'No existe todavía.' } } -Local
+Show-Diagnostic 'agent.log' { if (Test-Path -LiteralPath $agentLog) { Get-Content -LiteralPath $agentLog -Encoding UTF8 -Tail 200 } else { 'No existe todavía.' } } -Local
 Show-Diagnostic 'peer.log' {
-    if ($PeerLog) { Get-Content -LiteralPath $PeerLog -Tail 200 -ErrorAction Stop }
-    else { Get-ChildItem -Path "$env:TEMP/atenea-windows-*/peer.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; Get-Content -LiteralPath $_.FullName -Tail 200 } }
+    if ($PeerLog) { Get-Content -LiteralPath $PeerLog -Encoding UTF8 -Tail 200 -ErrorAction Stop }
+    else { Get-ChildItem -Path "$env:TEMP/atenea-windows-*/peer.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Tail 200 } }
 } -Local
 Show-Diagnostic 'SCM estado y códigos de salida' { Get-CimInstance Win32_Service -Filter "Name='AteneaAgent'" | Select-Object Name,State,Status,AcceptStop,ProcessId,ExitCode,ServiceSpecificExitCode,CheckPoint,WaitHint,PathName | Format-List }
 Show-Diagnostic 'ServiceController' { Get-Service AteneaAgent -ErrorAction Stop | Format-List Name,Status,CanStop,ServiceType }

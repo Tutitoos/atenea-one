@@ -31,6 +31,18 @@ class SmokeSupportTests(unittest.TestCase):
         self.assertIn('SCM failure detail', errors.getvalue())
         self.assertEqual(run.call_args.kwargs['timeout'], 30)
 
+    @patch.dict('os.environ', {'SystemRoot': r'C:\Windows'}, clear=True)
+    @patch('smoke_support.subprocess.run')
+    def test_powershell_errors_use_text_and_utf8_not_clixml(self, run):
+        run.return_value = subprocess.CompletedProcess(['powershell'], 0, 'diagnóstico legible')
+        self.assertEqual(support.ps('Get-Service'), 'diagnóstico legible')
+        args = run.call_args.args[0]
+        flag = args.index('-OutputFormat')
+        self.assertEqual(args[flag + 1], 'Text')
+        self.assertIn('[Console]::OutputEncoding', args[-1])
+        self.assertEqual(run.call_args.kwargs['encoding'], 'utf-8')
+        self.assertEqual(run.call_args.kwargs['errors'], 'replace')
+
     @patch('smoke_support.subprocess.run')
     def test_timeout_keeps_partial_diagnostics(self, run):
         run.side_effect = subprocess.TimeoutExpired(['command'], 1, output=b'agent.log partial')

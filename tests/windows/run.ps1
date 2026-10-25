@@ -12,7 +12,7 @@ function Invoke-Bounded([string]$Command, [int]$Seconds) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $windowsPS
     $info.UseShellExecute = $false
-    $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ErrorActionPreference='Stop'; " + $Command))
+    $info.Arguments = '-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false); `$ErrorActionPreference='Stop'; " + $Command))
     $info.EnvironmentVariables['PSModulePath'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules'
     $info.EnvironmentVariables.Remove('PSHOME')
     $info.EnvironmentVariables.Remove('POWERSHELL_DISTRIBUTION_CHANNEL')
@@ -52,13 +52,13 @@ try {
     Show-FinalDiagnostics
     # El watchdog puede haber matado Python antes de su finally; SCM no es hijo suyo.
     try {
-        Invoke-Bounded '$s=Get-Service AteneaAgent -ErrorAction SilentlyContinue; if ($s -and $s.Status -ne "Stopped") {$s.Stop(); $s.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))}' 40
+        Invoke-Bounded '$s=Get-Service AteneaAgent -ErrorAction SilentlyContinue; if ($null -eq $s) {exit 0}; if ($s.Status -ne "Stopped") {$s.Stop(); $s.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))}' 40
     } catch {
         $cleanupFailures += $_
         Write-Warning "Fallo de parada SCM: $_"
         Show-FinalDiagnostics
         try {
-            Invoke-Bounded '$s=Get-CimInstance Win32_Service -Filter "Name=''AteneaAgent''"; if ($s.ProcessId) {$p=Get-Process -Id $s.ProcessId; $p.Kill(); if (-not $p.WaitForExit(10000)) {throw "El agente no terminó"}}' 20
+            Invoke-Bounded '$s=Get-CimInstance Win32_Service -Filter "Name=''AteneaAgent''"; if ($null -ne $s -and $s.ProcessId -gt 0) {$p=Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue; if ($null -ne $p) {$p.Kill(); if (-not $p.WaitForExit(10000)) {throw "El agente no terminó"}}}' 20
         } catch { $cleanupFailures += $_; Write-Warning "Fallo de terminación del agente: $_" }
     }
     try { if (Test-Path -LiteralPath "$stage/uninstall.ps1") { Invoke-Bounded "& '$stage/uninstall.ps1' -Purge" 60 } }
@@ -66,7 +66,7 @@ try {
     Show-FinalDiagnostics
 }
 if ($failure) { throw $failure }
-if ($cleanupFailures.Count) { throw ('Falló la limpieza: ' + ($cleanupFailures -join '; ')) }
+if (@($cleanupFailures).Count -gt 0) { throw ('Falló la limpieza: ' + ($cleanupFailures -join '; ')) }
 if (Get-Service AteneaAgent -ErrorAction SilentlyContinue) { throw 'Quedó registrado el servicio.' }
 if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Atenea')) { throw 'Quedaron binarios instalados.' }
 if (Test-Path -LiteralPath (Join-Path $env:ProgramData 'Atenea')) { throw 'Quedaron claves, configuración o estado tras -Purge.' }

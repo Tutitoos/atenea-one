@@ -23,8 +23,9 @@ def powershell_executable(source):
 
 def call(*args, timeout=30, env=None):
     try:
-        result = subprocess.run([str(arg) for arg in args], text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, timeout=timeout, env=env)
+        result = subprocess.run([str(arg) for arg in args], encoding='utf-8', errors='replace',
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=timeout, env=env)
     except subprocess.TimeoutExpired as error:
         if error.output:
             output = error.output.decode(errors='replace') if isinstance(error.output, bytes) else error.output
@@ -38,8 +39,9 @@ def call(*args, timeout=30, env=None):
 
 
 def ps(script, timeout=30):
-    return call(powershell_executable(os.environ), '-NoProfile', '-NonInteractive', '-Command',
-                "$ErrorActionPreference='Stop'; " + script, timeout=timeout,
+    return call(powershell_executable(os.environ), '-NoProfile', '-NonInteractive',
+                '-OutputFormat', 'Text', '-Command',
+                "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $ErrorActionPreference='Stop'; " + script, timeout=timeout,
                 env=powershell_environment(os.environ))
 
 

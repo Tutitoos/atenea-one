@@ -1,6 +1,8 @@
 # Se ejecuta sin elevación; el resultado se recoge desde probe-access.ps1.
 param([Parameter(Mandatory)][string]$ResultPath)
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Invoke-Cli([string]$Verb) {
     # Process.Start conserva el handle: Start-Process puede devolver ExitCode=$null (#5421).
     $info = [Diagnostics.ProcessStartInfo]::new()
@@ -9,6 +11,8 @@ function Invoke-Cli([string]$Verb) {
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $process = [Diagnostics.Process]::Start($info)
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -41,15 +45,15 @@ try {
         throw "CLI status falló (salida $($status.Code)): stderr=$($status.Error); stdout=$($status.Output)"
     }
     $response = $status.Output | ConvertFrom-Json
-    if (-not ($response.PSObject.Properties.Name -contains 'dns')) {
+    if ($null -eq $response -or $null -eq $response.PSObject.Properties['dns']) {
         throw "CLI status no devolvió un estado válido: stdout=$($status.Output)"
     }
     $reply = Invoke-Cli 'down'
     if ($reply.Code -eq 0 -or $reply.Error -notmatch 'solo se permite status') {
         throw "La canalización de estado no rechazó stop: salida=$($reply.Code); stderr=$($reply.Error); stdout=$($reply.Output)"
     }
-    @{ok=$true} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath
+    @{ok=$true} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
 } catch {
-    @{ok=$false; error=$_.Exception.Message} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath
+    @{ok=$false; error=$_.Exception.Message} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
     exit 1
 }
