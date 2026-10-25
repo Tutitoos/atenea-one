@@ -7,6 +7,7 @@ use atenea_identity::{DeviceId, NetworkId, Prefix, PublicKey, SigningKey, signin
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +56,9 @@ pub struct SyncConfig {
     pub url: String,
     #[serde(default = "default_interval")]
     pub interval_secs: u64,
+    /// Laboratorio: permite `http://` hacia un host que no sea loopback.
+    #[serde(default)]
+    pub insecure_http: bool,
 }
 
 fn default_interval() -> u64 {
@@ -72,6 +76,26 @@ pub struct CoordinatorConfig {
     pub relay_ca_file: Option<PathBuf>,
     #[serde(default = "default_relay")]
     pub relay: String,
+    /// Laboratorio: permite `http://` hacia un host que no sea loopback.
+    #[serde(default)]
+    pub insecure_http: bool,
+}
+
+/// URL del plano de control: `https` siempre; `http` solo hacia loopback o con `insecure_http`.
+fn control_url_ok(uri: &ureq::http::Uri, insecure_http: bool) -> bool {
+    match uri.scheme_str() {
+        Some("https") => true,
+        Some("http") => {
+            insecure_http
+                || uri.host().is_some_and(|h| {
+                    h == "localhost"
+                        || h.trim_matches(['[', ']'])
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                })
+        }
+        _ => false,
+    }
 }
 
 fn default_relay() -> String {
@@ -87,13 +111,13 @@ impl CoordinatorConfig {
             crate::relay::load_roots(Some(path))?;
         }
         let uri: ureq::http::Uri = self.url.parse().map_err(|_| "coordinator.url inválida")?;
-        if !matches!(uri.scheme_str(), Some("http" | "https"))
+        if !control_url_ok(&uri, self.insecure_http)
             || uri.host().is_none()
             || uri.authority().is_some_and(|a| a.as_str().contains('@'))
             || uri.query().is_some()
             || self.url.contains('#')
         {
-            return Err("coordinator: URL http(s) sin credenciales, query ni fragmento".into());
+            return Err("coordinator: URL https (http solo en loopback o con insecure_http) sin credenciales, query ni fragmento".into());
         }
         if self.stun.len() != 2
             || self.stun.iter().any(|s| {
@@ -110,7 +134,7 @@ impl CoordinatorConfig {
 impl SyncConfig {
     pub fn endpoint(&self) -> Result<String, String> {
         let uri: ureq::http::Uri = self.url.parse().map_err(|_| "sync.url inválida")?;
-        if !matches!(uri.scheme_str(), Some("http" | "https"))
+        if !control_url_ok(&uri, self.insecure_http)
             || uri.host().is_none()
             || uri.authority().is_some_and(|a| a.as_str().contains('@'))
             || uri.query().is_some()
@@ -118,7 +142,7 @@ impl SyncConfig {
             || self.interval_secs < 5
         {
             return Err(
-                "sync: URL http(s) sin credenciales, query ni fragmento e intervalo mínimo de 5 s"
+                "sync: URL https (http solo en loopback o con insecure_http) sin credenciales, query ni fragmento e intervalo mínimo de 5 s"
                     .into(),
             );
         }
@@ -131,6 +155,12 @@ impl SyncConfig {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Config, String> {
+        // En Windows el TOML lleva el ancla de confianza: exige DACL protegida y propietario SYSTEM/BA.
+        #[cfg(windows)]
+        let text = PrivateFiles::read(path)
+            .and_then(|b| String::from_utf8(b).map_err(std::io::Error::other))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        #[cfg(not(windows))]
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::parse(&text)
     }
@@ -220,28 +250,43 @@ fn resolve_key_path(path: &Path, directory: Option<&Path>) -> Result<PathBuf, St
 }
 
 /// Lee 32 bytes hex de una clave sin acceso a grupo/otros, incluidas credenciales de systemd.
-fn load_seed(path: &Path) -> Result<[u8; 32], String> {
+fn load_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>, String> {
     let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
     load_seed_from_directory(path, directory.as_deref())
 }
 
-fn load_seed_from_directory(path: &Path, directory: Option<&Path>) -> Result<[u8; 32], String> {
+fn load_seed_from_directory(
+    path: &Path,
+    directory: Option<&Path>,
+) -> Result<Zeroizing<[u8; 32]>, String> {
     let path = resolve_key_path(path, directory)?;
     let text = PrivateFiles::read_secret(&path)?;
-    hex::decode::<32>(&text).ok_or_else(|| format!("{}: se esperan 64 dígitos hex", path.display()))
+    hex::decode::<32>(&text)
+        .map(Zeroizing::new)
+        .ok_or_else(|| format!("{}: se esperan 64 dígitos hex", path.display()))
 }
 
 pub fn load_noise_key(path: &Path) -> Result<StaticKeypair, String> {
-    Ok(StaticKeypair::from_private(load_seed(path)?))
+    Ok(StaticKeypair::from_private(&*load_seed(path)?))
 }
 
 pub fn load_identity_key(path: &Path) -> Result<SigningKey, String> {
-    Ok(signing_key(load_seed(path)?))
+    Ok(signing_key(*load_seed(path)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_toml_with_inherited_acl_is_rejected() {
+        let path = std::env::temp_dir().join(format!("atenea-cfg-{}.toml", std::process::id()));
+        std::fs::write(&path, GOOD).unwrap();
+        let result = Config::load(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(result.unwrap_err().contains("DACL"));
+    }
 
     const GOOD: &str = r#"
 interface = "atenea0"
@@ -330,6 +375,11 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
     fn optional_sync_defaults_and_validation() {
         assert!(Config::parse(GOOD).unwrap().sync.is_none());
         let text = format!("{GOOD}\n[sync]\nurl = \"https://example.test\"");
+        let plain = text.replace("https://", "http://");
+        assert!(Config::parse(&plain).is_err());
+        assert!(Config::parse(&plain.replace("example.test", "127.0.0.1:8080")).is_ok());
+        assert!(Config::parse(&plain.replace("example.test", "localhost")).is_ok());
+        assert!(Config::parse(&format!("{plain}\ninsecure_http = true")).is_ok());
         assert_eq!(
             Config::parse(&text).unwrap().sync.unwrap().interval_secs,
             60
@@ -364,6 +414,10 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         assert!(
             Config::parse(&format!("{base}\nrelay_ca_file = \"/nonexistent/ca.pem\"")).is_err()
         );
+        let plain = base.replace("https://", "http://");
+        assert!(Config::parse(&plain).is_err());
+        assert!(Config::parse(&format!("{plain}\ninsecure_http = true")).is_ok());
+        assert!(Config::parse(&plain.replace("coord.test", "[::1]:8081")).is_ok());
     }
 }
 
@@ -423,7 +477,7 @@ mod phase7_tests {
             .unwrap();
         file.write_all("01".repeat(32).as_bytes()).unwrap();
         assert_eq!(
-            load_seed_from_directory(Path::new("credential:noise.key"), Some(&directory)).unwrap(),
+            *load_seed_from_directory(Path::new("credential:noise.key"), Some(&directory)).unwrap(),
             [1; 32]
         );
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();

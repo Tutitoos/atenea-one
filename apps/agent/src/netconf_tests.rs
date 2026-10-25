@@ -69,8 +69,7 @@ if [ -f "$base/dns-fail" ]; then exit 1; fi
     }
 
     fn script(&self, name: &str, text: &str) {
-        self.put(name, text);
-        fs::set_permissions(self.root.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+        crate::testutil::fake_binary(&self.root.join(name), text);
     }
 
     fn log(&self, name: &str) -> String {
@@ -210,7 +209,9 @@ fn protected_control_addresses_but_not_peer_endpoints_block_routes() {
             .reason
             .as_ref()
             .unwrap()
-            .contains("endpoint")
+            .contains("endpoint"),
+        "motivo de conflicto: {:?}",
+        net.status.routes[0].reason
     );
     cfg.peers[0].endpoints = vec!["192.168.40.9:51820".parse().unwrap()];
     net.apply(&cfg, &[]).unwrap();
@@ -460,4 +461,37 @@ fn withdrawing_peer_routes_preserves_dns_and_removes_both_families() {
             "-6 route del fd50::/64 dev atenea0",
         ]
     );
+}
+
+#[test]
+fn host_binaries_must_be_absolute_and_not_writable_by_others() {
+    assert!(Binaries::default().ip.is_absolute());
+    assert!(Binaries::default().nft.is_absolute());
+    assert!(Binaries::default().resolvectl.is_absolute());
+    let host = Host::new();
+    let net = |resolvectl: PathBuf| {
+        Network::new(
+            "atenea0".into(),
+            Binaries {
+                resolvectl,
+                ..Binaries::default()
+            },
+        )
+    };
+    assert!(net("resolvectl".into()).clear_dns().is_err());
+    assert!(net(host.root.join("resolvectl")).clear_dns().is_ok());
+    fs::set_permissions(
+        host.root.join("resolvectl"),
+        fs::Permissions::from_mode(0o770),
+    )
+    .unwrap();
+    assert!(net(host.root.join("resolvectl")).clear_dns().is_err());
+    fs::set_permissions(
+        host.root.join("resolvectl"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    fs::set_permissions(&host.root, fs::Permissions::from_mode(0o770)).unwrap();
+    assert!(net(host.root.join("resolvectl")).clear_dns().is_err());
+    fs::set_permissions(&host.root, fs::Permissions::from_mode(0o700)).unwrap();
 }

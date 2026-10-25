@@ -1,7 +1,9 @@
 //! Cliente macOS: órdenes nativas y resolutores por dominio, sin tocar DNS global ni pf.
 use super::HostNetwork;
+#[cfg(all(test, unix))]
+use crate::testutil::output;
 use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -28,11 +30,13 @@ pub struct Network {
     interface: String,
     bins: Binaries,
 }
+#[cfg(not(all(test, unix)))]
+fn output(command: &mut Command) -> std::io::Result<std::process::Output> {
+    command.output()
+}
 fn run(bin: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = Command::new(bin)
-        .args(args)
-        .output()
-        .map_err(|e| format!("{}: {e}", bin.display()))?;
+    let out =
+        output(Command::new(bin).args(args)).map_err(|e| format!("{}: {e}", bin.display()))?;
     if !out.status.success() {
         return Err(format!(
             "{} {}: {}",
@@ -150,9 +154,12 @@ fn owned(path: &Path) -> Result<bool, String> {
     if !meta.is_file() || meta.file_type().is_symlink() {
         return Ok(false);
     }
-    Ok(std::fs::read_to_string(path)
-        .map_err(|e| e.to_string())?
-        .starts_with(OWNER))
+    // Solo importa el prefijo: un resolutor ajeno no UTF-8 no debe impedir la limpieza.
+    let mut head = Vec::with_capacity(OWNER.len());
+    std::fs::File::open(path)
+        .and_then(|f| f.take(OWNER.len() as u64).read_to_end(&mut head))
+        .map_err(|e| e.to_string())?;
+    Ok(head == OWNER.as_bytes())
 }
 impl Network {
     pub fn new(interface: String, bins: Binaries) -> Self {
@@ -370,8 +377,17 @@ mod tests {
                 .contains("nameserver 10.77.0.1")
         );
         std::fs::write(dir.join("other.internal"), "nameserver 192.0.2.53\n").unwrap();
+        // Un resolutor ajeno no UTF-8 no rompe la limpieza ni se borra.
+        std::fs::write(dir.join("binary.internal"), [0xff, 0xfe, 0x00]).unwrap();
+        std::fs::write(
+            dir.join("stale.internal"),
+            format!("{OWNER}nameserver 10.77.0.1\n"),
+        )
+        .unwrap();
         host.cleanup().unwrap();
         assert!(!dir.join("lab.internal").exists());
+        assert!(!dir.join("stale.internal").exists());
+        assert!(dir.join("binary.internal").exists());
         assert!(dir.join("other.internal").exists());
         dns.domains = vec!["other.internal".into()];
         assert!(host.set_dns(&dns).is_err());
@@ -385,7 +401,6 @@ mod tests {
 #[cfg(test)]
 mod command_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     #[test]
     fn commands_use_injected_binaries() {
         let dir =
@@ -393,12 +408,10 @@ mod command_tests {
         std::fs::create_dir(&dir).unwrap();
         let bin = dir.join("fake");
         let log = dir.join("args");
-        std::fs::write(
+        crate::testutil::fake_binary(
             &bin,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+        );
         let host = Network::new(
             "utun9".into(),
             Binaries {

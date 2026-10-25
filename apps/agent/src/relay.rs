@@ -1005,11 +1005,10 @@ mod tests {
     async fn tls_server(
         cfg: Arc<rustls::ServerConfig>,
         reject: bool,
-    ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+    ) -> (String, watch::Receiver<usize>, JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let allocations = Arc::new(AtomicUsize::new(0));
-        let count = allocations.clone();
+        let (allocations, observed) = watch::channel(0);
         let task = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
             let Ok(stream) = tokio_rustls::TlsAcceptor::from(cfg).accept(tcp).await else {
@@ -1051,7 +1050,7 @@ mod tests {
                                 token,
                                 &sig
                             ));
-                            count.fetch_add(1, Ordering::SeqCst);
+                            // Se notifica después de escribir la respuesta completa.
                             if reject {
                                 wire::encode_alloc_err(wire::ErrCode::BadToken)
                             } else {
@@ -1062,33 +1061,45 @@ mod tests {
                             wire::encode_ping(alloc_id, nonce, true)
                         }
                         wire::Message::Data { alloc_id, datagram } => {
-                            stream
+                            if stream
                                 .write_all(
                                     &wire::encode_frame(&wire::encode_data(999, b"foreign"))
                                         .unwrap(),
                                 )
                                 .await
-                                .unwrap();
+                                .is_err()
+                            {
+                                return;
+                            }
                             wire::encode_data(alloc_id, datagram)
                         }
                         _ => panic!("unexpected message"),
                     };
                     // Lecturas parciales reales, no solo el decoder aislado.
                     let frame = wire::encode_frame(&response).unwrap();
-                    stream.write_all(&frame[..1]).await.unwrap();
-                    stream.write_all(&frame[1..]).await.unwrap();
+                    if stream.write_all(&frame[..1]).await.is_err()
+                        || stream.write_all(&frame[1..]).await.is_err()
+                    {
+                        return;
+                    }
+                    if matches!(message, wire::Message::Alloc { .. }) {
+                        allocations.send_modify(|count| *count += 1);
+                    }
                 }
             }
         });
-        (addr, allocations, task)
+        (addr, observed, task)
     }
 
     #[tokio::test]
     async fn udp_timeout_falls_back_to_tls_custom_ca_queue_and_renewal() {
         let (cfg, ca) = tls_config();
-        let (addr, allocations, server) = tls_server(cfg, false).await;
+        let (addr, mut allocations, server) = tls_server(cfg, false).await;
         let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let (client, mut events) = client(Some(ca.0.clone()));
+        let (mut client, mut events) = client(Some(ca.0.clone()));
+        // Esta prueba mide fallback y renovación, no la pérdida de heartbeats. La fragmentación
+        // TLS y la cola no deben competir con los ticks acelerados de las pruebas de timeout.
+        client.timing.ping = Timing::default().ping;
         client.open(
             [5; 16],
             token([5; 16]),
@@ -1117,13 +1128,13 @@ mod tests {
             client.send([5; 16], RelayKind::Tls, vec![1, 2]);
         }
         assert!(client.status().entries[0].drops["queue_full"] >= 10);
-        timeout(Duration::from_secs(3), async {
-            while allocations.load(Ordering::SeqCst) < 2 {
-                event(&mut events, |e| matches!(e, RelayEvent::Rtt { .. })).await;
-            }
-        })
+        timeout(
+            Duration::from_secs(3),
+            allocations.wait_for(|count| *count >= 2),
+        )
         .await
-        .unwrap();
+        .expect("renovación TLS no observada")
+        .expect("servidor TLS cerrado antes de renovar");
         assert!(client.status().entries[0].drops["invalid_message_or_allocation"] > 0);
         server.abort();
         event(&mut events, |e| {

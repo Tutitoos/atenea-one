@@ -30,7 +30,7 @@ echo "$@" >> /tmp/lab/resolvectl.log
 exit 0
 EOF
 chmod +x $LAB/bin/resolvectl
-export PATH=$LAB/bin:$PATH
+export ATENEA_RESOLVECTL=$LAB/bin/resolvectl PATH=$LAB/bin:$PATH
 
 section "Entorno: a, a2 (clientes), r (router de subred), h/h2 (VMs de la LAN), h3 (LAN local de a2)"
 ip link add br0 type bridge && ip link set br0 up

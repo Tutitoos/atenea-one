@@ -5,15 +5,24 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-fn base_url(url: &str) -> Result<&str, String> {
+/// `https` siempre; `http` solo hacia loopback o con `--insecure-http` (laboratorio). El token de
+/// enrolamiento y la topología no deben viajar en claro por una red real.
+fn base_url(url: &str, insecure_http: bool) -> Result<&str, String> {
     let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
-    if !matches!(uri.scheme_str(), Some("http" | "https"))
+    let loopback = uri.host().is_some_and(|h| {
+        h == "localhost"
+            || h.trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if !(uri.scheme_str() == Some("https")
+        || (uri.scheme_str() == Some("http") && (loopback || insecure_http)))
         || uri.host().is_none()
         || uri.authority().is_some_and(|a| a.as_str().contains('@'))
         || uri.query().is_some()
         || url.contains('#')
     {
-        return Err("se exige una URL http(s) sin credenciales, query ni fragmento".into());
+        return Err("se exige una URL https (http solo en loopback o con --insecure-http) sin credenciales, query ni fragmento".into());
     }
     Ok(url.trim_end_matches('/'))
 }
@@ -50,8 +59,14 @@ struct Enrolled {
     status: String,
 }
 
-pub fn enroll(url: &str, token: &str, dir: &Path, name: &str) -> Result<(), String> {
-    let url = format!("{}/api/v1/enroll", base_url(url)?);
+pub fn enroll(
+    url: &str,
+    token: &str,
+    dir: &Path,
+    name: &str,
+    insecure_http: bool,
+) -> Result<(), String> {
+    let url = format!("{}/api/v1/enroll", base_url(url, insecure_http)?);
     let bundle = bundle(dir)?;
     let body =
         serde_json::json!({"token": token, "bundle": hex::encode(&bundle.encode()), "name": name})
@@ -94,9 +109,9 @@ struct Join {
     root_anchor: String,
 }
 
-fn parse_join(text: &str) -> Result<Join, String> {
+fn parse_join(text: &str, insecure_http: bool) -> Result<Join, String> {
     let join: Join = serde_json::from_str(text).map_err(|_| "join: JSON inválido")?;
-    base_url(&join.url)?;
+    base_url(&join.url, insecure_http)?;
     let network = join.network_id.replace('-', "");
     hex::decode::<16>(&network).ok_or("join.network_id: UUID o 32 dígitos hex requeridos")?;
     hex::decode::<32>(&join.root_anchor).ok_or("join.root_anchor: se esperan 64 dígitos hex")?;
@@ -133,6 +148,9 @@ pub struct AgentConfigArgs {
     /// Grupo numérico autorizado a consultar el socket de estado.
     #[arg(long, requires = "status_socket")]
     status_gid: Option<u32>,
+    /// Solo laboratorio: acepta una URL `http://` que no sea loopback y la deja anotada en el TOML.
+    #[arg(long)]
+    insecure_http: bool,
 }
 
 fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<String, String> {
@@ -195,6 +213,9 @@ fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<Stri
     }
     let mut sync = toml::Table::new();
     sync.insert("url".into(), join.url.clone().into());
+    if args.insecure_http {
+        sync.insert("insecure_http".into(), true.into());
+    }
     table.insert("sync".into(), toml::Value::Table(sync));
     toml::to_string(&table).map_err(|e| format!("TOML: {e}"))
 }
@@ -205,7 +226,7 @@ pub fn agent_config(mut args: AgentConfigArgs) -> Result<(), String> {
     } else {
         std::fs::read_to_string(&args.join).map_err(|e| format!("join: {e}"))?
     };
-    let join = parse_join(&text)?;
+    let join = parse_join(&text, args.insecure_http)?;
     args.dir = std::fs::canonicalize(&args.dir).map_err(|e| format!("dir: {e}"))?;
     let bundle = bundle(&args.dir)?;
     let text = render(&join, &args, &bundle.device_id)?;
@@ -226,7 +247,7 @@ mod tests {
             r#"{{"url":"https://example.test","network_id":"00112233-4455-6677-8899-aabbccddeeff","root_anchor":"{}","token":"NO_GUARDAR"}}"#,
             "01".repeat(32)
         );
-        let join = parse_join(&input).unwrap();
+        let join = parse_join(&input, false).unwrap();
         let mut args = AgentConfigArgs {
             join: input,
             dir: "/tmp/device".into(),
@@ -246,6 +267,7 @@ mod tests {
                 .into(),
             ),
             status_gid: Some(545),
+            insecure_http: false,
         };
         let text = render(&join, &args, &[2; 16]).unwrap();
         let cfg = agent_config_contract::Config::parse(&text).unwrap();
@@ -264,14 +286,30 @@ mod tests {
         assert!(defaults.advertise_routes.is_empty());
         assert!(defaults.status_socket.is_none());
         assert!(defaults.status_gid.is_none());
-        assert!(parse_join("{}").is_err());
+        assert!(parse_join("{}", false).is_err());
         assert!(
             parse_join(
                 &args
                     .join
-                    .replace("https://example.test", "ftp://example.test")
+                    .replace("https://example.test", "ftp://example.test"),
+                false
             )
             .is_err()
+        );
+        let plain = args
+            .join
+            .replace("https://example.test", "http://198.51.100.7:8080");
+        assert!(parse_join(&plain, false).is_err());
+        assert!(parse_join(&plain.replace("198.51.100.7", "127.0.0.1"), false).is_ok());
+        let join = parse_join(&plain, true).unwrap();
+        args.insecure_http = true;
+        let text = render(&join, &args, &[2; 16]).unwrap();
+        assert!(
+            agent_config_contract::Config::parse(&text)
+                .unwrap()
+                .sync
+                .unwrap()
+                .insecure_http
         );
     }
     #[test]

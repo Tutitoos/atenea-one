@@ -1,6 +1,16 @@
 {
   admin 127.0.0.1:2019
   auto_https disable_redirects
+  # La dirección de HAProxy pertenece a una red interna dedicada.
+  servers {
+    listener_wrappers {
+      proxy_protocol {
+        timeout 5s
+        allow {$HAPROXY_PROXY_IP}/32
+      }
+      tls
+    }
+  }
 }
 {$PANEL_HOST} {
   tls {$CADDY_TLS}
@@ -12,7 +22,10 @@
     reverse_proxy coordinator:8081
   }
   handle {
-    reverse_proxy control-plane:8080
+    # Sustituye cualquier X-Real-IP del cliente; el control plane solo lo lee desde ATENEA_CP_TRUSTED_PROXIES.
+    reverse_proxy control-plane-proxy:8080 {
+      header_up X-Real-IP {remote_host}
+    }
   }
 }
 http://{$PANEL_HOST} {

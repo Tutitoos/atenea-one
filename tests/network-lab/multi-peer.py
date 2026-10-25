@@ -99,6 +99,7 @@ device_id = "{ids[name]}"
 trust_anchor = "{root}"
 [coordinator]
 url = "http://198.51.100.10:8081"
+insecure_http = true
 stun = ["198.51.100.10:3478", "198.51.100.10:3479"]
 relay_ca_file = "/tmp/lab/certs/ca.pem"
 ''')

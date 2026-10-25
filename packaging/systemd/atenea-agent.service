@@ -37,6 +37,14 @@ MemoryDenyWriteExecute=yes
 DevicePolicy=closed
 DeviceAllow=/dev/net/tun rw
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ProtectHostname=yes
+ProtectProc=invisible
+PrivateMounts=yes
+RemoveIPC=yes
+KeyringMode=private
 
 [Install]
 WantedBy=multi-user.target

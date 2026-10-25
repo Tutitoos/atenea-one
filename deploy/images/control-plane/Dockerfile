@@ -21,8 +21,9 @@ RUN rustc --edition=2024 -O /healthcheck.rs -o /out/healthcheck \
 
 FROM node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS web
 WORKDIR /app
-RUN npm install --global pnpm@11.23.0
+COPY scripts/install-pnpm.sh ./scripts/install-pnpm.sh
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN sh scripts/install-pnpm.sh
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/api-client ./packages/api-client
 COPY docs/api/openapi.json ./docs/api/openapi.json

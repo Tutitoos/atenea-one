@@ -19,6 +19,9 @@ atenea-identity = { path = "../crates/identity" }
 atenea-policies = { path = "../crates/policies" }
 atenea-nat-traversal = { path = "../crates/nat-traversal" }
 atenea-relay-core = { path = "../crates/relay-core" }
+# Solo para firmar con claves fijas de fuzz (signed_config_verify) y compilar el motor del agente.
+ed25519-dalek = "3.0.0"
+serde = { version = "1", features = ["derive"] }
 
 [[bin]]
 name = "datagram_parse"
@@ -100,6 +103,13 @@ bench = false
 [[bin]]
 name = "config_v2_parse"
 path = "fuzz_targets/config_v2_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_engine"
+path = "fuzz_targets/agent_engine.rs"
 test = false
 doc = false
 bench = false

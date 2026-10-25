@@ -354,6 +354,22 @@ async fn capacity_rates_size_and_tcp_frames() {
     lab.close().await;
 }
 #[tokio::test]
+async fn tcp_frame_before_alloc_closes_connection() {
+    let lab = Lab::start(|_| {}).await;
+    let mut tls = lab.tls().await;
+    tls.send(&w::encode_data(1, b"xx")).await;
+    if let Client::Tls(s) = &mut tls {
+        let mut byte = [0];
+        assert!(
+            timeout(Duration::from_secs(2), s.read(&mut byte))
+                .await
+                .unwrap()
+                .map_or(true, |n| n == 0)
+        );
+    }
+    lab.close().await;
+}
+#[tokio::test]
 async fn partial_frames_and_alloc_idle_handshake_deadlines() {
     let lab = Lab::start(|c| {
         c.alloc_secs = 1;

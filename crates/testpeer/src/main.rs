@@ -53,15 +53,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Read;
     let mut key = Zeroizing::new(String::new());
     file.take(4096).read_to_string(&mut key)?;
-    let private =
-        hex::decode(&key).ok_or("noise.key inválida (se esperan 32 bytes hexadecimales)")?;
+    let private = Zeroizing::new(
+        hex::decode::<32>(&key).ok_or("noise.key inválida (se esperan 32 bytes hexadecimales)")?,
+    );
     let bundle = DeviceBundle::parse(&std::fs::read(args.agent_bundle)?)?;
     bundle.verify()?;
     let socket = UdpSocket::bind(args.listen)?;
     let start = Instant::now();
     let timeout = Duration::from_secs(args.timeout_secs);
     let mut peer = Peer::new(
-        StaticKeypair::from_private(private),
+        StaticKeypair::from_private(&private),
         bundle.noise_pubkey,
         network,
         Addresses {

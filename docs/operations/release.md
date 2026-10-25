@@ -66,11 +66,18 @@ reutilizable ni debe distribuirse como tal.
 `scripts/release/sbom.py` produce CycloneDX **1.5 JSON** y comprueba sus campos
 obligatorios, identidades únicas, hashes y referencias de dependencias:
 
-- Rust: `cargo metadata --offline --locked --format-version 1`, junto con
-  `Cargo.lock`, aporta nombres, versiones, checksums SHA-256 del registro,
-  expresiones de licencia declaradas y grafo de dependencias. Los crates locales
-  no tienen checksum de registro. Es un inventario del código resuelto, no una
-  afirmación de que todas las features/targets se enlacen en cada ejecutable.
+- Rust: `cargo metadata --offline --locked --format-version 1 --filter-platform <triple>`,
+  junto con `Cargo.lock`, aporta nombres, versiones, checksums SHA-256 del registro,
+  expresiones de licencia declaradas y grafo de dependencias. **Un SBOM por
+  objetivo** (`atenea:target`) y **solo producción**: se parte de los paquetes
+  que se distribuyen (`--root`) y no se siguen aristas exclusivas de desarrollo
+  (`dev-dependencies`). Los crates locales no tienen checksum de registro. Es el
+  grafo resuelto para ese triple, no una afirmación de que todas las features se
+  enlacen en cada ejecutable. El SBOM de Windows añade **Wintun** (`--wintun`;
+  versión y SHA-256 salen de `packaging/windows/get-wintun.ps1`, que es quien lo
+  verifica al instalar) y el de Linux las **dependencias de ejecución del `.deb`**
+  (`--deb-depends`, de `packaging/deb/build.sh`; sin versión resuelta: son
+  restricciones). La cadena de herramientas queda en `BUILD-INFO.json`.
 - Panel: parser propio del lock pnpm v9, sin ejecutar pnpm; incluye versiones,
   integridades SHA-512/SHA-256 y dependencias/optionalDependencies de snapshots.
   No inventa licencias ausentes del lock; se consulta el inventario de licencias
@@ -133,15 +140,45 @@ raw Ed25519. La verificación por clave pública seguirá siendo independiente.
 
 ## Workflow, aprobación y publicación
 
-`.github/workflows/release.yml` solo se dispara manualmente o por tags `v*`, no
-por pushes normales a ramas. Los jobs Linux/macOS/Windows construyen y suben
-artefactos internos sin publicar. El runner Linux sí puede descargar dependencias
-para el build completo; esto no es parte del ensayo offline del Mac.
+`.github/workflows/release.yml` se dispara por tags `v*` o manualmente. El disparo
+manual **solo construye** (sirve de ensayo): `publish` exige un push de tag `v*`.
+Los jobs Linux/macOS/Windows construyen y suben artefactos internos sin publicar,
+con el toolchain de `rust-toolchain.toml`, y cada uno **atesta la procedencia** de
+sus ficheros (`actions/attest-build-provenance`, permisos `id-token` y
+`attestations` solo en esos jobs). El runner Linux sí puede descargar
+dependencias para el build completo; esto no es parte del ensayo offline del Mac.
 
-Antes de usarlo, configurar el environment **release**, sus **revisores
-obligatorios**, protección de tags y secreto `ATENEA_RELEASE_ED25519_PEM` con una
-clave elegida por el responsable. `environment: release` por sí solo no configura
-la aprobación en GitHub. Dar al secreto acceso solo a ese environment.
+Todas las acciones, también `actions/upload-artifact` y `download-artifact`, se
+fijan por SHA completo (comentario con la etiqueta); Dependabot propone las
+actualizaciones. Cada job declara sus `permissions` mínimos; el valor por defecto
+del workflow es ninguno.
+
+### Requisitos del environment `release` (verificables)
+
+El repositorio no puede aplicarlos; `publish` los **comprueba** antes de tocar el
+secreto (`scripts/release/check-environment.py`, con `actions: read`) y falla si
+no se cumplen. Settings > Environments > release:
+
+- [ ] Revisores obligatorios (al menos uno) y «Prevent self-review».
+- [ ] Deployment branches and tags: política personalizada **solo con tags `v*`**
+      (y reglas de protección/ruleset de tags `v*` en el repositorio).
+- [ ] El secreto `ATENEA_RELEASE_ED25519_PEM` es un secreto **del environment**, no
+      del repositorio ni de la organización.
+
+La comprobación es un detector, no la barrera: la barrera es la configuración del
+environment. Un workflow modificado en una rama no puede usar el secreto si la
+política de despliegue solo admite tags `v*` protegidos.
+
+### Procedencia del commit
+
+Antes de usar el secreto, `publish` ejecuta `gh attestation verify` sobre **cada**
+fichero de `dist/` exigiendo este repositorio, este workflow como firmante, el
+commit (`--source-digest $GITHUB_SHA`) y la ref del tag, sin runners propios. Un
+fichero cambiado entre el job de construcción y la firma, o construido desde otro
+commit, no tiene atestación válida y el release se aborta. Además `manifest.py`
+comprueba que commit y versión de `BUILD-INFO`, ZIP, `.deb` y SBOM coinciden. La
+firma Ed25519 del manifiesto cubre commit y SHA-256 de cada artefacto, por lo
+que atestigua artefactos cuya procedencia se verificó en ese commit.
 
 **Solo `publish`** tiene `packages: write`, `contents: write`, login GHCR,
 `docker push`, firma y `gh release create`. Primero publica imágenes, captura sus
@@ -174,4 +211,7 @@ con `CARGO_BUILD_JOBS=2`. No se repitió clippy/test Linux del workspace.
 GHCR/Releases, digest real de registro, reconstrucción completa del panel en el
 ensayo local, firmas de plataforma/notarización macOS y Authenticode Windows,
 ensamblado de `.pkg`/ZIP en runners durante este ensayo, clave real del responsable
-y token hardware. No se ha publicado nada, creado tags, hecho commit ni push.
+y token hardware. Tampoco se han ejecutado las atestaciones de procedencia, su
+verificación con `gh attestation verify`, la lectura del environment por API ni los
+SBOM por objetivo en los runners (el SBOM se probó con `cargo metadata` local y
+pruebas unitarias). No se ha publicado nada, creado tags, hecho commit ni push.

@@ -9,9 +9,9 @@ use std::time::Instant;
 const NET: [u8; 16] = [7; 16];
 
 fn pair(now: Instant) -> (Session, Session) {
-    let a = StaticKeypair::from_private([0x11; 32]);
-    let b = StaticKeypair::from_private([0x22; 32]);
-    let (pending, msg1) = initiate(&a, &b.public, &NET, 1, 1000).unwrap();
+    let a = StaticKeypair::from_private(&[0x11; 32]);
+    let b = StaticKeypair::from_private(&[0x22; 32]);
+    let (mut pending, msg1) = initiate(&a, &b.public, &NET, 1, 1000).unwrap();
     let (sb, msg2) = read_init(&b, &NET, &msg1, 1).unwrap().accept(2, now).unwrap();
     (pending.finish(&msg2, 2, now).unwrap(), sb)
 }

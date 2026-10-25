@@ -9,10 +9,21 @@ if (Get-Service -Name AteneaAgent -ErrorAction SilentlyContinue) {
     throw 'AteneaAgent ya está registrado. Desinstale antes de actualizar; se conservan las claves.'
 }
 if (Test-Path -LiteralPath $bin) { throw "Ya existe $bin; no se sobrescribe." }
+$trusted = @('S-1-5-18', 'S-1-5-32-544')
 foreach ($path in @($bin, $data)) {
     if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw "No se admiten enlaces ni puntos de reanálisis: $path"
     }
+}
+# ProgramData lo puede crear cualquier usuario: se reutiliza solo si todo su contenido es de SYSTEM/Administradores.
+if (Test-Path -LiteralPath $data) {
+    foreach ($item in @(Get-Item -LiteralPath $data -Force) + @(Get-ChildItem -LiteralPath $data -Recurse -Force)) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "No se admiten enlaces ni puntos de reanálisis: $($item.FullName)" }
+        $owner = (Get-Acl -LiteralPath $item.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($trusted -notcontains $owner) { throw "$($item.FullName) no pertenece a SYSTEM ni a Administradores; revise y retire $data antes de instalar." }
+    }
+}
+foreach ($path in @($bin, $data)) {
     New-Item -ItemType Directory -Force -Path $path | Out-Null
     $acl = [Security.AccessControl.DirectorySecurity]::new()
     $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
@@ -32,8 +43,15 @@ try {
     New-Service -Name AteneaAgent -DisplayName 'Atenea Client' -StartupType Manual `
         -BinaryPathName ('"{0}" run --service --config "{1}"' -f (Join-Path $bin 'atenea-agent.exe'), $config) `
         -Description 'Cliente Atenea: túnel cifrado, rutas firmadas y DNS dividido.' | Out-Null
+    # Tras una caída el DNS dividido queda hasta la limpieza de arranque: reinicio con espera creciente,
+    # también ante salidas con error (no solo cierres abruptos); una parada ordenada no reinicia.
+    & "$env:SystemRoot/System32/sc.exe" failure AteneaAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc failure falló ($LASTEXITCODE)" }
+    & "$env:SystemRoot/System32/sc.exe" failureflag AteneaAgent 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc failureflag falló ($LASTEXITCODE)" }
 } catch {
     $failure = $_
+    if (Get-Service -Name AteneaAgent -ErrorAction SilentlyContinue) { & "$env:SystemRoot/System32/sc.exe" delete AteneaAgent | Out-Null }
     try { Remove-Item -LiteralPath $bin -Recurse -Force }
     catch { Write-Warning "No se pudo retirar la instalación incompleta: $_" }
     throw $failure

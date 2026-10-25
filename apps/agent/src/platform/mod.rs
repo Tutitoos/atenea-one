@@ -3,7 +3,7 @@ use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};
 use std::net::{IpAddr, SocketAddr};
 
 pub mod lifecycle;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(test, unix)))]
 pub mod linux;
 #[cfg(any(unix, target_os = "windows"))]
 pub mod local_ipc;

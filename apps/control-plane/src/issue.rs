@@ -54,8 +54,11 @@ pub async fn load_devices(c: &mut PgConnection, net: Uuid) -> Result<Vec<Device>
                 .iter()
                 .map(|a| a.parse().map_err(|_| ApiError::internal()))
                 .collect::<Result<_, _>>()?,
-            endpoints: serde_json::from_value(r.get("endpoints"))
-                .map_err(|_| ApiError::internal())?,
+            endpoints: atenea_nat_traversal::sanitize_candidates(
+                serde_json::from_value::<Vec<std::net::SocketAddr>>(r.get("endpoints"))
+                    .map_err(|_| ApiError::internal())?,
+                4,
+            ),
         });
     }
     Ok(devices)
@@ -153,7 +156,7 @@ pub async fn get(
         return Err(invalid());
     }
     let dev = Uuid::from_bytes(signed.device_id);
-    let row = sqlx::query("SELECT network_id,identity_pubkey FROM devices WHERE id=$1")
+    let row = sqlx::query("SELECT network_id,identity_pubkey,status FROM devices WHERE id=$1")
         .bind(dev)
         .fetch_optional(&s.pool)
         .await?
@@ -170,12 +173,10 @@ pub async fn get(
         &body,
     )
     .map_err(|_| invalid())?;
-    {
-        let mut nonces = s.nonces.lock().map_err(|_| ApiError::internal())?;
-        nonces.retain(|_, ts| now.saturating_sub(*ts) <= 120);
-        if nonces.insert((dev, signed.nonce), now).is_some() {
-            return Err(invalid());
-        }
+    crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
+    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
+    if row.get::<String, _>("status") != "approved" {
+        return Err(ApiError::forbidden("device_not_approved"));
     }
     let net: Uuid = row.get("network_id");
     let mut tx = s.pool.begin().await?;
@@ -222,6 +223,10 @@ pub async fn get(
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
+    // Rechazo cerrado: una red heredada fuera de ADR-007 no se firma.
+    if !network_prefixes.iter().all(Prefix::valid_route) {
+        return Err(ApiError::conflict("invalid_network_prefix"));
+    }
     let (peers, rules) = compile(own, &devices, &policies, &network_prefixes)?;
     let mut dns = crate::dns::load(&mut tx, net).await?;
     dns.servers.retain(|a| {
@@ -269,17 +274,21 @@ pub async fn get(
         .execute(&mut *tx)
         .await?;
     let org: Uuid = n.get("org_id");
-    crate::audit::record(
-        &mut tx,
-        "device",
-        dev,
-        Some(org),
-        Some(net),
-        "config.issue",
-        dev,
-        serde_json::json!({"version":version,"hash":hex::encode(hash)}),
-    )
-    .await?;
+    // Auditoría acotada: una entrada por dispositivo y hora; el resto queda en configuration_versions.
+    let audited: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_events WHERE network_id=$1 AND target=$2 AND action='config.issue' AND at>now()-interval '1 hour')").bind(net).bind(dev.to_string()).fetch_one(&mut *tx).await?;
+    if !audited {
+        crate::audit::record(
+            &mut tx,
+            "device",
+            dev,
+            Some(org),
+            Some(net),
+            "config.issue",
+            dev,
+            serde_json::json!({"version":version,"hash":hex::encode(hash)}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     atenea_observability::event(
         if last.is_some() {

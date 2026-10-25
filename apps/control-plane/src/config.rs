@@ -17,6 +17,12 @@ pub struct Config {
     pub config_validity_secs: u64,
     pub dev_insecure_cookies: bool,
     pub enroll_per_minute: u32,
+    /// Intentos de `GET /auth/login` por minuto y IP cliente.
+    pub login_per_minute: u32,
+    /// Peticiones firmadas por minuto y dispositivo (config, estado, rutas).
+    pub device_per_minute: u32,
+    /// Redes de los proxies inversos cuyo `X-Real-IP` se acepta; vacío = no se confía en cabeceras.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     pub application_role: Option<String>,
     pub web_dir: Option<std::path::PathBuf>,
 }
@@ -35,6 +41,9 @@ impl Default for Config {
             config_validity_secs: 300,
             dev_insecure_cookies: false,
             enroll_per_minute: 10,
+            login_per_minute: 20,
+            device_per_minute: 30,
+            trusted_proxies: Vec::new(),
             application_role: None,
             web_dir: None,
         }
@@ -87,5 +96,36 @@ mod tests {
         assert!(read_secret(&path).is_err());
         std::fs::remove_file(&path).unwrap();
         assert!(read_secret(&path).is_err());
+    }
+}
+
+#[cfg(test)]
+mod proxies {
+    use super::Config;
+    use figment::{
+        Figment,
+        providers::{Format, Serialized, Toml},
+    };
+    #[test]
+    fn trusted_proxies_se_leen_como_cidr_y_por_defecto_vacios() {
+        let base = || Figment::from(Serialized::defaults(Config::default()));
+        assert!(
+            base()
+                .extract::<Config>()
+                .unwrap()
+                .trusted_proxies
+                .is_empty()
+        );
+        let c: Config = base()
+            .merge(Toml::string("trusted_proxies=['172.18.0.0/16','fd00::/8']"))
+            .extract()
+            .unwrap();
+        assert_eq!(c.trusted_proxies.len(), 2);
+        assert!(
+            base()
+                .merge(Toml::string("trusted_proxies=['no-cidr']"))
+                .extract::<Config>()
+                .is_err()
+        );
     }
 }

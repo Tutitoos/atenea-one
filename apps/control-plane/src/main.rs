@@ -26,6 +26,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if config.config_validity_secs == 0
         || config.config_validity_secs > 3600
         || config.enroll_per_minute == 0
+        || config.login_per_minute == 0
+        || config.device_per_minute == 0
     {
         return Err("Validez o límite de tasa inválidos".into());
     }

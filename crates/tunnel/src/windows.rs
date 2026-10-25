@@ -298,6 +298,11 @@ mod tests {
         v6[5] = 1;
         assert!(validate(&v6).is_err());
         assert!(validate(&[]).is_err());
+        // El agente descarta estos paquetes por su tipo: solo `InvalidData`.
+        assert_eq!(
+            validate(&[]).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         assert!(wide("a\0b").is_err());
     }
 }

@@ -87,7 +87,69 @@ async fn discover(state: &AppState) -> Result<(CoreProviderMetadata, reqwest::Cl
     Ok((metadata, http))
 }
 
-pub async fn login(State(state): State<AppState>) -> Result<Response, ApiError> {
+/// Tope de flujos OIDC vigentes; evita crecimiento ilimitado por llamadas anónimas.
+const MAX_PENDING_FLOWS: i64 = 10_000;
+
+/// Tope duro: recuento e inserción serializados en una transacción corta.
+pub async fn insert_flow(
+    pool: &sqlx::PgPool,
+    state_hash: &[u8],
+    verifier: &str,
+    nonce: &str,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(7311705)")
+        .execute(&mut *tx)
+        .await?;
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM oidc_flows WHERE expires_at > now()")
+            .fetch_one(&mut *tx)
+            .await?;
+    if pending >= MAX_PENDING_FLOWS {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    }
+    sqlx::query(
+        "INSERT INTO oidc_flows (state_hash, pkce_verifier, nonce, created_at, expires_at) \
+         VALUES ($1, $2, $3, now(), now() + interval '10 minutes')",
+    )
+    .bind(state_hash)
+    .bind(verifier)
+    .bind(nonce)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Borra flujos OIDC y sesiones caducados (expiración absoluta, antigüedad 8 h o inactividad 1 h).
+pub async fn purge(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM oidc_flows WHERE expires_at <= now()")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "DELETE FROM sessions WHERE expires_at <= now() \
+         OR created_at <= now() - interval '8 hours' \
+         OR last_seen_at <= now() - interval '1 hour'",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn login(
+    State(state): State<AppState>,
+    source: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let ip = crate::client_ip(&state.config, source.map(|a| a.0.0.ip()), &headers);
+    crate::take(&state.login_rate, ip, state.config.login_per_minute)?;
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM oidc_flows WHERE expires_at > now()")
+            .fetch_one(&state.pool)
+            .await?;
+    if pending >= MAX_PENDING_FLOWS {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    }
     let (metadata, _) = discover(&state).await?;
     let client = CoreClient::from_provider_metadata(
         metadata,
@@ -109,14 +171,12 @@ pub async fn login(State(state): State<AppState>) -> Result<Response, ApiError> 
         .add_scope(Scope::new("profile".into()))
         .set_pkce_challenge(challenge)
         .url();
-    sqlx::query(
-        "INSERT INTO oidc_flows (state_hash, pkce_verifier, nonce, created_at, expires_at) \
-         VALUES ($1, $2, $3, now(), now() + interval '10 minutes')",
+    insert_flow(
+        &state.pool,
+        &hash(flow_state.secret()),
+        verifier.secret(),
+        nonce.secret(),
     )
-    .bind(hash(flow_state.secret()).as_slice())
-    .bind(verifier.secret())
-    .bind(nonce.secret())
-    .execute(&state.pool)
     .await?;
     let mut response = private_response(Redirect::to(url.as_str()).into_response());
     response.headers_mut().insert(

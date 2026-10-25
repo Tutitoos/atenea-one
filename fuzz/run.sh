@@ -11,7 +11,8 @@ IMAGE=atenea-fuzz
 
 docker build -q -t "$IMAGE" -f "$DIR/Dockerfile" "$DIR" >/dev/null
 
-# Dentro del contenedor: copia las semillas al corpus (sin pisar) y ejecuta cada objetivo.
+# Dentro del contenedor: reproduce primero las regresiones versionadas (-runs=0 solo las ejecuta),
+# copia las semillas al corpus (sin pisar) y ejecuta cada objetivo.
 INNER='
 set -u
 rc=0
@@ -19,6 +20,10 @@ targets="${TARGET:-$(cargo +nightly fuzz list)}"
 for t in $targets; do
   mkdir -p "corpus/$t" "artifacts/$t"
   [ -d "seeds/$t" ] && cp -n seeds/"$t"/* "corpus/$t"/ 2>/dev/null
+  if ls regressions/"$t"/* >/dev/null 2>&1; then
+    echo "=== $t: regresiones ==="
+    cargo +nightly fuzz run "$t" regressions/"$t"/* -- -runs=0 || rc=1
+  fi
   echo "=== $t (${SECS}s) ==="
   cargo +nightly fuzz run "$t" "corpus/$t" -- -max_total_time="$SECS" -print_final_stats=1 || rc=1
 done

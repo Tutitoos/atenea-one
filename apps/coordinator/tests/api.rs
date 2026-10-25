@@ -385,7 +385,7 @@ async fn rate_presence_nonce_body_and_poll_limits() {
         l.request("GET", "/v1/events?wait=0", Value::Null, 3)
             .await
             .0,
-        StatusCode::UNAUTHORIZED
+        StatusCode::TOO_MANY_REQUESTS
     );
     let l = Lab::new(Config {
         max_body_bytes: 1,
@@ -394,6 +394,188 @@ async fn rate_presence_nonce_body_and_poll_limits() {
     assert_eq!(l.announce(3, &[]).await.0, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+#[tokio::test]
+async fn device_nonce_quota_preserves_other_network() {
+    let l = Lab::new(Config {
+        max_nonces: 64,
+        ..Config::default()
+    });
+    assert_eq!(l.announce(3, &[]).await.0, StatusCode::OK);
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(4, &[], 1, 5, 1200, "192.0.2.2:443"),
+            4,
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for _ in 0..100 {
+        let status = l
+            .request("GET", "/v1/events?wait=0", Value::Null, 3)
+            .await
+            .0;
+        assert!(matches!(
+            status,
+            StatusCode::OK | StatusCode::TOO_MANY_REQUESTS
+        ));
+    }
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 4)
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn device_poll_quota_preserves_other_network_and_cancellation() {
+    let l = Arc::new(Lab::new(Config::default()));
+    assert_eq!(l.announce(3, &[]).await.0, StatusCode::OK);
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(4, &[], 1, 5, 1200, "192.0.2.2:443"),
+            4,
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut polls = Vec::new();
+    for _ in 0..2 {
+        let l = l.clone();
+        polls.push(tokio::spawn(async move {
+            l.request("GET", "/v1/events?wait=30", Value::Null, 3).await
+        }));
+        tokio::task::yield_now().await;
+    }
+    l.advance(2);
+    assert_eq!(l.announce(3, &[]).await.0, StatusCode::OK);
+    assert!(l.state.metrics_text().contains("atenea_long_polls 2\n"));
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 3)
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 4)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    for poll in polls {
+        poll.abort();
+        let _ = poll.await;
+    }
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 3)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert!(l.state.metrics_text().contains("atenea_long_polls 0\n"));
+}
+
+#[tokio::test]
+async fn network_nonce_quota_preserves_other_network() {
+    let l = Lab::new(Config {
+        max_nonces: 64,
+        ..Config::default()
+    });
+    for id in 3..=6 {
+        assert_eq!(l.announce(id, &[]).await.0, StatusCode::OK);
+    }
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(7, &[], 1, 5, 1200, "192.0.2.2:443"),
+            7
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut accepted = 4;
+    for id in 3..=6 {
+        for _ in 0..15 {
+            let status = l
+                .request("GET", "/v1/events?wait=0", Value::Null, id)
+                .await
+                .0;
+            if status == StatusCode::OK {
+                accepted += 1;
+            } else {
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
+    }
+    assert_eq!(accepted, 32);
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 7)
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn network_poll_quota_preserves_other_network() {
+    let l = Arc::new(Lab::new(Config {
+        max_long_polls: 16,
+        ..Config::default()
+    }));
+    for id in 3..=5 {
+        assert_eq!(l.announce(id, &[]).await.0, StatusCode::OK);
+    }
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(6, &[], 1, 5, 1200, "192.0.2.2:443"),
+            6
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut polls = Vec::new();
+    for id in [3, 3, 4, 4] {
+        let l = l.clone();
+        polls.push(tokio::spawn(async move {
+            l.request("GET", "/v1/events?wait=30", Value::Null, id)
+                .await
+        }));
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 5)
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 6)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    for poll in polls {
+        poll.abort();
+        let _ = poll.await;
+    }
+    assert_eq!(
+        l.request("GET", "/v1/events?wait=0", Value::Null, 5)
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
 #[tokio::test]
 async fn cancelled_poll_releases_capacity_and_sweeper_runs() {
     let l = Arc::new(Lab::new(Config {

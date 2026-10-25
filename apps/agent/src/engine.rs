@@ -25,8 +25,17 @@ const HANDSHAKE_RETRY: Duration = Duration::from_secs(5);
 const QUEUE_TTL: Duration = Duration::from_secs(10);
 /// Solo se renegocia una sesión que está cerca de caducar si hubo tráfico reciente.
 const ACTIVE_WINDOW: Duration = Duration::from_secs(15);
-/// Máximo de mensajes 1 procesados por segundo (cada uno cuesta operaciones DH).
+/// Mensajes 1 por segundo (cada uno cuesta un DH) admitidos de orígenes sin par asociado.
 const INIT_RATE: f64 = 50.0;
+/// Mensajes 1 por segundo y ráfaga de un mismo origen desconocido (IP; IPv6 por /64).
+const ORIGIN_INIT_RATE: f64 = 2.0;
+const ORIGIN_INIT_BURST: f64 = 5.0;
+/// Orígenes desconocidos recordados a la vez; con la tabla llena de orígenes activos se descarta.
+const MAX_ORIGINS: usize = 1024;
+const ORIGIN_IDLE: Duration = Duration::from_secs(10);
+/// Mensajes 1 por segundo y ráfaga reservados a cada par configurado (origen conocido o relay).
+const PEER_INIT_RATE: f64 = 10.0;
+const PEER_INIT_BURST: f64 = 20.0;
 /// Sondeo (hole punching): ventana y límite de envíos del mismo mensaje 1 (~1 s con jitter ±25 %).
 const PROBE_WINDOW: Duration = Duration::from_secs(10);
 const PROBE_MAX_ROUNDS: u32 = 12;
@@ -143,22 +152,48 @@ impl Counters {
     }
 }
 
+/// Cubo de tokens: `rate` por segundo con ráfaga máxima `burst`.
 struct Limiter {
     tokens: f64,
-    last: Instant,
+    last: Option<Instant>,
+    rate: f64,
+    burst: f64,
 }
 
 impl Limiter {
+    fn new(rate: f64, burst: f64) -> Limiter {
+        Limiter {
+            tokens: burst,
+            last: None,
+            rate,
+            burst,
+        }
+    }
+
     fn allow(&mut self, now: Instant) -> bool {
-        let dt = now.saturating_duration_since(self.last).as_secs_f64();
-        self.last = now;
-        self.tokens = (self.tokens + dt * INIT_RATE).min(INIT_RATE);
+        if let Some(last) = self.last {
+            let dt = now.saturating_duration_since(last).as_secs_f64();
+            self.tokens = (self.tokens + dt * self.rate).min(self.burst);
+        }
+        self.last = Some(now);
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             true
         } else {
             false
         }
+    }
+}
+
+/// Agrupa IPv6 por /64: un atacante con un prefijo no multiplica sus cubos.
+fn origin_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(a) => {
+            let mut o = a.octets();
+            o[8..].fill(0);
+            IpAddr::V6(o.into())
+        }
+        v4 => v4,
     }
 }
 
@@ -210,6 +245,8 @@ struct Peer {
     last_attempt: Option<Instant>,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
+    /// Cupo propio de mensajes 1: un tercero no puede gastar el de un par configurado.
+    init_limiter: Limiter,
     /// Último mensaje 1 aceptado y su respuesta, para repetirla ante retransmisiones idénticas.
     last_init_cache: Option<(Vec<u8>, Vec<u8>)>,
     last_handshake: Option<Instant>,
@@ -250,6 +287,7 @@ impl Peer {
             last_attempt: None,
             queued: None,
             last_init_ts: None,
+            init_limiter: Limiter::new(PEER_INIT_RATE, PEER_INIT_BURST),
             last_init_cache: None,
             last_handshake: None,
             last_data: None,
@@ -259,6 +297,15 @@ impl Peer {
             tx_bytes: 0,
             rx_bytes: 0,
         }
+    }
+
+    /// La IP es un origen conocido de este par (ruta confirmada o pistas); no está autenticada.
+    fn knows_ip(&self, ip: IpAddr) -> bool {
+        self.endpoint
+            .iter()
+            .chain(&self.cfg_endpoints)
+            .chain(&self.candidates)
+            .any(|a| a.ip() == ip)
     }
 
     /// ¿Hay forma de enviar por ese camino?
@@ -431,7 +478,11 @@ pub struct Engine {
     by_addr: HashMap<IpAddr, usize>,
     by_key: HashMap<[u8; 32], usize>,
     by_index: HashMap<u32, usize>,
+    /// Cubo global de mensajes 1 de orígenes sin par asociado.
     limiter: Limiter,
+    origins: HashMap<IpAddr, Limiter>,
+    /// Un mensaje 1 con marca anterior a este instante (arranque del agente) no se acepta.
+    init_floor: u64,
     counters: Counters,
     policy: Option<Policy>,
     /// Ventana (not_before, not_after) de la configuración vigente; sin ella todo se deniega.
@@ -443,7 +494,9 @@ pub struct Engine {
 
 impl Engine {
     /// Sin configuración: deniega todo hasta `apply_config` (fail-closed, ADR-002).
-    pub fn new(net: NetworkId, keys: StaticKeypair, now: Instant) -> Engine {
+    /// `init_floor`: marca (unix) mínima de un mensaje 1; el arranque la fija para que un mensaje 1
+    /// capturado antes de reiniciar no vuelva a aceptarse.
+    pub fn new(net: NetworkId, keys: StaticKeypair, init_floor: u64) -> Engine {
         Engine {
             net,
             keys,
@@ -454,10 +507,9 @@ impl Engine {
             by_addr: HashMap::new(),
             by_key: HashMap::new(),
             by_index: HashMap::new(),
-            limiter: Limiter {
-                tokens: INIT_RATE,
-                last: now,
-            },
+            limiter: Limiter::new(INIT_RATE, INIT_RATE),
+            origins: HashMap::new(),
+            init_floor,
             counters: Counters::default(),
             policy: None,
             lease: None,
@@ -465,6 +517,23 @@ impl Engine {
             last_config_error: None,
             nat: None,
         }
+    }
+
+    /// Cupo de un origen desconocido; la tabla está acotada y se purga de orígenes inactivos.
+    fn origin_allow(&mut self, key: IpAddr, now: Instant) -> bool {
+        if !self.origins.contains_key(&key) && self.origins.len() >= MAX_ORIGINS {
+            self.origins.retain(|_, l| {
+                l.last
+                    .is_some_and(|t| now.saturating_duration_since(t) < ORIGIN_IDLE)
+            });
+            if self.origins.len() >= MAX_ORIGINS {
+                return false;
+            }
+        }
+        self.origins
+            .entry(key)
+            .or_insert_with(|| Limiter::new(ORIGIN_INIT_RATE, ORIGIN_INIT_BURST))
+            .allow(now)
     }
 
     /// Aplica una configuración ya verificada y persistida. Conserva las sesiones de los peers cuya
@@ -514,6 +583,10 @@ impl Engine {
     pub fn note_config_error(&mut self, code: &'static str) {
         self.counters.inc("config_rejected");
         self.last_config_error = Some(code);
+    }
+
+    pub fn knows_peer(&self, id: &DeviceId) -> bool {
+        self.peers.iter().any(|p| &p.device_id == id)
     }
 
     /// Dentro de `[not_before - 30, not_after + 30)` (ADR-002).
@@ -567,6 +640,17 @@ impl Engine {
             if i != 0 && !self.by_index.contains_key(&i) {
                 return i;
             }
+        }
+    }
+
+    /// Un paquete rechazado por el backend se descarta; los fallos del dispositivo se propagan.
+    pub fn on_tun_error(&mut self, error: std::io::Error) -> std::io::Result<Vec<Out>> {
+        match error.kind() {
+            std::io::ErrorKind::InvalidData | std::io::ErrorKind::InvalidInput => {
+                self.counters.inc("tx_malformed");
+                Ok(Vec::new())
+            }
+            _ => Err(error),
         }
     }
 
@@ -792,7 +876,19 @@ impl Engine {
         unix: u64,
         out: &mut Vec<Out>,
     ) {
-        if !self.limiter.allow(now) {
+        let known = match (via, hint) {
+            (Via::Relay(_), Some(h)) => self.peers.iter().position(|p| p.device_id == *h),
+            (Via::Direct(from), _) => self.peers.iter().position(|p| p.knows_ip(from.ip())),
+            _ => None,
+        };
+        let allowed = match (known, via) {
+            (Some(pi), _) => self.peers[pi].init_limiter.allow(now),
+            (None, Via::Direct(from)) => {
+                self.origin_allow(origin_key(from.ip()), now) && self.limiter.allow(now)
+            }
+            (None, _) => self.limiter.allow(now),
+        };
+        if !allowed {
             self.counters.inc("rx_init_ratelimited");
             return;
         }
@@ -807,6 +903,10 @@ impl Engine {
         };
         if hint.is_some_and(|h| *h != self.peers[pi].device_id) {
             self.counters.inc("rx_relay_peer_mismatch");
+            return;
+        }
+        if inc.timestamp < self.init_floor {
+            self.counters.inc("rx_init_stale");
             return;
         }
         let index = self.fresh_index();
@@ -870,20 +970,30 @@ impl Engine {
             self.counters.inc("rx_relay_peer_mismatch");
             return;
         }
-        if peer.pending.as_ref().map(|(p, _)| p.local_index()) != Some(receiver_index) {
+        let Some((pending, _)) = peer.pending.as_mut() else {
+            self.counters.inc("rx_resp_unknown");
+            return;
+        };
+        if pending.local_index() != receiver_index {
             self.counters.inc("rx_resp_unknown");
             return;
         }
-        let (pending, _) = peer.pending.take().expect("comprobado arriba");
+        // Solo un mensaje 2 autenticado consume el handshake pendiente.
         let Ok(session) = pending.finish(noise, sender_index, now) else {
             self.counters.inc("rx_resp_invalid");
             return;
         };
+        peer.pending = None;
         peer.previous = peer.current.take();
         peer.current = Some(session);
         // Camino confirmado: la respuesta solo puede producirla el par (Noise IK autenticado).
         let kind = via.kind();
-        if let Via::Direct(from) = via {
+        if let Via::Direct(from) = via
+            && !self
+                .tunnel_only
+                .iter()
+                .any(|t| prefix_contains(t, &from.ip()))
+        {
             peer.endpoint = Some(from);
         }
         peer.note_rx(kind, now);
@@ -971,6 +1081,10 @@ impl Engine {
         let kind = via.kind();
         if let Via::Direct(from) = via
             && peer.endpoint != Some(from)
+            && !self
+                .tunnel_only
+                .iter()
+                .any(|t| prefix_contains(t, &from.ip()))
         {
             peer.endpoint = Some(from);
             self.counters.inc("endpoint_updates");
@@ -1452,6 +1566,32 @@ mod tests {
     const A_EP: &str = "192.0.2.1:51820";
     const B_EP: &str = "192.0.2.2:51820";
 
+    #[test]
+    fn malformed_tun_read_is_counted_without_stopping_following_traffic() {
+        let mut l = lab();
+        for kind in [
+            std::io::ErrorKind::InvalidData,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            assert!(
+                l.a.on_tun_error(std::io::Error::from(kind))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_eq!(l.a.counters.0["tx_malformed"], 2);
+        let out = l.a.on_tun(&v4(1, 2, b"despues"), l.now, l.unix);
+        let (_, received) = pump(&mut l, out, vec![]);
+        assert_eq!(received.len(), 1);
+        assert_eq!(
+            l.a.on_tun_error(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+                .err()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+    }
+
     use atenea_identity::{AdvertisedRoute, DnsConfig, Peer as CfgPeer, Rule, Selector};
 
     const NET: NetworkId = [7; 16];
@@ -1521,8 +1661,8 @@ mod tests {
         }
     }
 
-    fn mk(cfg: &DeviceConfig, keys: StaticKeypair, now: Instant) -> Engine {
-        let mut e = Engine::new(NET, keys, now);
+    fn mk(cfg: &DeviceConfig, keys: StaticKeypair, _now: Instant) -> Engine {
+        let mut e = Engine::new(NET, keys, 0);
         e.apply_config(cfg);
         e
     }
@@ -2015,7 +2155,7 @@ mod tests {
         pump(&mut l, out, vec![]);
         let first_index = l.a.peers[0].current.as_ref().unwrap().remote_index;
         // A "reinicia": estado en memoria nuevo, mismas claves.
-        let keys = StaticKeypair::from_private(*l.a.keys.private_bytes());
+        let keys = StaticKeypair::from_private(l.a.keys.private_bytes());
         l.a = mk(&l.cfg_a, keys, l.now);
         l.unix += 2; // timestamp creciente para B
         let out = l.a.on_tun(&v4(1, 2, b"despues"), l.now, l.unix);
@@ -2087,6 +2227,90 @@ mod tests {
         assert_eq!(l.b.peers[0].endpoint, Some(ep("203.0.113.7:9")));
     }
 
+    #[test]
+    fn roaming_never_adopts_an_endpoint_inside_the_tunnel() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let out = l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix);
+        let Out::Udp(_, dg) = &out[0] else { panic!() };
+        l.b.on_udp(ep("[fd77::99]:9"), dg, l.now, l.unix);
+        assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
+    }
+
+    fn garbage_init(sender: u32) -> Vec<u8> {
+        proto::encode_init(sender, &[0u8; proto::NOISE_MSG1_LEN]).unwrap()
+    }
+
+    #[test]
+    fn spoofed_init_flood_does_not_stop_a_configured_peer() {
+        let mut l = lab();
+        for i in 0..400u32 {
+            let from = SocketAddr::new(
+                IpAddr::from([198, 51, (i / 250) as u8, (i % 250) as u8 + 1]),
+                9,
+            );
+            l.b.on_udp(from, &garbage_init(i), l.now, l.unix);
+        }
+        assert!(l.b.counters.0["rx_init_ratelimited"] >= 300);
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b.len(), 1);
+    }
+
+    #[test]
+    fn one_origin_cannot_exceed_its_own_quota() {
+        let mut l = lab();
+        let from = ep("198.51.100.9:9");
+        for i in 0..50 {
+            l.b.on_udp(from, &garbage_init(i), l.now, l.unix);
+        }
+        assert_eq!(l.b.counters.0["rx_init_invalid"], 5);
+        assert_eq!(l.b.counters.0["rx_init_ratelimited"], 45);
+    }
+
+    #[test]
+    fn forged_responses_do_not_cancel_a_pending_handshake() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        let index = l.a.peers[0].pending.as_ref().unwrap().0.local_index();
+        let forged = proto::encode_resp(9, index, &[0u8; proto::NOISE_MSG2_LEN]).unwrap();
+        assert!(l.a.on_udp(ep(B_EP), &forged, l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["rx_resp_invalid"], 1);
+        assert!(l.a.peers[0].pending.is_some());
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b.len(), 1);
+    }
+
+    #[test]
+    fn init_older_than_the_floor_is_not_accepted() {
+        let mut l = lab();
+        l.b.init_floor = l.unix;
+        let (_, old) =
+            crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 3, l.unix - 1).unwrap();
+        assert!(
+            l.b.on_udp(
+                ep(A_EP),
+                &proto::encode_init(3, &old).unwrap(),
+                l.now,
+                l.unix
+            )
+            .is_empty()
+        );
+        assert_eq!(l.b.counters.0["rx_init_stale"], 1);
+        let (_, new) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 4, l.unix).unwrap();
+        assert_eq!(
+            l.b.on_udp(
+                ep(A_EP),
+                &proto::encode_init(4, &new).unwrap(),
+                l.now,
+                l.unix
+            )
+            .len(),
+            1
+        );
+    }
+
     fn udp_to(dport: u16) -> Vec<u8> {
         let mut d = vec![0x30, 0x39];
         d.extend_from_slice(&dport.to_be_bytes());
@@ -2134,7 +2358,7 @@ mod tests {
 
     #[test]
     fn no_configuration_means_no_traffic() {
-        let mut e = Engine::new(NET, StaticKeypair::generate(), Instant::now());
+        let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
         assert!(
             e.on_tun(&v4(1, 2, b"x"), Instant::now(), 1_000_000)
                 .is_empty()

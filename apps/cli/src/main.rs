@@ -54,6 +54,9 @@ enum Cmd {
         dir: PathBuf,
         #[arg(long)]
         name: String,
+        /// Solo laboratorio: acepta `http://` hacia un host que no sea loopback.
+        #[arg(long)]
+        insecure_http: bool,
     },
     /// Certifica una clave de emisor existente para otra red.
     IssuerCert(issue::IssuerCertArgs),
@@ -146,7 +149,8 @@ fn run(cmd: Cmd) -> Result<(), String> {
             token,
             dir,
             name,
-        } => enroll::enroll(&url, &token, &dir, &name),
+            insecure_http,
+        } => enroll::enroll(&url, &token, &dir, &name, insecure_http),
         Cmd::IssuerCert(args) => issue::issuer_cert(args),
         Cmd::AgentConfig(args) => enroll::agent_config(args),
         Cmd::RootInit { out } => issue::root_init(&out),

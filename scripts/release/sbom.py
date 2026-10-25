@@ -33,11 +33,49 @@ def validate(bom):
     assert bom["metadata"]["component"]["version"]
 
 
-def rust(metadata, lock):
+def production(data, roots):
+    """Ids alcanzables desde `roots` (nombres de miembros del workspace) sin aristas solo de desarrollo."""
+    nodes = {n["id"]: n for n in data["resolve"]["nodes"]}
+    members = {p["id"]: p["name"] for p in data["packages"] if p["id"] in set(data["workspace_members"])}
+    start = [i for i, name in members.items() if not roots or name in roots]
+    assert start and (not roots or {members[i] for i in start} == set(roots)), "Raíz desconocida"
+    seen, todo = set(start), list(start)
+    while todo:
+        for dep in nodes[todo.pop()]["deps"]:
+            if dep["pkg"] not in seen and any(k["kind"] != "dev" for k in dep["dep_kinds"]):
+                seen.add(dep["pkg"])
+                todo.append(dep["pkg"])
+    return seen, nodes
+
+
+def wintun(script):
+    """Wintun se descarga al instalar: versión y SHA-256 salen del mismo script que lo verifica."""
+    text = Path(script).read_text()
+    version = re.search(r"wintun-(\d+\.\d+(?:\.\d+)?)\.zip'", text).group(1)
+    sha = re.search(r"\$sha256 = '([0-9a-f]{64})'", text).group(1)
+    return [component("wintun", version, "wintun:" + version, hashes=[{"alg": "SHA-256", "content": sha}],
+                      licenses=[{"license": {"name": "Wintun (excepción de controlador, ver docs/architecture/dependencies.md)"}}])]
+
+
+def deb_depends(script):
+    """Dependencias de ejecución declaradas en el control del .deb (sin versión resuelta)."""
+    line = re.search(r"^Depends: (.+)$", Path(script).read_text(), re.M).group(1)
+    out = []
+    for item in line.split(","):
+        m = re.fullmatch(r"\s*([a-z0-9][a-z0-9.+-]*)\s*(?:\((.+)\))?\s*", item)
+        assert m, "Depends ilegible: " + item
+        out.append(component(m.group(1), m.group(2) or "unversioned", "deb-depends:" + m.group(1)))
+    return out
+
+
+def rust(metadata, lock, roots=(), wintun_script=None, deb_script=None):
     data = json.loads(Path(metadata).read_text())
     checksums = {(p["name"], p["version"]): p.get("checksum") for p in tomllib.loads(Path(lock).read_text())["package"]}
+    keep, nodes = production(data, set(roots))
     components = []
     for p in data["packages"]:
+        if p["id"] not in keep:
+            continue
         c = component(p["name"], p["version"], p["id"])
         checksum = checksums.get((p["name"], p["version"]))
         if checksum:
@@ -45,7 +83,11 @@ def rust(metadata, lock):
         if p.get("license"):
             c["licenses"] = [{"expression": p["license"]}]
         components.append(c)
-    deps = [{"ref": n["id"], "dependsOn": n["dependencies"]} for n in data["resolve"]["nodes"]]
+    deps = [{"ref": i, "dependsOn": sorted(d["pkg"] for d in nodes[i]["deps"] if d["pkg"] in keep and any(k["kind"] != "dev" for k in d["dep_kinds"]))} for i in sorted(keep)]
+    if wintun_script:
+        components += wintun(wintun_script)
+    if deb_script:
+        components += deb_depends(deb_script)
     return components, deps
 
 
@@ -133,16 +175,19 @@ def image(reference):
         subprocess.run(["docker", "rm", container], check=True, stdout=subprocess.DEVNULL)
 
 
-def emit(kind, source, output, version, commit, lock="Cargo.lock"):
+def emit(kind, source, output, version, commit, lock="Cargo.lock", roots=(), target=None, wintun_script=None, deb_script=None):
+    properties = [{"name": "atenea:commit", "value": commit}]
     if kind == "rust":
-        components, dependencies = rust(source, lock)
+        components, dependencies = rust(source, lock, roots, wintun_script, deb_script)
+        if target:
+            properties.append({"name": "atenea:target", "value": target})
     elif kind == "panel":
         components, dependencies = panel(source)
     else:
         components, dependencies = image(source)
     bom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
            "metadata": {"component": component("atenea-" + kind, version, "atenea:" + kind, type="application"),
-                        "properties": [{"name": "atenea:commit", "value": commit}]},
+                        "properties": properties},
            "components": sorted(components, key=lambda c: c["bom-ref"]), "dependencies": dependencies}
     validate(bom)
     Path(output).write_text(json.dumps(bom, sort_keys=True, indent=2) + "\n")
@@ -156,5 +201,9 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--lock", default="Cargo.lock")
+    parser.add_argument("--root", action="append", default=[], help="miembro del workspace que se distribuye (repetible)")
+    parser.add_argument("--target", help="triple del `cargo metadata --filter-platform`")
+    parser.add_argument("--wintun", help="get-wintun.ps1: añade Wintun como componente")
+    parser.add_argument("--deb-depends", help="packaging/deb/build.sh: añade las dependencias del .deb")
     args = parser.parse_args()
-    emit(args.kind, args.source, args.output, args.version, args.commit, args.lock)
+    emit(args.kind, args.source, args.output, args.version, args.commit, args.lock, args.root, args.target, args.wintun, args.deb_depends)

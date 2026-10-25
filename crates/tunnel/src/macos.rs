@@ -204,5 +204,10 @@ mod tests {
         v6[5] = 1;
         assert!(family(&v6).is_err());
         assert!(family(&[]).is_err());
+        // El agente descarta estos paquetes por su tipo: solo `InvalidData`.
+        assert_eq!(
+            normalize(2u32.to_le_bytes(), &v4).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 }

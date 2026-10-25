@@ -42,6 +42,8 @@ En el panel, un administrador debe:
 
 La retirada de una declaración elimina la petición; rechazar una ruta aprobada la revoca. Esperar la próxima sincronización y comprobar que desaparece en los clientes; un cliente desconectado conserva su última configuración hasta que caduque el lease. No hay tránsito de tráfico entre pares a través del router.
 
+La comprobación de conflictos ocurre al aplicar la configuración o cambiar los endpoints resueltos, no continuamente. Tras cambiar de LAN, revisar de nuevo las rutas: un solape nuevo puede persistir hasta que se reaplique la configuración. Si es necesario, parar y arrancar el agente para volver a comprobarlas antes de usar la subred.
+
 ## 3. Elegir SNAT o rutas de retorno (ADR-007 §3)
 
 | Elección al aprobar | Qué ve la LAN | Configuración necesaria |

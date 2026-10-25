@@ -9,10 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::{
-    net::{IpAddr, SocketAddr},
-    time::Instant,
-};
+use std::net::SocketAddr;
 use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct Token {
@@ -25,7 +22,7 @@ pub async fn token(
     Path(net): Path<Uuid>,
     h: HeaderMap,
     Json(b): Json<Token>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<impl axum::response::IntoResponse, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
     if !(60..=86400).contains(&b.ttl_secs) {
         return Err(ApiError::bad("invalid_ttl"));
@@ -53,6 +50,10 @@ pub async fn token(
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
+        [
+            ("cache-control", "no-store"),
+            ("x-content-type-options", "nosniff"),
+        ],
         Json(
             json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)}}),
         ),
@@ -67,22 +68,11 @@ pub struct Enrollment {
 pub async fn enroll(
     State(s): State<AppState>,
     source: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+    h: HeaderMap,
     Json(b): Json<Enrollment>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let ip = source.map_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), |a| a.0.0.ip());
-    {
-        let mut rates = s.rate.lock().map_err(|_| ApiError::internal())?;
-        let limit = f64::from(s.config.enroll_per_minute);
-        let now = Instant::now();
-        rates.retain(|_, (_, at)| now.duration_since(*at).as_secs() < 120);
-        let entry = rates.entry(ip).or_insert((limit, now));
-        entry.0 = (entry.0 + now.duration_since(entry.1).as_secs_f64() * limit / 60.).min(limit);
-        entry.1 = now;
-        if entry.0 < 1. {
-            return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
-        }
-        entry.0 -= 1.;
-    }
+    let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
+    crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
     crate::orgs::name(&b.name)?;
     let bytes = hex::decode(&b.bundle).map_err(|_| ApiError::bad("invalid_bundle"))?;
     let bundle = atenea_identity::DeviceBundle::parse(&bytes)
@@ -214,14 +204,26 @@ pub async fn revoke(
         .execute(&mut *tx)
         .await?;
     let result = sqlx::query(
-        "UPDATE devices SET status='revoked',revoked_at=now() WHERE id=$1 AND network_id=$2",
+        "UPDATE devices SET status='revoked',revoked_at=now() WHERE id=$1 AND network_id=$2 AND status<>'revoked'",
     )
     .bind(dev)
     .bind(net)
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
-        return Err(ApiError::not_found());
+        // Idempotente: ya revocado no reescribe revoked_at ni duplica auditoría.
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1 AND network_id=$2)",
+        )
+        .bind(dev)
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+        return if exists {
+            Ok(Json(json!({"device_id":dev,"status":"revoked"})))
+        } else {
+            Err(ApiError::not_found())
+        };
     }
     sqlx::query("DELETE FROM ip_allocations WHERE device_id=$1")
         .bind(dev)
@@ -257,17 +259,18 @@ pub async fn update(
     if let Some(n) = &b.name {
         crate::orgs::name(n)?;
     }
-    if b.endpoints
-        .as_ref()
-        .is_some_and(|e| e.len() > 4 || e.iter().any(|e| e.port() == 0))
-    {
-        return Err(ApiError::bad("invalid_endpoints"));
-    }
     let endpoints = b.endpoints.map(|mut e| {
         e.sort();
         e.dedup();
-        json!(e)
+        e
     });
+    if endpoints.as_ref().is_some_and(|e| {
+        e.len() > 4
+            || atenea_nat_traversal::sanitize_candidates(e.iter().copied(), 4).len() != e.len()
+    }) {
+        return Err(ApiError::bad("invalid_endpoints"));
+    }
+    let endpoints = endpoints.map(|e| json!(e));
     let mut tx = s.pool.begin().await?;
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
         .bind(net)

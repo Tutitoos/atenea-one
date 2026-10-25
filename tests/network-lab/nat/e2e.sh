@@ -64,6 +64,7 @@ trust_anchor = "$ROOT_PUB"
 
 [coordinator]
 url = "$3"
+insecure_http = true
 stun = ["$4:3478", "$4:3479"]
 EOF
 }

@@ -83,14 +83,14 @@ enroll() {  # enroll <ns>: crea claves, token, enrola; imprime el device_id (UUI
   atenea device-init --dir $LAB/$n > $LAB/$n.info
   api POST /api/v1/networks/$NETID/enrollment-tokens --json '{"ttl_secs":600}' > $LAB/$n.token.json
   python3 -c "import json;print(json.dumps(json.load(open('$LAB/$n.token.json'))['join']))" > $LAB/$n.join.json
-  atenea enroll --url $CP_URL --token "$(python3 -c "import json;print(json.load(open('$LAB/$n.token.json'))['token'])")" --dir $LAB/$n --name host-$n > $LAB/$n.enroll.txt 2>&1
+  atenea enroll --url $CP_URL --token "$(python3 -c "import json;print(json.load(open('$LAB/$n.token.json'))['token'])")" --dir $LAB/$n --name host-$n --insecure-http > $LAB/$n.enroll.txt 2>&1
 }
 enroll a; enroll b
 DEV_A=$(uuid_of "$(sed -n 's/^device_id=//p' $LAB/a.info)")
 DEV_B=$(uuid_of "$(sed -n 's/^device_id=//p' $LAB/b.info)")
 grep -q pending $LAB/a.enroll.txt && ok "A enrolado en estado pending" || { bad "A no queda pending"; cat $LAB/a.enroll.txt; }
 TOKEN_A=$(python3 -c "import json;print(json.load(open('$LAB/a.token.json'))['token'])")
-check "un token de un solo uso no se puede reutilizar" bash -c "! atenea enroll --url $CP_URL --token '$TOKEN_A' --dir $LAB/a --name otra"
+check "un token de un solo uso no se puede reutilizar" bash -c "! atenea enroll --url $CP_URL --token '$TOKEN_A' --dir $LAB/a --name otra --insecure-http"
 FP_A=$(sed -n 's/^fingerprint=//p' $LAB/a.info)
 check "el inventario muestra a A con su huella ($FP_A)" bash -c "python3 $CP api GET /api/v1/networks/$NETID/devices | grep -q '$FP_A'"
 for D in $DEV_A $DEV_B; do api POST /api/v1/networks/$NETID/devices/$D/approve > /dev/null && ok "dispositivo $D aprobado (IPv4+IPv6 asignadas)" || bad "no se aprobó $D"; done
@@ -102,7 +102,7 @@ api POST /api/v1/networks/$NETID/policies --json "{\"src\":{\"kind\":\"device\",
 
 section "Agentes: configuración generada, sincronización y túnel"
 for n in a b; do
-  atenea agent-config --join "$(cat $LAB/$n.join.json)" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock
+  atenea agent-config --join "$(cat $LAB/$n.join.json)" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock --insecure-http
   echo "interval_secs = 10" >> $LAB/$n.toml
 done
 ip netns exec a atenea up --config $LAB/a.toml --log $LAB/a.log >/dev/null && ip netns exec b atenea up --config $LAB/b.toml --log $LAB/b.log >/dev/null && ok "agentes arrancados" || { bad "arranque"; cat $LAB/a.log $LAB/b.log; exit 1; }

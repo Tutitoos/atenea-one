@@ -105,14 +105,21 @@ for name in ('a', 'b'):
 devices = api(net + '/devices')
 ip_b = next(d['ipv4'] for d in devices if d['name'] == 'host-b')
 
+def field_or_none(agent, dotted):
+    # Mientras el agente no ha cargado su configuración la lista de pares está vacía.
+    try:
+        return lab('field', agent, dotted)
+    except RuntimeError:
+        return None
+
 def wait_path(path):
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         lab('ping', 'a', ip_b, check=False)
-        if path == lab('field', 'a', 'peers.0.path') and path == lab('field', 'b', 'peers.0.path') and lab('ping', 'a', ip_b, check=False):
+        if path == field_or_none('a', 'peers.0.path') and path == field_or_none('b', 'peers.0.path') and lab('ping', 'a', ip_b, check=False):
             return
         time.sleep(3)
-    raise AssertionError(f'No se alcanzó {path}: ' + lab('field', 'a', 'peers.0.path'))
+    raise AssertionError(f'No se alcanzó {path}: ' + str(field_or_none('a', 'peers.0.path')))
 
 # El simulacro reutiliza el alta real sin repetir el recorrido destructivo de revocación.
 if __import__('os').environ.get('ATENEA_STACK_DRILLS') == '1':

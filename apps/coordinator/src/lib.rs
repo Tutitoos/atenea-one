@@ -4,7 +4,7 @@ pub mod config;
 mod presence;
 mod rate;
 pub mod stun;
-use atenea_identity::{DeviceId, PublicKey};
+use atenea_identity::{DeviceId, NetworkId, PublicKey};
 use axum::{
     Json, Router,
     body::{Bytes, to_bytes},
@@ -65,6 +65,8 @@ struct Memory {
     relay_pair: rate::Window<(DeviceId, DeviceId)>,
     relay_device: rate::Window<DeviceId>,
     relay_tokens: rate::Window<(DeviceId, DeviceId)>,
+    polls_device: HashMap<DeviceId, usize>,
+    polls_network: HashMap<NetworkId, usize>,
     seq: u64,
 }
 pub struct Coordinator {
@@ -75,6 +77,28 @@ pub struct Coordinator {
     polls: Semaphore,
     relay_signer: Option<atenea_identity::SigningKey>,
     pub metrics: atenea_observability::Metrics,
+}
+struct PollGuard {
+    state: Arc<Coordinator>,
+    device: DeviceId,
+    network: NetworkId,
+}
+impl Drop for PollGuard {
+    fn drop(&mut self) {
+        let mut m = self.state.memory.lock().expect("memoria");
+        if let Some(count) = m.polls_device.get_mut(&self.device) {
+            *count -= 1;
+            if *count == 0 {
+                m.polls_device.remove(&self.device);
+            }
+        }
+        if let Some(count) = m.polls_network.get_mut(&self.network) {
+            *count -= 1;
+            if *count == 0 {
+                m.polls_network.remove(&self.network);
+            }
+        }
+    }
 }
 impl Coordinator {
     pub fn new(config: Config) -> Result<Arc<Self>, &'static str> {
@@ -105,6 +129,8 @@ impl Coordinator {
                 relay_device: rate::Window::new(config.max_rate_entries, 60, 10),
                 // Cada emisión genera dos tokens; el tope compartido es cuatro por minuto.
                 relay_tokens: rate::Window::new(config.max_rate_entries, 60, 2),
+                polls_device: HashMap::new(),
+                polls_network: HashMap::new(),
                 seq: 0,
             }),
             polls: Semaphore::new(config.max_long_polls),
@@ -130,9 +156,10 @@ impl Coordinator {
     pub fn metrics_text(&self) -> String {
         self.sweep();
         format!(
-            "{}# TYPE atenea_presences gauge\natenea_presences {}\n",
+            "{}# TYPE atenea_presences gauge\natenea_presences {}\n# TYPE atenea_long_polls gauge\natenea_long_polls {}\n",
             self.metrics.encode(),
-            self.memory.lock().expect("memoria").presences.len()
+            self.memory.lock().expect("memoria").presences.len(),
+            self.config.max_long_polls - self.polls.available_permits()
         )
     }
 }
@@ -199,8 +226,14 @@ async fn announce(
     }
     let candidates = atenea_nat_traversal::sanitize_candidates(data.candidates, 8);
     let mut m = s.memory.lock().expect("memoria");
-    m.nonces
-        .verify(&req, &config.identity_pubkey, &method, &uri, &bytes, now)?;
+    m.nonces.verify(
+        &req,
+        config.network_id,
+        &config.identity_pubkey,
+        (&method, &uri),
+        &bytes,
+        now,
+    )?;
     if !m.announce.allow(
         req.device_id,
         now,
@@ -246,13 +279,15 @@ fn authenticate(
 ) -> Result<DeviceId, ApiError> {
     let req = auth::parse(headers, now)?;
     presence::sweep(&mut m.presences, now);
-    let key = m
+    let config = &m
         .presences
         .get(&req.device_id)
         .ok_or(ApiError(StatusCode::CONFLICT, "not_announced"))?
-        .config
-        .identity_pubkey;
-    m.nonces.verify(&req, &key, method, uri, bytes, now)?;
+        .config;
+    let key = config.identity_pubkey;
+    let network = config.network_id;
+    m.nonces
+        .verify(&req, network, &key, (method, uri), bytes, now)?;
     Ok(req.device_id)
 }
 #[derive(Deserialize)]
@@ -400,11 +435,26 @@ async fn events(
             .filter(|n| *n <= 30)
             .ok_or(ApiError(StatusCode::BAD_REQUEST, "invalid_request"))?,
     };
-    let _permit = s.polls.try_acquire().map_err(|_| ApiError::rate())?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(wait);
-    let id = {
+    let (id, _permit, _quota) = {
         let mut m = s.memory.lock().expect("memoria");
-        authenticate(&mut m, &headers, &method, &uri, &bytes, (s.clock)())?
+        let id = authenticate(&mut m, &headers, &method, &uri, &bytes, (s.clock)())?;
+        let network = m.presences.get(&id).expect("autenticado").config.network_id;
+        if m.polls_device.get(&id).copied().unwrap_or(0) >= 2
+            || m.polls_network.get(&network).copied().unwrap_or(0)
+                >= s.config.max_long_polls.div_ceil(4).max(1)
+        {
+            return Err(ApiError::rate());
+        }
+        let permit = s.polls.try_acquire().map_err(|_| ApiError::rate())?;
+        *m.polls_device.entry(id).or_default() += 1;
+        *m.polls_network.entry(network).or_default() += 1;
+        let quota = PollGuard {
+            state: s.clone(),
+            device: id,
+            network,
+        };
+        (id, permit, quota)
     };
     loop {
         let notify = {

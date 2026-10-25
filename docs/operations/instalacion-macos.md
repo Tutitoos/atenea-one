@@ -24,6 +24,8 @@ sudo installer -pkg target/macos-package/atenea-client-unsigned.pkg -target /
 
 Sin `/Library/Application Support/Atenea/agent.toml`, el postinstall no registra ni arranca el demonio. `RunAtLoad` es falso; `KeepAlive/PathState` solo mantiene el servicio cuando existe ese fichero. El lanzador vuelve a comprobarlo, crea `/var/run/atenea` (0700 root:wheel) y limpia resolutores propios antes de ejecutar el agente. El plist ejecuta como root:wheel y conserva stdout/stderr en `/var/log/atenea-agent.log` (administrar rotación de logs con las herramientas del sistema). No sustituye una configuración firmada por valores de ejemplo.
 
+Los ejecutables se instalan en `/Library/Atenea/bin` (root:wheel 0755; `/etc/paths.d/atenea` lo añade al `PATH` de las shells nuevas), nunca bajo `/usr/local`: ahí el directorio puede pertenecer al usuario administrador (Homebrew en Intel) y quien pueda escribirlo sustituiría un binario que launchd ejecuta como root. El lanzador exige además, antes de ejecutar, que `/Library`, `/Library/Atenea`, `bin` y los dos ficheros pertenezcan a root y no sean escribibles por grupo ni otros (si no, termina con error y no arranca el agente). Una instalación anterior en `/usr/local/bin` no se limpia sola: eliminar `atenea`, `atenea-agent`, `atenea-uninstall.sh` y `/usr/local/libexec/atenea-launchd.sh` a mano tras actualizar.
+
 Crear las claves con `atenea device-init` en un directorio privado y obtener una configuración firmada vigente del administrador de red. Un TOML local orientativo (sustituir identificadores/ancla por los emitidos):
 
 ```toml
@@ -62,10 +64,12 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 
 `cleanup` puede ejecutarse después de SIGKILL. No destruye interfaces ajenas. Para parar sin que KeepAlive lo reinicie, usar `launchctl bootout system/one.atenea.agent`; una orden `atenea down` aislada permite el reinicio de launchd mientras siga existiendo la configuración.
 
+**Residual tras una caída sin limpieza** (SIGKILL, pánico, corte de energía): `/etc/resolver/<dominio>` es global del sistema, no se retira con la utun, y sigue apuntando a IPs del túnel hasta que launchd relanza el lanzador (`ThrottleInterval` de 10 s mientras exista `agent.toml`), que ejecuta `cleanup` antes de `run`. En ese intervalo, en una red no confiable, las consultas de esos dominios pueden salir por el adaptador físico. Si el agente no se relanza (configuración retirada, `bootout`, ruta del lanzador rechazada), ejecutar `cleanup` a mano. Un fichero ajeno o no UTF-8 en `/etc/resolver` no impide la limpieza: solo se retiran los que comienzan por la marca de Atenea y se leen únicamente esos primeros bytes.
+
 ## Desinstalación
 
 ```sh
-sudo /usr/local/bin/atenea-uninstall.sh
+sudo /Library/Atenea/bin/atenea-uninstall.sh
 ```
 
 Descarga launchd, limpia resolutores propios, elimina binarios/plist/sockets y olvida el recibo `one.atenea.client`. **Conserva claves, configuración, estado antirrollback y logs** deliberadamente. El administrador puede eliminarlos manualmente solo cuando retire la identidad del dispositivo; no se borran secretos ni el estado por una actualización o una desinstalación accidental.

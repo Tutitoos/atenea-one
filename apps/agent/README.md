@@ -23,13 +23,27 @@ identity_key_file = "credential:identity"
 
 `credential:nombre` busca el fichero dentro de `$CREDENTIALS_DIRECTORY` de systemd (`LoadCredential` o `LoadCredentialEncrypted`). El nombre no puede contener `/` ni `..`; falta de directorio, clave ilegible o permisos de grupo/otros producen un error. También se admiten los ficheros privados 0600 habituales. La interfaz admite letras ASCII, números y `_`, hasta 15 caracteres: se usa como identificador de la tabla nftables.
 
+## Transporte, estado y recuperación
+
+`sync.url` y `coordinator.url` exigen `https`; `http` solo se admite hacia loopback o con `insecure_http = true` en esa sección (laboratorio; `atenea enroll` y `agent-config` aceptan `--insecure-http` con el mismo alcance). `sync` solo sustituye `config_file` con una configuración que verifica (firma, serial, versión y reloj) contra el estado vigente.
+
+El estado anti-rollback (`state.bin`) se escribe en un temporal exclusivo y el directorio de estado se crea 0700; se lee sin seguir enlaces simbólicos y solo si es de root o del dueño del directorio. La hora máxima observada avanza solo hasta el fin del lease de la última configuración verificada, y el estado comprometido nunca retrocede en disco. Tras un reloj que estuvo adelantado, con el agente parado:
+
+```sh
+atenea-agent reset-clock --config /etc/atenea/agent.toml
+```
+
+Solo borra la hora máxima observada; conserva versión, serial y anclas.
+
+Las concesiones de relay del coordinator se aceptan solo para pares de la configuración, como mucho cuatro relays por concesión y cuatro resoluciones en vuelo; cada dirección se resuelve con plazo y el cliente conecta a la IP verificada (se descartan loopback, enlace local, multicast, la red del túnel y las subredes servidas). El mensaje 1 se limita antes de la criptografía: cupo propio por par configurado y cupo por origen desconocido.
+
 ## Aplicación por enlace
 
-Linux necesita `ip`, `nft` y, para DNS dividido, `resolvectl` con systemd-resolved activo. El servicio necesita `CAP_NET_ADMIN`; no necesita `CAP_NET_RAW`. No modifica `/etc/resolv.conf` ni sysctls globales. El administrador debe habilitar explícitamente el forwarding de las familias servidas; `forwarding_ok` lo lee de nuevo en cada consulta de estado y en cada informe, sin esperar una nueva configuración ni intentar repararlo. Es nulo cuando la configuración aplicada no anuncia subredes.
+Linux necesita `ip`, `nft` y, para DNS dividido, `resolvectl` con systemd-resolved activo, invocados por ruta absoluta (`/usr/sbin/ip`, `/usr/sbin/nft`, `/usr/bin/resolvectl`; sustituibles con `ATENEA_IP`, `ATENEA_NFT` y `ATENEA_RESOLVECTL`) y con entorno vacío; el ejecutable y su directorio deben ser de root o del proceso y sin escritura de grupo/otros. El servicio necesita `CAP_NET_ADMIN`; no necesita `CAP_NET_RAW`. No modifica `/etc/resolv.conf` ni sysctls globales. El administrador debe habilitar explícitamente el forwarding de las familias servidas; `forwarding_ok` lo lee de nuevo en cada consulta de estado y en cada informe, sin esperar una nueva configuración ni intentar repararlo. Es nulo cuando la configuración aplicada no anuncia subredes.
 
 Cada ruta de un par se instala con `ip route add PREFIJO dev INTERFAZ`. Se informa `conflict` si solapa una ruta no predeterminada de otra interfaz, cubre un endpoint del plano de control o no se puede comprobar/instalar con seguridad. La ruta predeterminada nunca se modifica. Reaplicar conserva las rutas sin cambios y elimina únicamente las que el agente instaló y han desaparecido. Al cerrar la TUN, el kernel retira sus rutas.
 
-Los endpoints y candidatos de pares dentro de cualquier ruta firmada o prefijo del túnel se descartan antes de sondear/negociar: alcanzarlos por la propia VPN crearía un bucle, pero no bloquean instalar la ruta. El router no anuncia sus direcciones dentro de `advertised` ni de los prefijos del túnel. Los endpoints del plano de control y los de relay recibidos siguen protegidos y sí producen `conflict`.
+Los endpoints y candidatos de pares, y los destinos de relay concedidos por el coordinator, dentro de cualquier ruta firmada o prefijo del túnel se descartan antes de sondear/negociar/conectar: alcanzarlos por la propia VPN crearía un bucle, pero no bloquean instalar la ruta. El router no anuncia sus direcciones dentro de `advertised` ni de los prefijos del túnel. Los endpoints del plano de control (sync, coordinator, STUN) siguen protegidos y sí producen `conflict`.
 
 El servicio arranca aunque no pueda resolver los endpoints del control plane, coordinator o STUN. Mientras falte esa información, las rutas de subred quedan `pending` con motivo `endpoints_unresolved`; la TUN y las direcciones de la red del túnel siguen operativas. Reintenta cada diez segundos fuera del bucle de E/S, con una única resolución en vuelo (sin acumular hilos). Si tarda más de diez segundos, retira las rutas de subred hasta completar la resolución. Cambiar las IP resueltas vuelve a comprobar los conflictos.
 
@@ -47,6 +61,8 @@ La tabla ausente es un éxito; un error de permisos o de nft es un error, no se 
 
 El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload` y `cleanup`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
 
+Los listeners atienden clientes fuera del bucle TUN/UDP: como máximo 16 conexiones simultáneas por socket, órdenes de hasta 32 bytes y un segundo para toda la conexión (lectura y respuesta). El estado es una instantánea serializada renovada una vez por segundo, no un cálculo por cliente. La saturación del socket de estado no ocupa las plazas del control. Los paquetes rechazados como malformados por el backend TUN se descartan y cuentan en `tx_malformed`; los errores de E/S del dispositivo siguen siendo fatales.
+
 ```sh
 atenea status --socket /run/atenea/status.sock
 atenea reload --socket /run/atenea/control.sock
@@ -58,6 +74,8 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 ## Pruebas sin privilegios
 
 La política de `netconf` usa un backend `HostNetwork` en memoria para probar rutas, diferencias, conflictos, DNS y capacidades en cualquier plataforma, sin procesos ni privilegios. Las pruebas adicionales del backend Linux inyectan las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls; usan ejecutables simulados y ficheros temporales y no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.
+
+La regresión `udp_timeout_falls_back_to_tls_custom_ca_queue_and_renewal` usa sockets locales y respuestas TLS fragmentadas. Espera una notificación del servidor tras escribir la respuesta de renovación, independiente de los eventos RTT; mantiene el intervalo normal de heartbeat para no mezclar esa comprobación con las pruebas de caducidad aceleradas.
 
 ## macOS
 

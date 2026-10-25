@@ -9,7 +9,7 @@ ATENEA_COORD_ANCHORS='["<clave pública raíz: 64 caracteres hex>"]' \
   cargo run -p atenea-coordinator
 ```
 
-Preparar el ancla con la **clave pública** de la raíz que firmó el certificado de emisor; no usar la clave de identidad del dispositivo ni la del emisor. Codificar sus 32 bytes públicos en hexadecimal; nunca copiar el fichero de clave privada. Se admiten varias raíces explícitas; el coordinator no aprende `next_anchor` de los anuncios. Una lista vacía o claves débiles/incorrectas impiden arrancar. HTTP escucha por defecto solo en loopback; para exposición pública usar un proxy HTTPS de confianza sin registrar Authorization ni cuerpos. `observed_ip` es la dirección TCP real, no se confía en `X-Forwarded-For`.
+Preparar el ancla con la **clave pública** de la raíz que firmó el certificado de emisor; no usar la clave de identidad del dispositivo ni la del emisor. Codificar sus 32 bytes públicos en hexadecimal; nunca copiar el fichero de clave privada. Se admiten varias raíces explícitas; el coordinator no aprende `next_anchor` de los anuncios. Una lista vacía o claves débiles/incorrectas impiden arrancar. HTTP escucha por defecto solo en loopback; para exposición pública usar un proxy HTTPS de confianza sin registrar Authorization ni cuerpos. `observed_ip` es la dirección del peer TCP inmediato (la del proxy cuando lo hay), no una dirección obtenida de `X-Forwarded-For`; es informativa, no autoriza candidatos.
 
 `ATENEA_COORD_CONFIG=/ruta/coordinator.toml` carga TOML opcional; después las variables `ATENEA_COORD_*` prevalecen. Claves TOML en minúsculas. Listas en variables con sintaxis Figment: `ATENEA_COORD_STUN_PORTS='[3478,3479]'`, `ATENEA_COORD_ANCHORS='["hex", "hex"]'`.
 
@@ -23,8 +23,8 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 | `PRESENCE_TTL_SECS` | `60` | TTL máximo; también limita `not_after + 30` |
 | `MAX_BODY_BYTES` | `163840` | Cuerpo HTTP máximo |
 | `MAX_PRESENCES` | `4096` | Tabla de presencias |
-| `MAX_LONG_POLLS` | `256` | Peticiones events simultáneas |
-| `MAX_NONCES` | `65536` | Nonces retenidos 120 s; tabla llena rechaza autenticación |
+| `MAX_LONG_POLLS` | `256` | Peticiones events simultáneas; máximo 2 por dispositivo y ⌈total/4⌉ por red |
+| `MAX_NONCES` | `65536` | Nonces retenidos 120 s; cuota por dispositivo mín(256, ⌈total/4⌉) y por red mín(4096, ⌈total/2⌉); exceso devuelve 429 |
 | `MAX_RATE_ENTRIES` | `65536` | Entradas por tabla de cubos; llena deniega claves nuevas hasta reponer cubos |
 | `ANNOUNCE_INTERVAL_SECS` | `2` | Cubo por dispositivo, ráfaga 1 |
 | `RENDEZVOUS_PAIR_INTERVAL_SECS` | `1` | Cubo por par dirigido, ráfaga 1 |
@@ -36,6 +36,8 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 | `RELAY_TOKEN_TTL_SECS` | `300` | Vida del token, entre 1 y 600 segundos |
 
 Para las filas sin clave TOML explícita se usa el sufijo en minúsculas. Todos los límites son positivos. Los cubos cuentan intentos autenticados, incluidos intentos no disponibles; no hay estado duradero. Barrido cada 5 s y antes de acceder a presencia; eventos caducan a 30 s, máximo 16 (se elimina el más antiguo). Máximo 8 candidatos saneados por anuncio. `RUST_LOG=info` activa el registro operativo sin configuraciones, firmas ni nonces.
+
+Todas las peticiones firmadas comparten además cubos por dispositivo (1/s, ráfaga 16) y red (8/s, ráfaga 64), comprobados tras la firma y antes de reservar el nonce. Se purgan nonces caducados como máximo una vez por segundo; nunca se expulsan nonces vigentes para admitir otros. La cuota agotada devuelve 429, no un fallo de firma. Las cuotas son por proceso y no sustituyen la capacidad global: muchas redes independientes pueden consumirla. Los long-polls liberan los cupos global, de red y de dispositivo al responder o cancelarse, incluso si se sustituye la presencia.
 
 ## API pública
 
@@ -77,6 +79,9 @@ Sin clave o sin relays, las peticiones autenticadas a `/v1/relay` reciben 503 `r
 - `long_poll_delivery_bounded_queue_and_event_expiry`: long-poll que despierta por evento, secuencia, máximo 16, descarte antiguo, caducidad a 30 s.
 - `rate_presence_nonce_body_and_poll_limits`: límites announce/par/dispositivo, tabla de presencia, nonces y cuerpo.
 - `cancelled_poll_releases_capacity_and_sweeper_runs`: cupo de polls, cancelación y barrido periódico.
+- `device_nonce_quota_preserves_other_network` y `network_nonce_quota_preserves_other_network`: el exceso queda en su cuota y otra red sigue autenticándose.
+- `device_poll_quota_preserves_other_network_and_cancellation` y `network_poll_quota_preserves_other_network`: concurrencia aislada y capacidad recuperada tras cancelación; métrica privada `atenea_long_polls`.
+- `live_nonces_are_preserved_at_capacity_and_expired_nonces_are_reclaimed`: conservación antirrepetición y recuperación de capacidad al caducar.
 - `bounded_and_refilled`: tabla de cubos acotada y reposición.
 - `udp_binding_garbage_and_shared_rate_limit`: sockets UDP reales loopback, XOR-MAPPED-ADDRESS, basura ignorada, amplificación y límite por IP compartido entre puertos.
 - `relay_tokens_inverse_event_and_independent_limits`: verifica firma y 173 bytes, red/origen/destino/identidad/ventana/TTL, token inverso y secuencia, separación de rendezvous, límite de 5 s compartido y cuatro tokens/minuto.

@@ -30,6 +30,10 @@ atenea-agent.exe run --service --config C:\ProgramData\Atenea\agent.toml
 
 La ruta real se deriva de las variables del sistema: no se presupone la unidad C. No se arranca durante la instalación, incluso si existe una configuración anterior. No se sobrescribe una instalación registrada; para actualizar, parar y desinstalar primero, conservando los datos.
 
+`install.ps1` reutiliza un `%ProgramData%\Atenea` preexistente solo si él y todo su contenido pertenecen a SYSTEM o Administradores y no hay enlaces; si no, aborta sin tocarlo (cualquier usuario puede crear esa carpeta antes de la instalación). Reaplica la DACL privada al directorio. El servicio también exige que `agent.toml`, que contiene el ancla de confianza, tenga propietario SYSTEM/Administradores y DACL protegida con solo esas entidades (el agente rechaza el arranque si no).
+
+Recuperación SCM: el instalador configura `sc failure` con reinicios a los 5, 15 y 60 s (contador reiniciado a las 24 h) y `failureflag 1`, de modo que también una salida con código de error se reinicia, no solo una caída abrupta. Una parada ordenada (`Stop-Service`) no reinicia. Al arrancar, el agente limpia NRPT y rutas propios. **Residual:** entre una caída y el reinicio (≥ 5 s) o si se agotan los reintentos, las reglas NRPT del dominio permanecen y pueden enviar consultas a IPs del túnel por otro adaptador; en ese caso ejecutar `cleanup` con el servicio parado. `uninstall.ps1` desactiva la recuperación antes de parar el servicio.
+
 El servicio escribe desde el arranque en `%ProgramData%\Atenea\agent.log`, en modo anexado y sin secuencias ANSI. El fichero tiene propietario Administradores y DACL protegida que solo admite SYSTEM/Administradores; se puede leer mientras el servicio está activo. Si no puede abrirlo de forma privada, el arranque falla: no se cambia a una salida insegura. Conservar este registro antes de una retirada con `-Purge`, que también lo elimina.
 
 ### Procedencia y hash de Wintun

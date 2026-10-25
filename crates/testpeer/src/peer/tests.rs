@@ -17,8 +17,8 @@ fn endpoint() -> SocketAddr {
 }
 
 fn fixture() -> (Peer, StaticKeypair, Instant) {
-    let keys = StaticKeypair::from_private([1; 32]);
-    let agent = StaticKeypair::from_private([2; 32]);
+    let keys = StaticKeypair::from_private(&[1; 32]);
+    let agent = StaticKeypair::from_private(&[2; 32]);
     let now = Instant::now();
     (
         Peer::new(keys, agent.public, NETWORK, addresses(), now),
@@ -28,7 +28,7 @@ fn fixture() -> (Peer, StaticKeypair, Instant) {
 }
 
 fn connect(peer: &mut Peer, agent: &StaticKeypair, now: Instant, unix: u64, index: u32) -> Session {
-    let (pending, noise) =
+    let (mut pending, noise) =
         crypto::initiate(agent, &peer.keys.public, &NETWORK, index, unix).unwrap();
     let request = proto::encode_init(index, &noise).unwrap();
     let response = peer.receive(endpoint(), &request, now, unix).unwrap();
@@ -209,7 +209,7 @@ fn malformed_packets_and_unauthorized_sources_are_discarded() {
 #[test]
 fn wrong_key_network_timestamp_do_not_pin_endpoint() {
     let (mut peer, agent, now) = fixture();
-    let stranger = StaticKeypair::from_private([3; 32]);
+    let stranger = StaticKeypair::from_private(&[3; 32]);
     for (key, network, unix) in [
         (&stranger, NETWORK, UNIX),
         (&agent, [8; 16], UNIX),

@@ -5,14 +5,18 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: read
+# Cada job declara lo mínimo que necesita.
+permissions: {}
 
 jobs:
   linux:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Identidad y toolchain
@@ -20,10 +24,11 @@ jobs:
           echo "ATENEA_BUILD_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "ATENEA_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("apps/cli/Cargo.toml","rb"))["package"]["version"])')" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
-          rustup toolchain install 1.99.1 --profile minimal
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"])')
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+          rustup toolchain install "$toolchain" --profile minimal
       - name: Construir binarios, Debian e inventarios
         env:
-          RUSTUP_TOOLCHAIN: 1.99.1
           CARGO_BUILD_JOBS: 2
         run: |
           set -euo pipefail
@@ -35,11 +40,14 @@ jobs:
             test "$(target/release/$name --version)" = "$name $ATENEA_VERSION ($ATENEA_BUILD_COMMIT)"
             cp "target/release/$name" "dist/$name-linux"
           done
-          cargo metadata --offline --locked --format-version 1 > dist/cargo-metadata.json
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo metadata --offline --locked --format-version 1 --filter-platform "$host" > dist/cargo-metadata.json
           python3 scripts/release/build-info.py > dist/BUILD-INFO.json
           python3 -c 'import json, subprocess; p="dist/BUILD-INFO.json"; d=json.load(open(p)); d["toolchain"]=subprocess.check_output(["rustc","--version"],text=True).strip(); open(p,"w").write(json.dumps(d,sort_keys=True)+"\n")'
           packaging/deb/build.sh target/release "$ATENEA_VERSION" "$(dpkg --print-architecture)" dist/atenea.deb
-          python3 scripts/release/sbom.py rust dist/cargo-metadata.json dist/rust.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT"
+          python3 scripts/release/sbom.py rust dist/cargo-metadata.json dist/rust.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT" \
+            --target "$host" --deb-depends packaging/deb/build.sh \
+            --root atenea-cli --root atenea-agent --root atenea-control-plane --root atenea-coordinator --root atenea-relay
           python3 scripts/release/sbom.py panel pnpm-lock.yaml dist/panel.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT"
       - name: Activar exportación OCI en el runner desechable
         run: |
@@ -60,13 +68,21 @@ jobs:
             test "$(docker run --rm --network none "atenea-release/$service:build" --version)" = "atenea-$service $ATENEA_VERSION ($GITHUB_SHA)"
           done
           python3 scripts/release/images.py dist "$GITHUB_SHA" "$ATENEA_VERSION" control-plane=atenea-release/control-plane:build coordinator=atenea-release/coordinator:build relay=atenea-release/relay:build
-      - uses: actions/upload-artifact@v4
+      - name: Atestar procedencia de los artefactos
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux
           path: dist/*
           if-no-files-found: error
 
   native:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
@@ -75,17 +91,18 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Preparar identidad y toolchain
         run: |
           echo "ATENEA_BUILD_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "ATENEA_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("apps/cli/Cargo.toml","rb"))["package"]["version"])')" >> "$GITHUB_ENV"
-          rustup toolchain install 1.99.1 --profile minimal
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"])')
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+          rustup toolchain install "$toolchain" --profile minimal
       - name: Construir cliente nativo
         env:
-          RUSTUP_TOOLCHAIN: 1.99.1
           CARGO_BUILD_JOBS: 2
         run: |
           set -euo pipefail
@@ -98,8 +115,12 @@ jobs:
             test "$(target/release/$name$suffix --version | tr -d '\r')" = "$name $ATENEA_VERSION ($GITHUB_SHA)"
             cp "target/release/$name$suffix" "dist/$name-$RUNNER_OS$suffix"
           done
-          cargo metadata --offline --locked --format-version 1 > "$RUNNER_TEMP/native-metadata.json"
-          python3 scripts/release/sbom.py rust "$RUNNER_TEMP/native-metadata.json" "dist/rust-$RUNNER_OS.cdx.json" --version "$ATENEA_VERSION" --commit "$GITHUB_SHA"
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo metadata --offline --locked --format-version 1 --filter-platform "$host" > "$RUNNER_TEMP/native-metadata.json"
+          extra=()
+          if [ "$RUNNER_OS" = Windows ]; then extra=(--wintun packaging/windows/get-wintun.ps1); fi
+          python3 scripts/release/sbom.py rust "$RUNNER_TEMP/native-metadata.json" "dist/rust-$RUNNER_OS.cdx.json" --version "$ATENEA_VERSION" --commit "$GITHUB_SHA" \
+            --target "$host" --root atenea-cli --root atenea-agent ${extra[@]+"${extra[@]}"}
           python3 scripts/release/build-info.py > "dist/$RUNNER_OS.build-info.json"
       - name: Construir PKG sin firmar
         if: runner.os == 'macOS'
@@ -113,7 +134,11 @@ jobs:
         run: |
           packaging/windows/build-zip.ps1
           Copy-Item target/windows-package/*.zip dist/
-      - uses: actions/upload-artifact@v4
+      - name: Atestar procedencia de los artefactos
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ runner.os }}
           path: dist/*
@@ -122,34 +147,57 @@ jobs:
   assemble:
     needs: [linux, native]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-unsigned
           path: dist/*
           if-no-files-found: error
 
   # Única frontera con permisos de escritura, secreto y aprobación manual.
-  # Configurar revisores obligatorios en Settings > Environments > release.
+  # Solo se firma desde un tag v*; `workflow_dispatch` construye pero no publica.
+  # El environment `release` (revisores, solo tags v*) se comprueba antes de usar el secreto.
   publish:
     needs: assemble
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write
       packages: write
+      actions: read
+      attestations: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-unsigned
           path: dist
+      - name: Comprobar protección del environment release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/release" > "$RUNNER_TEMP/environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/release/deployment-branch-policies" > "$RUNNER_TEMP/policies.json"
+          python3 scripts/release/check-environment.py "$RUNNER_TEMP/environment.json" "$RUNNER_TEMP/policies.json"
+      - name: Verificar que los artefactos se construyeron en este commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for file in dist/*; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" --deny-self-hosted-runners > /dev/null
+          done
       - name: Activar carga OCI en el runner desechable
         run: |
           sudo python3 - <<'PY'

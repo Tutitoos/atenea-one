@@ -53,10 +53,16 @@ pub async fn create(
         .ipv6_cidr
         .parse()
         .map_err(|_| ApiError::bad("invalid_cidr"))?;
+    let prefix = |n: &IpNet| atenea_identity::Prefix {
+        addr: n.addr(),
+        len: n.prefix_len(),
+    };
     if !v4.addr().is_ipv4()
         || !v6.addr().is_ipv6()
         || v4.addr() != v4.network()
         || v6.addr() != v6.network()
+        || !prefix(&v4).valid_route()
+        || !prefix(&v6).valid_route()
     {
         return Err(ApiError::bad("invalid_cidr"));
     }

@@ -80,15 +80,21 @@ impl Runtime {
             }
         }
     }
-    pub(crate) async fn message(&self, binding: Binding, body: &[u8]) {
+    /// Devuelve `true` si la respuesta incluye `ALLOC_OK` para `binding` (sin recorrer la tabla).
+    pub(crate) async fn message(&self, binding: Binding, body: &[u8]) -> bool {
         let outputs = self
             .shared
             .lock()
             .unwrap()
             .state
             .process(binding, body, now());
+        let allocated = outputs.iter().any(|(to, out)| {
+            *to == binding && out.get(1) == Some(&atenea_relay_core::ty::ALLOC_OK)
+        });
         self.dispatch(outputs).await;
+        allocated
     }
+
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         let s = self.shared.lock().unwrap();
         let udp = s
@@ -232,11 +238,12 @@ impl Relay {
                 result = self.tcp.accept() => {
                     let (stream,addr) = result?;
                     let mut s = self.runtime.shared.lock().unwrap(); let c = &s.state.config;
-                    if s.clients.len() >= c.tcp_total || s.clients.values().filter(|(ip,_)| *ip == addr.ip()).count() >= c.tcp_per_ip {
+                    let group = limits::ip_group(addr.ip());
+                    if s.clients.len() >= c.tcp_total || s.clients.values().filter(|(ip,_)| *ip == group).count() >= c.tcp_per_ip {
                         s.state.drop_packet("tcp_capacity"); continue;
                     }
                     next_id = next_id.checked_add(1).ok_or_else(|| io::Error::other("identificadores TCP agotados"))?;
-                    let id = next_id; let (tx,rx) = mpsc::channel(c.tcp_queue); s.clients.insert(id,(addr.ip(),tx)); drop(s);
+                    let id = next_id; let (tx,rx) = mpsc::channel(c.tcp_queue); s.clients.insert(id,(group,tx)); drop(s);
                     let runtime = self.runtime.clone(); let tls = self.tls.clone(); let stop = shutdown.clone();
                     tasks.spawn(async move { tcp::connection(runtime,stream,addr,id,rx,tls,stop).await; });
                 },

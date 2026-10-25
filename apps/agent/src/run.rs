@@ -41,6 +41,12 @@ enum Cmd {
         #[arg(short, long)]
         config: PathBuf,
     },
+    /// Con el agente parado: borra solo la hora máxima observada (tras un reloj mal ajustado).
+    /// Conserva versión, serial y anclas del estado anti-rollback.
+    ResetClock {
+        #[arg(short, long)]
+        config: PathBuf,
+    },
 }
 
 pub fn main() -> ExitCode {
@@ -90,6 +96,15 @@ pub fn main() -> ExitCode {
                 }
             };
         }
+        Cmd::ResetClock { config } => {
+            return match Config::load(&config).and_then(|cfg| state::reset_clock(&cfg.state_dir)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
     };
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -130,19 +145,21 @@ fn unix_now() -> u64 {
 struct Runtime {
     cfg: Config,
     local: LocalKeys,
-    state: AgentState,
+    store: state::Store,
+    /// Fin del lease de la última configuración verificada: tope de la hora observada.
+    horizon: Option<u64>,
     tun: TunDevice,
     engine: Engine,
     /// (mtime, longitud) del último fichero de configuración procesado, para no reprocesarlo.
     seen: Option<(SystemTime, u64)>,
     /// MTU y direcciones ya instaladas en la interfaz.
     iface: Option<(usize, Vec<(IpAddr, u8)>)>,
-    last_saved: u64,
     netconf: crate::netconf::NetConf,
-    protected: Vec<IpAddr>,
     resolved_endpoints: Option<Vec<IpAddr>>,
     routes_changed: bool,
     candidate_exclusions: Vec<atenea_identity::Prefix>,
+    /// Red del túnel, rutas de los pares y subredes servidas: no son destinos de relay.
+    tunnel_only: Vec<atenea_identity::Prefix>,
 }
 
 impl Runtime {
@@ -169,22 +186,23 @@ impl Runtime {
                 return;
             }
         };
-        let v = match verify_config(&bytes, &self.local, &self.state, unix) {
+        let v = match verify_config(&bytes, &self.local, self.store.state(), unix) {
             Ok(v) => v,
             Err(e) => {
                 self.reject(e.code());
                 return;
             }
         };
-        // Se persiste ANTES de aplicar: un fallo no aplica nada y conserva la configuración anterior.
-        if !v.noop || v.state != self.state {
-            if let Err(e) = state::save(&self.cfg.state_dir, &v.state) {
-                tracing::error!("no se pudo persistir el estado: {e}");
-                self.reject("state_persist_failed");
-                return;
-            }
-            self.last_saved = unix;
+        // Se persiste ANTES de aplicar y el estado en memoria cambia a la vez (`commit`): un fallo
+        // posterior no aplica nada, conserva la configuración anterior y no hace retroceder el estado.
+        if v.state != *self.store.state()
+            && let Err(e) = self.store.commit(v.state, unix)
+        {
+            tracing::error!("no se pudo persistir el estado: {e}");
+            self.reject("state_persist_failed");
+            return;
         }
+        self.horizon = Some(v.config.not_after);
         let addrs: Vec<(IpAddr, u8)> = v
             .config
             .tunnel_addrs
@@ -202,16 +220,14 @@ impl Runtime {
             if let Err(e) = self.netconf.configure_link(wanted.0, &wanted.1) {
                 tracing::error!("configurando la interfaz: {e}");
                 self.reject("interface_failed");
+                self.seen = None;
                 return;
             }
             self.iface = Some(wanted);
         }
         self.netconf
             .endpoints_resolved(self.resolved_endpoints.is_some());
-        let mut protected = self.protected.clone();
-        if let Some(endpoints) = &self.resolved_endpoints {
-            protected.extend(endpoints);
-        }
+        let protected = self.resolved_endpoints.clone().unwrap_or_default();
         if let Err(e) = self.netconf.apply(&v.config, &protected) {
             tracing::error!("configurando la red: {e}");
             self.reject("network_failed");
@@ -226,13 +242,18 @@ impl Runtime {
             .cloned()
             .chain(v.config.advertised.iter().map(|r| r.prefix.clone()))
             .collect();
+        self.tunnel_only = self
+            .candidate_exclusions
+            .iter()
+            .cloned()
+            .chain(v.config.peers.iter().flat_map(|p| p.routes.iter().cloned()))
+            .collect();
         self.engine.apply_config(&v.config);
         tracing::info!(
             version = v.config.config_version,
             noop = v.noop,
             "configuración aplicada"
         );
-        self.state = v.state;
     }
 
     fn reject(&mut self, code: &'static str) {
@@ -240,15 +261,9 @@ impl Runtime {
         self.engine.note_config_error(code);
     }
 
-    /// Mantiene la hora máxima observada (anti-rollback de reloj) y la persiste como mucho cada 60 s.
+    /// Mantiene la hora máxima observada (anti-rollback de reloj), acotada por el lease validado.
     fn housekeeping(&mut self, unix: u64) {
-        self.state.max_time_observed = self.state.max_time_observed.max(unix);
-        if unix.saturating_sub(self.last_saved) >= 60 {
-            if let Err(e) = state::save(&self.cfg.state_dir, &self.state) {
-                tracing::error!("no se pudo persistir el estado: {e}");
-            }
-            self.last_saved = unix;
-        }
+        self.store.tick(unix, self.horizon);
     }
 }
 
@@ -277,6 +292,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             s
         }
     };
+    let store = state::Store::new(cfg.state_dir.clone(), state, unix_now());
     let tun = TunDevice::open(&cfg.interface).map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
     let udp = UdpSocket::bind(cfg.listen)
         .await
@@ -305,6 +321,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         let path = cfg.config_file.clone();
         let device = cfg.device_id;
         let identity = identity.clone();
+        let snapshots = store.subscribe();
+        let (noise_pub, identity_pub) = (local.noise_pub, local.identity_pub);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(sync.interval_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -313,8 +331,19 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 let sync = sync.clone();
                 let identity = identity.clone();
                 let path = path.clone();
+                let snapshot = snapshots.borrow().clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    crate::sync::fetch(&sync, &identity, device, &path, unix_now())
+                    // Solo una configuración que verifica contra el estado vigente sustituye al fichero.
+                    let keys = LocalKeys {
+                        noise_pub,
+                        identity_pub,
+                    };
+                    let verify = |body: &[u8]| {
+                        verify_config(body, &keys, &snapshot, unix_now())
+                            .map(|_| ())
+                            .map_err(|e| e.code())
+                    };
+                    crate::sync::fetch(&sync, &identity, device, &path, unix_now(), &verify)
                 })
                 .await
                 .unwrap_or(Err("fallo de la tarea de sincronización"));
@@ -326,12 +355,13 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             }
         })
     });
-    let engine = Engine::new(cfg.network_id, noise, Instant::now());
+    let engine = Engine::new(cfg.network_id, noise, unix_now());
     let dual = cfg.listen.is_ipv6();
     let device = cfg.device_id;
 
     // Coordinator (fase 4): anuncio de presencia, avisos de pares y descubrimiento de candidatos.
     let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel::<CoordMsg>(64);
+    let vet_slots = Arc::new(tokio::sync::Semaphore::new(4));
     let (cand_tx, cand_rx) = tokio::sync::watch::channel::<Vec<SocketAddr>>(Vec::new());
     let announce_now = Arc::new(Notify::new());
     let (coord_tx, coord_rx) =
@@ -436,17 +466,17 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let mut rt = Runtime {
         cfg,
         local,
-        state,
+        store,
+        horizon: None,
         tun,
         engine,
         seen: None,
         iface: None,
-        last_saved: unix_now(),
         netconf,
-        protected: Vec::new(),
         resolved_endpoints,
         routes_changed: true,
         candidate_exclusions: Vec::new(),
+        tunnel_only: Vec::new(),
     };
     tracing::info!(interface = %rt.tun.name(), listen = %rt.cfg.listen, "agente en marcha; sin tráfico hasta cargar una configuración vigente");
     rt.poll_config(unix_now());
@@ -467,11 +497,34 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
+    let snapshot = || {
+        std::sync::Arc::<str>::from(
+            ipc_status(
+                &rt,
+                sync_rx.borrow().clone(),
+                coord_rx.borrow().clone(),
+                relay.status(),
+            )
+            .to_string(),
+        )
+    };
+    let (status_tx, status_rx) = tokio::sync::watch::channel(snapshot());
+    let (action_tx, mut action_rx) = tokio::sync::mpsc::channel(16);
+    let _ipc_server = crate::ipc::serve(
+        ipc,
+        rt.cfg.ipc_socket.clone(),
+        false,
+        status_rx.clone(),
+        action_tx.clone(),
+    );
+    let _status_server = status_ipc
+        .zip(rt.cfg.status_socket.clone())
+        .map(|(listener, path)| crate::ipc::serve(listener, path, true, status_rx, action_tx));
     loop {
         let outs = tokio::select! {
             r = rt.tun.recv(&mut tun_buf) => match r {
                 Ok(n) => rt.engine.on_tun(&tun_buf[..n], Instant::now(), unix_now()),
-                Err(e) => return Err(format!("lectura TUN: {e}")),
+                Err(e) => rt.engine.on_tun_error(e).map_err(|e| format!("lectura TUN: {e}"))?,
             },
             r = udp.recv_from(&mut udp_buf) => match r {
                 Ok((n, from)) => {
@@ -493,6 +546,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 let now = Instant::now();
                 ticks += 1;
                 if ticks.is_multiple_of(4) {
+                    status_tx.send_replace(std::sync::Arc::<str>::from(
+                        ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status()).to_string()
+                    ));
                     if endpoint_task.as_ref().is_some_and(|task| task.is_finished())
                         && let Some(task) = endpoint_task.take()
                     {
@@ -649,21 +705,25 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
                 }
                 CoordMsg::Relay(peer, grant) => {
-                    if relay_on {
-                        use std::net::ToSocketAddrs;
-                        let mut resolved = true;
-                        for endpoint in &grant.relays {
-                            for address in endpoint.udp.iter().chain(&endpoint.tls) {
-                                match address.to_socket_addrs() {
-                                    Ok(addrs) => rt.protected.extend(addrs.map(|a| a.ip())),
-                                    Err(_) => resolved = false,
-                                }
+                    // Las concesiones son pistas de un coordinator no fiable: solo para pares
+                    // configurados, con pocas resoluciones simultáneas y sin tocar la red local.
+                    if relay_on
+                        && rt.engine.knows_peer(&peer)
+                        && let Ok(permit) = vet_slots.clone().try_acquire_owned()
+                    {
+                        let (tx, tunnel_only) = (msg_tx.clone(), rt.tunnel_only.clone());
+                        tokio::spawn(async move {
+                            let relays = crate::coord::vet_relays(grant.relays, &tunnel_only).await;
+                            drop(permit);
+                            if !relays.is_empty() {
+                                let _ = tx.send(CoordMsg::RelayVetted(peer, grant.token, relays)).await;
                             }
-                        }
-                        rt.seen = None;
-                        rt.poll_config(unix_now());
-                        if resolved { relay.open(peer, grant.token, grant.relays); }
+                        });
                     }
+                    Vec::new()
+                }
+                CoordMsg::RelayVetted(peer, token, relays) => {
+                    if relay_on { relay.open(peer, token, relays); }
                     Vec::new()
                 }
             },
@@ -681,10 +741,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     }
                 }
             },
-            r = ipc.accept() => {
-                if let Ok((stream, _)) = r {
-                    let status = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
-                    match crate::ipc::handle(stream, &rt.cfg.ipc_socket, false, status).await {
+            Some(action) = action_rx.recv() => {
+                    match action {
                         crate::ipc::Action::Stop => break,
                         crate::ipc::Action::Reload => {
                             match Config::load(&path) {
@@ -704,19 +762,6 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         crate::ipc::Action::Cleanup => { let _ = rt.netconf.cleanup(); rt.seen = None; }
                         crate::ipc::Action::None => {}
                     }
-                }
-                continue;
-            }
-            r = async {
-                match &status_ipc {
-                    Some(listener) => listener.accept().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                if let Ok((stream, _)) = r {
-                    let status = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
-                    if let Some(path) = &rt.cfg.status_socket { crate::ipc::handle(stream, path, true, status).await; }
-                }
                 continue;
             }
             _ = lifecycle.wait() => {
@@ -759,7 +804,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     rt.netconf.cleanup()?;
     tracing::info!("limpieza de red terminada");
-    let _ = state::save(&rt.cfg.state_dir, &rt.state);
+    rt.store.flush();
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
     if let Some(path) = &rt.cfg.status_socket {
         let _ = std::fs::remove_file(path);
@@ -773,6 +818,12 @@ enum CoordMsg {
     Candidates(atenea_identity::DeviceId, Vec<SocketAddr>),
     /// Token de relay para un par (petición propia o aviso del coordinator).
     Relay(atenea_identity::DeviceId, crate::coord::RelayGrant),
+    /// Relays de una concesión ya resueltos y verificados (IP literal).
+    RelayVetted(
+        atenea_identity::DeviceId,
+        Vec<u8>,
+        Vec<crate::relay::RelayEndpoint>,
+    ),
 }
 
 #[derive(Clone, Default, serde::Serialize)]

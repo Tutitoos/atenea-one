@@ -1,4 +1,7 @@
-use crate::{config::Config, limits::Bucket};
+use crate::{
+    config::Config,
+    limits::{Bucket, ip_group},
+};
 use atenea_relay_core::{ErrCode, RelayToken};
 use rand::{RngCore, rngs::OsRng};
 use std::{
@@ -13,11 +16,12 @@ pub enum Binding {
     Tcp(u64, IpAddr),
 }
 impl Binding {
+    /// Clave de cuota por origen (IPv6 agrupado por /64), no la dirección exacta.
     pub fn ip(self) -> IpAddr {
-        match self {
+        ip_group(match self {
             Self::Udp(a) => a.ip(),
             Self::Tcp(_, ip) => ip,
-        }
+        })
     }
 }
 pub struct Allocation {

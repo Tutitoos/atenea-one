@@ -1,5 +1,7 @@
 //! Cliente Windows: NetTCPIP y NRPT por dominio, sin DNS global ni rutas predeterminadas.
 use super::HostNetwork;
+#[cfg(all(test, unix))]
+use crate::testutil::output;
 use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
@@ -47,10 +49,12 @@ fn command(bin: &Path, script: &str) -> Result<Command, String> {
         .arg(format!("{PRELUDE}{script}"));
     Ok(cmd)
 }
+#[cfg(not(all(test, unix)))]
+fn output(command: &mut Command) -> std::io::Result<std::process::Output> {
+    command.output()
+}
 fn run(bin: &Path, script: &str) -> Result<Vec<u8>, String> {
-    let out = command(bin, script)?
-        .output()
-        .map_err(|e| format!("{}: {e}", bin.display()))?;
+    let out = output(&mut command(bin, script)?).map_err(|e| format!("{}: {e}", bin.display()))?;
     if !out.status.success() {
         return Err(format!(
             "{}: {}",
@@ -199,9 +203,7 @@ impl Network {
             return Err("pnputil requiere una ruta absoluta".into());
         }
         for id in parse_orphans(&run(&self.bins.powershell, &self.orphan_script())?)? {
-            let out = Command::new(&self.bins.pnputil)
-                .args(["/remove-device", &id])
-                .output()
+            let out = output(Command::new(&self.bins.pnputil).args(["/remove-device", &id]))
                 .map_err(|e| format!("{}: {e}", self.bins.pnputil.display()))?;
             if !out.status.success() {
                 return Err(format!(
@@ -442,19 +444,16 @@ mod tests {
 #[cfg(all(test, unix))]
 mod command_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     #[test]
     fn injected_binary_receives_native_scoped_commands() {
         let dir = std::env::temp_dir().join(format!("atenea-windows-host-{}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         let bin = dir.join("powershell");
         let log = dir.join("args");
-        std::fs::write(
+        crate::testutil::fake_binary(
             &bin,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n", log.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n", log.display()),
+        );
         let host = Network::new(
             "Atenea One".into(),
             Binaries {
@@ -507,19 +506,14 @@ mod command_tests {
         let powershell = dir.join("powershell");
         let pnputil = dir.join("pnputil");
         let log = dir.join("args");
-        std::fs::write(
+        crate::testutil::fake_binary(
             &powershell,
             "#!/bin/sh\nprintf '%s\\n' '{\"Items\":[\"SWD\\\\Wintun\\\\{abc}\"]}'\n",
-        )
-        .unwrap();
-        std::fs::write(
+        );
+        crate::testutil::fake_binary(
             &pnputil,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n", log.display()),
-        )
-        .unwrap();
-        for bin in [&powershell, &pnputil] {
-            std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n", log.display()),
+        );
         let host = Network::new(
             "Atenea One".into(),
             Binaries {

@@ -7,6 +7,17 @@ $bin = Join-Path $env:ProgramFiles 'Atenea'
 $config = Join-Path $env:ProgramData 'Atenea/agent.toml'
 $service = Get-Service -Name AteneaAgent -ErrorAction SilentlyContinue
 if ($service) {
+    # Una salida con error durante la retirada no debe provocar un reinicio que compita con la limpieza.
+    # Process.Start pasa la línea tal cual (PowerShell 5.1 descarta el argumento vacío de actions=).
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = "$env:SystemRoot/System32/sc.exe"
+    $info.Arguments = 'failure AteneaAgent reset= 0 actions= ""'
+    $info.UseShellExecute = $false
+    $recovery = [Diagnostics.Process]::Start($info)
+    try {
+        if (-not $recovery.WaitForExit(10000)) { $recovery.Kill(); throw 'Timeout al desactivar la recuperación SCM.' }
+        if ($recovery.ExitCode -ne 0) { throw "No se pudo desactivar la recuperación SCM (salida $($recovery.ExitCode))." }
+    } finally { $recovery.Dispose() }
     if ($service.Status -ne 'Stopped') {
         try {
             # Stop() evita el bucle de espera sin plazo de Stop-Service.

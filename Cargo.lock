@@ -176,6 +176,7 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "webpki-roots 1.0.11",
+ "zeroize",
 ]
 
 [[package]]
@@ -190,6 +191,7 @@ dependencies = [
  "serde_json",
  "toml 0.9.12+spec-1.1.0",
  "ureq",
+ "zeroize",
 ]
 
 [[package]]
@@ -197,6 +199,7 @@ name = "atenea-control-plane"
 version = "0.1.0"
 dependencies = [
  "atenea-identity",
+ "atenea-nat-traversal",
  "atenea-observability",
  "axum",
  "base64 0.22.1",

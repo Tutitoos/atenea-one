@@ -1,10 +1,22 @@
 //! Órdenes Linux existentes, separadas de la política de rutas y estados.
 use super::HostNetwork;
+#[cfg(all(test, unix))]
+use crate::testutil::{output, spawn};
 use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[cfg(not(test))]
+fn output(command: &mut Command) -> std::io::Result<std::process::Output> {
+    command.output()
+}
+
+#[cfg(not(test))]
+fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
+    command.spawn()
+}
 #[derive(Clone)]
 pub struct Binaries {
     pub ip: PathBuf,
@@ -13,11 +25,16 @@ pub struct Binaries {
     pub proc_sys: PathBuf,
 }
 impl Default for Binaries {
+    /// Rutas fijas; el administrador puede sustituirlas con `ATENEA_IP`, `ATENEA_NFT` y
+    /// `ATENEA_RESOLVECTL` (absolutas; `command` rechaza las que no son de root o del proceso).
     fn default() -> Self {
+        let bin = |var: &str, fixed: &str| {
+            std::env::var_os(var).map_or_else(|| fixed.into(), PathBuf::from)
+        };
         Self {
-            ip: "ip".into(),
-            nft: "nft".into(),
-            resolvectl: "resolvectl".into(),
+            ip: bin("ATENEA_IP", "/usr/sbin/ip"),
+            nft: bin("ATENEA_NFT", "/usr/sbin/nft"),
+            resolvectl: bin("ATENEA_RESOLVECTL", "/usr/bin/resolvectl"),
             proc_sys: "/proc/sys".into(),
         }
     }
@@ -34,10 +51,7 @@ impl Network {
         Ok(())
     }
     fn configure_ip(&self, args: &[&str]) -> Result<(), String> {
-        let out = Command::new(&self.bins.ip)
-            .args(args)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let out = output(command(&self.bins.ip)?.args(args)).map_err(|e| e.to_string())?;
         if out.status.success() {
             Ok(())
         } else {
@@ -77,11 +91,39 @@ fn parse_prefix(text: &str) -> Option<Prefix> {
     }
     Some(Prefix { addr, len })
 }
-fn run(bin: &PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = Command::new(bin)
-        .args(args)
-        .output()
-        .map_err(|_| "binario no disponible".to_string())?;
+/// Ejecutable absoluto, regular, de root o del propio proceso, sin escritura de grupo/otros ni en su
+/// directorio; entorno vacío salvo un `PATH` fijo para los scripts auxiliares de las pruebas.
+fn command(bin: &Path) -> Result<Command, String> {
+    use std::os::unix::fs::MetadataExt;
+    if !bin.is_absolute() {
+        return Err("binario de red: se requiere ruta absoluta".into());
+    }
+    #[cfg(target_os = "linux")]
+    let me = std::fs::metadata("/proc/self")
+        .map_err(|_| "no se pudo identificar el proceso")?
+        .uid();
+    // El backend Linux también se prueba con binarios simulados en hosts Unix sin /proc.
+    #[cfg(all(test, not(target_os = "linux")))]
+    let me = std::fs::metadata(std::env::temp_dir())
+        .map_err(|_| "no se pudo identificar el usuario de pruebas")?
+        .uid();
+    let trusted = |meta: &std::fs::Metadata| {
+        (meta.uid() == 0 || meta.uid() == me) && meta.mode() & 0o022 == 0
+    };
+    let file = std::fs::metadata(bin).map_err(|_| "binario de red no disponible")?;
+    let dir = bin
+        .parent()
+        .and_then(|d| std::fs::metadata(d).ok())
+        .ok_or("binario de red no disponible")?;
+    if !file.is_file() || !trusted(&file) || !dir.is_dir() || !trusted(&dir) {
+        return Err("binario de red con propietario o permisos inseguros".into());
+    }
+    let mut cmd = Command::new(bin);
+    cmd.env_clear().env("PATH", "/usr/bin:/bin");
+    Ok(cmd)
+}
+fn run(bin: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let out = output(command(bin)?.args(args)).map_err(|_| "binario no disponible".to_string())?;
     if !out.status.success() {
         return Err("orden de red fallida".into());
     }
@@ -196,13 +238,14 @@ impl HostNetwork for Network {
         } else {
             script
         };
-        let mut child = Command::new(&self.bins.nft)
-            .args(["-f", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "nft no disponible")?;
+        let mut child = spawn(
+            command(&self.bins.nft)?
+                .args(["-f", "-"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .map_err(|_| "nft no disponible")?;
         let write = child
             .stdin
             .take()
@@ -224,7 +267,11 @@ impl HostNetwork for Network {
         std::fs::read_to_string(self.bins.proc_sys.join(file)).is_ok_and(|v| v.trim() == "1")
     }
     async fn local_addrs(&self, port: u16) -> Vec<SocketAddr> {
-        match tokio::process::Command::new(&self.bins.ip)
+        let cmd = match command(&self.bins.ip) {
+            Ok(cmd) => cmd,
+            Err(_) => return Vec::new(),
+        };
+        match tokio::process::Command::from(cmd)
             .args(["-o", "addr", "show", "scope", "global"])
             .output()
             .await

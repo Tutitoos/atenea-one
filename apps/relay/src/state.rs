@@ -361,4 +361,30 @@ mod tests {
                 .is_empty()
         );
     }
+    #[test]
+    fn per_ip_quota_covers_the_whole_ipv6_64() {
+        let c = Config {
+            max_per_ip: 1,
+            alloc_per_second: 100,
+            ..Config::default()
+        };
+        let mut s = State::new(c, vec![key(1).verifying_key().to_bytes()], [0; 32]);
+        let a = Binding::Tcp(1, "2001:db8:1:2::1".parse().unwrap());
+        let same = Binding::Tcp(2, "2001:db8:1:2:aaaa::2".parse().unwrap());
+        let other = Binding::Tcp(3, "2001:db8:1:3::1".parse().unwrap());
+        assert!(matches!(
+            wire::parse(&alloc(&mut s, a, 2, 3, 100_000)[0].1),
+            Ok(Message::AllocOk { .. })
+        ));
+        assert!(matches!(
+            wire::parse(&alloc(&mut s, same, 4, 5, 100_000)[0].1),
+            Ok(Message::AllocErr {
+                code: ErrCode::Full
+            })
+        ));
+        assert!(matches!(
+            wire::parse(&alloc(&mut s, other, 4, 5, 100_000)[0].1),
+            Ok(Message::AllocOk { .. })
+        ));
+    }
 }

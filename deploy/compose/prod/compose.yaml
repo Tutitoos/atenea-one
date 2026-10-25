@@ -27,6 +27,8 @@ services:
       backend: {}
       edge:
         aliases: ['${PANEL_HOST:?}', '${RELAY_HOST:?}']
+      proxy:
+        ipv4_address: ${ATENEA_HAPROXY_PROXY_IP:-172.30.84.3}
     healthcheck:
       <<: *health
       test: [CMD, /bin/true]
@@ -53,12 +55,18 @@ services:
     environment:
       PANEL_HOST: ${PANEL_HOST:?}
       CADDY_TLS: ${CADDY_TLS:?internal o correo ACME}
+      HAPROXY_PROXY_IP: ${ATENEA_HAPROXY_PROXY_IP:-172.30.84.3}
       XDG_CONFIG_HOME: /tmp/config
     ports: ['${ATENEA_BIND_IP:-0.0.0.0}:${HTTP_PORT:-80}:80/tcp']
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
-    networks: [backend, edge]
+    networks:
+      backend: {}
+      edge: {}
+      proxy:
+        ipv4_address: ${ATENEA_CADDY_PROXY_IP:-172.30.84.2}
+        aliases: [caddy-proxy]
     healthcheck:
       <<: *health
       test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:2019/config/]
@@ -111,10 +119,16 @@ services:
       ATENEA_CP_OIDC_REDIRECT_URL: https://${PANEL_HOST:?}/auth/callback
       ATENEA_CP_PUBLIC_URL: https://${PANEL_HOST:?}
       ATENEA_CP_ISSUER_KEY_FILE: /run/secrets/issuer.key
+      # Solo Caddy, en la red interna dedicada al proxy, puede afirmar X-Real-IP.
+      ATENEA_CP_TRUSTED_PROXIES: '["${ATENEA_CADDY_PROXY_IP:-172.30.84.2}/32"]'
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       RUST_LOG: info
     secrets: [app-database-url, oidc-client-secret, issuer.key]
-    networks: [backend, edge]
+    networks:
+      backend: {}
+      edge: {}
+      proxy:
+        aliases: [control-plane-proxy]
     healthcheck:
       <<: *health
       test: [CMD, /usr/local/bin/healthcheck, http, '127.0.0.1:8080']
@@ -168,3 +182,11 @@ volumes:
 networks:
   backend: {internal: true}
   edge: {}
+  proxy:
+    internal: true
+    ipam:
+      config:
+        # Caddy (.2) y el netns (.3) tienen IP fija; las asignaciones dinámicas salen de otro rango
+        # para que ningún servicio ocupe antes una IP reservada.
+        - subnet: ${ATENEA_PROXY_SUBNET:-172.30.84.0/28}
+          ip_range: ${ATENEA_PROXY_DYNAMIC_RANGE:-172.30.84.8/29}

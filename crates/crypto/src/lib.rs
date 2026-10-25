@@ -74,16 +74,16 @@ impl StaticKeypair {
         let kp = Builder::new(NOISE_PARAMS.parse().expect("parámetros fijos"))
             .generate_keypair()
             .expect("RNG del sistema");
-        let mut private = [0u8; 32];
+        let mut private = Zeroizing::new([0u8; 32]);
         private.copy_from_slice(&kp.private);
-        Self::from_private(private)
+        Self::from_private(&private)
     }
 
-    pub fn from_private(private: [u8; 32]) -> Self {
-        let secret = x25519_dalek::StaticSecret::from(private);
+    pub fn from_private(private: &[u8; 32]) -> Self {
+        let secret = x25519_dalek::StaticSecret::from(*private);
         let public = x25519_dalek::PublicKey::from(&secret).to_bytes();
         Self {
-            private: Zeroizing::new(private),
+            private: Zeroizing::new(*private),
             public,
         }
     }
@@ -129,7 +129,8 @@ pub fn check_timestamp(ts: u64, now_unix: u64, last: Option<u64>) -> Result<(), 
 }
 
 pub struct PendingInit {
-    hs: HandshakeState,
+    /// `None` solo tras consumir un mensaje 2 autenticado.
+    hs: Option<HandshakeState>,
     remote_static: [u8; 32],
     local_index: u32,
 }
@@ -155,7 +156,7 @@ pub fn initiate(
     }
     Ok((
         PendingInit {
-            hs,
+            hs: Some(hs),
             remote_static: *remote_public,
             local_index,
         },
@@ -169,8 +170,10 @@ impl PendingInit {
     }
 
     /// Procesa el mensaje 2 y crea la sesión (el iniciador queda confirmado).
+    /// Un mensaje 2 que no autentica deja intacto el handshake pendiente: quien responde sin
+    /// conocer las claves no puede descartar el intento.
     pub fn finish(
-        mut self,
+        &mut self,
         msg2: &[u8],
         outer_remote_index: u32,
         now: Instant,
@@ -178,12 +181,12 @@ impl PendingInit {
         if msg2.len() != proto::NOISE_MSG2_LEN {
             return Err(Error::BadPayload);
         }
+        let hs = self.hs.as_mut().ok_or(Error::Noise)?;
         let mut payload = [0u8; 64];
-        let n = self
-            .hs
+        let n = hs
             .read_message(msg2, &mut payload)
             .map_err(|_| Error::Noise)?;
-        if n != proto::RESP_PAYLOAD_LEN || !self.hs.is_handshake_finished() {
+        if n != proto::RESP_PAYLOAD_LEN || !hs.is_handshake_finished() {
             return Err(Error::BadPayload);
         }
         let remote_index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
@@ -192,6 +195,8 @@ impl PendingInit {
         }
         let transport = self
             .hs
+            .take()
+            .ok_or(Error::Noise)?
             .into_stateless_transport_mode()
             .map_err(|_| Error::Noise)?;
         Ok(Session::new(
@@ -403,7 +408,7 @@ mod tests {
         let a = StaticKeypair::generate();
         let b = StaticKeypair::generate();
         let now = Instant::now();
-        let (pending, msg1) = initiate(&a, &b.public, &NET, 11, 1000).unwrap();
+        let (mut pending, msg1) = initiate(&a, &b.public, &NET, 11, 1000).unwrap();
         let inc = read_init(&b, &NET, &msg1, 11).unwrap();
         assert_eq!(inc.remote_static, a.public);
         assert_eq!(inc.timestamp, 1000);
@@ -426,7 +431,7 @@ mod tests {
     #[test]
     fn public_key_derivation_matches_snow() {
         let kp = StaticKeypair::generate();
-        let again = StaticKeypair::from_private(*kp.private_bytes());
+        let again = StaticKeypair::from_private(kp.private_bytes());
         assert_eq!(kp.public, again.public);
     }
 
@@ -526,13 +531,19 @@ mod tests {
         let a = StaticKeypair::generate();
         let b = StaticKeypair::generate();
         let now = Instant::now();
-        let (p, msg1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
+        let (mut p, msg1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
         let (_, mut msg2) = read_init(&b, &NET, &msg1, 1)
             .unwrap()
             .accept(2, now)
             .unwrap();
         msg2[10] ^= 1;
         assert!(p.finish(&msg2, 2, now).is_err());
+        // Un mensaje 2 ajeno no consume el handshake: el legítimo aún completa.
+        let (_, ok2) = read_init(&b, &NET, &msg1, 1)
+            .unwrap()
+            .accept(2, now)
+            .unwrap();
+        assert!(p.finish(&ok2, 2, now).is_ok());
     }
 
     #[test]
@@ -540,7 +551,7 @@ mod tests {
         let a = StaticKeypair::generate();
         let b = StaticKeypair::generate();
         let now = Instant::now();
-        let (p, msg1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
+        let (mut p, msg1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
         let (_, msg2) = read_init(&b, &NET, &msg1, 1)
             .unwrap()
             .accept(2, now)
@@ -555,7 +566,7 @@ mod tests {
         let b = StaticKeypair::generate();
         let now = Instant::now();
         let mk = || {
-            let (p, m1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
+            let (mut p, m1) = initiate(&a, &b.public, &NET, 1, 1).unwrap();
             let (_, m2) = read_init(&b, &NET, &m1, 1).unwrap().accept(2, now).unwrap();
             p.finish(&m2, 2, now).unwrap()
         };

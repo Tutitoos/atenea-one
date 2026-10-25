@@ -52,6 +52,10 @@ La unidad usa `run --config`; `ExecStopPost` ejecuta `cleanup --config` incluso 
 
 No usar `atenea up` simultáneamente con systemd. Parar con `systemctl stop atenea-agent`, pues `down` podría provocar el reinicio según el modo de salida. No cambiar rutas de estado/runtime fuera de los directorios permitidos sin revisar el endurecimiento.
 
+El agente ejecuta `/usr/sbin/ip`, `/usr/sbin/nft` y `/usr/bin/resolvectl` con entorno vacío (sin `PATH` heredado). Cada ejecutable y su directorio deben ser de root y no escribibles por grupo/otros; si no, el agente se niega a lanzarlo. Los directorios de los sockets (`/run/atenea`) deben cumplir lo mismo: el socket se crea en un subdirectorio temporal privado, se verifica y se renombra al destino; un enlace simbólico o fichero ajeno en esa ruta se rechaza.
+
+La unidad añade filtro de syscalls `@system-service`, arquitectura nativa, `ProtectHostname`, `ProtectProc=invisible` y `PrivateMounts`. Si una distribución instala los binarios en otra ruta, fijarla con `Environment=ATENEA_IP=/ruta/absoluta` (también `ATENEA_NFT`, `ATENEA_RESOLVECTL`) en un drop-in de systemd, nunca por `PATH`; se aplican las mismas comprobaciones de propietario y permisos. Una syscall denegada por el filtro devuelve `EPERM` y queda en el diario.
+
 ## Claves y credenciales de systemd
 
 Por defecto las claves son ficheros hex de root 0600 bajo `/var/lib/atenea/device`; no hacerlos legibles al grupo. Un respaldo debe incluir claves, ancla y estado antirretroceso; no borrar el estado para eludir un error de verificación.
@@ -105,4 +109,4 @@ El arnés comprueba instalación, permisos, grupo, unidad, puntuación `systemd-
 
 ### Comprobación estática del paquete
 
-En Debian 13 arm64, systemd 257.13: `bash -n` y ShellCheck 0.10.0 sin incidencias, construcción con binarios previamente compilados del volumen de laboratorio y `dpkg-deb --info/--contents` correctos. `systemd-analyze verify` acepta la unidad; `systemd-analyze security --offline=yes` informa exposición **4.0 (OK)**. Es una evaluación estática, no una garantía de aislamiento ni una prueba de arranque. La ejecución completa con PID 1, IPC, SIGKILL y resolved queda a cargo del propietario con el arnés cuando esté integrado el agente.
+En Debian 13 arm64, systemd 257.13: `bash -n` y ShellCheck 0.10.0 sin incidencias, construcción con binarios previamente compilados del volumen de laboratorio y `dpkg-deb --info/--contents` correctos. `systemd-analyze verify` aceptó la unidad **antes** del endurecimiento adicional de syscalls/procfs, con exposición **4.0 (OK)**; esa puntuación no se ha recalculado y el arnés debe repetirse. Es una evaluación estática, no una garantía de aislamiento ni una prueba de arranque. La ejecución completa con PID 1, IPC, SIGKILL y resolved queda a cargo del propietario con el arnés cuando esté integrado el agente.

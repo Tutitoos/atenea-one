@@ -90,7 +90,7 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `POST /api/v1/enroll` `{token, bundle (hex, 146 bytes), name}` | token | Ver §5 |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
 
-Toda acción de escritura (usuario o dispositivo) genera un `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.update`, `policy.create`, `policy.delete`, `config.issue` (de dispositivo, con versión y hash; se agrupan en la tabla `configuration_versions`, no un evento por petición si la configuración no cambió de contenido).
+Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
 
 ## 5. Enrolamiento
 
@@ -105,6 +105,9 @@ Toda acción de escritura (usuario o dispositivo) genera un `audit_events`: `org
 5. Mientras esté `pending`, `GET /device/config` devuelve `403 device_not_approved`. Un administrador compara la **huella del bundle** (`atenea device-init` la imprime; el inventario la muestra) por otro canal antes de aprobar.
 
 Límite de tasa de `/api/v1/enroll` por IP de origen (token bucket en memoria, configurable; por defecto 10 por minuto) para frenar la adivinación de tokens (256 bits: no es el control principal).
+Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en `trusted_proxies`; si no, el peer. `GET /auth/login` tiene límite análogo (`login_per_minute`, `429 rate_limited`) y tope de 10 000 flujos OIDC vigentes; `oidc_flows` y `sessions` caducados se purgan cada minuto. Las peticiones firmadas (`config`, `status`, `routes`) se limitan por dispositivo (`device_per_minute`, `429`) tras verificar la firma y antes de abrir transacción; la caché de nonces está acotada (65 536; llena → `429`). Un dispositivo no aprobado recibe `403` sin bloquear la fila de la red. `config.issue` se audita como máximo una vez por dispositivo y hora.
+
+`POST …/networks` exige CIDR privados (RFC 1918, 100.64/10, ULA), IPv4 ≥ /8 e IPv6 ≥ /32 (`400 invalid_cidr`), reforzado por CHECK `NOT VALID` (migración 0004). Una red heredada fuera de rango no se firma (`409 invalid_network_prefix`). `PATCH …/devices/{dev}` valida `endpoints` con `sanitize_candidates` (sin loopback, multicast, no especificadas, enlace local ni puerto 0; `400 invalid_endpoints`); al cargar los pares para emitir también se sanean los datos heredados, con máximo cuatro endpoints. `POST …/enrollment-tokens` responde con `Cache-Control: no-store` y `X-Content-Type-Options: nosniff`. `revoke` es idempotente: repetirlo no reescribe `revoked_at` ni duplica auditoría.
 
 ## 6. Emisión de configuración
 
@@ -151,7 +154,7 @@ Panel web (fase 6), coordinator/STUN/relays y descubrimiento de endpoints (fases
 - El callback vincula además `state` al navegador mediante cookie temporal HttpOnly `atenea_oidc`, SameSite=Lax, Path=/auth/callback y duración 600 s; evita login CSRF.
 - Para devolver el mismo CSRF en `/session`, se conserva también `sessions.csrf_token`. El token de sesión continúa almacenado exclusivamente como hash; CSRF no autentica sin esa sesión.
 - `--migrate` usa la conexión administrativa, concede permisos al rol configurado y termina. El servicio normal usa otra conexión restringida y rechaza permisos UPDATE/DELETE/TRUNCATE sobre auditoría.
-- `config.issue` se registra en la transacción de cada nueva versión firmada: versión y ventana cambian el contenido firmado incluso cuando los pares y reglas permanecen iguales.
+- Cada nueva versión firmada se registra en `configuration_versions`; el evento de auditoría `config.issue` se escribe en esa misma transacción como máximo una vez por dispositivo y hora (versión y hash de la primera de la ventana).
 - Las pruebas del router no sustituyen el E2E con TUN Linux; este se ejecuta con `tests/network-lab/run-e2e.sh` (ver [resultados](../operations/e2e-fase3b.md)). No forma parte del CI porque necesita contenedores privilegiados.
 
 ## 10. Extensiones para el panel (fase 6)

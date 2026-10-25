@@ -33,7 +33,7 @@ Prefijo `/v1`, JSON, `Authorization: AtDevice v1 …` (contrato del control plan
 
 **Presencia.** Clave `device_id`; contiene `network_id`, pares (ids) de su configuración, candidatos saneados (`sanitize_candidates`, máximo 8) y caducidad `min(now + 60 s, config.not_after + 30 s)`. Un barrido cada 5 s elimina las caducadas: **no quedan dispositivos fantasma** pasado el TTL. Un `announce` posterior sustituye el registro. Una configuración caducada o con firma inválida se rechaza (`403 invalid_config`).
 
-**Límites.** Tamaño de cuerpo 160 KiB; hasta 4096 presencias y 256 long-polls simultáneos (configurable); `announce` ≤ 1 por 2 s por dispositivo; `rendezvous` ≤ 1 por segundo por par y ≤ 10 por minuto por dispositivo; sobrepasar: `429`.
+**Límites operativos.** Tamaño de cuerpo 160 KiB; hasta 4096 presencias y 256 long-polls simultáneos (configurable), con máximo 2 polls por dispositivo y ⌈total/4⌉ por red; `announce` ≤ 1 por 2 s por dispositivo; `rendezvous` ≤ 1 por segundo por par y ≤ 10 por minuto por dispositivo. Tras verificar la firma, todas las rutas firmadas comparten un cubo por dispositivo (1/s, ráfaga 16) y otro por red (8/s, ráfaga 64) antes de reservar nonces. La caché conserva cada nonce vigente durante 120 s, purga caducados y aplica cuotas por dispositivo mín(256, ⌈total/4⌉) y red mín(4096, ⌈total/2⌉), además del total configurable (65536). Los excesos de capacidad/tasa devuelven `429`, no `401`. Respuesta o cancelación liberan los tres cupos de long-poll. Las cuotas son locales al proceso; no cambian el formato firmado.
 
 ## 4. Comportamiento del agente
 
@@ -41,7 +41,7 @@ Configuración local nueva (TOML, sin firmar):
 
 ```toml
 [coordinator]
-url = "http://host:8081"          # base HTTP(S) del coordinator
+url = "https://host:8081"         # base HTTPS (http solo en loopback o con insecure_http = true, laboratorio)
 stun = ["host:3478", "host:3479"] # dos puertos del mismo servidor, en este orden
 ```
 
@@ -65,12 +65,12 @@ La lista de coordinators y STUN de una red se distribuirá en la configuración 
 
 | Riesgo | Mitigación |
 | --- | --- |
-| Coordinator hostil entrega candidatos de una víctima ("reflexión") | Solo para pares de la propia configuración; ≤ 8 candidatos, ≤ 12 sondeos de 118 bytes por candidato y ≤ 1 intento cada 30 s (backoff): ≈ 1 paquete/s por candidato durante 10 s. Residual aceptado: tráfico acotado hacia terceros |
+| Coordinator hostil entrega candidatos de una víctima ("reflexión") | Solo para pares de la propia configuración; ≤ 8 candidatos, ≤ 12 sondeos de 114 bytes por candidato y ≤ 1 intento cada 30 s (backoff): ≈ 1 paquete/s por candidato durante 10 s. Residual aceptado: tráfico acotado hacia terceros |
 | Coordinator hostil desvía a un par | Imposible sin las claves: el handshake falla (IK con la clave del par de la configuración) |
 | Un tercero obtiene candidatos de un dispositivo | `rendezvous` exige firma del dispositivo y autorización mutua; respuesta uniforme `peer_unavailable` |
 | Mensaje 1 repetido desde otra IP redirige el tráfico del respondedor | El endpoint solo se confirma con un paquete autenticado de la sesión (§4) |
 | Amplificación/reflexión por STUN | Respuesta ≤ 2,2× la petición, límite por IP de origen |
-| Agotamiento del coordinator (long-polls, presencias, anuncios con configuraciones grandes) | Límites de §3; presencia con TTL y tablas acotadas |
+| Agotamiento del coordinator (long-polls, presencias, anuncios con configuraciones grandes) | Límites de §3; presencia con TTL, nonces y concurrencia con cuotas por dispositivo/red y tablas acotadas; las pruebas `device_nonce_quota_preserves_other_network`, `network_nonce_quota_preserves_other_network`, `device_poll_quota_preserves_other_network_and_cancellation` y `network_poll_quota_preserves_other_network` verifican aislamiento y recuperación de capacidad |
 | Dispositivo revocado sigue anunciándose | Su configuración caduca (≤ 300 + 30 s, ADR-002) y la presencia caduca con ella |
 | Presencia/ubicación de dispositivos observable por el coordinator | No se oculta (E2E no oculta metadatos, T15) |
 

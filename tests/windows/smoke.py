@@ -1,7 +1,9 @@
 """Aceptación real; run.ps1 la limita al runner elevado y desechable."""
 import ctypes
 from ctypes import wintypes
+import json
 import os
+import struct
 from pathlib import Path
 import re
 import subprocess
@@ -239,6 +241,12 @@ dst = "any"
         assert service['State'] == 'Stopped' and service['StartMode'] == 'Manual', service
         assert service['StartName'] == 'LocalSystem', service
         assert 'run --service --config' in service['PathName']
+        # FailureActions (REG_BINARY): reset, 2 punteros, nº de acciones, offset y pares (tipo, retardo ms).
+        raw = json.loads(ps("$k = Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\AteneaAgent'; ConvertTo-Json -Compress -InputObject @{Actions = [int[]]$k.FailureActions; Flag = [int]$k.FailureActionsOnNonCrashFailures}"))
+        blob = bytes(raw['Actions'])
+        reset, _, _, count, offset = struct.unpack_from('<5I', blob)
+        actions = [struct.unpack_from('<II', blob, offset + 8 * i) for i in range(count)]
+        assert reset == 86400 and actions == [(1, 5000), (1, 15000), (1, 60000)] and raw['Flag'] == 1, (reset, actions, raw)
         issue(1, False)
         peerlog = (work / 'peer.log').open('w+')
         peer = subprocess.Popen([str(REPO / 'target/debug/atenea-testpeer.exe'), '--device-dir', str(work / 'peer'), '--agent-bundle', str(DATA / 'device/bundle.bin'), '--listen', '127.0.0.1:51821', '--own-addr', '10.77.0.1', '--own-addr6', 'fd77::1', '--agent-addr', '10.77.0.2', '--agent-addr6', 'fd77::2', '--network-id', NETWORK, '--count', '2', '--timeout-secs', '120'], stdout=peerlog, stderr=subprocess.STDOUT)
@@ -292,6 +300,8 @@ dst = "any"
         # Caída sin destructor y limpieza offline, seguida de reinicio desde v2 persistida.
         ps('Start-Service AteneaAgent')
         until(nrpt)
+        # La prueba necesita observar la caída sin reinicio de SCM: se desactiva la recuperación instalada.
+        subprocess.run('sc.exe failure AteneaAgent reset= 0 actions= ""', check=True, timeout=10)
         ps("$p=(Get-CimInstance Win32_Service -Filter \"Name='AteneaAgent'\").ProcessId; Stop-Process -Id $p -Force")
         until(lambda: service_snapshot()['State'] == 'Stopped')
         call(AGENT, 'cleanup', '--config', config)

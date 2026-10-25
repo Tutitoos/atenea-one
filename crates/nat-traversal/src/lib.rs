@@ -276,8 +276,8 @@ mod tests {
         let r = encode_binding_request(&TX);
         assert_eq!(parse(&r), Ok(Message::BindingRequest { tx: TX }));
         assert!(looks_like_stun(&r));
-        // un Init de Atenea (versión 1, tipo 1, 118 bytes) no es STUN
-        let mut init = vec![0u8; 118];
+        // un Init de Atenea (versión 1, tipo 1, 114 bytes) no es STUN
+        let mut init = vec![0u8; 114];
         init[0] = 1;
         init[1] = 1;
         assert!(!looks_like_stun(&init));

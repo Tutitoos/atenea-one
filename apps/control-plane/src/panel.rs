@@ -130,13 +130,11 @@ pub async fn status(
         return Err(invalid());
     }
     let dev = Uuid::from_bytes(signed.device_id);
-    let mut tx = s.pool.begin().await?;
-    let row =
-        sqlx::query("SELECT network_id,status,identity_pubkey FROM devices WHERE id=$1 FOR UPDATE")
-            .bind(dev)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(invalid)?;
+    let row = sqlx::query("SELECT network_id,status,identity_pubkey FROM devices WHERE id=$1")
+        .bind(dev)
+        .fetch_optional(&s.pool)
+        .await?
+        .ok_or_else(invalid)?;
     let key: [u8; 32] = row
         .get::<Vec<u8>, _>("identity_pubkey")
         .try_into()
@@ -149,13 +147,8 @@ pub async fn status(
         &body,
     )
     .map_err(|_| invalid())?;
-    {
-        let mut nonces = s.nonces.lock().map_err(|_| ApiError::internal())?;
-        nonces.retain(|_, ts| now.saturating_sub(*ts) <= 120);
-        if nonces.insert((dev, signed.nonce), now).is_some() {
-            return Err(invalid());
-        }
-    }
+    crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
+    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
     if row.get::<String, _>("status") != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
@@ -180,6 +173,14 @@ pub async fn status(
         })
     {
         return Err(ApiError::bad("invalid_report"));
+    }
+    let mut tx = s.pool.begin().await?;
+    let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1 FOR UPDATE")
+        .bind(dev)
+        .fetch_one(&mut *tx)
+        .await?;
+    if status != "approved" {
+        return Err(ApiError::forbidden("device_not_approved"));
     }
     let net: Uuid = row.get("network_id");
     let peers: Vec<Uuid> = report.paths.iter().map(|p| p.peer).collect();
@@ -253,6 +254,7 @@ pub async fn sampler(s: AppState, mut stop: tokio::sync::watch::Receiver<bool>) 
             _=timer.tick()=>{
                 let current = chrono::Utc::now();
                 if sample(&s,current).await.is_err(){tracing::warn!("No se pudo muestrear la red");}
+                if crate::auth::purge(&s.pool).await.is_err(){tracing::warn!("No se pudo purgar sesiones caducadas");}
                 let expired = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM (SELECT max(not_after) AS expires FROM configuration_versions GROUP BY device_id) leases WHERE expires > $1 AND expires <= $2")
                     .bind(previous).bind(current).fetch_one(&s.pool).await;
                 match expired {

@@ -4,7 +4,9 @@
 
 use crate::config::CoordinatorConfig;
 use crate::relay::RelayEndpoint;
-use atenea_identity::{DeviceId, SigningKey, api_auth::sign_request};
+use atenea_identity::{DeviceId, Prefix, SigningKey, api_auth::sign_request};
+use atenea_nat_traversal::candidate_ok;
+use atenea_policies::prefix_contains;
 use base64::Engine as _;
 use serde::Deserialize;
 use std::io::Read;
@@ -73,6 +75,45 @@ fn grant(token_b64: &str, relays: Vec<RelayEndpoint>) -> Option<RelayGrant> {
 
 fn parse_candidates(list: &[String]) -> Vec<SocketAddr> {
     list.iter().filter_map(|s| s.parse().ok()).collect()
+}
+
+/// Relays de una concesión que se aceptan como mucho (el coordinator no es de confianza).
+const MAX_RELAYS: usize = 4;
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Resuelve `host:puerto` con plazo y devuelve una IP literal aceptable: unicast enrutable
+/// (sin loopback, enlace local, multicast ni no especificada) y fuera de la red del túnel y de
+/// las subredes servidas, que solo son alcanzables a través del propio túnel.
+async fn vet_addr(addr: &str, tunnel_only: &[Prefix]) -> Option<String> {
+    if addr.len() > 255 {
+        return None;
+    }
+    let resolved = tokio::time::timeout(RESOLVE_TIMEOUT, tokio::net::lookup_host(addr))
+        .await
+        .ok()?
+        .ok()?;
+    resolved
+        .take(8)
+        .find(|a| candidate_ok(a) && !tunnel_only.iter().any(|p| prefix_contains(p, &a.ip())))
+        .map(|a| a.to_string())
+}
+
+/// Acota y sanea los destinos de una concesión de relay. Los que se devuelven llevan la IP ya
+/// verificada: el cliente de relay conecta a ellas y no vuelve a resolver el nombre.
+pub async fn vet_relays(relays: Vec<RelayEndpoint>, tunnel_only: &[Prefix]) -> Vec<RelayEndpoint> {
+    let mut out = Vec::new();
+    for mut relay in relays.into_iter().take(MAX_RELAYS) {
+        if let Some(addr) = relay.udp.take() {
+            relay.udp = vet_addr(&addr, tunnel_only).await;
+        }
+        if let Some(addr) = relay.tls.take() {
+            relay.tls = vet_addr(&addr, tunnel_only).await;
+        }
+        if relay.udp.is_some() || relay.tls.is_some() {
+            out.push(relay);
+        }
+    }
+    out
 }
 
 /// URL completa y `path_and_query` exacto (es lo que firma la petición).
@@ -272,6 +313,7 @@ mod tests {
             stun: vec!["h:1".into(), "h:2".into()],
             relay_ca_file: None,
             relay: "auto".into(),
+            insecure_http: false,
         }
     }
 
@@ -315,6 +357,38 @@ mod tests {
             req
         });
         (url, h)
+    }
+
+    #[tokio::test]
+    async fn relay_destinations_are_vetted_and_bounded() {
+        let tunnel = [Prefix {
+            addr: "10.1.0.0".parse().unwrap(),
+            len: 16,
+        }];
+        let endpoint = |udp: &str, tls: Option<&str>| RelayEndpoint {
+            name: "r".into(),
+            udp: Some(udp.into()),
+            tls: tls.map(Into::into),
+            tls_name: None,
+        };
+        let vetted = vet_relays(
+            vec![
+                endpoint("127.0.0.1:4000", None),
+                endpoint("169.254.169.254:80", None),
+                endpoint("10.1.2.3:4000", Some("[::1]:443")),
+                endpoint("198.51.100.7:4000", Some("localhost:443")),
+                endpoint("198.51.100.8:4000", None),
+                endpoint("198.51.100.9:4000", None),
+                endpoint("198.51.100.10:4000", None),
+                endpoint("198.51.100.11:4000", None),
+            ],
+            &tunnel,
+        )
+        .await;
+        // Solo se consideran 4 relays; de ellos, uno conserva su UDP público y pierde el TLS a loopback.
+        assert_eq!(vetted.len(), 1);
+        assert_eq!(vetted[0].udp.as_deref(), Some("198.51.100.7:4000"));
+        assert!(vetted[0].tls.is_none());
     }
 
     #[test]

@@ -195,13 +195,19 @@ pub fn issuer_cert(args: IssuerCertArgs) -> Result<(), String> {
 pub fn device_init(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let noise = StaticKeypair::generate();
-    let seed = generate_seed();
-    let identity = signing_key(seed);
+    let seed = zeroize::Zeroizing::new(generate_seed());
+    let identity = signing_key(*seed);
     let mut device_id = [0u8; 16];
     device_id.copy_from_slice(&generate_seed()[..16]);
     let bundle = DeviceBundle::create(device_id, noise.public, &identity);
-    write_secret(&dir.join("noise.key"), &hex::encode(noise.private_bytes()))?;
-    write_secret(&dir.join("identity.key"), &hex::encode(&seed))?;
+    write_secret(
+        &dir.join("noise.key"),
+        &zeroize::Zeroizing::new(hex::encode(noise.private_bytes())),
+    )?;
+    write_secret(
+        &dir.join("identity.key"),
+        &zeroize::Zeroizing::new(hex::encode(&*seed)),
+    )?;
     write_new(&dir.join("bundle.bin"), &bundle.encode())?;
     println!("device_id={}", hex::encode(&device_id));
     println!("noise_public={}", hex::encode(&noise.public));

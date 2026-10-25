@@ -105,19 +105,19 @@ device-init)
   atenea device-init --dir $LAB/$1 > $LAB/$1.info && cat $LAB/$1.info
   ;;
 enroll)
-  atenea enroll --url "$2" --token "$3" --dir $LAB/$1 --name "host-$1"
+  atenea enroll --url "$2" --token "$3" --dir $LAB/$1 --name "host-$1" --insecure-http
   ;;
 start-agent)
   n=$1
   advertise=()
   if [[ "$n" == r ]]; then advertise=(--advertise-route 192.168.50.0/24); fi
-  atenea agent-config --join "$2" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock "${advertise[@]}" >/dev/null || exit 1
+  atenea agent-config --join "$2" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock --insecure-http "${advertise[@]}" >/dev/null || exit 1
   {
     echo "interval_secs = 10"
-    printf '\n[coordinator]\nurl = "http://198.51.100.10:8081"\nstun = ["198.51.100.10:3478", "198.51.100.10:3479"]\nrelay_ca_file = "%s/certs/ca.pem"\n' "$LAB"
+    printf '\n[coordinator]\nurl = "http://198.51.100.10:8081"\ninsecure_http = true\nstun = ["198.51.100.10:3478", "198.51.100.10:3479"]\nrelay_ca_file = "%s/certs/ca.pem"\n' "$LAB"
   } >> $LAB/$n.toml
   if [[ "$n" == r || "$n" == c ]]; then
-    export PATH="$LAB/dns-bin:$PATH" ATENEA_LAB_DEVICE=$n
+    export ATENEA_RESOLVECTL="$LAB/dns-bin/resolvectl" ATENEA_LAB_DEVICE=$n
   fi
   ip netns exec $n atenea up --config $LAB/$n.toml --log $LAB/$n.log
   ;;

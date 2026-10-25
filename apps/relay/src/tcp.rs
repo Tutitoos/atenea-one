@@ -1,5 +1,5 @@
-use crate::{Runtime, alloc::Binding, config::Config, now};
-use atenea_relay_core::{ALPN, FrameDecoder, Message, encode_frame, parse};
+use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group, now};
+use atenea_relay_core::{ALPN, FrameDecoder, MAGIC, Message, encode_frame, parse, ty};
 use std::{
     fs::File,
     io::{self, BufReader},
@@ -97,11 +97,11 @@ async fn serve(
 ) -> io::Result<()> {
     let c = runtime.shared.lock().unwrap().state.config.clone();
     let handshake = async {
-        let ip = if c.proxy_protocol {
+        let ip = ip_group(if c.proxy_protocol {
             proxy(&mut stream, source).await?
         } else {
             source.ip()
-        };
+        });
         {
             let mut s = runtime.shared.lock().unwrap();
             if s.clients
@@ -150,8 +150,9 @@ async fn serve(
                 let n = n?; if n == 0 { return Ok(()); } last_rx = Instant::now(); decoder.push(&buf[..n]);
                 while let Some(body) = decoder.next_frame().map_err(|_| io::Error::other("longitud de trama inválida"))? {
                     if matches!(parse(&body),Ok(Message::CookieReq | Message::Cookie {..})) { return Err(io::Error::other("cookie prohibida en TCP")); }
-                    runtime.message(binding,&body).await;
-                    if !allocated { allocated = runtime.shared.lock().unwrap().state.table.entries.values().any(|a| a.binding == binding); }
+                    // Antes de asignarse solo cabe ALLOC: el resto no puede ser válido y costaría mutex global.
+                    if !allocated && !body.starts_with(&[MAGIC, ty::ALLOC]) { return Err(io::Error::other("trama previa a ALLOC")); }
+                    allocated |= runtime.message(binding,&body).await;
                 }
             }
         }

@@ -14,6 +14,8 @@ mod relay;
 mod run;
 mod state;
 mod sync;
+#[cfg(all(test, unix))]
+mod testutil;
 
 fn main() -> std::process::ExitCode {
     if build_info::print_version("atenea-agent") {

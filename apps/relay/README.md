@@ -99,11 +99,18 @@ minúsculas. Listas de entorno usan sintaxis Figment, por ejemplo
 | `TCP_TOTAL` | 2048 | Conexiones totales, máximo 65536 |
 | `HANDSHAKE_SECS` | 10 | Plazo PROXY+TLS, máximo 300 |
 | `ALLOC_SECS` | 5 | Primera asignación válida tras TLS, máximo 300 |
-| `MAX_RATE_ENTRIES` | 65536 | Entradas IP/tipo de petición, máximo 1.000.000 |
+| `MAX_RATE_ENTRIES` | 65536 | Entradas origen/tipo de petición, máximo 1.000.000 |
 
 Todos los límites son positivos. Cubos con ráfaga de un segundo; la renovación
-no reinicia los cubos de DATA. Tablas de tasas se limpian tras 120 s sin uso. El
-barrido de asignaciones es cada 5 s; la vinculación deja de servir tráfico en su
+no reinicia los cubos de DATA. Las cuotas por origen (tasas COOKIE/ALLOC,
+MAX_PER_IP y TCP_PER_IP) agrupan IPv6 por prefijo /64 (IPv4 y direcciones
+IPv4-mapped por dirección exacta); con IPv6 detrás de NAT/proxy, un /64 comparte
+cuota. Si la tabla de tasas se llena se expulsan los cubos ya repuestos (barrido
+acotado a uno cada 100 ms y en el ciclo de 5 s), de modo que orígenes nuevos
+progresan bajo rotación de IP; solo se rechaza lo que excede su cuota. Por TCP,
+antes de la primera asignación solo se admiten tramas ALLOC (otra trama cierra la
+conexión); la asignación se detecta por el ALLOC_OK emitido, sin recorrer la
+tabla. El barrido de asignaciones es cada 5 s; la vinculación deja de servir tráfico en su
 instante de expiración aunque el barrido todavía no haya pasado. Las renovaciones
 mantienen alloc_id y sustituyen la vinculación anterior; el tráfico no prolonga
 la vida autorizada. Solo un ALLOC nuevo puede renovarla (máximo 120 s y nunca más
@@ -178,6 +185,9 @@ según relay-v1; omite códigos no observados. Rechazos sin cookie no generan re
 | `allocation_ip_network_packet_and_byte_limits` | Reloj inyectado: capacidad total/red/IP, ALLOC por segundo, cubos DATA paquetes/bytes |
 | `refresh_rebind_pair_and_expire` | Tabla pura: renovación, pareja, caducidad y liberación de índices |
 | `refill_and_bounds` | Reloj inyectado: recarga de cubos y tabla de tasas acotada |
+| `ipv6_is_grouped_by_64` / `full_table_evicts_refilled_buckets_under_rotation` | Agrupación /64 y progreso de orígenes nuevos con la tabla llena bajo rotación |
+| `per_ip_quota_covers_the_whole_ipv6_64` | MAX_PER_IP por /64 |
+| `tcp_frame_before_alloc_closes_connection` | Trama TCP no ALLOC previa a la asignación cierra la conexión |
 | `full_tcp_queue_drops_new_packet` | Cola llena descarta nuevo mensaje y cuenta sin crecer |
 
 El rechazo de PROXY externo se garantiza además por validación de configuración

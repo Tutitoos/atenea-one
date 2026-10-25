@@ -24,16 +24,17 @@ NFT
   ;;
 enroll)
   # La CA interna no forma parte del trust store público del CLI; canal interno aislado del ensayo.
-  atenea enroll --url "http://$CP_IP:8080" --token "$4" --dir "/tmp/lab/$2" --name "host-$2"
+  atenea enroll --url "http://$CP_IP:8080" --token "$4" --dir "/tmp/lab/$2" --name "host-$2" --insecure-http
   ;;
 start-agent)
   n=$2
   join=$(python3 -c 'import json,sys; x=json.loads(sys.argv[1]);x["url"]="http://"+sys.argv[2]+":8080";print(json.dumps(x))' "$3" "$CP_IP")
-  atenea agent-config --join "$join" --dir "/tmp/lab/$n" --out "/tmp/lab/$n.toml" --state-dir "/tmp/lab/$n.state" --config-file "/tmp/lab/$n.cfg" --ipc-socket "/tmp/lab/$n.sock" >/dev/null
+  atenea agent-config --join "$join" --dir "/tmp/lab/$n" --out "/tmp/lab/$n.toml" --state-dir "/tmp/lab/$n.state" --config-file "/tmp/lab/$n.cfg" --ipc-socket "/tmp/lab/$n.sock" --insecure-http >/dev/null
   cat >> "/tmp/lab/$n.toml" <<TOML
 interval_secs = ${DRILL_REISSUE:-10}
 [coordinator]
 url = "http://$COORD_IP:8081"
+insecure_http = true
 stun = ["$COORD_IP:3478", "$COORD_IP:3479"]
 relay_ca_file = "/tmp/lab/certs/ca.pem"
 TOML

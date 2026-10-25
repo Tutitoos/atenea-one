@@ -44,7 +44,7 @@ Reglas:
 
 - Handshake de 1 RTT; el iniciador puede enviar datos tras recibir el mensaje 2.
 - El mensaje 1 no tiene confidencialidad hacia adelante completa respecto a la clave estática del respondedor (spec Noise §7.7), de ahí la regla de no enviar datos de aplicación en él.
-- El respondedor hace operaciones DH por cada mensaje 1 con clave conocida: hace falta limitación de tasa por origen antes de la fase 4 (relay/coordinator exponen el puerto). El diseño de cookie/MAC anti-DoS queda como trabajo de la fase 2 si las pruebas de abuso lo exigen.
+- El respondedor hace operaciones DH por cada mensaje 1 con clave conocida: hace falta limitación de tasa por origen antes de la fase 4 (relay/coordinator exponen el puerto). Implementado en el agente: cupo por par configurado (origen conocido o relay) y por IP/IPv6 /64 de origen desconocido, con un cubo global solo para estos. Una inundación con origen suplantado agota el cubo de orígenes desconocidos; el diseño de cookie/MAC anti-DoS que lo evitaría queda pendiente de decisión (cambia el formato del mensaje 1).
 - La identidad del respondedor se revela a quien conozca su clave estática pública; no se pretende ocultar quién habla con quién frente al relay (ya documentado: E2E no oculta IPs, tamaños ni tiempos).
 
 ## Verificación

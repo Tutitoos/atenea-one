@@ -66,7 +66,11 @@ fn validate_body(body: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn write_changed(path: &Path, body: &[u8]) -> Result<bool, &'static str> {
+/// Comprobación completa de la configuración candidata (firma, serial, versión, reloj) contra el
+/// estado vigente; el fichero en uso solo se sustituye si la acepta.
+pub type Verify<'a> = &'a dyn Fn(&[u8]) -> Result<(), &'static str>;
+
+fn write_changed(path: &Path, body: &[u8], verify: Verify) -> Result<bool, &'static str> {
     validate_body(body)?;
     match PrivateFiles::read(path) {
         Ok(current) if current == body => return Ok(false),
@@ -78,6 +82,7 @@ fn write_changed(path: &Path, body: &[u8]) -> Result<bool, &'static str> {
         }
         Err(_) => return Err("no se pudo leer config_file"),
     }
+    verify(body)?;
     PrivateFiles::replace(path, body)?;
     Ok(true)
 }
@@ -88,6 +93,7 @@ pub fn fetch(
     device: DeviceId,
     path: &Path,
     ts: u64,
+    verify: Verify,
 ) -> Result<bool, &'static str> {
     let mut nonce = [0; 16];
     nonce.copy_from_slice(&atenea_identity::generate_seed()[..16]);
@@ -116,7 +122,7 @@ pub fn fetch(
         .take((RESPONSE_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| "respuesta ilegible")?;
-    write_changed(path, &bytes)
+    write_changed(path, &bytes, verify)
 }
 
 #[derive(Serialize)]
@@ -364,6 +370,7 @@ mod tests {
         SyncConfig {
             url: url.into(),
             interval_secs: 60,
+            insecure_http: false,
         }
     }
     #[cfg(unix)]
@@ -409,13 +416,29 @@ mod tests {
     fn atomic_write_and_noop() {
         let dir = temp();
         let path = dir.join("config.bin");
-        assert_eq!(write_changed(&path, b"AOCFfirst"), Ok(true));
+        let accept: Verify = &|_| Ok(());
+        assert_eq!(write_changed(&path, b"AOCFfirst", accept), Ok(true));
         let metadata = fs::metadata(&path).unwrap().modified().unwrap();
-        assert_eq!(write_changed(&path, b"AOCFfirst"), Ok(false));
+        assert_eq!(write_changed(&path, b"AOCFfirst", accept), Ok(false));
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), metadata);
-        assert!(write_changed(&path, b"invalid").is_err());
+        assert!(write_changed(&path, b"invalid", accept).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"AOCFfirst");
-        assert_eq!(write_changed(&path, b"AOCFsecond"), Ok(true));
+        assert_eq!(write_changed(&path, b"AOCFsecond", accept), Ok(true));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    #[cfg(unix)]
+    fn unverified_body_never_replaces_the_active_config() {
+        let dir = temp();
+        let path = dir.join("config.bin");
+        write_changed(&path, b"AOCFvalid", &|_| Ok(())).unwrap();
+        let reject: Verify = &|_| Err("config_rollback");
+        assert_eq!(
+            write_changed(&path, b"AOCFold", reject),
+            Err("config_rollback")
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"AOCFvalid");
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -451,7 +474,10 @@ mod tests {
         let key = atenea_identity::signing_key([1; 32]);
         let mut status = Status::default();
         for _ in 0..3 {
-            status.record(fetch(&cfg(&url), &key, [2; 16], &path, 123), 123);
+            status.record(
+                fetch(&cfg(&url), &key, [2; 16], &path, 123, &|_| Ok(())),
+                123,
+            );
         }
         assert_eq!(
             (status.sync_ok, status.sync_denied, status.sync_errors),

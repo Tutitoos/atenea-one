@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 atenea-observability.workspace = true
 atenea-identity.workspace = true
+atenea-nat-traversal.workspace = true
 axum = { version = "=0.8.9", features = ["ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

@@ -61,11 +61,8 @@ pub async fn authenticate(
         body,
     )
     .map_err(|_| invalid())?;
-    let mut nonces = s.nonces.lock().map_err(|_| ApiError::internal())?;
-    nonces.retain(|_, ts| now.saturating_sub(*ts) <= 120);
-    if nonces.insert((dev, signed.nonce), now).is_some() {
-        return Err(invalid());
-    }
+    crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
+    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
     Ok((dev, row.get("network_id")))
 }
 #[derive(Deserialize)]

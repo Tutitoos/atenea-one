@@ -21,8 +21,19 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `CONFIG_VALIDITY_SECS` | `300`; máximo `3600`, coherente con el lease del agente |
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
 | `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
+| `LOGIN_PER_MINUTE` | `20`; intentos de `GET /auth/login` por IP cliente (`429 rate_limited`); además máximo 10 000 flujos OIDC vigentes |
+| `DEVICE_PER_MINUTE` | `30`; peticiones firmadas por minuto y dispositivo (`config`, `status`, `routes`), comprobado tras verificar firma y antes de bloquear filas |
+| `TRUSTED_PROXIES` | Lista de CIDR, p. ej. `["172.30.84.2/32"]`; vacía por defecto. Solo si el peer TCP pertenece a ella se usa `X-Real-IP` como IP cliente; en otro caso se ignora toda cabecera |
 | `APPLICATION_ROLE` | Rol que recibe permisos limitados al aplicar migraciones |
 | `WEB_DIR` | Opcional: directorio `apps/web/build/client`; sirve SPA y assets desde este mismo origen |
+
+**IP cliente tras proxy.** El despliegue de referencia (HAProxy → Caddy → control plane) pasa la IP real con PROXY v2 y Caddy fija `X-Real-IP` con `header_up`, sustituyendo cualquier valor del cliente. La red interna dedicada `proxy` usa `172.30.84.0/29`: HAProxy ocupa `.3` (único origen PROXY v2 admitido por Caddy) y Caddy `.2` (único proxy admitido por el control plane). Los aliases `caddy-proxy` y `control-plane-proxy` pertenecen solo a esa red. Si el rango se solapa con el entorno, ajuste conjuntamente `ATENEA_PROXY_SUBNET`, `ATENEA_HAPROXY_PROXY_IP` y `ATENEA_CADDY_PROXY_IP` antes de actualizar el despliegue; las listas de confianza siguen esas direcciones exactas, no rangos privados completos. Fuera de compose configure `TRUSTED_PROXIES` con los peers concretos del proxy. Sin proxy confiable, todas sus peticiones comparten el cubo del peer TCP.
+
+**IdP y MFA.** MFA corresponde al proveedor OIDC: producción exige un IdP con MFA. El Dex del ejemplo usa contraseña estática de un factor y no demuestra MFA; el control plane no comprueba `amr`/`acr`.
+
+**Higiene en memoria y BD.** Cachés de nonces y cubos de tasa limitadas a 65 536 entradas (al llenarse se rechaza con `429`, sin expulsar nonces vigentes). El muestreador purga cada minuto `oidc_flows` y `sessions` caducados. `config.issue` se audita como máximo una vez por dispositivo y hora; cada emisión queda en `configuration_versions`.
+
+**CIDR de red (F7).** `0004_network_cidr_private.sql` añade CHECK `NOT VALID` (privados ADR-007, IPv4 ≥ /8, IPv6 ≥ /32): se aplica a altas, sin invalidar redes existentes. Para validar las existentes (ADR-009 §7) ejecute `ALTER TABLE networks VALIDATE CONSTRAINT networks_ipv4_private` y `networks_ipv6_private`; falla sin modificar datos si hay una red fuera de rango, que debe migrarse manualmente. Mientras tanto, la emisión rechaza con `409 invalid_network_prefix` una red heredada inválida.
 
 `DATABASE_URL_FILE` y `OIDC_CLIENT_SECRET_FILE` leen el fichero UTF-8 y eliminan únicamente CR/LF finales; un fichero vacío o ilegible impide arrancar, sin incluir su contenido en el error. La variable directa prevalece si se configura también; en contenedores configure solo `*_FILE`, con propietario UID del servicio y modo 0400.
 
