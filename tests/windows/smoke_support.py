@@ -42,6 +42,27 @@ def ps(script, timeout=30):
                 env=powershell_environment(os.environ))
 
 
+def parse_nrpt(text):
+    rules = json.loads(text) if text.strip() else []
+    if rules is None:
+        return []
+    if isinstance(rules, dict):
+        rules = [rules]
+    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+        raise ValueError('NRPT: se espera una lista de reglas proyectadas')
+    for rule in rules:
+        for field in ('Namespace', 'NameServers'):
+            values = rule.get(field)
+            if values is None:
+                values = []
+            elif isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                raise ValueError(f'NRPT: {field} debe contener cadenas')
+            rule[field] = values
+    return rules
+
+
 def ask(pipe, command):
     # El proceso auxiliar permite interrumpir también open/read síncronos bloqueados.
     return json.loads(call(sys.executable, __file__, pipe, command, timeout=5))

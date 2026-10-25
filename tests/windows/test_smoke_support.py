@@ -58,6 +58,25 @@ class SmokeSupportTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             support.pipe_exchange(r'\\.\pipe\atenea-control', 'status')
 
+    def test_projected_nrpt_normalizes_scalar_and_array_properties(self):
+        scalar = '{"Name":"regla","Namespace":".lab.internal","NameServers":"192.0.2.53","Comment":"Atenea prueba"}'
+        rule = support.parse_nrpt(scalar)[0]
+        self.assertEqual(rule['Namespace'], ['.lab.internal'])
+        self.assertEqual(rule['NameServers'], ['192.0.2.53'])
+        arrays = '[{"Name":"regla","Namespace":[".lab.internal"],"NameServers":["192.0.2.53","2001:db8::53"],"Comment":"Atenea prueba"}]'
+        rule = support.parse_nrpt(arrays)[0]
+        self.assertEqual(rule['NameServers'], ['192.0.2.53', '2001:db8::53'])
+        self.assertEqual(rule['Namespace'], ['.lab.internal'])
+
+    def test_projected_nrpt_empty_snapshot_has_no_rules(self):
+        for text in ['', '[]', 'null']:
+            self.assertEqual(support.parse_nrpt(text), [])
+
+    def test_projected_nrpt_rejects_cim_wrappers_without_dumping_them(self):
+        for text in ['"incorrecto"', '{"NameServers":{"CimClass":"objeto no proyectado"}}']:
+            with self.assertRaisesRegex(ValueError, '^NRPT: '):
+                support.parse_nrpt(text)
+
 
 if __name__ == '__main__':
     unittest.main()

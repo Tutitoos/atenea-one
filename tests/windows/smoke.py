@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 import sys
-from smoke_support import ask, call, ps
+from smoke_support import ask, call, parse_nrpt, ps
 import zipfile
 
 def pipe_sddl(pipe):
@@ -109,11 +109,20 @@ def snapshot():
 
 
 def nrpt():
-    return ps("@(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.lab.internal' -or $_.Namespace -contains 'lab.internal'}) | ConvertTo-Json -Depth 5 -Compress")
+    text = ps("$rules = @(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.lab.internal' -or $_.Namespace -contains 'lab.internal'} | Select-Object Name,@{Name='Namespace';Expression={,@($_.Namespace | ForEach-Object {[string]$_})}},@{Name='NameServers';Expression={,@($_.NameServers | ForEach-Object {[string]$_})}},Comment); ConvertTo-Json -InputObject $rules -Depth 3 -Compress")
+    return parse_nrpt(text)
 
 
 def root_nrpt():
     return ps("@(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.' -or $_.Namespace -contains ''}) | ConvertTo-Json -Depth 5 -Compress")
+
+
+def assert_clean_network(before):
+    assert not nrpt(), 'Quedan reglas NRPT de la prueba'
+    assert not ps('Get-NetAdapter -Name atenea0 -IncludeHidden -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name'), 'Queda el adaptador atenea0'
+    routes = ps("@(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('10.88.0.0/24','fd88::/64')}).Count")
+    assert routes == '0', f'Quedan {routes} rutas de subred de la prueba'
+    assert snapshot() == before, 'La limpieza alteró rutas por defecto o DNS global'
 
 
 temp = tempfile.TemporaryDirectory(prefix='atenea-windows-')
@@ -215,10 +224,12 @@ dst = "any"
         assert {r['prefix'] for r in status['routes'] if r['state'] == 'installed'} == {'10.88.0.0/24', 'fd88::/64'}, status
         for prefix in ('10.88.0.0/24', 'fd88::/64'):
             assert ps(f"(Get-NetRoute -DestinationPrefix '{prefix}').InterfaceAlias") == 'atenea0'
-        rules = json.loads(nrpt())
-        if isinstance(rules, dict):
-            rules = [rules]
-        assert len(rules) == 1 and rules[0]['NameServers'] == '10.77.0.1', rules
+        rules = nrpt()
+        assert len(rules) == 1, f'NRPT: se esperaba una regla; encontradas {len(rules)}'
+        rule = rules[0]
+        assert rule['NameServers'] == ['10.77.0.1'], f"NRPT: servidores inesperados {rule['NameServers']!r}"
+        assert rule['Namespace'] == ['.lab.internal'], f"NRPT: namespace inesperado {rule['Namespace']!r}"
+        assert rule['Comment'] == 'Atenea One: NRPT administrado (atenea0)', 'NRPT: propietario incorrecto'
         assert not root_nrpt(), 'Se creó una regla NRPT para el dominio raíz'
         # El adaptador nuevo no debe alterar las rutas por defecto ni los DNS de otros enlaces.
         current = json.loads(snapshot())
@@ -232,23 +243,18 @@ dst = "any"
         assert 'echo_replies=2' in (work / 'peer.log').read_text()
         # SCM entrega stop al Lifecycle; se espera limpieza antes de declarar Stopped.
         ps('Stop-Service AteneaAgent; (Get-Service AteneaAgent).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))', timeout=40)
-        assert not nrpt()
-        assert not ps('Get-NetAdapter -Name atenea0 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name')
-        assert snapshot() == before
+        assert_clean_network(before)
         # Caída sin destructor y limpieza offline, seguida de reinicio desde v2 persistida.
         ps('Start-Service AteneaAgent')
         until(nrpt)
         ps("$p=(Get-CimInstance Win32_Service -Filter \"Name='AteneaAgent'\").ProcessId; Stop-Process -Id $p -Force")
         until(lambda: ps('(Get-Service AteneaAgent).Status') == 'Stopped')
         call(AGENT, 'cleanup', '--config', config)
-        assert not nrpt()
-        assert not ps('Get-NetAdapter -Name atenea0 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name')
-        assert snapshot() == before
+        assert_clean_network(before)
         ps('Start-Service AteneaAgent')
         until(nrpt)
-        ps('Stop-Service AteneaAgent')
-        assert not nrpt()
-        assert snapshot() == before
+        ps('Stop-Service AteneaAgent; (Get-Service AteneaAgent).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))', timeout=40)
+        assert_clean_network(before)
     finally:
         # No se permite que un fallo de SCM tape el error de aceptación ni salte el reap.
         cleanup_step('diagnóstico previo', lambda: print(ps(f"& '{REPO / 'tests/windows/diagnostics.ps1'}' -PeerLog '{work / 'peer.log'}'", timeout=25), flush=True))
