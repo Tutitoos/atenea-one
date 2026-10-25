@@ -1,0 +1,10 @@
+---
+atenea_stack_dir: /opt/atenea
+atenea_stack_mode: compose
+atenea_stack_source: >-
+  {{ playbook_dir + '/relay-compose' if atenea_node_role == 'relay'
+     else atenea_compose_source | default(playbook_dir + '/../../deploy/compose/prod') }}
+atenea_stack_environment: "{{ atenea_env | default({}) }}"
+atenea_stack_secret_owner: '65532'
+atenea_stack_secret_group: '65532'
+atenea_stack_postgres_secrets: [postgres-password, postgres-init.sql]

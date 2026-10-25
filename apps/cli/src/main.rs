@@ -45,7 +45,8 @@ enum Cmd {
     Enroll {
         #[arg(long)]
         url: String,
-        #[arg(long)]
+        // Los tokens base64url pueden empezar por '-': no son una opción de clap.
+        #[arg(long, allow_hyphen_values = true)]
         token: String,
         #[arg(long)]
         dir: PathBuf,
@@ -298,6 +299,24 @@ mod tests {
         let path = Path::new("unused");
         assert!(ask(path, "status").unwrap_err().contains("pendiente"));
         assert!(up(path, None, path).unwrap_err().contains("pendiente"));
+    }
+
+    #[test]
+    fn enroll_accepts_tokens_starting_with_hyphen() {
+        let cli = Cli::try_parse_from([
+            "atenea",
+            "enroll",
+            "--url",
+            "https://x.test",
+            "--token",
+            "-abc_DEF",
+            "--dir",
+            "/d",
+            "--name",
+            "n",
+        ])
+        .unwrap();
+        assert!(matches!(cli.cmd, Cmd::Enroll { token, .. } if token == "-abc_DEF"));
     }
 
     #[test]

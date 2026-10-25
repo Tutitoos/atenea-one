@@ -1,0 +1,145 @@
+{
+  "uid": "atenea-control-plane",
+  "title": "Atenea · control-plane",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Disponibilidad",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"control-plane\"}",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Peticiones/s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (code) (rate(atenea_http_requests_total{job=\"control-plane\"}[5m]))",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latencia p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by (le)(rate(atenea_http_duration_seconds_bucket{job=\"control-plane\"}[5m])))",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Leases emitidos / renovados",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (__name__)(rate({__name__=~\"atenea_leases_(issued|renewed)_total\",job=\"control-plane\"}[5m]))",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "WebSocket activos",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "atenea_websocket_connections",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Errores de BD",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_database_errors_total{job=\"control-plane\"}[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    }
+  ]
+}

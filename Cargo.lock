@@ -197,6 +197,7 @@ name = "atenea-control-plane"
 version = "0.1.0"
 dependencies = [
  "atenea-identity",
+ "atenea-observability",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -230,6 +231,7 @@ version = "0.1.0"
 dependencies = [
  "atenea-identity",
  "atenea-nat-traversal",
+ "atenea-observability",
  "atenea-relay-core",
  "axum",
  "base64 0.22.1",
@@ -274,6 +276,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atenea-observability"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "atenea-policies"
 version = "0.1.0"
 dependencies = [
@@ -293,6 +304,7 @@ name = "atenea-relay"
 version = "0.1.0"
 dependencies = [
  "atenea-identity",
+ "atenea-observability",
  "atenea-relay-core",
  "figment",
  "hex",

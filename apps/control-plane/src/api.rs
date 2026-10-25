@@ -26,6 +26,7 @@ impl ApiError {
 }
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        atenea_observability::event(atenea_observability::Event::DatabaseError, 1);
         if e.as_database_error()
             .is_some_and(|e| e.is_unique_violation())
         {
@@ -129,6 +130,10 @@ pub fn router(s: AppState) -> Router {
             crate::panel::changed,
         ))
         .layer(axum::middleware::from_fn(uniform_errors))
+        .layer(axum::middleware::from_fn_with_state(
+            s.metrics.clone(),
+            atenea_observability::record,
+        ))
         .with_state(s)
 }
 async fn health(

@@ -1,0 +1,74 @@
+---
+- name: Validar acceso administrativo antes de endurecer
+  ansible.builtin.assert:
+    that:
+      - atenea_node_role in ['principal', 'relay']
+      - base_ssh_sources | length > 0
+      - atenea_admin_public_key is match('ssh-(ed25519|rsa) ')
+- name: Instalar paquetes base
+  ansible.builtin.apt:
+    name: [openssh-server, sudo, nftables, chrony, unattended-upgrades, ca-certificates]
+    state: present
+    update_cache: true
+    cache_valid_time: 86400
+- name: Crear administrador
+  ansible.builtin.user:
+    name: "{{ base_admin_user }}"
+    groups: sudo
+    shell: /bin/bash
+    append: true
+- name: Crear directorio SSH
+  ansible.builtin.file:
+    path: "/home/{{ base_admin_user }}/.ssh"
+    state: directory
+    owner: "{{ base_admin_user }}"
+    group: "{{ base_admin_user }}"
+    mode: '0700'
+- name: Instalar clave pública administrativa
+  ansible.builtin.copy:
+    content: "{{ atenea_admin_public_key }}
+"
+    dest: "/home/{{ base_admin_user }}/.ssh/authorized_keys"
+    owner: "{{ base_admin_user }}"
+    group: "{{ base_admin_user }}"
+    mode: '0600'
+- name: Permitir sudo administrativo por clave SSH
+  ansible.builtin.copy:
+    content: "{{ base_admin_user }} ALL=(ALL) NOPASSWD: ALL
+"
+    dest: /etc/sudoers.d/atenea
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+- name: Endurecer SSH
+  ansible.builtin.copy:
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      AllowTcpForwarding no
+      AllowUsers {{ base_admin_user }}
+    dest: /etc/ssh/sshd_config.d/00-atenea.conf
+    mode: '0644'
+  notify: Reiniciar SSH
+- name: Configurar actualizaciones de seguridad
+  ansible.builtin.copy:
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: '0644'
+- name: Instalar firewall de entrada y tráfico publicado Docker
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    mode: '0644'
+    validate: /usr/sbin/nft -c -f %s
+  notify: Cargar firewall
+- name: Activar servicios base
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [ssh, chrony, nftables]

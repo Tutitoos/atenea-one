@@ -45,11 +45,15 @@ impl ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
+        let mut response = (
             self.0,
             Json(json!({"error":{"code":self.1,"message":self.1}})),
         )
-            .into_response()
+            .into_response();
+        response
+            .extensions_mut()
+            .insert(atenea_observability::ErrorCode(self.1));
+        response
     }
 }
 struct Memory {
@@ -70,6 +74,7 @@ pub struct Coordinator {
     memory: Mutex<Memory>,
     polls: Semaphore,
     relay_signer: Option<atenea_identity::SigningKey>,
+    pub metrics: atenea_observability::Metrics,
 }
 impl Coordinator {
     pub fn new(config: Config) -> Result<Arc<Self>, &'static str> {
@@ -107,6 +112,7 @@ impl Coordinator {
             anchors,
             clock,
             relay_signer,
+            metrics: Default::default(),
         }))
     }
     pub fn sweep(&self) {
@@ -121,6 +127,14 @@ impl Coordinator {
             tokio::select! { _=interval.tick()=>self.sweep(), changed=stop.changed()=>{if changed.is_err() || *stop.borrow(){break;}} }
         }
     }
+    pub fn metrics_text(&self) -> String {
+        self.sweep();
+        format!(
+            "{}# TYPE atenea_presences gauge\natenea_presences {}\n",
+            self.metrics.encode(),
+            self.memory.lock().expect("memoria").presences.len()
+        )
+    }
 }
 pub fn router(state: Arc<Coordinator>) -> Router {
     Router::new()
@@ -133,6 +147,10 @@ pub fn router(state: Arc<Coordinator>) -> Router {
         .method_not_allowed_fallback(|| async {
             ApiError(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed")
         })
+        .layer(axum::middleware::from_fn_with_state(
+            state.metrics.clone(),
+            atenea_observability::record,
+        ))
         .with_state(state)
 }
 async fn body(request: Request, max: usize) -> Result<(Method, Uri, HeaderMap, Bytes), ApiError> {
@@ -353,6 +371,7 @@ async fn relay(
     };
     let token = issue(id, peer, own_key);
     let inverse = issue(peer, id, target_key);
+    atenea_observability::event(atenea_observability::Event::RelayTokensIssued, 2);
     m.seq = m.seq.wrapping_add(1);
     let event = Event::Relay {
         peer: hex::encode(id),

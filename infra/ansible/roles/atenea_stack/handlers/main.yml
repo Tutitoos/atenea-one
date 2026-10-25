@@ -1,0 +1,9 @@
+---
+- name: Aplicar stack
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop:
+    - [docker, compose, --project-directory, "{{ atenea_stack_dir }}", pull]
+    - [docker, compose, --project-directory, "{{ atenea_stack_dir }}", up, -d, --wait, --wait-timeout, '180']
+  changed_when: true
+  when: atenea_stack_mode == 'compose'

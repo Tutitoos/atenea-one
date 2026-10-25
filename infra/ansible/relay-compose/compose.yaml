@@ -1,0 +1,48 @@
+---
+name: atenea-relay
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  user: '65532:65532'
+  cap_drop: [ALL]
+  cap_add: [NET_BIND_SERVICE]
+  security_opt: ['no-new-privileges:true']
+  mem_limit: 256m
+  cpus: 0.5
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+services:
+  relay:
+    <<: *hardening
+    image: ${RELAY_IMAGE:?imagen por digest}
+    environment:
+      ATENEA_RELAY_CONFIG: /etc/atenea/relay.toml
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/config/relay.toml:/etc/atenea/relay.toml:ro'
+      - '${ATENEA_RUNTIME_DIR:?}/certs/relay.pem:/etc/atenea/relay.pem:ro'
+    secrets: [relay.key]
+    ports: ['443:443/tcp', '443:443/udp']
+    networks: [edge]
+    healthcheck:
+      test: [CMD, /usr/local/bin/healthcheck, unix, /tmp/relay.sock]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+  stun:
+    <<: *hardening
+    image: ${COORDINATOR_IMAGE:?imagen por digest}
+    environment:
+      ATENEA_COORD_CONFIG: /etc/atenea/stun.toml
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/config/stun.toml:/etc/atenea/stun.toml:ro'
+    ports: ['3478:3478/udp']
+    networks: [edge]
+    healthcheck:
+      test: [CMD, /usr/local/bin/healthcheck, http, '127.0.0.1:8081']
+      interval: 5s
+      timeout: 2s
+      retries: 12
+secrets:
+  relay.key:
+    file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay.key'
+networks:
+  edge: {}

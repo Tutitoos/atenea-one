@@ -43,6 +43,7 @@ fn valid_endpoint(endpoint: &str) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub listen: String,
+    pub metrics_listen: String,
     pub stun_ports: Vec<u16>,
     pub stun_bind: String,
     pub anchors: Vec<String>,
@@ -65,6 +66,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listen: "127.0.0.1:8081".into(),
+            metrics_listen: "127.0.0.1:9102".into(),
             stun_ports: vec![3478, 3479],
             stun_bind: "0.0.0.0".into(),
             anchors: vec![],
@@ -175,14 +177,14 @@ impl Config {
             .map_err(|_| "no se puede inspeccionar la clave de relay")?
             .is_file()
         {
-            return Err("la clave de relay requiere fichero regular 0600");
+            return Err("la clave de relay requiere fichero regular 0400 o 0600");
         }
         let file = std::fs::File::open(path).map_err(|_| "no se puede abrir la clave de relay")?;
         let meta = file
             .metadata()
             .map_err(|_| "no se puede inspeccionar la clave de relay")?;
-        if !meta.is_file() || meta.permissions().mode() & 0o777 != 0o600 {
-            return Err("la clave de relay requiere fichero regular 0600");
+        if !meta.is_file() || !matches!(meta.permissions().mode() & 0o777, 0o400 | 0o600) {
+            return Err("la clave de relay requiere fichero regular 0400 o 0600");
         }
         let text =
             std::io::read_to_string(file).map_err(|_| "no se puede leer la clave de relay")?;

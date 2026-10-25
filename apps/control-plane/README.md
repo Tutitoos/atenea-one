@@ -10,18 +10,21 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 
 | Sufijo de variable | Valor / función |
 | --- | --- |
-| `DATABASE_URL` | URL PostgreSQL del rol de aplicación, obligatoria |
+| `DATABASE_URL`, `DATABASE_URL_FILE` | URL PostgreSQL del rol de aplicación, obligatoria; alternativa por fichero de secreto |
 | `LISTEN` | `127.0.0.1:8080` |
+| `METRICS_LISTEN` | `127.0.0.1:9101`; `GET /metrics` en listener separado sin autenticación; nunca publicar/proxificar. [Operación](../../docs/operations/observabilidad.md) |
 | `PUBLIC_URL` | URL pública que se entrega en `join`; valor local predeterminado `http://127.0.0.1:8080` |
 | `OIDC_ISSUER` | URL del emisor; discovery y JWKS validan los ID tokens |
-| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Cliente OIDC registrado |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_CLIENT_SECRET_FILE` | Cliente OIDC registrado; secreto directo o por fichero |
 | `OIDC_REDIRECT_URL` | URL pública exacta de `/auth/callback` |
-| `ISSUER_KEY_FILE` | Fichero regular **0600**, semilla hex del emisor (32 bytes) |
+| `ISSUER_KEY_FILE` | Fichero regular **0400 o 0600**, sin permisos de grupo/otros, semilla hex del emisor (32 bytes) |
 | `CONFIG_VALIDITY_SECS` | `300`; máximo `3600`, coherente con el lease del agente |
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
 | `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
 | `APPLICATION_ROLE` | Rol que recibe permisos limitados al aplicar migraciones |
 | `WEB_DIR` | Opcional: directorio `apps/web/build/client`; sirve SPA y assets desde este mismo origen |
+
+`DATABASE_URL_FILE` y `OIDC_CLIENT_SECRET_FILE` leen el fichero UTF-8 y eliminan únicamente CR/LF finales; un fichero vacío o ilegible impide arrancar, sin incluir su contenido en el error. La variable directa prevalece si se configura también; en contenedores configure solo `*_FILE`, con propietario UID del servicio y modo 0400.
 
 Ejemplo sintético (no incluya secretos reales en el repositorio):
 
@@ -53,7 +56,7 @@ cargo run -p atenea-control-plane -- --migrate
 ## Emisor y certificado por red
 
 1. En la estación offline, `atenea root-init --out /ruta/offline/root.key` crea la raíz e imprime el ancla pública. Guarde esa raíz **fuera del control plane**.
-2. Prepare la semilla del emisor antes del primer arranque: en un directorio privado vacío de la estación de administración, `umask 077; openssl rand -hex 32 > issuer.key`. El RNG del sistema genera los 32 bytes; no escriba una clave a mano. Copie esta clave al servidor en un fichero 0600 y configure `ISSUER_KEY_FILE`. Arranque el servicio, cree la organización y la red por API con el ancla pública de la raíz; obtendrá el UUID de red.
+2. Prepare la semilla del emisor antes del primer arranque: en un directorio privado vacío de la estación de administración, `umask 077; openssl rand -hex 32 > issuer.key`. El RNG del sistema genera los 32 bytes; no escriba una clave a mano. Copie esta clave al servidor en un fichero 0400 (0600 también admitido), propietario del usuario del servicio, y configure `ISSUER_KEY_FILE`. Arranque el servicio, cree la organización y la red por API con el ancla pública de la raíz; obtendrá el UUID de red.
 3. En la estación offline certifique esa misma clave: `atenea issuer-cert --root /ruta/offline/root.key --issuer-key /ruta/privada/issuer.key --network-id HEX32 --serial 1 --valid-days 30 --out /ruta/privada/issuer.cert`. `HEX32` es el UUID de red sin guiones. La raíz nunca se copia al servidor.
 4. Cargue `issuer.cert` (178 bytes) por `PUT /api/v1/networks/UUID/issuer-cert`, cuerpo `application/octet-stream`, sesión admin/owner y CSRF. Se verifica red, raíz, firma y vigencia.
 5. Para otra red del mismo proceso repita `issuer-cert` con la misma `issuer.key`, el nuevo UUID y un serial adecuado. `atenea issuer-init` también genera clave y certificado juntos cuando ya se conoce el identificador de red; no sustituya por accidente la clave del emisor de un proceso que sirve otras redes.

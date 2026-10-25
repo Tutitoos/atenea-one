@@ -1,0 +1,22 @@
+---
+- name: Instalar motor y Compose de Debian
+  ansible.builtin.apt:
+    name: [docker.io, docker-cli, docker-compose]
+    state: present
+    install_recommends: false
+- name: Crear configuración Docker
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: '0755'
+- name: Configurar daemon sin puerto TCP
+  ansible.builtin.copy:
+    content: '{{ {"log-driver": "local", "log-opts": {"max-size": "10m", "max-file": "3"}, "live-restore": true} | to_nice_json }}'
+    dest: /etc/docker/daemon.json
+    mode: '0644'
+  notify: Reiniciar Docker
+- name: Activar Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started

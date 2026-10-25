@@ -358,7 +358,12 @@ async fn static_spa_fallback_preserves_api_errors_and_security_headers() {
             .unwrap()
             .contains("immutable")
     );
-    for path in ["/api/v1/unknown", "/auth/unknown", "/healthz/unknown"] {
+    for path in [
+        "/api/v1/unknown",
+        "/auth/unknown",
+        "/healthz/unknown",
+        "/metrics",
+    ] {
         let reply = t
             .send(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await;

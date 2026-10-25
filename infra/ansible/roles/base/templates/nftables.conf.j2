@@ -1,0 +1,29 @@
+#!/usr/sbin/nft -f
+# No vaciar reglas de Docker ni tablas ajenas. destroy es idempotente en Debian 13.
+destroy table inet atenea_host
+table inet atenea_host {
+  chain allowed {
+    ct state established,related accept
+    ct state invalid drop
+    meta l4proto { icmp, ipv6-icmp } accept
+{% for source in base_ssh_sources %}
+    {{ 'ip6' if ':' in source else 'ip' }} saddr {{ source }} tcp dport 22 accept
+{% endfor %}
+    tcp dport { {{ '80, 443' if atenea_node_role == 'principal' else '443' }} } accept
+    udp dport { 443, 3478 } accept
+  }
+  chain input {
+    type filter hook input priority -10; policy drop;
+    iifname "lo" accept
+    jump allowed
+  }
+  chain forward {
+    type filter hook forward priority -10; policy drop;
+    # Egreso de contenedores y respuestas; ingress se valida antes del accept de Docker.
+    iifname "docker*" accept
+    iifname "br-*" accept
+    ct status dnat meta l4proto tcp ct original proto-dst { {{ '80, 443' if atenea_node_role == 'principal' else '443' }} } accept
+    ct status dnat meta l4proto udp ct original proto-dst { 443, 3478 } accept
+    ct state established,related accept
+  }
+}

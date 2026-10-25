@@ -28,6 +28,7 @@ pub struct AppState {
     pub nonces: NonceCache,
     pub rate: Arc<Mutex<HashMap<IpAddr, (f64, Instant)>>>,
     pub panel: Arc<panel::Live>,
+    pub metrics: atenea_observability::Metrics,
 }
 impl AppState {
     pub fn new(
@@ -42,6 +43,7 @@ impl AppState {
             nonces: Default::default(),
             rate: Default::default(),
             panel: Arc::new(panel::Live::default()),
+            metrics: Default::default(),
         }
     }
 }

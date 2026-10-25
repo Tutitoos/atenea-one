@@ -51,6 +51,7 @@ impl Lab {
         let mut c = Config {
             udp_listen: "127.0.0.1:0".parse().unwrap(),
             tcp_listen: "127.0.0.1:0".parse().unwrap(),
+            metrics_listen: "127.0.0.1:0".into(),
             coordinator_keys: vec![hex::encode(sk(1).verifying_key().to_bytes())],
             tls_cert_file: dir.join("cert.pem").display().to_string(),
             tls_key_file: dir.join("key.pem").display().to_string(),

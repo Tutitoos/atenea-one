@@ -1,6 +1,12 @@
 use atenea_control_plane::{AppState, config::Config};
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() {
+    if run().await.is_err() {
+        eprintln!("Fallo del control plane; compruebe configuración, base de datos y listeners");
+        std::process::exit(1);
+    }
+}
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -25,8 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o777 != 0o600 || !metadata.is_file() {
-            return Err("El fichero de emisor debe ser regular y 0600".into());
+        if !issuer_key_mode(metadata.permissions().mode()) || !metadata.is_file() {
+            return Err("El fichero de emisor debe ser regular y 0400 o 0600".into());
         }
     }
     let mut seed = std::fs::read_to_string(&config.issuer_key_file)?;
@@ -51,6 +57,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     let state = AppState::new(pool, config, atenea_identity::signing_key(bytes));
+    let metrics_state = state.clone();
+    let metrics_task = atenea_observability::serve(
+        &state.config.metrics_listen,
+        std::sync::Arc::new(move || {
+            format!(
+                "{}# TYPE atenea_websocket_connections gauge\natenea_websocket_connections {}\n",
+                metrics_state.metrics.encode(),
+                metrics_state.panel.connection_count()
+            )
+        }),
+    )
+    .await?;
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let sampler = tokio::spawn(atenea_control_plane::panel::sampler(state.clone(), stop_rx));
     axum::serve(
@@ -64,5 +82,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .await?;
     let _ = stop_tx.send(true);
     sampler.await?;
+    metrics_task.abort();
     Ok(())
+}
+
+#[cfg(unix)]
+fn issuer_key_mode(mode: u32) -> bool {
+    matches!(mode & 0o777, 0o400 | 0o600)
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn permisos_clave_emisor() {
+    for mode in [0o400, 0o600] {
+        assert!(issuer_key_mode(mode));
+    }
+    for mode in [0o440, 0o640, 0o644, 0o604, 0o700] {
+        assert!(!issuer_key_mode(mode));
+    }
 }

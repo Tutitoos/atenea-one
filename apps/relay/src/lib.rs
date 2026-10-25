@@ -100,12 +100,79 @@ impl Runtime {
             .count();
         serde_json::json!({"allocations":s.state.table.entries.len(),"bound_udp":udp,"bound_tcp":s.state.table.entries.len()-udp,"tcp_connections":s.clients.len(),"traffic":s.state.counters})
     }
+    fn metrics_text(&self) -> String {
+        use std::fmt::Write;
+        let snapshot = self.snapshot();
+        let mut out = String::new();
+        for (name, key) in [
+            ("atenea_relay_allocations", "allocations"),
+            ("atenea_relay_udp_sessions", "bound_udp"),
+            ("atenea_relay_tls_sessions", "bound_tcp"),
+            ("atenea_relay_tls_connections", "tcp_connections"),
+        ] {
+            let _ = writeln!(out, "# TYPE {name} gauge\n{name} {}", snapshot[key]);
+        }
+        let s = self.shared.lock().unwrap();
+        let c = &s.state.counters;
+        for (transport, direction, packets, bytes) in [
+            ("udp", "egress", c.udp_packets, c.udp_bytes),
+            ("tls", "egress", c.tcp_packets, c.tcp_bytes),
+            (
+                "udp",
+                "ingress",
+                c.udp_received_packets,
+                c.udp_received_bytes,
+            ),
+            (
+                "tls",
+                "ingress",
+                c.tcp_received_packets,
+                c.tcp_received_bytes,
+            ),
+        ] {
+            let _ = writeln!(
+                out,
+                "atenea_relay_packets_total{{transport=\"{transport}\",direction=\"{direction}\"}} {packets}\natenea_relay_bytes_total{{transport=\"{transport}\",direction=\"{direction}\"}} {bytes}"
+            );
+        }
+        for reason in [
+            "malformed",
+            "cookie",
+            "cookie_rate",
+            "unexpected",
+            "unbound",
+            "size",
+            "allocation_rate",
+            "no_peer",
+            "udp_write",
+            "tcp_queue",
+            "tcp_closed",
+            "tcp_capacity",
+            "tcp_protocol",
+        ] {
+            let _ = writeln!(
+                out,
+                "atenea_relay_drops_total{{reason=\"{reason}\"}} {}",
+                c.drops.get(reason).unwrap_or(&0)
+            );
+        }
+        for code in 1..=8 {
+            let _ = writeln!(
+                out,
+                "atenea_relay_rejects_total{{code=\"{code}\"}} {}",
+                c.rejects.get(&code).unwrap_or(&0)
+            );
+        }
+        let _ = writeln!(out, "atenea_relay_allocations_total {}", c.allocations);
+        out
+    }
 }
 
 pub struct Relay {
     runtime: Arc<Runtime>,
     tcp: TcpListener,
     status: UnixListener,
+    metrics: tokio::task::JoinHandle<()>,
     tls: tokio_rustls::TlsAcceptor,
     status_path: String,
 }
@@ -115,21 +182,28 @@ impl Relay {
         let tls = tcp::tls_config(&config)?;
         let udp = UdpSocket::bind(config.udp_listen).await?;
         let tcp = TcpListener::bind(config.tcp_listen).await?;
+        let metrics_listener = tokio::net::TcpListener::bind(&config.metrics_listen).await?;
         // No se elimina una ruta preexistente: podría pertenecer a otro proceso.
         let status = UnixListener::bind(&config.status_socket)?;
         let status_path = config.status_socket.clone();
         let mut secret = [0; 32];
         rand::rngs::OsRng.fill_bytes(&mut secret);
-        Ok(Self {
-            runtime: Arc::new(Runtime {
-                udp,
-                shared: Mutex::new(Shared {
-                    state: State::new(config, keys, secret),
-                    clients: HashMap::new(),
-                }),
+        let runtime = Arc::new(Runtime {
+            udp,
+            shared: Mutex::new(Shared {
+                state: State::new(config, keys, secret),
+                clients: HashMap::new(),
             }),
+        });
+        let render = runtime.clone();
+        let metrics = tokio::spawn(async move {
+            let _ = axum_metrics(metrics_listener, render).await;
+        });
+        Ok(Self {
+            runtime,
             tcp,
             status,
+            metrics,
             tls,
             status_path,
         })
@@ -172,7 +246,7 @@ impl Relay {
                     let _ = tokio::time::timeout(std::time::Duration::from_millis(100),stream.write_all(&body)).await;
                 },
                 _ = tick.tick() => { let out = self.runtime.shared.lock().unwrap().state.sweep(now()); self.runtime.dispatch(out).await; },
-                Some(result) = tasks.join_next(), if !tasks.is_empty() => { if let Err(e) = result { tracing::warn!(error=%e,"tarea TCP terminada"); } },
+                Some(result) = tasks.join_next(), if !tasks.is_empty() => { if result.is_err() { tracing::warn!("tarea TCP terminada"); } },
             }
         }
         tasks.abort_all();
@@ -182,8 +256,14 @@ impl Relay {
 }
 impl Drop for Relay {
     fn drop(&mut self) {
+        self.metrics.abort();
         let _ = std::fs::remove_file(&self.status_path);
     }
+}
+
+async fn axum_metrics(listener: TcpListener, runtime: Arc<Runtime>) -> io::Result<()> {
+    // El listener no se comparte con TLS ni con el socket público UDP.
+    atenea_observability::serve_listener(listener, Arc::new(move || runtime.metrics_text())).await
 }
 
 #[cfg(test)]

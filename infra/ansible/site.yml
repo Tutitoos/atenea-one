@@ -1,0 +1,9 @@
+---
+- name: Configurar nodo Atenea
+  hosts: principal
+  become: true
+  roles:
+    - base
+    - docker
+    - atenea_stack
+    - observability_agent

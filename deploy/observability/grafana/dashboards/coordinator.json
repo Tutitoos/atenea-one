@@ -1,0 +1,101 @@
+{
+  "uid": "atenea-coordinator",
+  "title": "Atenea · coordinator",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Disponibilidad",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"coordinator\"}",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Presencias vigentes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "atenea_presences",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Operaciones por resultado",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route,code)(rate(atenea_http_requests_total{job=\"coordinator\"}[5m]))",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tokens emitidos/s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_relay_tokens_issued_total{job=\"coordinator\"}[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    }
+  ]
+}

@@ -80,6 +80,7 @@ minúsculas. Listas de entorno usan sintaxis Figment, por ejemplo
 | `CONFIG` | sin fichero | TOML opcional |
 | `UDP_LISTEN` | `0.0.0.0:443` | Socket UDP |
 | `TCP_LISTEN` | `127.0.0.1:8443` | Socket TCP |
+| `METRICS_LISTEN` | `127.0.0.1:9103` | `GET /metrics` privado en listener HTTP separado; nunca HAProxy/Caddy; [operación](../../docs/operations/observabilidad.md) |
 | `COORDINATOR_KEYS` | `[]` (obligatorio) | 1–32 claves públicas Ed25519 hex, no débiles |
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | vacíos (obligatorios) | PEM del servidor |
 | `PROXY_PROTOCOL` | `false` | Cabecera v2 obligatoria cuando se activa; listener loopback |

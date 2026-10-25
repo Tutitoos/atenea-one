@@ -1,0 +1,3 @@
+---
+base_admin_user: "{{ atenea_admin_user | default('operador') }}"
+base_ssh_sources: "{{ atenea_ssh_sources | default([]) }}"

@@ -1,6 +1,6 @@
 # ADR-008: Clientes macOS y Windows (fase 8)
 
-- **Estado:** Clientes macOS/Windows implementados con paquetes sin firmar y aceptación privilegiada definida en CI (2026-10-25; resultados del push pendientes). Excepción Wintun aceptada por el responsable el 2026-10-25. Firma y máquinas reales siguen pendientes.
+- **Estado:** **Aceptado** por el responsable el 2026-10-25, incluida la excepción Wintun (solo el controlador/DLL, ninguna parte del protocolo WireGuard). Clientes macOS/Windows implementados; la aceptación privilegiada pasa en runners reales de GitHub (`macos-latest`, `windows-latest`; commit `b31de56`): adaptador, v1/v2, rutas, DNS dividido, `ping` IPv4/IPv6 con `atenea-testpeer`, aislamiento de IPC, terminación forzada y limpieza. **Pendiente** (no impide aceptar el diseño): paquetes firmados (Apple Developer ID, certificado de firma de Windows) y matriz de interoperabilidad en máquinas reales.
 - **Relacionados:** ADR-003 (sesión), ADR-007 (subredes, DNS, privilegios).
 
 ## Contexto

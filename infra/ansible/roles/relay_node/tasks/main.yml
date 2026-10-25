@@ -1,0 +1,10 @@
+---
+- name: Exigir nodo sin control plane ni firma
+  ansible.builtin.assert:
+    that:
+      - atenea_node_role == 'relay'
+- name: Instalar distribución exclusiva relay y STUN
+  ansible.builtin.include_role:
+    name: atenea_stack
+  vars:
+    atenea_stack_source: "{{ playbook_dir }}/relay-compose"

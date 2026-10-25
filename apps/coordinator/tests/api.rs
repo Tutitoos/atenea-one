@@ -718,8 +718,14 @@ fn relay_config_validation_key_permissions_and_print_command() {
             .unwrap();
         assert!(!output.status.success());
     }
-    std::fs::set_permissions(&key.0, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(config.relay_signing_key().is_err());
+    for mode in [0o400, 0o600] {
+        std::fs::set_permissions(&key.0, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert!(config.relay_signing_key().unwrap().is_some());
+    }
+    for mode in [0o440, 0o640, 0o644, 0o604, 0o700] {
+        std::fs::set_permissions(&key.0, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert!(config.relay_signing_key().is_err());
+    }
     std::fs::set_permissions(&key.0, std::fs::Permissions::from_mode(0o600)).unwrap();
     std::fs::write(&key.0, "abcd").unwrap();
     assert!(config.relay_signing_key().is_err());

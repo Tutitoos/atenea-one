@@ -1,0 +1,27 @@
+groups:
+  - name: atenea
+    rules:
+      - alert: AteneaServicioCaido
+        expr: up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: 'Servicio {{ $labels.job }} no disponible'}
+      - alert: AteneaRelaySinSesiones
+        expr: atenea_relay_udp_sessions + atenea_relay_tls_sessions == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: 'Relay sin sesiones; puede ser normal sin clientes'}
+      - alert: AteneaErroresHTTP
+        expr: sum by (job) (rate(atenea_http_requests_total{code=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Errores HTTP sostenidos'}
+      - alert: AteneaLeaseSinRenovacion
+        expr: increase(atenea_leases_expired_total{job="control-plane"}[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: 'Leases expirados sin renovación; comprobar canal de control'}
+      - alert: AteneaDisco
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Menos del 15% de disco disponible'}

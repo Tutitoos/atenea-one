@@ -13,7 +13,7 @@ trap cleanup EXIT
 # Reutiliza la imagen/volumen del laboratorio; no instala toolchains en el anfitrión.
 docker image inspect atenea-lab >/dev/null
 docker volume inspect atenea-lab-target >/dev/null
-docker run --rm -v "$root:/src:ro" -v atenea-lab-target:/cache \
+docker run --rm -v "$root:/src:ro" -v atenea-lab-target:/cache -v atenea-cargo-registry:/usr/local/cargo/registry \
     -e CARGO_TARGET_DIR=/cache/target -w /src atenea-lab \
     cargo build --release --locked -p atenea-cli -p atenea-agent
 docker build -t "$image" "$root/tests/packaging"

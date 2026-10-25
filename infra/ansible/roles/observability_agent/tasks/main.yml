@@ -1,0 +1,4 @@
+---
+- name: Ejecutar hook del exportador definido por el operador
+  ansible.builtin.include_tasks: "{{ observability_agent_tasks }}"
+  when: observability_agent_tasks | length > 0

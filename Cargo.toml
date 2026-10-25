@@ -7,6 +7,7 @@ members = [
     "crates/policies",
     "crates/nat-traversal",
     "crates/relay-core",
+    "crates/observability",
     "crates/tunnel",
     "crates/testpeer",
     "crates/windows",
@@ -37,6 +38,7 @@ atenea-identity = { path = "crates/identity" }
 atenea-policies = { path = "crates/policies" }
 atenea-nat-traversal = { path = "crates/nat-traversal" }
 atenea-relay-core = { path = "crates/relay-core" }
+atenea-observability = { path = "crates/observability" }
 atenea-tunnel = { path = "crates/tunnel" }
 atenea-windows = { path = "crates/windows" }
 serde = { version = "1", features = ["derive"] }

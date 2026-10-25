@@ -242,3 +242,73 @@ El hash publicado en [wintun.net](https://www.wintun.net/) se contrastó mediant
 descarga y cálculo independiente el 2026-10-25. Sin alternativas de controlador,
 hash configurable ni descarga desde terceros. Certificado de firma de Atenea y
 validación en máquinas reales pendientes; la firma oficial de Wintun no firma el cliente.
+
+### Fase 9 — Copias y recuperación
+
+| Dependencia | Versión observada / fijación | Licencia | Uso |
+| --- | --- | --- | --- |
+| PostgreSQL, imagen oficial | `postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe` (17.11, índice multiarch consultado con `docker buildx imagetools inspect`) | PostgreSQL | Base de `deploy/backup/Dockerfile` |
+| pgBackRest | 2.59.3 (`2.59.3-1.pgdg13+1`, paquete PGDG) | MIT | Completas, incrementales, cifrado AES-256-CBC y WAL/PITR |
+| age | 1.2.1 (`1.2.1-1+b5`, Debian) | BSD-3-Clause | Copia de secretos a varios destinatarios |
+| Python | 3.13, Debian en imagen; biblioteca estándar en el orquestador | PSF | Extracción segura de claves y simulacro Docker |
+
+Fuentes: [pgBackRest](https://pgbackrest.org/), [age](https://github.com/FiloSottile/age), [imagen PostgreSQL](https://hub.docker.com/_/postgres). Los paquetes apt se resuelven al construir: el digest de la base no congela el repositorio apt; el release debe fijar el digest de la imagen resultante y registrar su SBOM.
+
+### Fase 9 — Infraestructura como código
+
+| Dependencia | Versión fijada / observada | Licencia | Uso |
+| --- | --- | --- | --- |
+| Debian, imagen oficial | `debian:13@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308` | Licencias de paquetes Debian | Systemd, herramientas y ensayo limpio |
+| OpenTofu | `ghcr.io/opentofu/opentofu:1.10.6@sha256:879a73a0ee45132abf1b26583e3ab3a1e5443157a13b460114578d13dbe40b6e` | MPL-2.0 | `fmt`, `validate`, `plan` local; binario copiado sin heredar ONBUILD |
+| SOPS | `ghcr.io/getsops/sops:v3.11.0@sha256:6ce00ac946e1a52b2d1e5b7087441f7b6ef7bad907753104013f8bdb8f5fd891` | MPL-2.0 | Cifrado y rotación de secretos |
+| Ansible core | Debian `2.19.11-0+deb13u1` | GPL-3.0-or-later | Solo `ansible.builtin`; sin Galaxy ni colecciones externas |
+| ansible-lint | Debian `25.6.1+really25.2.1-1` | GPL-3.0-or-later | Perfil production, ejecución offline |
+| yamllint | Debian `1.37.1-1` | GPL-3.0-or-later | YAML de infraestructura |
+| age | Debian `1.2.1-1+b5` | BSD-3-Clause | Identidades efímeras y destinatarios SOPS |
+| Provider incorporado Terraform | `terraform.io/builtin/terraform`, incluido en Tofu | Incluido en OpenTofu | `terraform_data`, ningún servicio remoto |
+| Provider DNS | `hashicorp/dns` `3.4.3` | MPL-2.0 | Ejemplo RFC2136/TSIG; no aplicado contra DNS real |
+
+Digests de índices consultados con `docker buildx imagetools inspect`; versiones
+Debian observadas mediante `dpkg-query` en el contenedor. Los paquetes apt de roles
+y herramientas no quedan congelados por el digest base: registrar SBOM y digest
+de la imagen construida para un release. Las herramientas GPL se ejecutan como
+procesos de operación/lint separados; no se enlazan con los binarios Apache-2.0.
+Fuentes: [OpenTofu](https://github.com/opentofu/opentofu),
+[SOPS](https://github.com/getsops/sops), [Ansible](https://docs.ansible.com/),
+[DNS 3.4.3](https://registry.terraform.io/providers/hashicorp/dns/3.4.3/docs).
+
+### Fase 9 — Stack e imágenes
+
+| Dependencia | Versión / índice fijado | Licencia | Uso |
+| --- | --- | --- | --- |
+| Rust oficial | `rust:1.99@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc` | MIT/Apache-2.0 y paquetes Debian | Compilación `--locked` multi-etapa |
+| Distroless CC Debian 13 | `gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e` | Apache-2.0 y paquetes Debian | Runtime no root y sin shell |
+| Node oficial | `node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205` | MIT y paquetes Debian | Build estático del panel con pnpm 11.23.0 |
+| HAProxy oficial | `haproxy:3.2-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b` | GPL-2.0/LGPL-2.1 | Entrada TCP L4, SNI/ALPN, PROXYv2 |
+| Caddy oficial | `caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d` | Apache-2.0 | HTTPS panel, HTTP-01 y CA local |
+| Dex | `ghcr.io/dexidp/dex:v2.41.1@sha256:bc7cfce7c17f52864e2bb2a4dc1d2f86a41e3019f6d42e81d92a301fad0c8a1d` | Apache-2.0 | OIDC del piloto |
+
+Digests reales consultados con `docker buildx imagetools inspect`; PostgreSQL 17 usa el índice documentado en copias. Fuentes: [Distroless](https://github.com/GoogleContainerTools/distroless), [Rust](https://hub.docker.com/_/rust), [HAProxy](https://hub.docker.com/_/haproxy), [Caddy](https://hub.docker.com/_/caddy), [Dex](https://github.com/dexidp/dex). No hay nuevas dependencias Rust externas para bootstrap ni healthchecks.
+
+### Fase 9 — observabilidad
+
+El crate local `atenea-observability` reutiliza Axum 0.8.9 (MIT) y Tokio 1
+(MIT), ya presentes en el workspace. No se incorpora SDK OpenTelemetry ni otro
+registro Prometheus: son contadores enteros, un histograma de seis límites
+constantes y texto Prometheus 0.0.4, contrastado por un scrape de Prometheus real.
+
+| Dependencia separada | Versión | Licencia | Uso |
+| --- | --- | --- | --- |
+| Prometheus | 3.2.1 | Apache-2.0 | Scrape, PromQL, reglas y promtool |
+| node_exporter | 1.9.1 | Apache-2.0 | Solo colector de sistemas de ficheros |
+| Grafana | 11.6.0 | AGPL-3.0 | Paneles provisionados |
+| Loki | 3.4.2 | AGPL-3.0 | Registros de siete días |
+| Alloy | 1.8.3 | Apache-2.0 | Lectura de JSON Docker sin acceso al socket Docker |
+
+Los cinco índices multiarch se obtuvieron con `docker buildx imagetools inspect`
+y están fijados por digest en `deploy/compose/prod/observability.yaml`.
+Fuentes: [Prometheus](https://github.com/prometheus/prometheus),
+[node_exporter](https://github.com/prometheus/node_exporter),
+[Grafana](https://github.com/grafana/grafana),
+[Loki](https://github.com/grafana/loki) y [Alloy](https://github.com/grafana/alloy).
+Se ejecutan como procesos independientes: no se enlazan con los binarios Atenea.

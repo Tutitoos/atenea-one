@@ -281,6 +281,14 @@ pub async fn get(
     )
     .await?;
     tx.commit().await?;
+    atenea_observability::event(
+        if last.is_some() {
+            atenea_observability::Event::LeaseRenewed
+        } else {
+            atenea_observability::Event::LeaseIssued
+        },
+        1,
+    );
     s.panel.changed(net, "devices");
     s.panel.changed(net, "audit");
     Ok((

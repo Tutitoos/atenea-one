@@ -16,6 +16,7 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 | Sufijo de variable / clave TOML | Predeterminado | Uso |
 | --- | --- | --- |
 | `LISTEN` / `listen` | `127.0.0.1:8081` | Dirección HTTP |
+| `METRICS_LISTEN` / `metrics_listen` | `127.0.0.1:9102` | `GET /metrics` privado, listener separado sin autenticación; [regla de red](../../docs/operations/observabilidad.md) |
 | `STUN_BIND` / `stun_bind` | `0.0.0.0` | IP UDP; `::` permite IPv6 según la configuración dual-stack del sistema |
 | `STUN_PORTS` / `stun_ports` | `[3478,3479]` | Dos puertos UDP distintos y no nulos |
 | `ANCHORS` / `anchors` | `[]` (requiere configuración) | Raíces públicas hex de 32 bytes |
@@ -30,7 +31,7 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 | `RENDEZVOUS_PER_MINUTE` | `10` | Cubo por dispositivo, ráfaga 10 |
 | `STUN_PER_SECOND` | `20` | Cubo por IP, compartido entre ambos puertos |
 | `STUN_BURST` | `40` | Ráfaga STUN |
-| `RELAY_SIGNING_KEY_FILE` | Sin clave | Semilla Ed25519 de 32 bytes hex (64 dígitos, salto final opcional); fichero regular con permisos 0600 |
+| `RELAY_SIGNING_KEY_FILE` | Sin clave | Semilla Ed25519 de 32 bytes hex (64 dígitos, salto final opcional); fichero regular con permisos 0400 o 0600, sin permisos de grupo/otros |
 | `RELAYS` | `[]` | Lista JSON de `{name, udp?, tls?, tls_name?}`; al menos UDP o TLS `host:puerto`, nombre TLS obligatorio si hay TLS |
 | `RELAY_TOKEN_TTL_SECS` | `300` | Vida del token, entre 1 y 600 segundos |
 
@@ -55,13 +56,15 @@ STUN acepta únicamente Binding request bien formado y responde XOR-MAPPED-ADDRE
 ## Configurar relay
 
 ```sh
-chmod 600 /ruta/relay-signing.hex
+chmod 400 /ruta/relay-signing.hex
 export ATENEA_COORD_RELAY_SIGNING_KEY_FILE=/ruta/relay-signing.hex
 export ATENEA_COORD_RELAYS='[{"name":"principal","udp":"relay.example:443","tls":"relay.example:443","tls_name":"relay.example"}]'
 atenea-coordinator --print-relay-key
 ```
 
 La semilla debe generarse de forma segura y ser distinta de claves raíz, emisor y dispositivos. `--print-relay-key` imprime únicamente su clave pública hex y sale sin abrir sockets; entregar esa clave **pública**, nunca la semilla, al operador del relay para su lista `ATENEA_RELAY_COORDINATOR_KEYS`. El fichero TOML también permite `[[relays]]`; los endpoints admiten DNS, IPv4 e IPv6 entre corchetes y puertos 1–65535.
+
+En contenedores monte el fichero con el UID del usuario del servicio y modo 0400. Se admiten 0400 y 0600; se rechazan, entre otros, 0440, 0640, 0644, 0604 y 0700.
 
 Sin clave o sin relays, las peticiones autenticadas a `/v1/relay` reciben 503 `relay_unavailable`; el resto del servicio sigue funcionando. Clave configurada inválida o RELAYS inválido impiden arrancar. Relay tiene tablas independientes de rendezvous: ventanas móviles de una petición por par no dirigido cada 5 s y 10 intentos/minuto por dispositivo. El máximo de **cuatro tokens por par y minuto equivale a dos peticiones exitosas**, porque cada petición emite dos tokens; se comparte entre ambas direcciones. Los límites devuelven 429 `rate_limited` y las tablas llenas rechazan nuevas entradas. Sin presencia se conserva 409; autorización unilateral, otra red y par ausente conservan el mismo 404 que rendezvous. No se altera el intervalo configurable de rendezvous (1 s por defecto).
 

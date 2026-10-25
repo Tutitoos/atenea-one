@@ -11,6 +11,7 @@ description = "Coordinator de Atenea One: presencia, rendezvous y STUN propio"
 workspace = true
 
 [dependencies]
+atenea-observability.workspace = true
 atenea-identity.workspace = true
 atenea-nat-traversal.workspace = true
 atenea-relay-core.workspace = true

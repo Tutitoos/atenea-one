@@ -1,0 +1,47 @@
+---
+- name: Actualizar con rollback del manifiesto anterior
+  hosts: principal:relays
+  become: true
+  serial: 1
+  tasks:
+    - name: Exigir backup verificado antes de actualizar
+      ansible.builtin.assert:
+        that:
+          - atenea_backup_verified | default(false) | bool
+          - atenea_health_url is defined
+    - name: Guardar manifiesto desplegado antes de reemplazar digests
+      ansible.builtin.slurp:
+        src: "{{ atenea_stack_dir | default('/opt/atenea') }}/.env"
+      register: atenea_previous_manifest
+      no_log: true
+    - name: Desplegar y comprobar salud
+      block:
+        - name: Aplicar nueva distribución
+          ansible.builtin.include_role:
+            name: atenea_stack
+        - name: Comprobar salud HTTP desde el nodo
+          ansible.builtin.uri:
+            url: "{{ atenea_health_url }}"
+            status_code: 200
+          register: atenea_health
+          retries: 12
+          delay: 5
+          until: atenea_health.status == 200
+      rescue:
+        - name: Recuperar referencias por digest realmente desplegadas
+          ansible.builtin.copy:
+            content: "{{ atenea_previous_manifest.content | b64decode }}"
+            dest: "{{ atenea_stack_dir | default('/opt/atenea') }}/.env"
+            mode: '0600'
+          no_log: true
+        - name: Arrancar los digests anteriores y esperar salud
+          ansible.builtin.command:
+            argv: [docker, compose, --project-directory, "{{ atenea_stack_dir | default('/opt/atenea') }}", up, -d, --wait, --wait-timeout, '180']
+          changed_when: true
+        - name: Comprobar salud recuperada
+          ansible.builtin.uri:
+            url: "{{ atenea_health_url }}"
+            status_code: 200
+        - name: Informar fallo aunque rollback haya terminado
+          ansible.builtin.fail:
+            msg: Actualización fallida; se ha aplicado el manifiesto anterior. Revisar migraciones expand/contract.

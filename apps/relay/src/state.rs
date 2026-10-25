@@ -18,6 +18,11 @@ pub struct Counters {
     pub tcp_bytes: u64,
     pub drops: BTreeMap<&'static str, u64>,
     pub rejects: BTreeMap<u8, u64>,
+    pub udp_received_packets: u64,
+    pub udp_received_bytes: u64,
+    pub tcp_received_packets: u64,
+    pub tcp_received_bytes: u64,
+    pub allocations: u64,
 }
 pub struct State {
     pub config: Config,
@@ -143,6 +148,7 @@ impl State {
                     Ok(id) => id,
                     Err(e) => return self.reject(b, e),
                 };
+                self.counters.allocations += 1;
                 let a = &self.table.entries[&id];
                 let peer = self.table.peer(a.key, now);
                 let mut out = vec![(
@@ -156,6 +162,16 @@ impl State {
                 return out;
             }
             Message::Data { alloc_id, datagram } => {
+                match b {
+                    Binding::Udp(_) => {
+                        self.counters.udp_received_packets += 1;
+                        self.counters.udp_received_bytes += datagram.len() as u64;
+                    }
+                    Binding::Tcp(..) => {
+                        self.counters.tcp_received_packets += 1;
+                        self.counters.tcp_received_bytes += datagram.len() as u64;
+                    }
+                }
                 let Some(a) = self
                     .table
                     .entries

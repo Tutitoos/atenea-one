@@ -1,0 +1,81 @@
+---
+- name: Validar modo de instalación
+  ansible.builtin.assert:
+    that:
+      - atenea_stack_mode in ['compose', 'dry-run']
+- name: Crear directorios privados del stack
+  ansible.builtin.file:
+    path: "{{ atenea_stack_dir }}/{{ item }}"
+    state: directory
+    mode: '0700'
+  loop: ['', secrets]
+- name: Copiar distribución Compose sin modificar origen
+  ansible.builtin.copy:
+    src: "{{ atenea_stack_source }}/"
+    dest: "{{ atenea_stack_dir }}/"
+    mode: preserve
+  notify: Aplicar stack
+- name: Copiar configuración pública y certificados preparados por el operador
+  ansible.builtin.copy:
+    src: "{{ atenea_config_source }}/"
+    dest: "{{ atenea_stack_dir }}/"
+    mode: preserve
+  when: atenea_config_source is defined
+  notify: Aplicar stack
+- name: Validar variables de entorno sin inyección de líneas
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Z][A-Z0-9_]*$')
+      - "'\n' not in (item.value | string)"
+      - "'\r' not in (item.value | string)"
+  loop: "{{ atenea_stack_environment | dict2items }}"
+- name: Renderizar variables no secretas de despliegue
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ atenea_stack_dir }}/.env"
+    mode: '0600'
+  notify: Aplicar stack
+- name: Descifrar secretos solo en el controlador
+  ansible.builtin.command:
+    argv: [sops, --decrypt, --output-type, json, "{{ atenea_secrets_source }}"]
+  delegate_to: localhost
+  become: false
+  register: atenea_decrypted
+  changed_when: false
+  no_log: true
+- name: Validar nombres de secretos y ausencia de raíz
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[a-z][a-z0-9_.-]*$')
+      - "'root' not in item.key"
+      - atenea_node_role != 'relay' or item.key == 'relay.key'
+  loop: "{{ (atenea_decrypted.stdout | from_json).files | dict2items }}"
+  no_log: true
+- name: Instalar secretos por fichero
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ atenea_stack_dir }}/secrets/{{ item.key }}"
+    owner: "{{ '999' if item.key in atenea_stack_postgres_secrets else atenea_stack_secret_owner }}"
+    group: "{{ '999' if item.key in atenea_stack_postgres_secrets else atenea_stack_secret_group }}"
+    mode: '0400'
+  loop: "{{ (atenea_decrypted.stdout | from_json).files | dict2items }}"
+  no_log: true
+  notify: Aplicar stack
+- name: Validar imágenes y Compose resuelto
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", config, --format, json]
+  register: atenea_compose_config
+  changed_when: false
+- name: Exigir referencias por digest sin builds locales
+  ansible.builtin.assert:
+    that:
+      - item.value.image is match('^.+@sha256:[0-9a-f]{64}$')
+      - item.value.build is not defined
+  loop: "{{ (atenea_compose_config.stdout | from_json).services | dict2items }}"
+- name: Impedir servicios del principal en el relay secundario antes del arranque
+  ansible.builtin.assert:
+    that:
+      - (atenea_compose_config.stdout | from_json).services.keys() | difference(['relay', 'stun']) | length == 0
+  when: atenea_node_role == 'relay'
+- name: Aplicar cambios pendientes antes de comprobar salud
+  ansible.builtin.meta: flush_handlers

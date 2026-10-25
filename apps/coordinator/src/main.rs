@@ -3,7 +3,13 @@ use std::{error::Error, sync::Arc};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() {
+    if run().await.is_err() {
+        eprintln!("Fallo del coordinator; compruebe configuración, ficheros y listeners");
+        std::process::exit(1);
+    }
+}
+async fn run() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -18,6 +24,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let state = Coordinator::new(config.clone())?;
     let udp = stun::bind(&config).await?;
     let http = TcpListener::bind(&config.listen).await?;
+    let metrics_state = state.clone();
+    let metrics_task = atenea_observability::serve(
+        &config.metrics_listen,
+        Arc::new(move || metrics_state.metrics_text()),
+    )
+    .await?;
     let (stop, rx) = watch::channel(false);
     let sweeper = tokio::spawn(Arc::clone(&state).run_sweeper(rx.clone()));
     let udp_task = tokio::spawn(stun::serve(udp, config, rx));
@@ -34,6 +46,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = stop.send(true);
     sweeper.await?;
     udp_task.await??;
+    metrics_task.abort();
     result?;
     Ok(())
 }

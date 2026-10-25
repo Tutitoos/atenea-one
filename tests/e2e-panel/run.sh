@@ -32,6 +32,6 @@ docker run -d --name atenea-panel-routes-dex --network $NETNAME --network-alias 
 mkdir -p apps/web/test-results
 docker run --rm --name atenea-panel-routes-run --privileged --network $NETNAME \
   -v "$PWD":/src:ro -v "$PWD/apps/web/test-results":/src/apps/web/test-results \
-  -v atenea-lab-target:/cache -e CARGO_TARGET_DIR=/cache/target \
+  -v atenea-lab-target:/cache -v atenea-cargo-registry:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/cache/target \
   -v atenea-panel-pnpm:/pnpm-store -v atenea-panel-modules:/work \
   -w /src atenea-panel-lab bash tests/e2e-panel/in-container.sh

@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 pub struct Config {
     pub udp_listen: SocketAddr,
     pub tcp_listen: SocketAddr,
+    pub metrics_listen: String,
     pub coordinator_keys: Vec<String>,
     pub tls_cert_file: String,
     pub tls_key_file: String,
@@ -35,6 +36,7 @@ impl Default for Config {
         Self {
             udp_listen: "0.0.0.0:443".parse().unwrap(),
             tcp_listen: "127.0.0.1:8443".parse().unwrap(),
+            metrics_listen: "127.0.0.1:9103".into(),
             coordinator_keys: vec![],
             tls_cert_file: String::new(),
             tls_key_file: String::new(),

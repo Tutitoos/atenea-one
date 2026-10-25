@@ -1,0 +1,9 @@
+---
+- name: Configurar nodo Atenea
+  hosts: relays
+  become: true
+  roles:
+    - base
+    - docker
+    - relay_node
+    - observability_agent

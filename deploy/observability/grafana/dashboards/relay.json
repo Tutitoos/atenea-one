@@ -1,0 +1,145 @@
+{
+  "uid": "atenea-relay",
+  "title": "Atenea · relay",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Disponibilidad",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"relay\"}",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Sesiones UDP/TLS",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=~\"atenea_relay_(udp|tls)_sessions\"}",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Bytes/s por transporte y sentido",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_relay_bytes_total[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Paquetes/s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_relay_packets_total[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Descartes y límites",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_relay_drops_total[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Rechazos de asignación",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(atenea_relay_rejects_total[5m])",
+          "legendFormat": "{{code}} {{route}} {{transport}} {{direction}} {{reason}}"
+        }
+      ]
+    }
+  ]
+}

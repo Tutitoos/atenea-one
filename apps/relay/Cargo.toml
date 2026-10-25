@@ -11,6 +11,7 @@ description = "Relay de Atenea One: reenvío UDP y TLS/TCP de datagramas cifrado
 workspace = true
 
 [dependencies]
+atenea-observability.workspace = true
 atenea-identity.workspace = true
 atenea-relay-core.workspace = true
 figment = { version = "0.10", features = ["env", "toml"] }

@@ -11,6 +11,7 @@ description = "Control plane de Atenea One"
 workspace = true
 
 [dependencies]
+atenea-observability.workspace = true
 atenea-identity.workspace = true
 axum = { version = "=0.8.9", features = ["ws"] }
 base64 = "0.22"

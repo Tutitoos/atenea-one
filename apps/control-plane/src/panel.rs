@@ -41,6 +41,9 @@ impl Default for Live {
     }
 }
 impl Live {
+    pub fn connection_count(&self) -> usize {
+        self.connections.lock().expect("conexiones").values().sum()
+    }
     pub fn changed(&self, net: Uuid, scope: &str) {
         let Ok(_publish) = self.publish.lock() else {
             return;
@@ -243,8 +246,24 @@ pub async fn sample(s: &AppState, at: chrono::DateTime<chrono::Utc>) -> Result<(
 }
 pub async fn sampler(s: AppState, mut stop: tokio::sync::watch::Receiver<bool>) {
     let mut timer = tokio::time::interval(Duration::from_secs(60));
+    let mut previous = chrono::Utc::now();
     loop {
-        tokio::select! { _=stop.changed()=>break, _=timer.tick()=>{if sample(&s,chrono::Utc::now()).await.is_err(){tracing::warn!("No se pudo muestrear la red");}} }
+        tokio::select! {
+            _=stop.changed()=>break,
+            _=timer.tick()=>{
+                let current = chrono::Utc::now();
+                if sample(&s,current).await.is_err(){tracing::warn!("No se pudo muestrear la red");}
+                let expired = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM (SELECT max(not_after) AS expires FROM configuration_versions GROUP BY device_id) leases WHERE expires > $1 AND expires <= $2")
+                    .bind(previous).bind(current).fetch_one(&s.pool).await;
+                match expired {
+                    Ok(count) => {
+                        atenea_observability::event(atenea_observability::Event::LeaseExpired, count as u64);
+                        previous = current;
+                    }
+                    Err(_) => { atenea_observability::event(atenea_observability::Event::DatabaseError, 1); tracing::warn!("No se pudieron contar leases expirados"); }
+                }
+            }
+        }
     }
 }
 struct Connection {
@@ -357,7 +376,7 @@ pub async fn changed(
 }
 pub async fn static_content(State(s): State<AppState>, uri: Uri) -> Response {
     let path = uri.path();
-    if ["/api", "/auth", "/healthz"]
+    if ["/api", "/auth", "/healthz", "/metrics"]
         .iter()
         .any(|p| path.starts_with(p))
     {

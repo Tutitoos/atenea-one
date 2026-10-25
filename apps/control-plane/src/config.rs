@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub database_url: String,
     pub listen: String,
+    pub metrics_listen: String,
     pub public_url: String,
     pub oidc_issuer: String,
     pub oidc_client_id: String,
@@ -24,6 +25,7 @@ impl Default for Config {
         Self {
             database_url: String::new(),
             listen: "127.0.0.1:8080".into(),
+            metrics_listen: "127.0.0.1:9101".into(),
             public_url: "http://127.0.0.1:8080".into(),
             oidc_issuer: String::new(),
             oidc_client_id: String::new(),
@@ -44,8 +46,46 @@ impl Config {
         if let Ok(path) = std::env::var("ATENEA_CP_CONFIG") {
             f = f.merge(Toml::file(path));
         }
-        f.merge(Env::prefixed("ATENEA_CP_"))
-            .extract()
-            .map_err(Box::new)
+        for field in ["DATABASE_URL", "OIDC_CLIENT_SECRET"] {
+            if let Ok(path) = std::env::var(format!("ATENEA_CP_{field}_FILE")) {
+                let value = read_secret(std::path::Path::new(&path)).map_err(|_| {
+                    Box::new(figment::Error::from("no se pudo leer secreto por fichero"))
+                })?;
+                f = f.merge(Serialized::default(&field.to_lowercase(), value));
+            }
+        }
+        f.merge(
+            Env::prefixed("ATENEA_CP_").ignore(&["DATABASE_URL_FILE", "OIDC_CLIENT_SECRET_FILE"]),
+        )
+        .extract()
+        .map_err(Box::new)
+    }
+}
+
+fn read_secret(path: &std::path::Path) -> std::io::Result<String> {
+    let value = std::fs::read_to_string(path)?;
+    let value = value.trim_end_matches(['\r', '\n']);
+    if value.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "secreto vacío",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_secret;
+
+    #[test]
+    fn secreto_por_fichero_conserva_espacios_y_rechaza_vacio() {
+        let path = std::env::temp_dir().join(format!("atenea-secret-{}", std::process::id()));
+        std::fs::write(&path, " valor \r\n").unwrap();
+        assert_eq!(read_secret(&path).unwrap(), " valor ");
+        std::fs::write(&path, "\n").unwrap();
+        assert!(read_secret(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
+        assert!(read_secret(&path).is_err());
     }
 }

@@ -1,0 +1,4 @@
+{$ATENEA_GRAFANA_HOST} {
+    tls {$CADDY_TLS:internal}
+    reverse_proxy grafana:3000
+}

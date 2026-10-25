@@ -1,0 +1,5 @@
+# Solo anclas PÚBLICAS; ninguna semilla relay_signing_key_file ni relays.
+listen = "127.0.0.1:8081"
+stun_bind = "0.0.0.0"
+stun_ports = [3478, 3479]
+anchors = ["REEMPLAZAR_POR_ANCLA_PUBLICA_HEX"]

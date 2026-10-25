@@ -1,0 +1,34 @@
+logging {
+  level = "warn"
+}
+local.file_match "docker" {
+  path_targets = [{__path__ = "/var/lib/docker/containers/*/*-json.log"}]
+}
+loki.source.file "docker" {
+  targets    = local.file_match.docker.targets
+  forward_to = [loki.process.atenea.receiver]
+}
+loki.process "atenea" {
+  stage.json {
+    expressions = {service = "attrs.\"com.docker.compose.service\"", message = "log"}
+  }
+  stage.labels {
+    values = {service = ""}
+  }
+  stage.match {
+    selector = "{service!~\"control-plane|coordinator|relay\"}"
+    action   = "drop"
+  }
+  stage.output {
+    source = "message"
+  }
+  stage.label_keep {
+    values = ["service"]
+  }
+  forward_to = [loki.write.local.receiver]
+}
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

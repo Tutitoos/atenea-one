@@ -8,6 +8,7 @@ docker build -q -t atenea-lab tests/network-lab >/dev/null
 exec docker run --rm --privileged \
   -v "$PWD":/src:ro \
   -v atenea-lab-target:/cache \
+  -v atenea-cargo-registry:/usr/local/cargo/registry \
   -e CARGO_TARGET_DIR=/cache/target \
   -w /src atenea-lab \
   bash "tests/network-lab/${1:-lab.sh}"

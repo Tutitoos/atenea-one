@@ -38,6 +38,13 @@ test-results/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+/infra/ansible/inventory.yml
+/infra/ansible/inventory.local.yml
+/infra/ansible/group_vars/
+/infra/ansible/host_vars/
+/infra/secrets/*.sops.yaml
+/infra/secrets/*.rotate.*
+/infra/tofu/**/*.tfplan
 
 # SO / editores
 .DS_Store

@@ -1,0 +1,7 @@
+udp_listen = "0.0.0.0:443"
+tcp_listen = "0.0.0.0:443"
+proxy_protocol = false
+coordinator_keys = ["REEMPLAZAR_POR_CLAVE_PUBLICA_COORDINATOR_HEX"]
+tls_cert_file = "/etc/atenea/relay.pem"
+tls_key_file = "/run/secrets/relay.key"
+status_socket = "/tmp/relay.sock"

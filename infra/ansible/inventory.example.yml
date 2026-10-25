@@ -1,0 +1,22 @@
+---
+all:
+  vars:
+    ansible_user: operador
+    atenea_admin_user: operador
+    atenea_admin_public_key: "REEMPLAZAR_POR_CLAVE_PUBLICA_SSH"
+    atenea_ssh_sources: ["192.0.2.0/24", "2001:db8::/32"]
+    atenea_secrets_source: /ruta/privada/principal.sops.yaml
+    atenea_compose_source: "{{ playbook_dir }}/../../deploy/compose/prod"
+    atenea_env: {}
+  children:
+    principal:
+      hosts:
+        principal.example.test:
+          ansible_host: 192.0.2.10
+          atenea_node_role: principal
+    relays:
+      hosts:
+        relay2.example.test:
+          ansible_host: 192.0.2.20
+          atenea_node_role: relay
+          atenea_secrets_source: /ruta/privada/relay.sops.yaml

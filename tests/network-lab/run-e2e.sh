@@ -24,5 +24,5 @@ docker run -d --name atenea-e2e-dex --network $NETNAME --network-alias dex \
   ghcr.io/dexidp/dex:v2.41.1 dex serve /etc/dex/config.yaml >/dev/null
 
 docker run --rm --privileged --network $NETNAME \
-  -v "$PWD":/src:ro -v atenea-lab-target:/cache -e CARGO_TARGET_DIR=/cache/target \
+  -v "$PWD":/src:ro -v atenea-lab-target:/cache -v atenea-cargo-registry:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/cache/target \
   -w /src atenea-lab bash tests/network-lab/e2e-cp.sh
