@@ -44,7 +44,7 @@ jobs:
       - run: pnpm -r run build
   macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,6 +54,7 @@ jobs:
       - name: Formato, clippy y pruebas sin privilegios
         run: |
           cargo fmt --all -- --check
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/macos -p 'test_*.py'
           cargo clippy -p atenea-tunnel -p atenea-agent -p atenea-cli -p atenea-testpeer --all-targets -- -D warnings
           cargo test -p atenea-tunnel -p atenea-agent -p atenea-cli -p atenea-testpeer
           cargo check --workspace
@@ -64,6 +65,7 @@ jobs:
           ATENEA_BIN_DIR="$PWD/target/debug" packaging/macos/build-pkg.sh
           pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
       - name: Aceptación privilegiada en VM desechable
+        timeout-minutes: 12
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
   windows:
     runs-on: windows-latest
