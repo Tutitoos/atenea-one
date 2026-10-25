@@ -2,6 +2,7 @@
 import json
 import ntpath
 import os
+import re
 import subprocess
 import sys
 
@@ -42,25 +43,122 @@ def ps(script, timeout=30):
                 env=powershell_environment(os.environ))
 
 
+def _invalid(label, text, detail):
+    return ValueError(f'{label}: {detail}; salida original: {text[:1000]}')
+
+
+def _json(text, label):
+    try:
+        return json.loads(text) if text.strip() else None
+    except ValueError as error:
+        raise _invalid(label, text, f'JSON no válido ({error.msg})') from None
+
+
+def _collection(value, label, text):
+    count = None
+    if isinstance(value, dict) and ('value' in value or 'Value' in value):
+        keys = set(value)
+        payload = 'value' if 'value' in value else 'Value'
+        if not keys <= {payload, 'Count'}:
+            raise _invalid(label, text, 'envoltorio de colección no válido')
+        if 'Count' in value:
+            count = value['Count']
+            if type(count) is not int or count < 0:
+                raise _invalid(label, text, 'Count debe ser un entero no negativo')
+        value = value[payload]
+    values = [] if value is None else value if isinstance(value, list) else [value]
+    if count is not None and count != len(values):
+        raise _invalid(label, text, 'Count no coincide con la colección')
+    return values
+
+
+def _strings(value, label, text):
+    values = _collection(value, label, text)
+    if any(not isinstance(item, str) for item in values):
+        raise _invalid(label, text, 'se esperan cadenas proyectadas')
+    return values
+
+
+def _record(value, fields, label, text):
+    if not isinstance(value, dict):
+        raise _invalid(label, text, 'se espera un registro proyectado')
+    result = {}
+    for field, kind in fields.items():
+        item = value.get(field)
+        if kind is list:
+            if field not in value:
+                raise _invalid(label, text, f'falta {field}')
+            result[field] = _strings(item, label, text)
+        elif type(item) is not kind:
+            raise _invalid(label, text, f'{field} debe ser {kind.__name__}')
+        else:
+            result[field] = item
+    return result
+
+
 def parse_nrpt(text):
-    rules = json.loads(text) if text.strip() else []
-    if rules is None:
-        return []
-    if isinstance(rules, dict):
-        rules = [rules]
-    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
-        raise ValueError('NRPT: se espera una lista de reglas proyectadas')
-    for rule in rules:
-        for field in ('Namespace', 'NameServers'):
-            values = rule.get(field)
-            if values is None:
-                values = []
-            elif isinstance(values, str):
-                values = [values]
-            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
-                raise ValueError(f'NRPT: {field} debe contener cadenas')
-            rule[field] = values
-    return rules
+    fields = {'Name': str, 'Namespace': list, 'NameServers': list, 'Comment': str}
+    return [_record(rule, fields, 'NRPT', text)
+            for rule in _collection(_json(text, 'NRPT'), 'NRPT', text)]
+
+
+def parse_snapshot(text):
+    label = 'Snapshot'
+    value = _json(text, label)
+    if not isinstance(value, dict) or not {'routes', 'dns'} <= value.keys():
+        raise _invalid(label, text, 'se esperan routes y dns proyectados')
+    schemas = {
+        'routes': {'DestinationPrefix': str, 'NextHop': str,
+                   'InterfaceIndex': int, 'RouteMetric': int},
+        'dns': {'InterfaceIndex': int, 'AddressFamily': int, 'ServerAddresses': list},
+    }
+    return {name: [_record(item, fields, label, text)
+                   for item in _collection(value[name], label, text)]
+            for name, fields in schemas.items()}
+
+
+def parse_service(text):
+    label = 'Servicio'
+    values = _collection(_json(text, label), label, text)
+    if len(values) != 1:
+        raise _invalid(label, text, 'se espera exactamente un servicio')
+    return _record(values[0], {field: str for field in
+                              ('State', 'StartMode', 'StartName', 'PathName')}, label, text)
+
+
+def parse_strings(text):
+    return _strings(_json(text, 'Cadenas'), 'Cadenas', text)
+
+
+def parse_count(text):
+    value = _json(text, 'Cantidad')
+    if type(value) is not int or value < 0:
+        raise _invalid('Cantidad', text, 'se espera un entero no negativo')
+    return value
+
+
+def parse_private_principals(text):
+    label = 'SDDL'
+    # Solo la DACL protegida determina los permisos; no las ACE de la SACL.
+    sections = re.findall(r'D:([^:]*?)(?=S:|$)', text.strip())
+    if len(sections) != 1:
+        raise _invalid(label, text, 'se espera una DACL protegida D:P')
+    dacl = sections[0]
+    flags, separator, entries = dacl.partition('(')
+    if not re.fullmatch(r'P(?:AI|AR)*', flags):
+        raise _invalid(label, text, 'se espera una DACL protegida D:P')
+    entries = separator + entries
+    aces = re.findall(r'\(([^()]*)\)', entries)
+    if ''.join(f'({ace})' for ace in aces) != entries:
+        raise _invalid(label, text, 'ACE no válida')
+    principals = set()
+    for ace in aces:
+        fields = ace.split(';')
+        if len(fields) != 6 or fields[0] not in {'A', 'D'} or not fields[5]:
+            raise _invalid(label, text, 'ACE no válida')
+        if fields[0] == 'A':
+            principals.add(fields[5])
+    return principals
 
 
 def ask(pipe, command):

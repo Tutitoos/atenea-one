@@ -1,7 +1,6 @@
 """Aceptación real; run.ps1 la limita al runner elevado y desechable."""
 import ctypes
 from ctypes import wintypes
-import json
 import os
 from pathlib import Path
 import re
@@ -9,7 +8,10 @@ import subprocess
 import tempfile
 import time
 import sys
-from smoke_support import ask, call, parse_nrpt, ps
+from smoke_support import (
+    ask, call, parse_count, parse_nrpt, parse_private_principals,
+    parse_service, parse_snapshot, parse_strings, ps,
+)
 import zipfile
 
 def pipe_sddl(pipe):
@@ -89,19 +91,31 @@ with zipfile.ZipFile(REPO / 'target/windows-package/atenea-client-unsigned.zip')
 
 def until(check, seconds=30):
     deadline = time.monotonic() + seconds
+    last_error = None
     while time.monotonic() < deadline:
         try:
             result = check()
             if result:
                 return result
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-            pass
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            last_error = error
         time.sleep(0.2)
-    raise AssertionError('Condición no cumplida dentro del plazo')
+    detail = f'; último error: {last_error}' if last_error else ''
+    raise AssertionError(f'Condición no cumplida dentro del plazo{detail}') from last_error
 
 
 def snapshot():
-    return ps("@{routes=@(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')} | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric | Sort-Object DestinationPrefix,InterfaceIndex,NextHop);dns=@(Get-DnsClientServerAddress | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | Sort-Object InterfaceIndex,AddressFamily)} | ConvertTo-Json -Depth 5 -Compress")
+    text = ps("""
+        $routes = @(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')} | ForEach-Object {
+            [pscustomobject]@{DestinationPrefix=[string]$_.DestinationPrefix; NextHop=[string]$_.NextHop; InterfaceIndex=[int]$_.InterfaceIndex; RouteMetric=[int]$_.RouteMetric}
+        } | Sort-Object DestinationPrefix,InterfaceIndex,NextHop)
+        $dns = @(Get-DnsClientServerAddress | ForEach-Object {
+            [pscustomobject]@{InterfaceIndex=[int]$_.InterfaceIndex; AddressFamily=[int]$_.AddressFamily; ServerAddresses=[string[]]@($_.ServerAddresses | ForEach-Object {[string]$_})}
+        } | Sort-Object InterfaceIndex,AddressFamily)
+        $result = [pscustomobject]@{routes=[object[]]$routes; dns=[object[]]$dns}
+        ConvertTo-Json -InputObject $result -Depth 5 -Compress
+    """)
+    return parse_snapshot(text)
 
 
 
@@ -109,19 +123,48 @@ def snapshot():
 
 
 def nrpt():
-    text = ps("$rules = @(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.lab.internal' -or $_.Namespace -contains 'lab.internal'} | Select-Object Name,@{Name='Namespace';Expression={,@($_.Namespace | ForEach-Object {[string]$_})}},@{Name='NameServers';Expression={,@($_.NameServers | ForEach-Object {[string]$_})}},Comment); ConvertTo-Json -InputObject $rules -Depth 3 -Compress")
+    text = ps("""
+        $rules = @(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.lab.internal' -or $_.Namespace -contains 'lab.internal'} | ForEach-Object {
+            $r = $_
+            [pscustomobject]@{
+                Name=[string]$r.Name
+                Namespace=[string[]]@($r.Namespace | ForEach-Object {[string]$_})
+                NameServers=[string[]]@($r.NameServers | ForEach-Object {[string]$_})
+                Comment=[string]$r.Comment
+            }
+        })
+        ConvertTo-Json -Depth 3 -Compress -InputObject @($rules)
+    """)
     return parse_nrpt(text)
 
 
 def root_nrpt():
-    return ps("@(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.' -or $_.Namespace -contains ''}) | ConvertTo-Json -Depth 5 -Compress")
+    return parse_count(ps("[int](@(Get-DnsClientNrptRule | Where-Object {$_.Namespace -contains '.' -or $_.Namespace -contains ''}).Count)")) != 0
+
+
+def service_snapshot():
+    text = ps("""
+        $s = Get-CimInstance Win32_Service -Filter "Name='AteneaAgent'"
+        if ($null -eq $s) { throw 'Servicio AteneaAgent ausente' }
+        $result = [pscustomobject]@{State=[string]$s.State; StartMode=[string]$s.StartMode; StartName=[string]$s.StartName; PathName=[string]$s.PathName}
+        ConvertTo-Json -InputObject $result -Depth 2 -Compress
+    """)
+    return parse_service(text)
+
+
+def interface_addrs():
+    return parse_strings(ps("$values = [string[]]@(Get-NetIPAddress -InterfaceAlias atenea0 | ForEach-Object {[string]$_.IPAddress}); ConvertTo-Json -InputObject @($values) -Compress"))
+
+
+def adapter_names():
+    return parse_strings(ps("$values = [string[]]@(Get-NetAdapter -Name atenea0 -IncludeHidden -ErrorAction SilentlyContinue | ForEach-Object {[string]$_.Name}); ConvertTo-Json -InputObject @($values) -Compress"))
 
 
 def assert_clean_network(before):
     assert not nrpt(), 'Quedan reglas NRPT de la prueba'
-    assert not ps('Get-NetAdapter -Name atenea0 -IncludeHidden -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name'), 'Queda el adaptador atenea0'
-    routes = ps("@(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('10.88.0.0/24','fd88::/64')}).Count")
-    assert routes == '0', f'Quedan {routes} rutas de subred de la prueba'
+    assert not adapter_names(), 'Queda el adaptador atenea0'
+    routes = parse_count(ps("[int](@(Get-NetRoute | Where-Object {$_.DestinationPrefix -in @('10.88.0.0/24','fd88::/64')}).Count)"))
+    assert routes == 0, f'Quedan {routes} rutas de subred de la prueba'
     assert snapshot() == before, 'La limpieza alteró rutas por defecto o DNS global'
 
 
@@ -192,7 +235,7 @@ dst = "any"
 
     peer = None
     try:
-        service = json.loads(ps("Get-CimInstance Win32_Service -Filter \"Name='AteneaAgent'\" | Select-Object State,StartMode,StartName,PathName | ConvertTo-Json -Compress"))
+        service = service_snapshot()
         assert service['State'] == 'Stopped' and service['StartMode'] == 'Manual', service
         assert service['StartName'] == 'LocalSystem', service
         assert 'run --service --config' in service['PathName']
@@ -202,12 +245,12 @@ dst = "any"
         until(lambda: 'ready' in (work / 'peer.log').read_text())
         ps('Start-Service AteneaAgent')
         until(lambda: ask(CONTROL, 'status'))
-        until(lambda: '10.77.0.2' in ps("Get-NetIPAddress -InterfaceAlias atenea0 | Select-Object -ExpandProperty IPAddress"))
-        assert 'fd77::2' in ps("Get-NetIPAddress -InterfaceAlias atenea0 | Select-Object -ExpandProperty IPAddress")
-        assert ps("@(Get-NetIPInterface -InterfaceAlias atenea0 | Where-Object {$_.NlMtu -ne 1280}).Count") == '0'
+        until(lambda: '10.77.0.2' in interface_addrs())
+        assert 'fd77::2' in interface_addrs()
+        assert parse_count(ps("[int](@(Get-NetIPInterface -InterfaceAlias atenea0 | Where-Object {$_.NlMtu -ne 1280}).Count)")) == 0
         for private in (config, DATA / 'device/noise.key', DATA / 'device/identity.key', DATA / 'state/state.bin'):
             sddl = ps(f"(Get-Acl -LiteralPath '{private}').Sddl")
-            allowed = set(re.findall(r'\(A;[^)]*;;;([^;)]+)\)', sddl))
+            allowed = parse_private_principals(sddl)
             assert 'D:P' in sddl and allowed == {'SY', 'BA'}, (private, sddl)
         for pipe, readers in ((CONTROL, {'SY', 'BA'}), (STATUS, {'SY', 'BA', 'BU'})):
             sddl = pipe_sddl(pipe)
@@ -223,7 +266,8 @@ dst = "any"
         status = ask(STATUS, 'status')
         assert {r['prefix'] for r in status['routes'] if r['state'] == 'installed'} == {'10.88.0.0/24', 'fd88::/64'}, status
         for prefix in ('10.88.0.0/24', 'fd88::/64'):
-            assert ps(f"(Get-NetRoute -DestinationPrefix '{prefix}').InterfaceAlias") == 'atenea0'
+            aliases = parse_strings(ps(f"$values = [string[]]@(Get-NetRoute -DestinationPrefix '{prefix}' | ForEach-Object {{[string]$_.InterfaceAlias}}); ConvertTo-Json -InputObject @($values) -Compress"))
+            assert aliases == ['atenea0'], f'Ruta {prefix}: interfaces inesperadas {aliases!r}'
         rules = nrpt()
         assert len(rules) == 1, f'NRPT: se esperaba una regla; encontradas {len(rules)}'
         rule = rules[0]
@@ -232,9 +276,10 @@ dst = "any"
         assert rule['Comment'] == 'Atenea One: NRPT administrado (atenea0)', 'NRPT: propietario incorrecto'
         assert not root_nrpt(), 'Se creó una regla NRPT para el dominio raíz'
         # El adaptador nuevo no debe alterar las rutas por defecto ni los DNS de otros enlaces.
-        current = json.loads(snapshot())
-        original = json.loads(before)
-        own_index = int(ps('(Get-NetAdapter -Name atenea0).ifIndex'))
+        current = snapshot()
+        original = before
+        own_index = parse_count(ps('[int]((Get-NetAdapter -Name atenea0).ifIndex)'))
+        assert own_index > 0, 'Índice del adaptador inválido'
         current['dns'] = [r for r in current['dns'] if r['InterfaceIndex'] != own_index]
         assert current == original, (current, original)
         for family, address in (('-4', '10.77.0.1'), ('-6', 'fd77::1')):
@@ -248,7 +293,7 @@ dst = "any"
         ps('Start-Service AteneaAgent')
         until(nrpt)
         ps("$p=(Get-CimInstance Win32_Service -Filter \"Name='AteneaAgent'\").ProcessId; Stop-Process -Id $p -Force")
-        until(lambda: ps('(Get-Service AteneaAgent).Status') == 'Stopped')
+        until(lambda: service_snapshot()['State'] == 'Stopped')
         call(AGENT, 'cleanup', '--config', config)
         assert_clean_network(before)
         ps('Start-Service AteneaAgent')

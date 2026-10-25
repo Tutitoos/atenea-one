@@ -40,6 +40,8 @@ if (Test-Path -LiteralPath $stage) {
     throw 'El directorio de instalación de prueba ya existe.'
 }
 try {
+    # Un solo plazo cubre la recogida PS5.1 real y todos los lectores, antes de instalar.
+    Invoke-Bounded "& '$PSScriptRoot/json-fixtures.ps1' -Out '$repo/target/windows-json-fixtures.json'; & python -u '$PSScriptRoot/check_ps51_fixtures.py' '$repo/target/windows-json-fixtures.json'; if (`$LASTEXITCODE -ne 0) {exit `$LASTEXITCODE}" 30
     Expand-Archive -LiteralPath $zip -DestinationPath $stage
     Invoke-Bounded "& '$stage/install.ps1'" 90
     Invoke-Bounded "& python -u '$PSScriptRoot/smoke.py'; if (`$LASTEXITCODE -ne 0) {exit `$LASTEXITCODE}" 360
