@@ -26,7 +26,7 @@ No se ejecutó ninguna prueba, compilación, fuzz, Docker ni laboratorio al prep
 | **Panel** | [`apps/web`](../../apps/web), servido por el control plane (`panel.rs`) | SPA que consume la API; no define modelos propios. | — | Cookie de sesión HttpOnly (la gestiona el navegador) |
 | **Par de pruebas** | [`crates/testpeer`](../../crates/testpeer/src) | `Engine` sin TUN para laboratorios/CI. | — | Claves sintéticas |
 
-Estado del contrato de cada pieza: [ADR-001](../architecture/ADR-001-noise-ik.md) a [ADR-005](../architecture/ADR-005-custodia-clave-raiz.md), [ADR-007](../architecture/ADR-007-subredes-dns-privilegios.md), [ADR-008](../architecture/ADR-008-clientes-windows-macos.md) y [ADR-009](../architecture/ADR-009-operacion-y-releases.md) existen y se leyeron (VERIFICADO, lectura). El [índice](../architecture/README.md) solo lista 001–006 y marca 006 (licencia) «Pendiente de ratificar»; **no existe fichero ADR-006** en el árbol (VERIFICADO, listado del directorio). ADR-009 figura «Propuesto» (pendiente de ratificar por el responsable).
+Estado del contrato de cada pieza: [ADR-001](../architecture/ADR-001-noise-ik.md) a [ADR-009](../architecture/ADR-009-operacion-y-releases.md) (incluidos [ADR-006](../architecture/ADR-006-licencia.md), licencia Apache-2.0, y ADR-009, operación y releases) figuran **Aceptados** en el [índice](../architecture/README.md); ADR-006 y ADR-009 se aceptaron el 2026-10-26, después de la lectura inicial de este paquete que los encontró inexistente y «Propuesto». Aceptar un ADR no equivale a verificar su implementación.
 
 ## 2. Mapa de componentes y fronteras de confianza
 
@@ -380,7 +380,7 @@ Observaciones surgidas al leer documentación y código; no son hallazgos de seg
 3. **Comprobaciones de permisos desiguales.** El agente, el emisor del control plane y la clave de firma del coordinator validan modo/tipo; la clave TLS del relay, `DATABASE_URL_FILE` y el secreto OIDC por fichero **no** tienen esa comprobación en el código (el despliegue de producción fija 0400 para la clave del relay). Evaluar si debe ser un control del software o solo del despliegue.
 4. **Datos de sesión/OIDC en claro en BD.** `csrf_token`, `pkce_verifier` y `nonce` se guardan sin hash (decisión documentada; acotada por TTL).
 5. **PROXY v2 hacia el panel.** La configuración de producción lo envía también a Caddy; ADR-004 §3 describe la variante anterior (ver §4.7).
-6. **ADR-006 inexistente y ADR-009 «Propuesto».** Las decisiones de operación/releases no están ratificadas formalmente.
+6. **ADR-006 (licencia) y ADR-009 (operación y releases) aceptados el 2026-10-26.** Los objetivos RPO ≤ 24 h / RTO ≤ 2 h son objetivos del piloto aún sin medir en un VPS; la publicación y la clave de firma de releases siguen pendientes de decisión.
 7. **Estado del agente sin autenticación de contenido** (conocido): protege la corrupción, no a un root local.
 8. **`unsafe`:** véase [mapa del código §5](mapa-del-codigo.md#5-inventario-de-bloques-unsafe); `crates/windows` aplica `#[allow(unsafe_code)]` a `mod service` aunque `service.rs` no contiene la palabra `unsafe`.
 9. **Wintun cargado por ruta configurable.** `ATENEA_WINTUN_DLL` (absoluta) o `wintun.dll` junto al ejecutable ([`tunnel/windows.rs` L83–L99](../../crates/tunnel/src/windows.rs)); el código no verifica hash ni firma de la DLL (eso recae en el instalador). Los permisos del directorio de instalación: SIN COMPROBAR.

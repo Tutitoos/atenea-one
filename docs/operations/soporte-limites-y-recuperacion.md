@@ -53,7 +53,7 @@ Perfil piloto: **300 s de lease / 60 s de sondeo de renovación / 30 s de tolera
 
 ### Recuperación: RPO/RTO
 
-Objetivos **propuestos**, pendientes de ratificación de [ADR-009](../architecture/ADR-009-operacion-y-releases.md): RPO ≤24 h / RTO ≤2 h. No son un compromiso de servicio. [Medición de restore](copias-y-recuperacion.md#mediciones-reales-2026-10-25), 2026-10-25, checkout base `b31de5621b0a3676b1ef137361fc01152c0455e4` con cambios de fase 9 sin commit; dos ciclos, datos pequeños, esquema 0001–0003:
+Objetivos **del piloto**, aceptados con [ADR-009](../architecture/ADR-009-operacion-y-releases.md) el 2026-10-26: RPO ≤24 h / RTO ≤2 h. No son un compromiso de servicio y aún no están medidos en un VPS. [Medición de restore](copias-y-recuperacion.md#mediciones-reales-2026-10-25), 2026-10-25, checkout base `b31de5621b0a3676b1ef137361fc01152c0455e4` con cambios de fase 9 sin commit; dos ciclos, datos pequeños, esquema 0001–0003:
 
 | Escenario | Media | Peor caso |
 | --- | ---: | ---: |

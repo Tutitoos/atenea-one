@@ -1,7 +1,7 @@
 # Inventario de dependencias y licencias (fase 0)
 
 - **Fecha de consulta:** 2026-10-24 (crates.io y npm). Son las últimas versiones estables **observadas**; no se ha compilado ni resuelto ninguna. Las versiones se fijan con el primer `Cargo.lock` / `pnpm-lock.yaml` de cada componente.
-- **Licencia del proyecto:** Apache-2.0 (ADR-006, pendiente de ratificar). Todas las licencias de abajo son permisivas y compatibles con su redistribución, salvo lo marcado.
+- **Licencia del proyecto:** Apache-2.0 ([ADR-006](ADR-006-licencia.md), aceptado el 2026-10-26). Todas las licencias de abajo son permisivas y compatibles con su redistribución, salvo lo marcado.
 
 ## Rust
 

@@ -1,6 +1,6 @@
 # ADR-009: Operación, disponibilidad, secretos y releases (fase 9)
 
-- **Estado:** Propuesto (2026-10-25). Pendiente de ratificación por el responsable; las cifras RPO/RTO son propuestas para el piloto y se confirman con la medición real del simulacro.
+- **Estado:** **Aceptado** por el responsable el 2026-10-26. La arquitectura, la política de secretos, el contrato de migraciones y el proceso de release se aceptan tal como están. Los objetivos RPO ≤ 24 h y RTO ≤ 2 h se aceptan como **objetivos del piloto**, no como compromiso de servicio, y se confirman o corrigen con una medición real en un VPS (la medida hasta ahora es de Docker sobre Mac arm64 con datos pequeños). La publicación en GHCR/Releases y la clave de firma de releases siguen requiriendo decisión y autorización expresas.
 - **Relacionados:** ADR-002 (revocación/lease), ADR-004 (entrada 443), ADR-005 (custodia de la clave raíz), ADR-007.
 
 ## Contexto
