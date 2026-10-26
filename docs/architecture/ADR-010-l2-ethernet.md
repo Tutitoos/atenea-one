@@ -1,6 +1,6 @@
 # ADR-010: L2 Ethernet opt-in por red (fase 10)
 
-- **Estado:** **Propuesto** (2026-10-26). Sin decisión del responsable: nada de lo que depende de este ADR se implementa antes de aceptarlo (véase [§9](#9-decisiones-para-el-responsable)). Es solo diseño y viabilidad: no hay código, ni vectores, ni laboratorio ejecutado.
+- **Estado:** **Aceptado el 2026-10-26** (diseño y decisiones D1–D7, opciones recomendadas), con la **implementación EN PAUSA**: no se escribe código L2 hasta recibir el informe de la auditoría externa de la fase 11 y tener triados y resueltos sus hallazgos críticos/altos. El diseño puede revisarse con ese informe (p. ej. si cambia el formato de la configuración firmada). Es solo diseño y viabilidad: no hay código, ni vectores, ni laboratorio ejecutado.
 - **Relacionados:** ADR-001 (Noise IK), ADR-003 (DATA, MTU), ADR-004, ADR-007 (subredes, DNS), ADR-008 (clientes; excepción Wintun), [wire-v2](../protocol/wire-v2.md), [relay-v2](../protocol/relay-v2.md), [coordinator-v1](../protocol/coordinator-v1.md), [signed-config-v1](../protocol/signed-config-v1.md), [signed-config-v2](../protocol/signed-config-v2.md), [modelo de amenazas](../security/threat-model.md) (T31+ propuestas aquí), [especificación borrador l2-v1](../protocol/l2-v1.md), [plan de la fase](../operations/fase-10-plan.md).
 - **Convención de evidencia:** **VERIFICADO** = leído en la fuente o salida real indicada (con fecha); **INFERIDO** = deducción razonada sin prueba; **SIN COMPROBAR** = no se ha podido verificar en este entorno. Fechas de consulta: 2026-10-26.
 
@@ -135,7 +135,7 @@ El **editor Monaco de políticas**, la **topología avanzada** y la **selección
 
 ## 9. Decisiones para el responsable
 
-Cada decisión indica opciones, coste, recomendación y consecuencia. **Marcadas como pendientes; ninguna está tomada.**
+Cada decisión indica opciones, coste, recomendación y consecuencia. **Decisiones tomadas por el responsable el 2026-10-26: se aceptan las opciones recomendadas en D1–D7** (D1 A solo Linux; D2 A sin excepción de driver en Windows; D3 A L2 de dispositivo; D4 A configuración firmada v3; D5 A difusión `proxy` por defecto con mDNS opt-in; D6 A sin VLAN en v1; D7 sin DHCP, mDNS opt-in y la frase de posicionamiento propuesta). La implementación sigue en pausa (véase el estado).
 
 ### D1. Sistemas operativos soportados en v1
 - **A (recomendada): solo Linux.** Coste bajo; todos los criterios de salida verificables en CI/Docker. Consecuencia: macOS/Windows no pueden unirse a redes L2; el panel debe decirlo al crear la red.
@@ -172,7 +172,7 @@ Cada decisión indica opciones, coste, recomendación y consecuencia. **Marcadas
 
 ## 10. Consecuencias
 
-- Aceptar el ADR habilita implementar solo M1 (Linux TAP, trama, MAC firmada) tras escribir vectores y un parser v3; nada se activa por defecto.
+- Aceptar el ADR habilitará implementar solo M1 (Linux TAP, trama, MAC firmada) tras escribir vectores y un parser v3, **cuando termine la pausa por la auditoría**; nada se activa por defecto.
 - Se añade superficie auditable: parser de tramas y de configuración v3, filtros ARP/ND, tablas y cubos. La auditoría externa pendiente (fase 11) no cubre L2: debe repetirse o ampliarse tras la implementación.
 - Cambios en componentes existentes, solo si se acepta: `crates/identity` (v3), `crates/policies` (ACL L2), `crates/tunnel` (tipo TAP separado de TUN), `apps/agent/src/platform` (TAP Linux, MAC, detección de `master`), control plane/OpenAPI (modo de red, asignación de MAC), coordinator (parseo v3). **Ningún** cambio en wire-v2, relay-v2, STUN ni handshake.
 
