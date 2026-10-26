@@ -37,7 +37,7 @@ pub fn run_service(config: PathBuf) -> Result<(), String> {
             success = result.is_ok(),
             "bucle del agente terminado; cerrando runtime"
         );
-        drop(runtime);
+        crate::run::shutdown_runtime(runtime);
         tracing::info!("runtime del servicio cerrado");
         result
     })

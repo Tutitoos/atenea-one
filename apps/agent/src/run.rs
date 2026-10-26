@@ -116,13 +116,21 @@ pub fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match rt.block_on(run(config)) {
+    let result = rt.block_on(run(config));
+    shutdown_runtime(rt);
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Solo después de que `run` termine y libere TUN/red/IPC. Abortar una tarea
+/// async no cancela su HTTP síncrono: no esperar indefinidamente a esos hilos.
+pub(crate) fn shutdown_runtime(runtime: tokio::runtime::Runtime) {
+    runtime.shutdown_timeout(Duration::from_secs(2));
 }
 
 /// Nivel desde `ATENEA_LOG` (error|warn|info|debug); por defecto info.
@@ -810,12 +818,13 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     tracing::info!("cerrando: la interfaz y sus rutas se eliminan al cerrar la TUN");
     #[cfg(target_os = "windows")]
     rt.netconf.cleanup()?;
-    tracing::info!("limpieza de red terminada");
     rt.store.flush();
     let _ = std::fs::remove_file(&rt.cfg.ipc_socket);
     if let Some(path) = &rt.cfg.status_socket {
         let _ = std::fs::remove_file(path);
     }
+    drop(rt);
+    tracing::info!("limpieza de red terminada");
     Ok(())
 }
 
@@ -895,4 +904,52 @@ fn ipc_status(
     status["dns"] = serde_json::json!(network.dns);
     status["forwarding_ok"] = serde_json::json!(network.forwarding_ok);
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shutdown_runtime;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn shutdown_finishes_after_cleanup_without_waiting_for_blocking_http() {
+        struct Cleanup(Arc<AtomicBool>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (started, wait_started) = mpsc::channel();
+        runtime.spawn_blocking(move || {
+            started.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(20));
+        });
+        wait_started.recv_timeout(Duration::from_secs(3)).unwrap();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let start = Instant::now();
+        let result: Result<(), &str> = runtime.block_on(async {
+            let _resources = Cleanup(cleaned.clone());
+            Ok(())
+        });
+        assert_eq!(result, Ok(()));
+        assert!(
+            cleaned.load(Ordering::SeqCst),
+            "los recursos se liberan antes de cerrar el runtime"
+        );
+        shutdown_runtime(runtime);
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "el HTTP bloqueante no debe retrasar la parada"
+        );
+    }
 }

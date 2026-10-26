@@ -32,6 +32,7 @@ build/
 coverage/
 playwright-report/
 test-results/
+/tests/load/out/
 
 # OpenTofu / Ansible
 .terraform/

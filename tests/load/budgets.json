@@ -1,0 +1,1186 @@
+{
+  "scope": "Propuestas calibradas con dos repeticiones Docker Desktop/Mac arm64; no dimensionamiento VPS",
+  "budgets": [
+    {
+      "id": "B01-direct-tcp",
+      "match": {
+        "kind": "tcp",
+        "path": "direct"
+      },
+      "samples": 2,
+      "min": {
+        "mbit_s": 700,
+        "bytes": 536870912
+      },
+      "max": {
+        "elapsed_s": 7
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 180,
+          "rss_peak_kib": 16384,
+          "cpu_percent_per_mbit_s": 0.18
+        },
+        "atenea-relay": {
+          "rss_peak_kib": 16384
+        }
+      }
+    },
+    {
+      "id": "B02-relay-udp-tcp",
+      "match": {
+        "kind": "tcp",
+        "path": "relay-udp"
+      },
+      "samples": 2,
+      "min": {
+        "mbit_s": 18,
+        "bytes": 536870912
+      },
+      "max": {
+        "elapsed_s": 240
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 15,
+          "rss_peak_kib": 16384,
+          "cpu_percent_per_mbit_s": 0.55
+        },
+        "atenea-relay": {
+          "cpu_percent": 10,
+          "rss_peak_kib": 16384,
+          "cpu_percent_per_mbit_s": 0.4
+        }
+      }
+    },
+    {
+      "id": "B03-relay-tls-tcp",
+      "match": {
+        "kind": "tcp",
+        "path": "relay-tls"
+      },
+      "samples": 2,
+      "min": {
+        "mbit_s": 18,
+        "bytes": 536870912
+      },
+      "max": {
+        "elapsed_s": 240
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 18,
+          "rss_peak_kib": 16384,
+          "cpu_percent_per_mbit_s": 0.7
+        },
+        "atenea-relay": {
+          "cpu_percent": 9,
+          "rss_peak_kib": 16384,
+          "cpu_percent_per_mbit_s": 0.35
+        }
+      }
+    },
+    {
+      "id": "B04-direct-rtt",
+      "match": {
+        "kind": "rtt",
+        "path": "direct"
+      },
+      "samples": 2,
+      "min": {
+        "sent": 2000
+      },
+      "max": {
+        "p95_ms": 2,
+        "p99_ms": 4,
+        "loss_percent": 0.1
+      }
+    },
+    {
+      "id": "B05-relay-udp-rtt",
+      "match": {
+        "kind": "rtt",
+        "path": "relay-udp"
+      },
+      "samples": 2,
+      "min": {
+        "sent": 2000
+      },
+      "max": {
+        "p95_ms": 3,
+        "p99_ms": 8,
+        "loss_percent": 0.1
+      }
+    },
+    {
+      "id": "B06-relay-tls-rtt",
+      "match": {
+        "kind": "rtt",
+        "path": "relay-tls"
+      },
+      "samples": 2,
+      "min": {
+        "sent": 2000
+      },
+      "max": {
+        "p95_ms": 3,
+        "p99_ms": 8,
+        "loss_percent": 0.1
+      }
+    },
+    {
+      "id": "B07-direct-udp",
+      "match": {
+        "kind": "udp",
+        "path": "direct"
+      },
+      "samples": 2,
+      "min": {
+        "received_mbit_s": 19.18
+      },
+      "max": {
+        "loss_percent": 0.1
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 25,
+          "rss_peak_kib": 16384
+        },
+        "atenea-relay": {
+          "cpu_percent": 15,
+          "rss_peak_kib": 16384
+        }
+      }
+    },
+    {
+      "id": "B08-relay-udp-udp",
+      "match": {
+        "kind": "udp",
+        "path": "relay-udp"
+      },
+      "samples": 2,
+      "min": {
+        "received_mbit_s": 19.18
+      },
+      "max": {
+        "loss_percent": 0.1
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 25,
+          "rss_peak_kib": 16384
+        },
+        "atenea-relay": {
+          "cpu_percent": 15,
+          "rss_peak_kib": 16384
+        }
+      }
+    },
+    {
+      "id": "B09-relay-tls-udp",
+      "match": {
+        "kind": "udp",
+        "path": "relay-tls"
+      },
+      "samples": 2,
+      "min": {
+        "received_mbit_s": 19.18
+      },
+      "max": {
+        "loss_percent": 0.1
+      },
+      "process_count": {
+        "atenea-agent": 2,
+        "atenea-relay": 1
+      },
+      "process_max": {
+        "atenea-agent": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 16384
+        },
+        "atenea-relay": {
+          "cpu_percent": 15,
+          "rss_peak_kib": 16384
+        }
+      }
+    },
+    {
+      "id": "B10-agent-shutdown",
+      "match": {
+        "kind": "agent-shutdown",
+        "agent_sha256": "fd10f5b258a1b4ff34302cb77ccf610379b6a32acbae30d246704c0027d58f6f"
+      },
+      "samples": 5,
+      "max": {
+        "elapsed_s": 3
+      },
+      "require": {
+        "ok": true
+      }
+    },
+    {
+      "id": "B11-handshake-under-load",
+      "match": {
+        "kind": "handshake-retry-audit",
+        "agent_sha256": "fd10f5b258a1b4ff34302cb77ccf610379b6a32acbae30d246704c0027d58f6f",
+        "mode": "valid-mac1-no-cookie",
+        "warmup": false,
+        "handshake_observed": true
+      },
+      "samples": 2,
+      "max": {
+        "handshake_worst_ms": 2000,
+        "traces.a.max_init_sends_per_candidate": 12
+      }
+    },
+    {
+      "id": "B12-B13-reconnect-resources-1000",
+      "match": {
+        "kind": "handshake-retry-audit",
+        "agent_sha256": "fd10f5b258a1b4ff34302cb77ccf610379b6a32acbae30d246704c0027d58f6f",
+        "mode": "valid-mac1-no-cookie",
+        "warmup": false,
+        "offered_pps": 1000
+      },
+      "samples": 5,
+      "max": {
+        "timings.a-b.first_ping_s": 30,
+        "timings.c-b.first_ping_s": 30,
+        "timings.a-c.first_ping_s": 30,
+        "responder.cpu_percent": 60,
+        "responder.rss_peak_kib": 16384
+      },
+      "require": {
+        "timings.a-b.ok": true,
+        "timings.c-b.ok": true,
+        "timings.a-c.ok": true
+      }
+    },
+    {
+      "id": "B12-B13-reconnect-resources-10000",
+      "match": {
+        "kind": "handshake-retry-audit",
+        "agent_sha256": "fd10f5b258a1b4ff34302cb77ccf610379b6a32acbae30d246704c0027d58f6f",
+        "mode": "valid-mac1-no-cookie",
+        "warmup": false,
+        "offered_pps": 10000
+      },
+      "samples": 5,
+      "max": {
+        "timings.a-b.first_ping_s": 30,
+        "timings.c-b.first_ping_s": 30,
+        "timings.a-c.first_ping_s": 30,
+        "responder.cpu_percent": 60,
+        "responder.rss_peak_kib": 16384
+      },
+      "require": {
+        "timings.a-b.ok": true,
+        "timings.c-b.ok": true,
+        "timings.a-c.ok": true
+      }
+    },
+    {
+      "id": "B12-B13-reconnect-resources-50000",
+      "match": {
+        "kind": "handshake-retry-audit",
+        "agent_sha256": "fd10f5b258a1b4ff34302cb77ccf610379b6a32acbae30d246704c0027d58f6f",
+        "mode": "valid-mac1-no-cookie",
+        "warmup": false,
+        "offered_pps": 50000
+      },
+      "samples": 5,
+      "max": {
+        "timings.a-b.first_ping_s": 30,
+        "timings.c-b.first_ping_s": 30,
+        "timings.a-c.first_ping_s": 30,
+        "responder.cpu_percent": 60,
+        "responder.rss_peak_kib": 16384
+      },
+      "require": {
+        "timings.a-b.ok": true,
+        "timings.c-b.ok": true,
+        "timings.a-c.ok": true
+      }
+    },
+    {
+      "id": "B14-relay-capacity",
+      "match": {
+        "kind": "relay-capacity"
+      },
+      "samples": 2,
+      "require": {
+        "accepted": 4096,
+        "rejected": 1,
+        "status.allocations": 4096
+      },
+      "max": {
+        "elapsed_s": 30,
+        "resident_rss_kib": 16384,
+        "rss_kib_per_allocation": 1,
+        "cookie_timeouts": 10
+      }
+    },
+    {
+      "id": "B15-relay-aggregate-stress",
+      "match": {
+        "kind": "relay-aggregate"
+      },
+      "samples": 2,
+      "min": {
+        "received_mbit_s": 30
+      },
+      "process_count": {
+        "atenea-relay": 2
+      },
+      "process_max": {
+        "atenea-relay": {
+          "cpu_percent": 150,
+          "rss_peak_kib": 16384
+        }
+      }
+    },
+    {
+      "id": "B16-relay-new-source",
+      "match": {
+        "kind": "relay-cookie-flood"
+      },
+      "samples": 2,
+      "require": {
+        "new_source_served": true
+      },
+      "min": {
+        "sources": 5000,
+        "responses": 4000
+      },
+      "max": {
+        "elapsed_s": 10
+      }
+    },
+    {
+      "id": "B17-relay-ipv6-group",
+      "match": {
+        "kind": "relay-ipv6-group"
+      },
+      "samples": 2,
+      "require": {
+        "prefixes": 1,
+        "addresses": 100
+      },
+      "min": {
+        "responses": 20
+      },
+      "max": {
+        "responses": 40,
+        "elapsed_s": 1
+      }
+    },
+    {
+      "id": "B18-coordinator-1000-announce",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 1000,
+        "quota": false,
+        "phase": "announce"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 6,
+        "p99_ms": 6
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 8,
+          "rss_peak_kib": 65536
+        }
+      },
+      "min": {
+        "success_rps": 28
+      }
+    },
+    {
+      "id": "B18-coordinator-1000-rendezvous",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 1000,
+        "quota": false,
+        "phase": "rendezvous"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 8
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 8,
+          "rss_peak_kib": 65536
+        }
+      },
+      "min": {
+        "success_rps": 5.5
+      }
+    },
+    {
+      "id": "B18-coordinator-1000-poll",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 1000,
+        "quota": false,
+        "phase": "poll"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 1200
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 8,
+          "rss_peak_kib": 65536
+        }
+      }
+    },
+    {
+      "id": "B18-presences-1000",
+      "match": {
+        "kind": "presence",
+        "requested": 1000
+      },
+      "samples": 2,
+      "require": {
+        "observed": 1000,
+        "complete": true
+      }
+    },
+    {
+      "id": "B19-coordinator-5000-announce",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 5000,
+        "quota": false,
+        "phase": "announce"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 90,
+        "p99_ms": 90
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 225280
+        }
+      },
+      "min": {
+        "success_rps": 140
+      }
+    },
+    {
+      "id": "B19-coordinator-5000-rendezvous",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 5000,
+        "quota": false,
+        "phase": "rendezvous"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 8
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 225280
+        }
+      },
+      "min": {
+        "success_rps": 28
+      }
+    },
+    {
+      "id": "B19-coordinator-5000-poll",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 5000,
+        "quota": false,
+        "phase": "poll"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 1200
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 225280
+        }
+      }
+    },
+    {
+      "id": "B19-presences-5000",
+      "match": {
+        "kind": "presence",
+        "requested": 5000
+      },
+      "samples": 2,
+      "require": {
+        "observed": 5000,
+        "complete": true
+      }
+    },
+    {
+      "id": "B20-coordinator-10000-announce",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 10000,
+        "quota": false,
+        "phase": "announce"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 6,
+        "p99_ms": 6
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 393216
+        }
+      },
+      "min": {
+        "success_rps": 276
+      }
+    },
+    {
+      "id": "B20-coordinator-10000-rendezvous",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 10000,
+        "quota": false,
+        "phase": "rendezvous"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 8
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 393216
+        }
+      },
+      "min": {
+        "success_rps": 55
+      }
+    },
+    {
+      "id": "B20-coordinator-10000-poll",
+      "match": {
+        "kind": "control-summary",
+        "mode": "coordinator",
+        "devices": 10000,
+        "quota": false,
+        "phase": "poll"
+      },
+      "samples": 2,
+      "max": {
+        "errors": 0,
+        "p95_ms": 1200
+      },
+      "process_count": {
+        "coordinator": 1
+      },
+      "process_max": {
+        "coordinator": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B20-presences-10000",
+      "match": {
+        "kind": "presence",
+        "requested": 10000
+      },
+      "samples": 2,
+      "require": {
+        "observed": 10000,
+        "complete": true
+      }
+    },
+    {
+      "id": "B21-CP-1000-read-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 1000,
+        "concurrency": 50,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 106
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 1020
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 90,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 131072
+        }
+      }
+    },
+    {
+      "id": "B21-CP-1000-issuance-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 1000,
+        "concurrency": 50,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 57
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 1600
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 90,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 131072
+        }
+      }
+    },
+    {
+      "id": "B21-CP-1000-read-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 1000,
+        "concurrency": 200,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 132
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 2410
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 90,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 131072
+        }
+      }
+    },
+    {
+      "id": "B21-CP-1000-issuance-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 1000,
+        "concurrency": 200,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 53
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 5580
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 90,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 131072
+        }
+      }
+    },
+    {
+      "id": "B21-database-1000",
+      "match": {
+        "kind": "db-size",
+        "devices": 1000,
+        "stage": "after-websocket"
+      },
+      "samples": 2,
+      "max": {
+        "physical_bytes": 103000000
+      }
+    },
+    {
+      "id": "B21-websocket-1000",
+      "match": {
+        "kind": "websocket-summary",
+        "devices": 1000
+      },
+      "samples": 2,
+      "require": {
+        "requested": 64,
+        "accepted": 64,
+        "receivers": 64,
+        "errors": 0,
+        "rejected": 0
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 90,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 131072
+        }
+      }
+    },
+    {
+      "id": "B22-CP-5000-read-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 5000,
+        "concurrency": 50,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 18
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 8370
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 262144
+        }
+      }
+    },
+    {
+      "id": "B22-CP-5000-issuance-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 5000,
+        "concurrency": 50,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 13
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 5780
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 262144
+        }
+      }
+    },
+    {
+      "id": "B22-CP-5000-read-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 5000,
+        "concurrency": 200,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 20
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 19000
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 262144
+        }
+      }
+    },
+    {
+      "id": "B22-CP-5000-issuance-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 5000,
+        "concurrency": 200,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 14
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 19200
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 262144
+        }
+      }
+    },
+    {
+      "id": "B22-database-5000",
+      "match": {
+        "kind": "db-size",
+        "devices": 5000,
+        "stage": "after-websocket"
+      },
+      "samples": 2,
+      "max": {
+        "physical_bytes": 456000000
+      }
+    },
+    {
+      "id": "B22-websocket-5000",
+      "match": {
+        "kind": "websocket-summary",
+        "devices": 5000
+      },
+      "samples": 2,
+      "require": {
+        "requested": 64,
+        "accepted": 64,
+        "receivers": 64,
+        "errors": 0,
+        "rejected": 0
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 30,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 40,
+          "rss_peak_kib": 262144
+        }
+      }
+    },
+    {
+      "id": "B23-CP-10000-read-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 10000,
+        "concurrency": 50,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 8
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 15430
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 20,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 50,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B23-CP-10000-issuance-50",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 10000,
+        "concurrency": 50,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 7
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 10850
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 20,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 50,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B23-CP-10000-read-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 10000,
+        "concurrency": 200,
+        "phase": "read"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 11
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 30410
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 20,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 50,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B23-CP-10000-issuance-200",
+      "match": {
+        "kind": "control-summary",
+        "mode": "control-plane",
+        "devices": 10000,
+        "concurrency": 200,
+        "phase": "issuance"
+      },
+      "samples": 2,
+      "min": {
+        "success_rps": 7
+      },
+      "max": {
+        "errors": 0,
+        "p95_ms": 39020
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 20,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 50,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B23-database-10000",
+      "match": {
+        "kind": "db-size",
+        "devices": 10000,
+        "stage": "after-websocket"
+      },
+      "samples": 2,
+      "max": {
+        "physical_bytes": 1070000000
+      }
+    },
+    {
+      "id": "B23-websocket-10000",
+      "match": {
+        "kind": "websocket-summary",
+        "devices": 10000
+      },
+      "samples": 2,
+      "require": {
+        "requested": 64,
+        "accepted": 64,
+        "receivers": 64,
+        "errors": 0,
+        "rejected": 0
+      },
+      "process_count": {
+        "control-plane": 1,
+        "postgres": 1
+      },
+      "process_max": {
+        "control-plane": {
+          "cpu_percent": 20,
+          "rss_peak_kib": 65536
+        },
+        "postgres": {
+          "cpu_percent": 50,
+          "rss_peak_kib": 393216
+        }
+      }
+    },
+    {
+      "id": "B24-soak-steady",
+      "match": {"kind": "soak-stack-summary"},
+      "samples": 1,
+      "require": {"steady_ok": true, "ok": true, "known_finding": "relay-token-cycle"},
+      "min": {"steady_samples": 2},
+      "max": {"steady_errors": 0, "ping_loss_percent": 1}
+    }
+  ]
+}

@@ -258,6 +258,8 @@ struct Peer {
     last_attempt: Option<Instant>,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
+    /// Respuestas de cookie reservadas: desconocidos no consumen este cupo.
+    cookie_limiter: Limiter,
     /// Cupo propio de mensajes 1: un tercero no puede gastar el de un par configurado.
     init_limiter: Limiter,
     /// Último mensaje 1 aceptado y su respuesta, para repetirla ante retransmisiones idénticas.
@@ -303,6 +305,7 @@ impl Peer {
             queued: None,
             last_init_ts: None,
             init_limiter: Limiter::new(PEER_INIT_RATE, PEER_INIT_BURST),
+            cookie_limiter: Limiter::new(2.0, 4.0),
             last_init_cache: None,
             last_handshake: None,
             last_data: None,
@@ -627,6 +630,38 @@ impl Engine {
             .or_insert_with(|| Limiter::new(20.0, 20.0))
             .allow(now)
             && self.cookie_global.allow(now)
+    }
+
+    fn cookie_reply_allow(
+        &mut self,
+        via: Via,
+        hint: Option<&DeviceId>,
+        source: Source,
+        now: Instant,
+    ) -> bool {
+        let known = match (via, hint) {
+            (Via::Direct(addr), _) => self.peers.iter().position(|p| {
+                p.endpoint
+                    .iter()
+                    .chain(&p.cfg_endpoints)
+                    .chain(&p.candidates)
+                    .any(|a| crate::net::from_wire(*a) == crate::net::from_wire(addr))
+            }),
+            (Via::Relay(_, _), Some(id)) => self.peers.iter().position(|p| p.device_id == *id),
+            _ => None,
+        };
+        let allowed = match known {
+            Some(pi) => self.peers[pi].cookie_limiter.allow(now),
+            None => self.cookie_allow(source, now),
+        };
+        if !allowed {
+            self.counters.inc(if known.is_some() {
+                "cookie_reply_ratelimited_peer"
+            } else {
+                "cookie_reply_ratelimited_unknown"
+            });
+        }
+        allowed
     }
 
     /// Cupo de un origen desconocido; la tabla está acotada y se purga de orígenes inactivos.
@@ -956,8 +991,16 @@ impl Engine {
             return out;
         }
         match proto::parse(dg) {
-            Err(ParseError::TooLarge) => self.counters.inc("rx_oversize"),
-            Err(_) => self.counters.inc("rx_malformed"),
+            Err(error) => {
+                self.counters.inc(if error == ParseError::TooLarge {
+                    "rx_oversize"
+                } else {
+                    "rx_malformed"
+                });
+                if dg.starts_with(&[proto::VERSION, proto::TYPE_COOKIE]) {
+                    self.counters.inc("rx_cookie_reply_invalid");
+                }
+            }
             Ok(Packet::Init {
                 sender_index,
                 noise,
@@ -993,6 +1036,7 @@ impl Engine {
                 ) {
                     PreDh::Drop => {}
                     PreDh::Challenge => {
+                        self.counters.inc("init_challenged");
                         let quota_source = match via {
                             Via::Direct(addr) => {
                                 Source::direct(SocketAddr::new(origin_key(addr.ip()), 0))
@@ -1000,7 +1044,7 @@ impl Engine {
                             }
                             _ => source,
                         };
-                        if self.cookie_allow(quota_source, now) {
+                        if self.cookie_reply_allow(via, hint, quota_source, now) {
                             let secrets = self.cookie_secrets.as_ref().expect("inicializado");
                             let mac1 = dg[114..130].try_into().expect("INIT exacto");
                             match cookie::seal_reply(
@@ -1011,9 +1055,11 @@ impl Engine {
                             ) {
                                 Ok(reply) => match (via, hint) {
                                     (Via::Direct(addr), _) => {
+                                        self.counters.inc("tx_cookie_reply");
                                         out.push(Out::Udp(addr, reply.to_vec()))
                                     }
                                     (Via::Relay(kind, relay_id), Some(peer)) => {
+                                        self.counters.inc("tx_cookie_reply");
                                         out.push(Out::Relay {
                                             peer: *peer,
                                             relay_id,
@@ -1025,15 +1071,31 @@ impl Engine {
                                 },
                                 Err(_) => self.counters.inc("cookie_rng_failed"),
                             }
+                        } else {
+                            self.counters.inc("cookie_reply_ratelimited");
                         }
                     }
                     PreDh::Proceed => {
+                        if dg[proto::INIT_MAC2_OFFSET..].iter().any(|b| *b != 0)
+                            && self
+                                .cookie_secrets
+                                .as_ref()
+                                .expect("inicializado")
+                                .verify_mac2(dg, &source)
+                        {
+                            self.counters.inc("mac2_accepted");
+                        }
                         self.on_init(via, hint, sender_index, noise, now, unix, &mut out)
                     }
                 }
             }
             Ok(Packet::CookieReply { receiver_index, .. }) => {
-                self.on_cookie(via, hint, receiver_index, dg, now, &mut out)
+                let accepted = self.on_cookie(via, hint, receiver_index, dg, now, &mut out);
+                self.counters.inc(if accepted {
+                    "rx_cookie_reply"
+                } else {
+                    "rx_cookie_reply_invalid"
+                });
             }
             Ok(Packet::Resp {
                 sender_index,
@@ -1073,45 +1135,48 @@ impl Engine {
         dg: &[u8],
         now: Instant,
         out: &mut Vec<Out>,
-    ) {
+    ) -> bool {
         let Some(&pi) = self.by_index.get(&receiver_index) else {
-            return;
+            return false;
         };
         let peer = &mut self.peers[pi];
         if hint.is_some_and(|h| *h != peer.device_id) {
-            return;
+            return false;
         }
         let Some((pending, started)) = peer.pending.as_ref() else {
-            return;
+            return false;
         };
         if pending.local_index() != receiver_index
             || now.saturating_duration_since(*started) >= PROBE_WINDOW
         {
-            return;
+            return false;
         }
         match via {
-            Via::Direct(addr) if !Self::targets(peer).contains(&addr) => return,
+            Via::Direct(addr) if !Self::targets(peer).contains(&addr) => return false,
             Via::Relay(kind, id) if peer.stat[PathKind::of(kind).idx()].relay_id != Some(id) => {
-                return;
+                return false;
             }
             _ => {}
         }
         let Some(source) = peer.init_source(via, &self.net, &self.device) else {
-            return;
+            return false;
         };
         if !peer.init_routes.get(&via).is_some_and(|r| r.sends > 0) {
-            return;
+            return false;
         }
-        let Some(init) = &peer.pending_dg else { return };
+        let Some(init) = &peer.pending_dg else {
+            return false;
+        };
         let mac1 = init[114..130].try_into().expect("INIT exacto");
         let Ok(value) = cookie::open_reply(dg, receiver_index, &peer.public, mac1) else {
-            return;
+            return false;
         };
         peer.cookies
             .insert(source, CachedCookie::new(peer.public, source, value, now));
         if let Some(o) = peer.send_init(via, &self.net, &self.device, now, true) {
             out.push(o);
         }
+        true
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3342,5 +3407,212 @@ mod tests {
         };
         assert!(matches!(proto::parse(response), Ok(Packet::Resp { .. })));
         assert!(l.b.peers[0].next.is_some());
+    }
+
+    #[test]
+    fn configured_cookie_reservations_complete_under_unknown_load_direct_and_relay() {
+        for relay in [false, true] {
+            let mut l = lab();
+            require_cookie(&mut l);
+            let init = garbage_init(99, &l.b.keys.public);
+            let start = l.now;
+            for n in 0..50_000u32 {
+                let now = start + Duration::from_micros(u64::from(n) * 20);
+                let from = SocketAddr::from(([203, (n / 256) as u8, (n % 256) as u8, 1], 9));
+                l.b.on_udp(from, &init, now, l.unix);
+            }
+            l.now = start + Duration::from_micros(999_980);
+            assert!(l.b.cookie_global.tokens < 1.0);
+            assert_eq!(l.b.peers[0].cookie_limiter.tokens, 4.0);
+            assert_eq!(l.b.limiter.tokens, INIT_RATE);
+            if relay {
+                l.direct_ok = false;
+                l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now);
+                l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now);
+            }
+            let pkt = v4(1, 2, b"reserva");
+            let initial = l.a.on_tun(&pkt, l.now, l.unix);
+            let challenge = if relay {
+                let dg = initial
+                    .iter()
+                    .find_map(|o| match o {
+                        Out::Relay { dg, .. } => Some(dg),
+                        _ => None,
+                    })
+                    .unwrap();
+                l.b.on_relay_rx(&[1; 16], [17; 16], RelayKind::Udp, dg, l.now, l.unix)
+            } else {
+                l.b.on_udp(ep(A_EP), &udp_of(&initial)[0].1, l.now, l.unix)
+            };
+            assert_eq!(
+                challenge.len(),
+                1,
+                "el cupo desconocido no consume la reserva"
+            );
+            let (_, delivered) = pump(&mut l, vec![], challenge);
+            assert_eq!(delivered, vec![pkt]);
+            assert!(l.a.peers[0].current.is_some());
+            assert!(l.b.peers[0].current.is_some());
+        }
+    }
+
+    #[test]
+    fn configured_cookie_reservations_isolate_peers_unknowns_and_refill() {
+        let mut l = lab();
+        let mut cfg = l.cfg_b.clone();
+        cfg.peers.push(CfgPeer {
+            device_id: [3; 16],
+            noise_pubkey: StaticKeypair::generate().public,
+            addrs: vec![ip("10.77.0.3")],
+            endpoints: vec![ep("198.51.100.33:3333")],
+            routes: vec![],
+        });
+        l.b.apply_config(&cfg);
+        require_cookie(&mut l);
+        let dg = garbage_init(99, &l.b.keys.public);
+        for n in 0..50u32 {
+            let out = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
+            assert_eq!(out.len(), usize::from(n < 4));
+        }
+        assert_eq!(l.b.cookie_global.tokens, 100.0);
+        assert!(l.b.cookie_origins.is_empty());
+        assert_eq!(l.b.peers[0].cookie_limiter.tokens, 0.0);
+        assert_eq!(l.b.peers[1].cookie_limiter.tokens, 4.0);
+        assert_eq!(
+            l.b.on_udp(ep("198.51.100.33:3333"), &dg, l.now, l.unix)
+                .len(),
+            1
+        );
+        let before = l.b.peers[1].cookie_limiter.tokens;
+        // Mismo host, otro puerto: no acredita un endpoint configurado.
+        let mut other_port = ep(A_EP);
+        other_port.set_port(other_port.port() + 1);
+        assert_eq!(l.b.on_udp(other_port, &dg, l.now, l.unix).len(), 1);
+        assert_eq!(l.b.cookie_global.tokens, 99.0);
+        assert_eq!(l.b.peers[0].cookie_limiter.tokens, 0.0);
+        assert_eq!(l.b.peers[1].cookie_limiter.tokens, before);
+        l.b.peers[0].endpoint = Some(ep("198.51.100.44:4444"));
+        l.b.peers[0].candidates.push(ep("198.51.100.55:5555"));
+        for from in [
+            ep("198.51.100.44:4444"),
+            ep("198.51.100.55:5555"),
+            crate::net::to_wire(ep(A_EP), true).unwrap(),
+        ] {
+            assert!(l.b.on_udp(from, &dg, l.now, l.unix).is_empty());
+        }
+        for kind in [RelayKind::Udp, RelayKind::Tls] {
+            assert!(
+                l.b.on_relay_rx(&[1; 16], [17; 16], kind, &dg, l.now, l.unix)
+                    .is_empty()
+            );
+        }
+        assert_eq!(l.b.cookie_global.tokens, 99.0);
+        assert_eq!(
+            l.b.on_relay_rx(&[3; 16], [17; 16], RelayKind::Udp, &dg, l.now, l.unix)
+                .len(),
+            1
+        );
+        l.now += Duration::from_millis(499);
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        l.now += Duration::from_millis(1);
+        assert_eq!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).len(), 1);
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        l.now += Duration::from_millis(500);
+        // La ventana de carga también avanza: preparar su primer INIT sin gastar la reserva.
+        l.b.on_udp(ep("203.0.113.1:9"), &dg, l.now, l.unix);
+        assert_eq!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).len(), 1);
+    }
+
+    #[test]
+    fn cookie_counters_record_only_the_corresponding_events_in_status() {
+        fn count(e: &Engine, name: &str) -> u64 {
+            e.counters.0.get(name).copied().unwrap_or(0)
+        }
+        let mut l = lab();
+        require_cookie(&mut l);
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"contadores"), l.now, l.unix));
+        let init = &first[0].1;
+        let challenge = udp_of(&l.b.on_udp(ep(A_EP), init, l.now, l.unix));
+        assert_eq!(count(&l.b, "init_challenged"), 1);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 1);
+        assert_eq!(count(&l.b, "mac2_accepted"), 0);
+        for _ in 0..4 {
+            l.b.on_udp(ep(A_EP), init, l.now, l.unix);
+        }
+        assert_eq!(count(&l.b, "init_challenged"), 5);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 4);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_peer"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_unknown"), 0);
+        for n in 0..101u8 {
+            l.b.on_udp(SocketAddr::from(([203, 0, 113, n], 9)), init, l.now, l.unix);
+        }
+        assert_eq!(count(&l.b, "init_challenged"), 106);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited"), 2);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_peer"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_unknown"), 1);
+        let mut bad_init = init.clone();
+        bad_init[114] ^= 1;
+        l.b.on_udp(ep(A_EP), &bad_init, l.now, l.unix);
+        assert_eq!(count(&l.b, "init_challenged"), 106);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        let reply = &challenge[0].1;
+        let mut bad_reply = reply.clone();
+        bad_reply[61] ^= 1;
+        assert!(l.a.on_udp(ep(B_EP), &bad_reply, l.now, l.unix).is_empty());
+        let unknown = proto::encode_cookie_reply(0, &[0; 24], &[0; 32]);
+        assert!(l.a.on_udp(ep(B_EP), &unknown, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 2);
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 0);
+        let retry = udp_of(&l.a.on_udp(ep(B_EP), reply, l.now, l.unix));
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 1);
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 2);
+        let mut bad_mac2 = retry[0].1.clone();
+        bad_mac2[130] ^= 1;
+        assert!(l.b.on_udp(ep(A_EP), &bad_mac2, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.b, "mac2_accepted"), 0);
+        let response = l.b.on_udp(ep(A_EP), &retry[0].1, l.now, l.unix);
+        assert_eq!(count(&l.b, "mac2_accepted"), 1);
+        assert_eq!(count(&l.b, "init_challenged"), 107);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        pump(&mut l, vec![], response);
+        assert!(l.a.on_udp(ep(B_EP), reply, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 1);
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 3);
+        assert!(
+            l.a.on_udp(ep(B_EP), &reply[..reply.len() - 1], l.now, l.unix)
+                .is_empty()
+        );
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 4);
+        let snapshot = serde_json::to_value(l.b.status(l.now, l.unix)).unwrap();
+        for (name, expected) in [
+            ("tx_cookie_reply", 104),
+            ("init_challenged", 107),
+            ("cookie_reply_ratelimited", 3),
+            ("cookie_reply_ratelimited_peer", 2),
+            ("cookie_reply_ratelimited_unknown", 1),
+            ("mac2_accepted", 1),
+        ] {
+            assert_eq!(snapshot["counters"][name], expected);
+        }
+        let snapshot = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert_eq!(snapshot["counters"]["rx_cookie_reply"], 1);
+        assert_eq!(snapshot["counters"]["rx_cookie_reply_invalid"], 4);
+    }
+
+    #[test]
+    fn mac2_counter_counts_valid_mac_without_load_but_not_zero_or_invalid() {
+        let mut l = lab();
+        let source = Source::direct(ep(A_EP)).unwrap();
+        let value = l.b.cookie_secrets.as_ref().unwrap().cookie(&source);
+        let noise = [0; proto::NOISE_MSG1_LEN];
+        for cookie in [None, Some(&[9; 16]), Some(&*value)] {
+            let dg = cookie::encode_init(9, &noise, &l.b.keys.public, cookie).unwrap();
+            assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        }
+        assert_eq!(l.b.counters.0["mac2_accepted"], 1);
+        assert!(!l.b.counters.0.contains_key("init_challenged"));
+        assert!(!l.b.counters.0.contains_key("tx_cookie_reply"));
     }
 }

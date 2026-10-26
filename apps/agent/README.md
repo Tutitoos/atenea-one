@@ -24,6 +24,10 @@ identity_key_file = "credential:identity"
 
 `handshake_cookie_threshold_per_second` es un entero positivo de 32 bits (por defecto 100; cero se rechaza), configurable también con `atenea agent-config --handshake-cookie-threshold-per-second N`. Cuenta INIT wire-v2 con longitud y MAC1 válidos en ventanas monotónicas de un segundo; al superar el umbral se exige MAC2 antes de DH. La cookie no autentica al par ni sustituye las cuotas DH existentes; su respuesta tampoco confirma ni marca sano un camino. Véase [wire-v2](../../docs/protocol/wire-v2.md). Cambiar el umbral requiere reiniciar.
 
+Las respuestas de cookie reservan por par configurado 2/s y ráfaga4, compartidos entre sus endpoints/candidatos exactos (IP y puerto) y contextos relay. Desconocidos usan otros cubos: 20/s y ráfaga20 por IP/IPv6 /64, global100/s y ráfaga100, tabla≤4096. Agotar estos últimos no consume las reservas. Una coincidencia de origen no autentica al par y las reservas no garantizan disponibilidad del enlace ni de la CPU.
+
+El objeto `counters` del estado contiene `init_challenged` (INIT que requiere cookie por carga), `tx_cookie_reply` (emitida), `cookie_reply_ratelimited` (omitida por cupo/capacidad), desglosado en `cookie_reply_ratelimited_peer` y `cookie_reply_ratelimited_unknown`, `rx_cookie_reply` (válida aceptada), `rx_cookie_reply_invalid` (descartada por índice/contexto/AEAD o estructura inválida con cabecera v2/COOKIE_REPLY) y `mac2_accepted` (MAC2 vigente/anterior válido que supera la puerta pre-DH, haya o no carga; no implica autorización Noise). Los contadores no incluyen secretos; las claves omitidas valen cero. IPC sigue sirviendo una única instantánea serializada, sin añadir cálculos por consulta.
+
 `credential:nombre` busca el fichero dentro de `$CREDENTIALS_DIRECTORY` de systemd (`LoadCredential` o `LoadCredentialEncrypted`). El nombre no puede contener `/` ni `..`; falta de directorio, clave ilegible o permisos de grupo/otros producen un error. También se admiten los ficheros privados 0600 habituales. La interfaz admite letras ASCII, números y `_`, hasta 15 caracteres: se usa como identificador de la tabla nftables.
 
 ## Transporte, estado y recuperación
@@ -59,6 +63,12 @@ atenea-agent cleanup --config /etc/atenea/agent.toml
 ```
 
 La tabla ausente es un éxito; un error de permisos o de nft es un error, no se oculta. Es adecuado para `ExecStopPost`.
+
+La parada por `atenea down`, SIGTERM/SIGINT (systemd/launchd) o SCM de Windows
+completa primero la limpieza de red, el vaciado del estado y la retirada del IPC.
+Después, ambas entradas del agente limitan a dos segundos la espera de cierre del
+runtime: un long-poll HTTP síncrono pendiente no retiene el proceso hasta su timeout.
+Este presupuesto no interrumpe la limpieza ni modifica los plazos HTTP durante el uso normal.
 
 ## Sockets y estado
 

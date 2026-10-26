@@ -76,6 +76,19 @@ dependencias criptográficas ni servicios externos. Requisitos directos:
 Todos estos crates ya se usan en el workspace; versiones resueltas en
 `Cargo.lock`. No añade TLS, base de datos ni cliente STUN público.
 
+### Herramienta de carga (fase 11, solo pruebas)
+
+`crates/testpeer` (`publish = false`) añade como dependencia directa
+`ed25519-dalek = "3.0.0"` para el binario auxiliar `atenea-load-sign`: genera
+fixtures sintéticas verificadas y firmas de carga. Reutiliza la versión y
+checksum ya fijados; `Cargo.lock` solo añade esa arista a `atenea-testpeer`,
+sin paquetes nuevos. Reutiliza `atenea-identity`, `atenea-crypto` y
+`atenea-protocol`; no introduce primitivas alternativas ni librerías Python.
+`scripts/release/build-local.sh` construye y copia una lista explícita de los
+cinco binarios de producto; Debian, macOS y Windows empaquetan exclusivamente
+`atenea` y `atenea-agent`. El helper no se distribuye en esos artefactos.
+
+
 ## TypeScript / panel (fase 6)
 
 | Paquete | Versión observada | Licencia |

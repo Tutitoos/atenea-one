@@ -121,6 +121,16 @@ def wait_path(path):
         time.sleep(3)
     raise AssertionError(f'No se alcanzó {path}: ' + str(field_or_none('a', 'peers.0.path')))
 
+# Carga sostenida: conserva alta/aprobación y agentes, sin ejecutar la revocación E2E.
+if __import__('os').environ.get('ATENEA_STACK_LOAD') == 'soak':
+    import os
+    import runpy
+    import sys
+    os.environ['ATENEA_LOAD_PEER_IP'] = ip_b
+    sys.argv = ['traffic.py', 'soak', os.environ['ATENEA_SOAK_HOURS']]
+    runpy.run_path('/src/tests/load/traffic.py', run_name='__main__')
+    raise SystemExit(0)
+
 # El simulacro reutiliza el alta real sin repetir el recorrido destructivo de revocación.
 if __import__('os').environ.get('ATENEA_STACK_DRILLS') == '1':
     import runpy
