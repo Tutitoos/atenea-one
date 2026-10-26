@@ -40,6 +40,8 @@ setup)
   ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > $LAB/relay-signing.hex
     head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > $LAB/issuer.key )
   RELAY_PUB=$(ATENEA_COORD_RELAY_SIGNING_KEY_FILE=$LAB/relay-signing.hex atenea-coordinator --print-relay-key)
+  RELAY_ID=$(python3 -c 'import secrets; value = secrets.token_hex(16); assert int(value, 16) != 0; print(value)')
+  printf '%s\n' "$RELAY_ID" > "$LAB/relay-id"
 
   # Control plane + panel (mismo origen)
   ADMIN_URL=postgres://postgres:pg@postgres/atenea
@@ -58,9 +60,9 @@ setup)
   # Coordinator, relay, web falso y HAProxy en inet
   ATENEA_COORD_LISTEN="[::]:8081" ATENEA_COORD_STUN_BIND="::" ATENEA_COORD_ANCHORS="[\"$ROOT_PUB\"]" \
     ATENEA_COORD_RELAY_SIGNING_KEY_FILE=$LAB/relay-signing.hex \
-    ATENEA_COORD_RELAYS='[{"name":"lab","udp":"198.51.100.10:443","tls":"198.51.100.10:443","tls_name":"relay.atenea.one"}]' \
+    ATENEA_COORD_RELAYS="[{\"relay_id\":\"$RELAY_ID\",\"name\":\"lab\",\"udp\":\"198.51.100.10:443\",\"tls\":\"198.51.100.10:443\",\"tls_name\":\"relay.atenea.one\"}]" \
     setsid nohup ip netns exec inet atenea-coordinator > $LAB/coord.log 2>&1 &
-  ATENEA_RELAY_UDP_LISTEN=0.0.0.0:443 ATENEA_RELAY_TCP_LISTEN=127.0.0.1:8443 \
+  ATENEA_RELAY_ID="$RELAY_ID" ATENEA_RELAY_UDP_LISTEN=0.0.0.0:443 ATENEA_RELAY_TCP_LISTEN=127.0.0.1:8443 \
     ATENEA_RELAY_COORDINATOR_KEYS="[\"$RELAY_PUB\"]" \
     ATENEA_RELAY_TLS_CERT_FILE=$LAB/certs/relay.pem ATENEA_RELAY_TLS_KEY_FILE=$LAB/certs/relay.key \
     ATENEA_RELAY_PROXY_PROTOCOL=true ATENEA_RELAY_STATUS_SOCKET=$LAB/relay.sock \
@@ -89,12 +91,15 @@ routes-setup)
   # Puerta inexistente: h no puede devolver tráfico al túnel sin SNAT.
   ip -n h route add default via 192.168.50.254
   ip netns exec r sysctl -qw net.ipv4.ip_forward=1
-  mkdir -p "$LAB/dns-bin"
-  cat > "$LAB/dns-bin/resolvectl" <<'SH'
+  # El agente ejecuta resolvectl con el entorno limpio: cada dispositivo tiene su propio simulado.
+  for dev in r c; do
+    mkdir -p "$LAB/dns-bin/$dev"
+    cat > "$LAB/dns-bin/$dev/resolvectl" <<SH
 #!/bin/sh
-printf '%s\n' "$*" >> "/tmp/lab/resolvectl-${ATENEA_LAB_DEVICE:?}.log"
+printf '%s\n' "\$*" >> "/tmp/lab/resolvectl-$dev.log"
 SH
-  chmod +x "$LAB/dns-bin/resolvectl"
+    chmod 755 "$LAB/dns-bin/$dev" "$LAB/dns-bin/$dev/resolvectl"
+  done
   ;;
 issuer-cert)
   # Cada spec firma su propia red; la CLI no sobrescribe certificados.
@@ -117,7 +122,7 @@ start-agent)
     printf '\n[coordinator]\nurl = "http://198.51.100.10:8081"\ninsecure_http = true\nstun = ["198.51.100.10:3478", "198.51.100.10:3479"]\nrelay_ca_file = "%s/certs/ca.pem"\n' "$LAB"
   } >> $LAB/$n.toml
   if [[ "$n" == r || "$n" == c ]]; then
-    export ATENEA_RESOLVECTL="$LAB/dns-bin/resolvectl" ATENEA_LAB_DEVICE=$n
+    export ATENEA_RESOLVECTL="$LAB/dns-bin/$n/resolvectl"
   fi
   ip netns exec $n atenea up --config $LAB/$n.toml --log $LAB/$n.log
   ;;

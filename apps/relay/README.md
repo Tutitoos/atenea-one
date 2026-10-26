@@ -20,7 +20,10 @@ ATENEA_COORD_RELAY_SIGNING_KEY_FILE=/etc/atenea/relay-signing-key.hex \
 ```
 
 Configurar esa misma ruta en el servicio del coordinator y su lista `RELAYS`
-con las entradas públicas UDP/TLS y `tls_name` del certificado.
+con las entradas públicas UDP/TLS, `tls_name` y el mismo `relay_id` de cada instancia.
+Generar una vez `openssl rand -hex 16` (rechazar cero), persistirlo y no reutilizarlo
+entre relays distintos. `ATENEA_RELAY_ID` o `relay_id` es obligatorio: exactamente
+32 hex minúsculos no cero. Rotar certificados no cambia esta audiencia.
 
 Preparar certificado de servidor y clave privada PEM para el nombre público del
 relay, emitidos por una CA confiable para los agentes. Para laboratorio se puede
@@ -43,6 +46,7 @@ laboratorio; usar una CA y un certificado de servidor normales en producción.
 Ejemplo de TOML local (rutas y clave pública sintéticas):
 
 ```toml
+relay_id = "11111111111111111111111111111111" # sintético: generar uno propio
 udp_listen = "0.0.0.0:443"
 tcp_listen = "127.0.0.1:8443"
 coordinator_keys = ["<clave-pública-Ed25519-hex-de-64-caracteres>"]
@@ -63,7 +67,7 @@ para cargar un fichero se usa TOML).
 
 UDP 443 es la entrada directa; HAProxy termina el encaminamiento TCP, **no TLS**,
 y usa `send-proxy-v2` hacia TCP loopback 8443. También se puede escuchar TCP/TLS
-directamente desactivando PROXY. Solo TLS 1.3, ALPN `atenea-relay/1`, sin 0-RTT.
+directamente desactivando PROXY. Solo TLS 1.3, ALPN `atenea-relay/2`, sin 0-RTT.
 PROXY exige loopback, comando PROXY y familia TCP4/TCP6; rechaza LOCAL, UNSPEC y
 extensiones TLV. El plazo de handshake incluye la lectura de PROXY. La IP de esa
 cabecera se usa para límites de asignación, tasa y conexiones. El límite global de
@@ -78,6 +82,7 @@ minúsculas. Listas de entorno usan sintaxis Figment, por ejemplo
 | Sufijo | Por defecto | Significado |
 | --- | --- | --- |
 | `CONFIG` | sin fichero | TOML opcional |
+| `ID` | obligatorio | Audiencia persistente; TOML `relay_id`, 32 hex minúsculos no cero |
 | `UDP_LISTEN` | `0.0.0.0:443` | Socket UDP |
 | `TCP_LISTEN` | `127.0.0.1:8443` | Socket TCP |
 | `METRICS_LISTEN` | `127.0.0.1:9103` | `GET /metrics` privado en listener HTTP separado; nunca HAProxy/Caddy; [operación](../../docs/operations/observabilidad.md) |
@@ -164,8 +169,10 @@ de **salida**; bytes son solo datagramas cifrados, sin sobrecarga. Para TCP cuen
 la aceptación en cola (no confirman recepción remota). `drops` omite motivos con
 cero eventos; motivos: `malformed`, `cookie`, `cookie_rate`, `unexpected`, `unbound`,
 `size`, `allocation_rate`, `no_peer`, `udp_write`, `tcp_queue`, `tcp_closed`,
-`tcp_capacity`, `tcp_protocol`. `rejects` usa claves de texto `1`–`8` de ALLOC_ERR
-según relay-v1; omite códigos no observados. Rechazos sin cookie no generan respuesta.
+`tcp_capacity`, `tcp_protocol`. `rejects` usa claves de texto `1`–`11` de ALLOC_ERR
+según [relay-v2](../../docs/protocol/relay-v2.md); omite códigos no observados.
+Rechazos sin cookie no generan respuesta. Cada token189 y prueba ALLOC298 fija
+una audiencia; no hay compatibilidad v1 ni token compartido entre relays.
 
 ## Pruebas y cobertura de §8
 

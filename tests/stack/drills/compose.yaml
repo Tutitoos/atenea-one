@@ -4,7 +4,7 @@ services:
       ATENEA_CP_CONFIG_VALIDITY_SECS: ${DRILL_LEASE:-60}
   coordinator:
     environment:
-      ATENEA_COORD_RELAYS: '[{"name":"principal","udp":"relay.stack.test:443","tls":"relay.stack.test:443","tls_name":"relay.stack.test"},{"name":"secundario","udp":"relay2:443"}]'
+      ATENEA_COORD_RELAYS: ${ATENEA_COORD_RELAYS:?concesiones generadas por prepare.py}
   relay2:
     image: ${RELAY_IMAGE:?}
     pull_policy: never

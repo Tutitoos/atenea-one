@@ -16,3 +16,4 @@ atenea-protocol.workspace = true
 atenea-identity.workspace = true
 clap.workspace = true
 zeroize.workspace = true
+ed25519-dalek = "3.0.0"

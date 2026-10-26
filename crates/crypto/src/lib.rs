@@ -2,6 +2,7 @@
 //!
 //! Estado de sesión solo en memoria: tras reiniciar, handshake nuevo con efímeras nuevas,
 //! por lo que nunca se reutiliza (clave, nonce).
+pub mod cookie;
 pub mod hex;
 pub mod replay;
 
@@ -20,7 +21,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_BLAKE2s";
-const PROLOGUE_PREFIX: &[u8] = b"atenea-one/v1";
+const PROLOGUE_PREFIX: &[u8] = b"atenea-one/v2";
 
 /// Rekey suave (ADR-003): 120 s o 2^32 mensajes.
 pub const REKEY_AFTER_TIME: Duration = Duration::from_secs(120);

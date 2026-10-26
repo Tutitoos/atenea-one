@@ -23,15 +23,17 @@ mod relay {
 }
 
 use arbitrary::Unstructured;
-use atenea_crypto::StaticKeypair;
+use atenea_crypto::{StaticKeypair, cookie};
 use atenea_identity::{DeviceConfig, DnsConfig, Peer, Prefix, Rule, Selector};
 use engine::{Engine, Out};
 use libfuzzer_sys::fuzz_target;
 use relay::RelayKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 const NET: [u8; 16] = [7; 16];
+const RELAY: [u8; 16] = [0x31; 16];
 const NOT_BEFORE: u64 = 999_000;
 const NOT_AFTER: u64 = 1_100_000;
 const EP: [&str; 2] = ["192.0.2.1:51820", "192.0.2.2:51820"];
@@ -84,9 +86,10 @@ fn ipv4(src: Ipv4Addr, dst: Ipv4Addr, payload: &[u8]) -> Vec<u8> {
     p
 }
 
+#[derive(Clone, Copy)]
 enum Via {
     Direct,
-    Relay(RelayKind),
+    Relay([u8; 16], RelayKind),
 }
 
 struct InFlight {
@@ -97,6 +100,7 @@ struct InFlight {
 
 struct World {
     engines: [Engine; 2],
+    public: [[u8; 32]; 2],
     now: Instant,
     unix: [u64; 2],
     queue: Vec<InFlight>,
@@ -109,13 +113,15 @@ impl World {
     fn new() -> World {
         let keys = [StaticKeypair::from_private(&[0x11; 32]), StaticKeypair::from_private(&[0x22; 32])];
         let cfgs = [config(0, keys[1].public), config(1, keys[0].public)];
+        let public = [keys[0].public, keys[1].public];
         let now = Instant::now();
         let [ka, kb] = keys;
         let mut engines = [Engine::new(NET, ka, 0), Engine::new(NET, kb, 0)];
         for (e, c) in engines.iter_mut().zip(&cfgs) {
+            e.set_cookie_threshold(NonZeroU32::new(1).unwrap());
             e.apply_config(c);
         }
-        World { engines, now, unix: [1_000_000; 2], queue: vec![], pending: [vec![], vec![]], counter: 0 }
+        World { engines, public, now, unix: [1_000_000; 2], queue: vec![], pending: [vec![], vec![]], counter: 0 }
     }
 
     fn lease(&self, i: usize) -> bool {
@@ -132,9 +138,9 @@ impl World {
                         self.queue.push(InFlight { to, via: Via::Direct, bytes: dg });
                     }
                 }
-                Out::Relay { kind, dg, .. } => {
+                Out::Relay { relay_id, kind, dg, .. } => {
                     assert!(atenea_protocol::parse(&dg).is_ok(), "datagrama relay emitido inválido");
-                    self.queue.push(InFlight { to: 1 - from, via: Via::Relay(kind), bytes: dg });
+                    self.queue.push(InFlight { to: 1 - from, via: Via::Relay(relay_id, kind), bytes: dg });
                 }
                 Out::Tun(pkt) => {
                     assert!(had_lease, "entrega a la TUN sin lease vigente");
@@ -152,7 +158,7 @@ impl World {
         let lease = self.lease(to);
         let outs = match item.via {
             Via::Direct => self.engines[to].on_udp(ep(1 - to), &item.bytes, now, unix),
-            Via::Relay(kind) => self.engines[to].on_relay_rx(&[(1 - to) as u8 + 1; 16], kind, &item.bytes, now, unix),
+            Via::Relay(relay_id, kind) => self.engines[to].on_relay_rx(&[(1 - to) as u8 + 1; 16], relay_id, kind, &item.bytes, now, unix),
         };
         self.absorb(to, outs, lease);
     }
@@ -175,7 +181,7 @@ fuzz_target!(|data: &[u8]| {
         if u.is_empty() {
             break;
         }
-        match u.int_in_range(0..=8u8).unwrap_or(0) {
+        match u.int_in_range(0..=11u8).unwrap_or(0) {
             // Avance del reloj monotónico y de pared (el lease puede caducar y recuperarse).
             0 | 1 => {
                 let secs = [0, 1, 1, 5, 20, 100, 200, 130_000][u.int_in_range(0..=7usize).unwrap_or(0)];
@@ -219,10 +225,10 @@ fuzz_target!(|data: &[u8]| {
                 let i = u.int_in_range(0..=w.queue.len() - 1).unwrap_or(0);
                 let src = &w.queue[i];
                 let via = match (&src.via, u.arbitrary::<bool>().unwrap_or(false)) {
-                    (Via::Direct, true) => Via::Relay(RelayKind::Udp),
-                    (Via::Relay(_), true) => Via::Direct,
+                    (Via::Direct, true) => Via::Relay(RELAY, RelayKind::Udp),
+                    (Via::Relay(..), true) => Via::Direct,
                     (Via::Direct, false) => Via::Direct,
-                    (Via::Relay(k), false) => Via::Relay(*k),
+                    (Via::Relay(id, k), false) => Via::Relay(*id, *k),
                 };
                 let copy = InFlight { to: src.to, via, bytes: src.bytes.clone() };
                 w.deliver(copy);
@@ -236,6 +242,46 @@ fuzz_target!(|data: &[u8]| {
                     item.bytes[at] ^= u.int_in_range(1..=255u8).unwrap_or(1);
                 }
                 w.deliver(item);
+            }
+            // Dos INIT válidos para alcanzar carga en la misma ventana; MAC1 inválido nunca responde.
+            9 => {
+                let to = u.int_in_range(0..=1usize).unwrap_or(0);
+                let invalid_mac1 = u.arbitrary::<bool>().unwrap_or(false);
+                let noise: Vec<u8> = (0..108).map(|_| u.arbitrary::<u8>().unwrap_or(0)).collect();
+                let mut bytes = cookie::encode_init(1, &noise, &w.public[to], None).unwrap();
+                if invalid_mac1 {
+                    bytes[114] ^= 1;
+                }
+                for _ in 0..2 {
+                    let outs = w.engines[to].on_udp(ep(1 - to), &bytes, w.now, w.unix[to]);
+                    if invalid_mac1 {
+                        assert!(outs.is_empty(), "MAC1 inválido produjo una respuesta");
+                    }
+                    w.absorb(to, outs, w.lease(to));
+                }
+            }
+            // Respuesta de cookie cifrada para un INIT pendiente, válida o con tag corrupto.
+            10 if w.queue.iter().any(|item| matches!(atenea_protocol::parse(&item.bytes), Ok(atenea_protocol::Packet::Init { .. }))) => {
+                let item = w.queue.iter().find(|item| matches!(atenea_protocol::parse(&item.bytes), Ok(atenea_protocol::Packet::Init { .. }))).unwrap();
+                let atenea_protocol::Packet::Init { sender_index, .. } = atenea_protocol::parse(&item.bytes).unwrap() else { unreachable!() };
+                let mut bytes = cookie::seal_reply(sender_index, &w.public[item.to], item.bytes[114..130].try_into().unwrap(), &[0x55; 16]).unwrap().to_vec();
+                if u.arbitrary::<bool>().unwrap_or(false) {
+                    bytes[61] ^= 1;
+                }
+                let via = match item.via {
+                    Via::Direct => Via::Direct,
+                    Via::Relay(id, kind) => Via::Relay(id, kind),
+                };
+                w.deliver(InFlight { to: 1 - item.to, via, bytes });
+            }
+            // Mismo relay para UDP/TLS; otro ID prueba el aislamiento de cookies.
+            11 => {
+                let side = u.int_in_range(0..=1usize).unwrap_or(0);
+                let relay_id = if u.arbitrary::<bool>().unwrap_or(false) { [0x32; 16] } else { RELAY };
+                let kind = if u.arbitrary::<bool>().unwrap_or(false) { RelayKind::Tls } else { RelayKind::Udp };
+                let ready = u.arbitrary::<bool>().unwrap_or(false);
+                let outs = w.engines[side].set_relay_ready(&[(1 - side) as u8 + 1; 16], relay_id, kind, ready, w.now);
+                w.absorb(side, outs, w.lease(side));
             }
             // Basura de un origen cualquiera (incluida la dirección real del par).
             _ => {

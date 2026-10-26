@@ -50,6 +50,7 @@ impl Lab {
                 .with_no_client_auth();
         client.alpn_protocols = vec![w::ALPN.to_vec()];
         let mut c = Config {
+            relay_id: "11".repeat(16),
             udp_listen: "127.0.0.1:0".parse().unwrap(),
             tcp_listen: "127.0.0.1:0".parse().unwrap(),
             metrics_listen: "127.0.0.1:0".into(),
@@ -150,11 +151,14 @@ impl Client {
         match self {
             Self::Tls(_) => [0; 16],
             Self::Udp(_) => {
-                self.send(&w::encode_cookie_req()).await;
+                self.send(&w::encode_cookie_req(&[0x11; 16])).await;
                 let b = self.recv().await;
                 assert!(b.len() < w::COOKIE_REQ_LEN);
                 match w::parse(&b).unwrap() {
-                    Message::Cookie { cookie } => cookie,
+                    Message::Cookie { relay_id, cookie } => {
+                        assert_eq!(relay_id, [0x11; 16]);
+                        cookie
+                    }
                     _ => panic!(),
                 }
             }
@@ -173,6 +177,7 @@ impl Client {
 fn token(src: u8, dst: u8, net: [u8; 16], now: u64, issuer: &SigningKey) -> Vec<u8> {
     RelayToken::issue(
         issuer,
+        [0x11; 16],
         net,
         [src; 16],
         [dst; 16],
@@ -185,15 +190,25 @@ fn token(src: u8, dst: u8, net: [u8; 16], now: u64, issuer: &SigningKey) -> Vec<
     .to_vec()
 }
 fn request(cookie: &[u8; 16], token: &[u8], key: &SigningKey, ts: u64) -> Vec<u8> {
-    w::encode_alloc(cookie, ts, token, &w::sign_alloc(key, cookie, ts, token))
+    w::encode_alloc(
+        &[0x11; 16],
+        cookie,
+        ts,
+        token,
+        &w::sign_alloc(key, &[0x11; 16], cookie, ts, token),
+    )
+}
+fn datagram() -> Vec<u8> {
+    [2, 3].into_iter().chain([0; 28]).collect()
 }
 async fn transfer(a: &mut Client, aid: u64, b: &mut Client, bid: u64) {
-    a.send(&w::encode_data(aid, b"\x01\x02ciphertext")).await;
+    let d = datagram();
+    a.send(&w::encode_data(aid, &d)).await;
     assert_eq!(
         w::parse(&b.recv().await).unwrap(),
         Message::Data {
             alloc_id: bid,
-            datagram: b"\x01\x02ciphertext"
+            datagram: &d
         }
     );
 }
@@ -231,15 +246,15 @@ async fn unpaired_unbound_and_rebinding() {
     let lab = Lab::start(|_| {}).await;
     let mut a = lab.udp().await;
     let aid = a.alloc(2, 3).await;
-    a.send(&w::encode_data(aid, b"xx")).await;
+    a.send(&w::encode_data(aid, &datagram())).await;
     a.silent().await;
     let mut b = lab.udp().await;
     let bid = b.alloc(3, 2).await;
     let mut attacker = lab.udp().await;
-    attacker.send(&w::encode_data(aid, b"xx")).await;
+    attacker.send(&w::encode_data(aid, &datagram())).await;
     b.silent().await;
     assert_eq!(attacker.alloc(2, 3).await, aid);
-    a.send(&w::encode_data(aid, b"xx")).await;
+    a.send(&w::encode_data(aid, &datagram())).await;
     b.silent().await;
     transfer(&mut attacker, aid, &mut b, bid).await;
     lab.close().await;
@@ -271,7 +286,7 @@ async fn invalid_tokens_proofs_cookies_and_time() {
         a.send(&request(&cookie, &t, &key, ts)).await;
         assert_eq!(w::parse(&a.recv().await), Ok(Message::AllocErr { code }));
     }
-    for offset in [5, 21, 37, 172] {
+    for offset in [21, 37, 53, 188] {
         let mut changed = good.clone();
         changed[offset] ^= 1;
         a.send(&request(&cookie, &changed, &sk(2), n)).await;
@@ -293,12 +308,12 @@ async fn invalid_tokens_proofs_cookies_and_time() {
     let wrong = token(3, 2, [8; 16], n, &sk(1));
     other.send(&request(&c, &wrong, &sk(3), n)).await;
     let _ = other.recv().await;
-    a.send(&w::encode_data(aid, b"xx")).await;
+    a.send(&w::encode_data(aid, &datagram())).await;
     other.silent().await;
     let wrong_device = token(3, 4, [7; 16], n, &sk(1));
     other.send(&request(&c, &wrong_device, &sk(3), n)).await;
     let _ = other.recv().await;
-    a.send(&w::encode_data(aid, b"xx")).await;
+    a.send(&w::encode_data(aid, &datagram())).await;
     other.silent().await;
     lab.close().await;
 }
@@ -310,7 +325,7 @@ async fn capacity_rates_size_and_tcp_frames() {
         c.max_per_ip = 2;
         c.cookie_per_second = 1;
         c.alloc_per_second = 100;
-        c.max_datagram = 4;
+        c.max_datagram = 30;
     })
     .await;
     let mut a = lab.tls().await;
@@ -333,11 +348,15 @@ async fn capacity_rates_size_and_tcp_frames() {
             code: w::ErrCode::Full
         })
     );
-    a.send(&w::encode_data(aid, b"oversize")).await;
+    a.send(&w::encode_data(
+        aid,
+        &[2, 3].into_iter().chain([0; 29]).collect::<Vec<_>>(),
+    ))
+    .await;
     b.silent().await;
     let mut udp = lab.udp().await;
     let _ = udp.cookie().await;
-    udp.send(&w::encode_cookie_req()).await;
+    udp.send(&w::encode_cookie_req(&[0x11; 16])).await;
     udp.silent().await;
     for length in [0u16, 2049] {
         let mut tls = lab.tls().await;
@@ -358,7 +377,7 @@ async fn capacity_rates_size_and_tcp_frames() {
 async fn tcp_frame_before_alloc_closes_connection() {
     let lab = Lab::start(|_| {}).await;
     let mut tls = lab.tls().await;
-    tls.send(&w::encode_data(1, b"xx")).await;
+    tls.send(&w::encode_data(1, &datagram())).await;
     if let Client::Tls(s) = &mut tls {
         let mut byte = [0];
         assert!(
@@ -508,4 +527,101 @@ async fn tls12_and_connection_limits() {
         );
         lab.close().await;
     }
+}
+
+#[tokio::test]
+async fn incompatible_versions_and_malformed_frames_close_tls_but_udp_is_silent() {
+    let lab = Lab::start(|_| {}).await;
+    let mut config = (*lab.client).clone();
+    config.alpn_protocols = vec![b"atenea-relay/1".to_vec()];
+    let socket = TcpStream::connect(lab.tcp).await.unwrap();
+    assert!(
+        TlsConnector::from(Arc::new(config))
+            .connect("localhost".try_into().unwrap(), socket)
+            .await
+            .is_err()
+    );
+    let mut udp = lab.udp().await;
+    for body in [
+        vec![0xa1, 1, 3],
+        vec![0xa1, 2, 0, 0],
+        vec![0xa1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ] {
+        udp.send(&body).await;
+        udp.silent().await;
+        let mut tls = lab.tls().await;
+        tls.send(&body).await;
+        let expected = if body[1] == 1 {
+            w::ErrCode::UnsupportedVersion
+        } else {
+            w::ErrCode::Malformed
+        };
+        assert_eq!(
+            w::parse(&tls.recv().await),
+            Ok(Message::AllocErr { code: expected })
+        );
+        if let Client::Tls(s) = &mut tls {
+            let mut byte = [0];
+            assert!(
+                timeout(Duration::from_secs(2), s.read(&mut byte))
+                    .await
+                    .unwrap()
+                    .map_or(true, |n| n == 0)
+            );
+        }
+    }
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn two_relay_ids_reject_cross_audience_on_udp_and_tls() {
+    let a = Lab::start(|_| {}).await;
+    let b = Lab::start(|c| c.relay_id = "12".repeat(16)).await;
+    let n = sec();
+    let t = token(2, 3, [7; 16], n, &sk(1));
+    for tls in [false, true] {
+        let mut client = if tls { b.tls().await } else { b.udp().await };
+        let cookie = if tls {
+            [0; 16]
+        } else {
+            client.send(&w::encode_cookie_req(&[0x11; 16])).await;
+            client.silent().await;
+            client.send(&w::encode_cookie_req(&[0x12; 16])).await;
+            match w::parse(&client.recv().await).unwrap() {
+                Message::Cookie { relay_id, cookie } => {
+                    assert_eq!(relay_id, [0x12; 16]);
+                    cookie
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        let proof = w::sign_alloc(&sk(2), &[0x11; 16], &cookie, n, &t);
+        for id in [[0x11; 16], [0x12; 16]] {
+            client
+                .send(&w::encode_alloc(&id, &cookie, n, &t, &proof))
+                .await;
+            assert_eq!(
+                w::parse(&client.recv().await),
+                Ok(Message::AllocErr {
+                    code: w::ErrCode::WrongRelay
+                })
+            );
+        }
+        let mut changed = t.clone();
+        changed[5..21].fill(0x12);
+        let proof = w::sign_alloc(&sk(2), &[0x12; 16], &cookie, n, &changed);
+        client
+            .send(&w::encode_alloc(&[0x12; 16], &cookie, n, &changed, &proof))
+            .await;
+        assert_eq!(
+            w::parse(&client.recv().await),
+            Ok(Message::AllocErr {
+                code: w::ErrCode::BadToken
+            })
+        );
+    }
+    let mut client = a.udp().await;
+    let _ = client.alloc(2, 3).await;
+    a.close().await;
+    b.close().await;
 }

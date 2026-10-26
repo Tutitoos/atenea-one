@@ -341,6 +341,7 @@ mod tests {
         );
         relays.entries.push(crate::relay::AllocationStatus {
             peer: "ab".repeat(16),
+            relay_id: "11".repeat(16),
             transport: crate::relay::RelayKind::Udp,
             relay: "sintético".into(),
             state: "ready".into(),

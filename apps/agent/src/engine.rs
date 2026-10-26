@@ -3,12 +3,13 @@
 //! Un par puede alcanzarse por tres caminos (preferencia `directo > relay UDP > relay TLS`) que
 //! comparten UNA sesión Noise y un único espacio de contadores (ADR-003): cambiar de camino no
 //! cambia claves; el antirreplay del receptor elimina las copias. Un camino solo cuenta como sano
-//! con paquetes AUTENTICADOS recibidos por él (docs/protocol/relay-v1.md §5.2).
+//! con paquetes AUTENTICADOS recibidos por él (docs/protocol/relay-v2.md §7).
 //! Las rutas firmadas solo amplían orígenes autorizados y destinos locales; no hay tránsito
 //! entre pares. En salida prima la dirección exacta y después el prefijo más largo (§4 de v2).
 
 use crate::packet::parse_ip;
 use crate::relay::RelayKind;
+use atenea_crypto::cookie::{self, CachedCookie, CookieSecrets, LoadWindow, PreDh, Source};
 use atenea_crypto::{self as crypto, PendingInit, Session, StaticKeypair};
 use atenea_identity::{CLOCK_TOLERANCE_SECS, DeviceConfig, DeviceId, NetworkId, Prefix};
 use atenea_nat_traversal::{MAX_CANDIDATES, sanitize_candidates};
@@ -117,17 +118,17 @@ impl PathKind {
 }
 
 /// Por dónde llegó un datagrama.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Via {
     Direct(SocketAddr),
-    Relay(RelayKind),
+    Relay(RelayKind, [u8; 16]),
 }
 
 impl Via {
     fn kind(self) -> PathKind {
         match self {
             Via::Direct(_) => PathKind::Direct,
-            Via::Relay(k) => PathKind::of(k),
+            Via::Relay(k, _) => PathKind::of(k),
         }
     }
 }
@@ -138,6 +139,7 @@ pub enum Out {
     Relay {
         peer: DeviceId,
         kind: RelayKind,
+        relay_id: [u8; 16],
         dg: Vec<u8>,
     },
     Tun(Vec<u8>),
@@ -189,6 +191,9 @@ impl Limiter {
 fn origin_key(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4_mapped() {
+                return IpAddr::V4(v4);
+            }
             let mut o = a.octets();
             o[8..].fill(0);
             IpAddr::V6(o.into())
@@ -204,10 +209,16 @@ struct Probe {
     rounds: u32,
 }
 
+struct InitRoute {
+    sends: u32,
+    retried_round: Option<u32>,
+}
+
 #[derive(Default, Clone)]
 struct PathStat {
     /// Solo relays: la asignación está lista para enviar.
     ready: bool,
+    relay_id: Option<[u8; 16]>,
     last_rx: Option<Instant>,
     healthy_since: Option<Instant>,
     last_tx: Option<Instant>,
@@ -232,6 +243,8 @@ struct Peer {
     pending: Option<(PendingInit, Instant)>,
     /// Mensaje 1 en vuelo, para reenviarlo idéntico durante el sondeo.
     pending_dg: Option<Vec<u8>>,
+    init_routes: HashMap<Via, InitRoute>,
+    cookies: HashMap<Source, CachedCookie>,
     probe: Option<Probe>,
     /// Sondeo del directo con la sesión ya establecida (keepalives cifrados a los candidatos).
     kprobe: Option<Probe>,
@@ -245,6 +258,8 @@ struct Peer {
     last_attempt: Option<Instant>,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
+    /// Respuestas de cookie reservadas: desconocidos no consumen este cupo.
+    cookie_limiter: Limiter,
     /// Cupo propio de mensajes 1: un tercero no puede gastar el de un par configurado.
     init_limiter: Limiter,
     /// Último mensaje 1 aceptado y su respuesta, para repetirla ante retransmisiones idénticas.
@@ -276,6 +291,8 @@ impl Peer {
             next: None,
             pending: None,
             pending_dg: None,
+            init_routes: HashMap::new(),
+            cookies: HashMap::new(),
             probe: None,
             kprobe: None,
             probe_failures: 0,
@@ -288,6 +305,7 @@ impl Peer {
             queued: None,
             last_init_ts: None,
             init_limiter: Limiter::new(PEER_INIT_RATE, PEER_INIT_BURST),
+            cookie_limiter: Limiter::new(2.0, 4.0),
             last_init_cache: None,
             last_handshake: None,
             last_data: None,
@@ -297,6 +315,58 @@ impl Peer {
             tx_bytes: 0,
             rx_bytes: 0,
         }
+    }
+
+    fn init_source(&self, via: Via, net: &NetworkId, own: &DeviceId) -> Option<Source> {
+        match via {
+            Via::Direct(addr) => Source::direct(addr).ok(),
+            Via::Relay(_, id) => Some(Source::relay(&id, net, own, &self.device_id)),
+        }
+    }
+
+    fn send_init(
+        &mut self,
+        via: Via,
+        net: &NetworkId,
+        own: &DeviceId,
+        now: Instant,
+        retry: bool,
+    ) -> Option<Out> {
+        let (_, started) = self.pending.as_ref()?;
+        if now.saturating_duration_since(*started) >= PROBE_WINDOW {
+            return None;
+        }
+        let source = self.init_source(via, net, own)?;
+        let round = self.probe.as_ref().map_or(1, |p| p.rounds);
+        if !self.init_routes.contains_key(&via)
+            && self.init_routes.len() >= MAX_CANDIDATES + self.cfg_endpoints.len() + 9
+        {
+            return None;
+        }
+        let route = self.init_routes.entry(via).or_insert(InitRoute {
+            sends: 0,
+            retried_round: None,
+        });
+        if route.sends >= PROBE_MAX_ROUNDS
+            || (retry && (route.sends == 0 || route.retried_round == Some(round)))
+        {
+            return None;
+        }
+        let mut dg = self.pending_dg.as_ref()?.clone();
+        dg[130..].fill(0);
+        if let Some(cookie) = self
+            .cookies
+            .get(&source)
+            .and_then(|c| c.get(&self.public, &source, now))
+        {
+            let mac = cookie::mac16(cookie, &dg[..130]);
+            dg[130..].copy_from_slice(&mac);
+        }
+        route.sends += 1;
+        if retry {
+            route.retried_round = Some(round);
+        }
+        Some(self.reply(via, dg))
     }
 
     /// La IP es un origen conocido de este par (ruta confirmada o pistas); no está autenticada.
@@ -348,6 +418,7 @@ impl Peer {
             PathKind::Direct => self.endpoint.map(|e| Out::Udp(e, dg)),
             _ => Some(Out::Relay {
                 peer: self.device_id,
+                relay_id: self.stat[k.idx()].relay_id?,
                 kind: k.relay()?,
                 dg,
             }),
@@ -357,9 +428,10 @@ impl Peer {
     fn reply(&self, via: Via, dg: Vec<u8>) -> Out {
         match via {
             Via::Direct(a) => Out::Udp(a, dg),
-            Via::Relay(kind) => Out::Relay {
+            Via::Relay(kind, relay_id) => Out::Relay {
                 peer: self.device_id,
                 kind,
+                relay_id,
                 dg,
             },
         }
@@ -470,6 +542,12 @@ pub struct Status {
 pub struct Engine {
     net: NetworkId,
     keys: StaticKeypair,
+    device: DeviceId,
+    cookie_secrets: Option<CookieSecrets>,
+    cookie_load: LoadWindow,
+    cookie_global: Limiter,
+    cookie_origins: HashMap<Source, Limiter>,
+    cookie_sweep: Option<Instant>,
     own: Vec<IpAddr>,
     advertised: Vec<Prefix>,
     /// Red del túnel y subredes (propias y de los pares): nada de ello es un destino de sondeo directo.
@@ -500,6 +578,12 @@ impl Engine {
         Engine {
             net,
             keys,
+            device: [0; 16],
+            cookie_secrets: CookieSecrets::new(Instant::now()).ok(),
+            cookie_load: LoadWindow::new(Instant::now(), cookie::DEFAULT_THRESHOLD),
+            cookie_global: Limiter::new(100.0, 100.0),
+            cookie_origins: HashMap::new(),
+            cookie_sweep: None,
             own: Vec::new(),
             advertised: Vec::new(),
             tunnel_only: Vec::new(),
@@ -517,6 +601,67 @@ impl Engine {
             last_config_error: None,
             nat: None,
         }
+    }
+
+    pub fn set_cookie_threshold(&mut self, threshold: std::num::NonZeroU32) {
+        self.cookie_load = LoadWindow::new(Instant::now(), threshold);
+    }
+
+    fn cookie_allow(&mut self, source: Source, now: Instant) -> bool {
+        if !self.cookie_origins.contains_key(&source) && self.cookie_origins.len() >= 4096 {
+            if self
+                .cookie_sweep
+                .is_none_or(|at| now.saturating_duration_since(at) >= Duration::from_millis(100))
+            {
+                self.cookie_origins.retain(|_, l| {
+                    l.last.is_some_and(|at| {
+                        l.tokens + now.saturating_duration_since(at).as_secs_f64() * l.rate
+                            < l.burst
+                    })
+                });
+                self.cookie_sweep = Some(now);
+            }
+            if self.cookie_origins.len() >= 4096 {
+                return false;
+            }
+        }
+        self.cookie_origins
+            .entry(source)
+            .or_insert_with(|| Limiter::new(20.0, 20.0))
+            .allow(now)
+            && self.cookie_global.allow(now)
+    }
+
+    fn cookie_reply_allow(
+        &mut self,
+        via: Via,
+        hint: Option<&DeviceId>,
+        source: Source,
+        now: Instant,
+    ) -> bool {
+        let known = match (via, hint) {
+            (Via::Direct(addr), _) => self.peers.iter().position(|p| {
+                p.endpoint
+                    .iter()
+                    .chain(&p.cfg_endpoints)
+                    .chain(&p.candidates)
+                    .any(|a| crate::net::from_wire(*a) == crate::net::from_wire(addr))
+            }),
+            (Via::Relay(_, _), Some(id)) => self.peers.iter().position(|p| p.device_id == *id),
+            _ => None,
+        };
+        let allowed = match known {
+            Some(pi) => self.peers[pi].cookie_limiter.allow(now),
+            None => self.cookie_allow(source, now),
+        };
+        if !allowed {
+            self.counters.inc(if known.is_some() {
+                "cookie_reply_ratelimited_peer"
+            } else {
+                "cookie_reply_ratelimited_unknown"
+            });
+        }
+        allowed
     }
 
     /// Cupo de un origen desconocido; la tabla está acotada y se purga de orígenes inactivos.
@@ -539,6 +684,7 @@ impl Engine {
     /// Aplica una configuración ya verificada y persistida. Conserva las sesiones de los peers cuya
     /// clave no cambió; destruye las de peers eliminados o con clave nueva (ADR-002).
     pub fn apply_config(&mut self, cfg: &DeviceConfig) {
+        self.device = cfg.device_id;
         let mut old = std::mem::take(&mut self.peers);
         // Prefijos alcanzables únicamente a través del túnel: red del túnel, rutas de los pares y las propias.
         let tunnel_only: Vec<Prefix> = cfg
@@ -557,6 +703,7 @@ impl Engine {
                 None => Peer::new(p.device_id, p.noise_pubkey),
             };
             peer.addrs = p.addrs.clone();
+            peer.cookies.clear();
             peer.routes = p.routes.clone();
             peer.cfg_endpoints = p
                 .endpoints
@@ -626,6 +773,10 @@ impl Engine {
             p.previous = None;
             p.next = None;
             p.pending = None;
+            p.pending_dg = None;
+            p.probe = None;
+            p.cookies.clear();
+            p.init_routes.clear();
             p.queued = None;
             p.last_attempt = None;
             p.kprobe = None;
@@ -771,12 +922,13 @@ impl Engine {
             self.counters.inc("tx_init_failed");
             return;
         };
-        let Ok(dg) = proto::encode_init(index, &msg) else {
+        let Ok(dg) = cookie::encode_init(index, &msg, &peer.public, None) else {
             return;
         };
         let probing = peer.endpoint.is_none();
         peer.pending = Some((pending, now));
-        peer.pending_dg = Some(dg.clone());
+        peer.pending_dg = Some(dg);
+        peer.init_routes.clear();
         peer.probe = probing.then(|| Probe {
             started: now,
             next_at: next_probe(now),
@@ -789,10 +941,19 @@ impl Engine {
         self.by_index.insert(index, pi);
         self.counters.inc("tx_init");
         for t in targets {
-            out.push(Out::Udp(t, dg.clone()));
+            if let Some(o) = peer.send_init(Via::Direct(t), &self.net, &self.device, now, false) {
+                out.push(o);
+            }
         }
         if let Some(k) = relay
-            && let Some(o) = peer.out(k, dg)
+            && let Some(id) = peer.stat[k.idx()].relay_id
+            && let Some(o) = peer.send_init(
+                Via::Relay(k.relay().expect("relay"), id),
+                &self.net,
+                &self.device,
+                now,
+                false,
+            )
         {
             out.push(o);
         }
@@ -807,12 +968,13 @@ impl Engine {
     pub fn on_relay_rx(
         &mut self,
         peer: &DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
         dg: &[u8],
         now: Instant,
         unix: u64,
     ) -> Vec<Out> {
-        self.on_datagram(Via::Relay(kind), Some(peer), dg, now, unix)
+        self.on_datagram(Via::Relay(kind, relay_id), Some(peer), dg, now, unix)
     }
 
     fn on_datagram(
@@ -829,12 +991,112 @@ impl Engine {
             return out;
         }
         match proto::parse(dg) {
-            Err(ParseError::TooLarge) => self.counters.inc("rx_oversize"),
-            Err(_) => self.counters.inc("rx_malformed"),
+            Err(error) => {
+                self.counters.inc(if error == ParseError::TooLarge {
+                    "rx_oversize"
+                } else {
+                    "rx_malformed"
+                });
+                if dg.starts_with(&[proto::VERSION, proto::TYPE_COOKIE]) {
+                    self.counters.inc("rx_cookie_reply_invalid");
+                }
+            }
             Ok(Packet::Init {
                 sender_index,
                 noise,
-            }) => self.on_init(via, hint, sender_index, noise, now, unix, &mut out),
+                ..
+            }) => {
+                if !cookie::verify_mac1(dg, &self.keys.public) {
+                    self.counters.inc("rx_init_mac1");
+                    return out;
+                }
+                let source = match (via, hint) {
+                    (Via::Direct(addr), _) => Source::direct(addr).ok(),
+                    (Via::Relay(_, id), Some(peer)) if self.knows_peer(peer) => {
+                        Some(Source::relay(&id, &self.net, peer, &self.device))
+                    }
+                    _ => None,
+                };
+                let Some(source) = source else { return out };
+                let Some(secrets) = self.cookie_secrets.as_mut() else {
+                    self.counters.inc("cookie_rng_failed");
+                    return out;
+                };
+                if secrets.rotate(now).is_err() {
+                    self.counters.inc("cookie_rng_failed");
+                    return out;
+                }
+                match cookie::pre_dh(
+                    dg,
+                    &self.keys.public,
+                    &source,
+                    secrets,
+                    &mut self.cookie_load,
+                    now,
+                ) {
+                    PreDh::Drop => {}
+                    PreDh::Challenge => {
+                        self.counters.inc("init_challenged");
+                        let quota_source = match via {
+                            Via::Direct(addr) => {
+                                Source::direct(SocketAddr::new(origin_key(addr.ip()), 0))
+                                    .expect("origen validado")
+                            }
+                            _ => source,
+                        };
+                        if self.cookie_reply_allow(via, hint, quota_source, now) {
+                            let secrets = self.cookie_secrets.as_ref().expect("inicializado");
+                            let mac1 = dg[114..130].try_into().expect("INIT exacto");
+                            match cookie::seal_reply(
+                                sender_index,
+                                &self.keys.public,
+                                mac1,
+                                &secrets.cookie(&source),
+                            ) {
+                                Ok(reply) => match (via, hint) {
+                                    (Via::Direct(addr), _) => {
+                                        self.counters.inc("tx_cookie_reply");
+                                        out.push(Out::Udp(addr, reply.to_vec()))
+                                    }
+                                    (Via::Relay(kind, relay_id), Some(peer)) => {
+                                        self.counters.inc("tx_cookie_reply");
+                                        out.push(Out::Relay {
+                                            peer: *peer,
+                                            relay_id,
+                                            kind,
+                                            dg: reply.to_vec(),
+                                        })
+                                    }
+                                    _ => {}
+                                },
+                                Err(_) => self.counters.inc("cookie_rng_failed"),
+                            }
+                        } else {
+                            self.counters.inc("cookie_reply_ratelimited");
+                        }
+                    }
+                    PreDh::Proceed => {
+                        if dg[proto::INIT_MAC2_OFFSET..].iter().any(|b| *b != 0)
+                            && self
+                                .cookie_secrets
+                                .as_ref()
+                                .expect("inicializado")
+                                .verify_mac2(dg, &source)
+                        {
+                            self.counters.inc("mac2_accepted");
+                        }
+                        self.on_init(via, hint, sender_index, noise, now, unix, &mut out)
+                    }
+                }
+            }
+            Ok(Packet::CookieReply { receiver_index, .. }) => {
+                let accepted = self.on_cookie(via, hint, receiver_index, dg, now, &mut out);
+                self.counters.inc(if accepted {
+                    "rx_cookie_reply"
+                } else {
+                    "rx_cookie_reply_invalid"
+                });
+            }
             Ok(Packet::Resp {
                 sender_index,
                 receiver_index,
@@ -865,6 +1127,58 @@ impl Engine {
         out
     }
 
+    fn on_cookie(
+        &mut self,
+        via: Via,
+        hint: Option<&DeviceId>,
+        receiver_index: u32,
+        dg: &[u8],
+        now: Instant,
+        out: &mut Vec<Out>,
+    ) -> bool {
+        let Some(&pi) = self.by_index.get(&receiver_index) else {
+            return false;
+        };
+        let peer = &mut self.peers[pi];
+        if hint.is_some_and(|h| *h != peer.device_id) {
+            return false;
+        }
+        let Some((pending, started)) = peer.pending.as_ref() else {
+            return false;
+        };
+        if pending.local_index() != receiver_index
+            || now.saturating_duration_since(*started) >= PROBE_WINDOW
+        {
+            return false;
+        }
+        match via {
+            Via::Direct(addr) if !Self::targets(peer).contains(&addr) => return false,
+            Via::Relay(kind, id) if peer.stat[PathKind::of(kind).idx()].relay_id != Some(id) => {
+                return false;
+            }
+            _ => {}
+        }
+        let Some(source) = peer.init_source(via, &self.net, &self.device) else {
+            return false;
+        };
+        if !peer.init_routes.get(&via).is_some_and(|r| r.sends > 0) {
+            return false;
+        }
+        let Some(init) = &peer.pending_dg else {
+            return false;
+        };
+        let mac1 = init[114..130].try_into().expect("INIT exacto");
+        let Ok(value) = cookie::open_reply(dg, receiver_index, &peer.public, mac1) else {
+            return false;
+        };
+        peer.cookies
+            .insert(source, CachedCookie::new(peer.public, source, value, now));
+        if let Some(o) = peer.send_init(via, &self.net, &self.device, now, true) {
+            out.push(o);
+        }
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn on_init(
         &mut self,
@@ -877,7 +1191,7 @@ impl Engine {
         out: &mut Vec<Out>,
     ) {
         let known = match (via, hint) {
-            (Via::Relay(_), Some(h)) => self.peers.iter().position(|p| p.device_id == *h),
+            (Via::Relay(_, _), Some(h)) => self.peers.iter().position(|p| p.device_id == *h),
             (Via::Direct(from), _) => self.peers.iter().position(|p| p.knows_ip(from.ip())),
             _ => None,
         };
@@ -1168,7 +1482,7 @@ impl Engine {
                 .last_data
                 .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
             // Sondeo: el MISMO mensaje 1 por directo y relay; el primer envío UDP puede perderse.
-            if let Some((_, at)) = &peer.pending {
+            if let Some(at) = peer.pending.as_ref().map(|(_, at)| *at) {
                 let relay = Self::ready_relay(peer).and_then(PathKind::relay);
                 let probe_over = peer.probe.as_ref().is_some_and(|p| {
                     now.duration_since(p.started) >= PROBE_WINDOW || p.rounds >= PROBE_MAX_ROUNDS
@@ -1180,30 +1494,38 @@ impl Engine {
                     peer.probe_failures += 1;
                     peer.hold_until = Some(now + backoff(peer.probe_failures));
                     self.counters.inc("probe_failed");
-                } else if let (Some(p), Some(dg)) = (peer.probe.as_mut(), peer.pending_dg.as_ref())
-                {
-                    if now >= p.next_at {
-                        for t in &targets {
-                            out.push(Out::Udp(*t, dg.clone()));
-                        }
-                        if let Some(kind) = relay {
-                            out.push(Out::Relay {
-                                peer: peer.device_id,
-                                kind,
-                                dg: dg.clone(),
-                            });
-                        }
+                } else if peer.probe.is_some() {
+                    let p = peer.probe.as_mut().expect("sondeo");
+                    let due = now >= p.next_at;
+                    let needs_relay = now.duration_since(p.started) >= RELAY_AFTER_PROBE;
+                    if due {
                         p.rounds += 1;
                         p.next_at = next_probe(now);
+                        for t in &targets {
+                            if let Some(o) =
+                                peer.send_init(Via::Direct(*t), &self.net, &self.device, now, false)
+                            {
+                                out.push(o);
+                            }
+                        }
+                        if let Some(kind) = relay
+                            && let Some(id) = peer.stat[PathKind::of(kind).idx()].relay_id
+                            && let Some(o) = peer.send_init(
+                                Via::Relay(kind, id),
+                                &self.net,
+                                &self.device,
+                                now,
+                                false,
+                            )
+                        {
+                            out.push(o);
+                        }
                         self.counters.inc("tx_probe");
                     }
-                    // El directo no llega: se pide relay en paralelo sin abandonar el sondeo.
-                    if now.duration_since(p.started) >= RELAY_AFTER_PROBE
-                        && Self::ready_relay(peer).is_none()
-                    {
+                    if needs_relay && Self::ready_relay(peer).is_none() {
                         peer.relay_wanted = true;
                     }
-                } else if now.duration_since(*at) >= HANDSHAKE_RETRY {
+                } else if now.duration_since(at) >= HANDSHAKE_RETRY {
                     peer.pending = None;
                     peer.pending_dg = None;
                 }
@@ -1294,7 +1616,7 @@ impl Engine {
                     peer.rendezvous_wanted = true;
                 }
             }
-            // Conmutación de caminos (docs/protocol/relay-v1.md §5.2).
+            // Conmutación de caminos (docs/protocol/relay-v2.md §7).
             let healthy = PATHS.map(|k| peer.healthy(k, now));
             for k in PATHS {
                 if !healthy[k.idx()] {
@@ -1401,6 +1723,7 @@ impl Engine {
     pub fn set_relay_ready(
         &mut self,
         peer: &DeviceId,
+        relay_id: [u8; 16],
         kind: RelayKind,
         ready: bool,
         now: Instant,
@@ -1411,14 +1734,27 @@ impl Engine {
         };
         let k = PathKind::of(kind);
         let s = &mut p.stat[k.idx()];
+        if !ready && s.relay_id.is_some_and(|id| id != relay_id) {
+            return out;
+        }
+        if s.relay_id.is_some_and(|id| id != relay_id) {
+            p.cookies.retain(|source, _| {
+                source.as_bytes()[0] != 3 || source.as_bytes()[1..17] == relay_id
+            });
+        }
+        s.relay_id = Some(relay_id);
         s.ready = ready;
         s.last_rx = None;
         s.healthy_since = None;
         if ready {
             self.counters.inc("relay_ready");
-            if let Some(dg) = p.pending_dg.clone()
-                && let Some(o) = p.out(k, dg)
-            {
+            if let Some(o) = p.send_init(
+                Via::Relay(kind, relay_id),
+                &self.net,
+                &self.device,
+                now,
+                false,
+            ) {
                 out.push(o);
             }
             if let Some(s) = p.current.as_mut()
@@ -1447,8 +1783,10 @@ impl Engine {
         out
     }
 
-    pub fn set_relay_rtt(&mut self, peer: &DeviceId, kind: RelayKind, ms: u32) {
-        if let Some(p) = self.peers.iter_mut().find(|p| &p.device_id == peer) {
+    pub fn set_relay_rtt(&mut self, peer: &DeviceId, relay_id: [u8; 16], kind: RelayKind, ms: u32) {
+        if let Some(p) = self.peers.iter_mut().find(|p| {
+            &p.device_id == peer && p.stat[PathKind::of(kind).idx()].relay_id == Some(relay_id)
+        }) {
             p.stat[PathKind::of(kind).idx()].rtt_ms = Some(ms);
         }
     }
@@ -1479,6 +1817,15 @@ impl Engine {
             .into_iter()
             .filter(|c| !tunnel_only.iter().any(|p| prefix_contains(p, &c.ip())))
             .collect();
+        let targets = Self::targets(peer);
+        let direct_sources: Vec<_> = targets
+            .iter()
+            .filter_map(|a| Source::direct(*a).ok())
+            .collect();
+        peer.cookies.retain(|source, c| {
+            (source.as_bytes()[0] == 3 || direct_sources.contains(source))
+                && c.get(&peer.public, source, now).is_some()
+        });
         peer.hold_until = None;
         if peer.healthy(PathKind::Direct, now) {
             return out;
@@ -1749,8 +2096,10 @@ mod tests {
                     Out::Udp(_, dg) if l.direct_ok => {
                         nb.extend(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix))
                     }
-                    Out::Relay { kind, dg, .. } if l.relay_ok => {
-                        nb.extend(l.b.on_relay_rx(&[1; 16], kind, &dg, l.now, l.unix))
+                    Out::Relay {
+                        kind, relay_id, dg, ..
+                    } if l.relay_ok => {
+                        nb.extend(l.b.on_relay_rx(&[1; 16], relay_id, kind, &dg, l.now, l.unix))
                     }
                     Out::Tun(p) => tun_a.push(p),
                     _ => {}
@@ -1761,8 +2110,10 @@ mod tests {
                     Out::Udp(_, dg) if l.direct_ok => {
                         na.extend(l.a.on_udp(ep(B_EP), &dg, l.now, l.unix))
                     }
-                    Out::Relay { kind, dg, .. } if l.relay_ok => {
-                        na.extend(l.a.on_relay_rx(&[2; 16], kind, &dg, l.now, l.unix))
+                    Out::Relay {
+                        kind, relay_id, dg, ..
+                    } if l.relay_ok => {
+                        na.extend(l.a.on_relay_rx(&[2; 16], relay_id, kind, &dg, l.now, l.unix))
                     }
                     Out::Tun(p) => tun_b.push(p),
                     _ => {}
@@ -2102,7 +2453,7 @@ mod tests {
         let mut l = lab();
         let stranger = StaticKeypair::generate();
         let (_, msg) = crypto::initiate(&stranger, &l.b.keys.public, &l.b.net, 5, l.unix).unwrap();
-        let dg = proto::encode_init(5, &msg).unwrap();
+        let dg = cookie::encode_init(5, &msg, &l.b.keys.public, None).unwrap();
         assert!(
             l.b.on_udp(ep("198.51.100.9:1"), &dg, l.now, l.unix)
                 .is_empty()
@@ -2115,11 +2466,11 @@ mod tests {
         let mut l = lab();
         let (_, msg) =
             crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 5, l.unix - 100).unwrap();
-        let dg = proto::encode_init(5, &msg).unwrap();
+        let dg = cookie::encode_init(5, &msg, &l.b.keys.public, None).unwrap();
         assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
         assert_eq!(l.b.counters.0["rx_init_stale"], 1);
         let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 6, l.unix).unwrap();
-        let dg = proto::encode_init(6, &msg).unwrap();
+        let dg = cookie::encode_init(6, &msg, &l.b.keys.public, None).unwrap();
         let first = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
         assert_eq!(first.len(), 1);
         let again = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
@@ -2132,7 +2483,7 @@ mod tests {
         assert_eq!(l.b.counters.0["rx_init_stale"], 1);
         // otro mensaje 1 distinto con el mismo timestamp no es una retransmisión
         let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 7, l.unix).unwrap();
-        let dg2 = proto::encode_init(7, &msg).unwrap();
+        let dg2 = cookie::encode_init(7, &msg, &l.b.keys.public, None).unwrap();
         assert!(l.b.on_udp(ep(A_EP), &dg2, l.now, l.unix).is_empty());
         assert_eq!(l.b.counters.0["rx_init_stale"], 2);
     }
@@ -2141,7 +2492,8 @@ mod tests {
     fn init_flood_is_rate_limited() {
         let mut l = lab();
         let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 5, l.unix).unwrap();
-        let dg = proto::encode_init(5, &msg).unwrap();
+        l.b.cookie_load = LoadWindow::new(l.now, std::num::NonZeroU32::new(1000).unwrap());
+        let dg = cookie::encode_init(5, &msg, &l.b.keys.public, None).unwrap();
         for _ in 0..200 {
             l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
         }
@@ -2238,19 +2590,20 @@ mod tests {
         assert_eq!(l.b.peers[0].endpoint, Some(ep(A_EP)));
     }
 
-    fn garbage_init(sender: u32) -> Vec<u8> {
-        proto::encode_init(sender, &[0u8; proto::NOISE_MSG1_LEN]).unwrap()
+    fn garbage_init(sender: u32, responder: &[u8; 32]) -> Vec<u8> {
+        cookie::encode_init(sender, &[0u8; proto::NOISE_MSG1_LEN], responder, None).unwrap()
     }
 
     #[test]
     fn spoofed_init_flood_does_not_stop_a_configured_peer() {
         let mut l = lab();
+        l.b.cookie_load = LoadWindow::new(l.now, std::num::NonZeroU32::new(1000).unwrap());
         for i in 0..400u32 {
             let from = SocketAddr::new(
                 IpAddr::from([198, 51, (i / 250) as u8, (i % 250) as u8 + 1]),
                 9,
             );
-            l.b.on_udp(from, &garbage_init(i), l.now, l.unix);
+            l.b.on_udp(from, &garbage_init(i, &l.b.keys.public), l.now, l.unix);
         }
         assert!(l.b.counters.0["rx_init_ratelimited"] >= 300);
         let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
@@ -2263,7 +2616,7 @@ mod tests {
         let mut l = lab();
         let from = ep("198.51.100.9:9");
         for i in 0..50 {
-            l.b.on_udp(from, &garbage_init(i), l.now, l.unix);
+            l.b.on_udp(from, &garbage_init(i, &l.b.keys.public), l.now, l.unix);
         }
         assert_eq!(l.b.counters.0["rx_init_invalid"], 5);
         assert_eq!(l.b.counters.0["rx_init_ratelimited"], 45);
@@ -2291,7 +2644,7 @@ mod tests {
         assert!(
             l.b.on_udp(
                 ep(A_EP),
-                &proto::encode_init(3, &old).unwrap(),
+                &cookie::encode_init(3, &old, &l.b.keys.public, None).unwrap(),
                 l.now,
                 l.unix
             )
@@ -2302,7 +2655,7 @@ mod tests {
         assert_eq!(
             l.b.on_udp(
                 ep(A_EP),
-                &proto::encode_init(4, &new).unwrap(),
+                &cookie::encode_init(4, &new, &l.b.keys.public, None).unwrap(),
                 l.now,
                 l.unix
             )
@@ -2555,7 +2908,7 @@ mod tests {
         // Repetición/captura del mensaje 1 desde otra IP: se responde a ella, pero la ruta no cambia.
         l.unix += 1;
         let (_, msg) = crypto::initiate(&l.a.keys, &l.b.keys.public, &l.a.net, 77, l.unix).unwrap();
-        let dg = proto::encode_init(77, &msg).unwrap();
+        let dg = cookie::encode_init(77, &msg, &l.b.keys.public, None).unwrap();
         let out = l.b.on_udp(ep("203.0.113.66:40000"), &dg, l.now, l.unix);
         assert_eq!(udp_of(&out)[0].0, ep("203.0.113.66:40000"));
         assert_eq!(
@@ -2624,8 +2977,8 @@ mod tests {
         // Se pierden los mensajes iniciales, incluso los enviados al abrir el relay.
         l.a.on_tun(&v4(1, 2, b"a"), l.now, l.unix);
         l.b.on_tun(&v4(2, 1, b"b"), l.now, l.unix);
-        l.a.set_relay_ready(&[2; 16], RelayKind::Udp, true, l.now);
-        l.b.set_relay_ready(&[1; 16], RelayKind::Udp, true, l.now);
+        l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now);
+        l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now);
         run(&mut l, 3);
         assert_eq!(l.a.peers[0].path_name(l.now), "relay-udp");
         assert_eq!(l.b.peers[0].path_name(l.now), "relay-udp");
@@ -2637,8 +2990,8 @@ mod tests {
         let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
         pump(&mut l, out, vec![]);
         let (ra, rb) = (
-            l.a.set_relay_ready(&[2; 16], RelayKind::Udp, true, l.now),
-            l.b.set_relay_ready(&[1; 16], RelayKind::Udp, true, l.now),
+            l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now),
+            l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now),
         );
         pump(&mut l, ra, rb);
         run(&mut l, 10);
@@ -2660,5 +3013,606 @@ mod tests {
         assert_eq!(early, PathKind::RelayUdp);
         assert_eq!(l.a.peers[0].active, PathKind::Direct);
         assert_eq!(l.a.counters.0["path_switches"], 2);
+    }
+    fn require_cookie(l: &mut Lab) {
+        l.b.cookie_load = LoadWindow::new(l.now, std::num::NonZeroU32::new(1).unwrap());
+        let dg = garbage_init(0, &l.b.keys.public);
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+    }
+
+    fn reply_for(init: &[u8], public: &[u8; 32], value: &[u8; 16]) -> Vec<u8> {
+        let Packet::Init { sender_index, .. } = proto::parse(init).unwrap() else {
+            panic!()
+        };
+        cookie::seal_reply(
+            sender_index,
+            public,
+            init[114..130].try_into().unwrap(),
+            value,
+        )
+        .unwrap()
+        .to_vec()
+    }
+
+    #[test]
+    fn invalid_mac1_never_spends_dh_or_origin_state() {
+        let mut l = lab();
+        l.b.cookie_load = LoadWindow::new(l.now, std::num::NonZeroU32::new(1).unwrap());
+        let mut dg = garbage_init(1, &l.b.keys.public);
+        dg[114] ^= 1;
+        for n in 1..=200 {
+            assert!(
+                l.b.on_udp(SocketAddr::from(([198, 51, 100, n], 9)), &dg, l.now, l.unix)
+                    .is_empty()
+            );
+        }
+        assert_eq!(l.b.limiter.tokens, INIT_RATE);
+        assert_eq!(l.b.peers[0].init_limiter.tokens, PEER_INIT_BURST);
+        assert!(l.b.origins.is_empty());
+        assert!(l.b.cookie_origins.is_empty());
+        assert!(!l.b.counters.0.contains_key("rx_init_invalid"));
+        let good = garbage_init(2, &l.b.keys.public);
+        assert!(l.b.on_udp(ep(A_EP), &good, l.now, l.unix).is_empty());
+        assert_eq!(
+            l.b.counters.0["rx_init_invalid"], 1,
+            "bad MAC1 did not advance load"
+        );
+    }
+
+    #[test]
+    fn cookie_threshold_and_monotonic_window_boundary() {
+        let mut l = lab();
+        l.b.cookie_load = LoadWindow::new(l.now, std::num::NonZeroU32::new(2).unwrap());
+        let dg = garbage_init(1, &l.b.keys.public);
+        for _ in 0..2 {
+            assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        }
+        let reply = udp_of(&l.b.on_udp(ep(A_EP), &dg, l.now, l.unix + 20));
+        assert!(matches!(
+            proto::parse(&reply[0].1),
+            Ok(Packet::CookieReply { .. })
+        ));
+        assert_eq!(l.b.counters.0["rx_init_invalid"], 2);
+        assert_eq!(l.b.peers[0].init_limiter.tokens, PEER_INIT_BURST - 2.0);
+        assert_eq!(
+            udp_of(&l.b.on_udp(ep(A_EP), &dg, l.now + Duration::from_millis(999), l.unix)).len(),
+            1
+        );
+        assert!(
+            l.b.on_udp(ep(A_EP), &dg, l.now + Duration::from_secs(1), l.unix)
+                .is_empty()
+        );
+        assert_eq!(l.b.counters.0["rx_init_invalid"], 3);
+    }
+
+    #[test]
+    fn cookie_challenge_flood_preserves_unknown_dh_budget() {
+        let mut l = lab();
+        require_cookie(&mut l);
+        let dg = garbage_init(1, &l.b.keys.public);
+        for n in 0..1000u32 {
+            let from = SocketAddr::from(([198, 51, (n / 250) as u8, (n % 250 + 1) as u8], 9));
+            l.b.on_udp(from, &dg, l.now, l.unix);
+        }
+        assert_eq!(l.b.limiter.tokens, INIT_RATE);
+        assert!(l.b.origins.is_empty());
+        assert_eq!(l.b.counters.0["rx_init_invalid"], 1);
+        assert!(l.b.peers[0].next.is_none());
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"cookie"), l.now, l.unix));
+        // Give the independent reply bucket time to refill, without changing Unix time.
+        l.now += Duration::from_millis(100);
+        let challenge = udp_of(&l.b.on_udp(ep(A_EP), &first[0].1, l.now, l.unix));
+        let retry = l.a.on_udp(ep(B_EP), &challenge[0].1, l.now, l.unix);
+        let (_, delivered) = pump(&mut l, retry, vec![]);
+        assert_eq!(delivered, vec![v4(1, 2, b"cookie")]);
+    }
+
+    #[test]
+    fn cookie_reply_quotas_and_bounded_table_recover() {
+        let mut l = lab();
+        require_cookie(&mut l);
+        let dg = garbage_init(1, &l.b.keys.public);
+        let mut emitted = 0;
+        for port in 1..=30 {
+            emitted +=
+                l.b.on_udp(
+                    SocketAddr::from(([198, 51, 100, 1], port)),
+                    &dg,
+                    l.now,
+                    l.unix,
+                )
+                .len();
+        }
+        assert_eq!(emitted, 20, "ports share the IP quota");
+        for n in 2..=100 {
+            emitted +=
+                l.b.on_udp(SocketAddr::from(([198, 51, 100, n], 9)), &dg, l.now, l.unix)
+                    .len();
+        }
+        assert_eq!(emitted, 100, "global burst");
+        l.b.cookie_origins.clear();
+        for n in 0..4096u32 {
+            let source = Source::direct(SocketAddr::from((
+                [203, (n / 256) as u8, (n % 256) as u8, 1],
+                0,
+            )))
+            .unwrap();
+            let mut limiter = Limiter::new(20.0, 20.0);
+            assert!(limiter.allow(l.now));
+            l.b.cookie_origins.insert(source, limiter);
+        }
+        assert!(
+            l.b.on_udp(ep("198.18.0.1:9"), &dg, l.now, l.unix)
+                .is_empty()
+        );
+        assert_eq!(l.b.cookie_origins.len(), 4096);
+        l.now += Duration::from_millis(100);
+        assert_eq!(l.b.on_udp(ep("198.18.0.1:9"), &dg, l.now, l.unix).len(), 1);
+        assert!(l.b.cookie_origins.len() < 4096);
+        assert_eq!(l.b.limiter.tokens, INIT_RATE);
+    }
+
+    #[test]
+    fn cookie_retry_preserves_init_route_and_unhealthy_state() {
+        let mut l = lab();
+        require_cookie(&mut l);
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"pending"), l.now, l.unix));
+        let started = l.a.peers[0].pending.as_ref().unwrap().1;
+        let next_at = l.a.peers[0].probe.as_ref().unwrap().next_at;
+        let challenge = udp_of(&l.b.on_udp(ep(A_EP), &first[0].1, l.now, l.unix));
+        assert!(l.b.peers[0].next.is_none());
+        let retry = udp_of(&l.a.on_udp(ep(B_EP), &challenge[0].1, l.now, l.unix));
+        assert_eq!(retry.len(), 1);
+        assert_eq!(retry[0].0, first[0].0);
+        assert_eq!(retry[0].1[..130], first[0].1[..130]);
+        assert_ne!(retry[0].1[130..], [0; 16]);
+        let p = &l.a.peers[0];
+        assert_eq!(p.pending.as_ref().unwrap().1, started);
+        assert_eq!(p.probe.as_ref().unwrap().next_at, next_at);
+        assert!(p.current.is_none());
+        assert!(p.endpoint.is_none());
+        assert!(
+            p.stat
+                .iter()
+                .all(|s| s.last_rx.is_none() && s.healthy_since.is_none())
+        );
+        assert!(
+            l.a.on_udp(ep(B_EP), &challenge[0].1, l.now, l.unix)
+                .is_empty()
+        );
+        let out = l.b.on_udp(ep(A_EP), &retry[0].1, l.now, l.unix);
+        let (_, delivered) = pump(&mut l, vec![], out);
+        assert_eq!(delivered, vec![v4(1, 2, b"pending")]);
+        assert!(
+            l.a.on_udp(ep(B_EP), &challenge[0].1, l.now, l.unix)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malicious_cookie_replies_do_not_cancel_pending_or_clear_cache() {
+        let mut l = lab();
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix));
+        let reply = reply_for(&first[0].1, &l.b.keys.public, &[9; 16]);
+        assert_eq!(l.a.on_udp(ep(B_EP), &reply, l.now, l.unix).len(), 1);
+        let index = l.a.peers[0].pending.as_ref().unwrap().0.local_index();
+        let mut bad_tag = reply.clone();
+        *bad_tag.last_mut().unwrap() ^= 1;
+        let mut unknown = reply.clone();
+        unknown[2..6].copy_from_slice(&index.wrapping_add(1).to_be_bytes());
+        for (from, dg) in [
+            (ep(B_EP), bad_tag),
+            (ep(B_EP), unknown),
+            (ep("192.0.2.99:9"), reply.clone()),
+        ] {
+            assert!(l.a.on_udp(from, &dg, l.now, l.unix).is_empty());
+            assert_eq!(
+                l.a.peers[0].pending.as_ref().unwrap().0.local_index(),
+                index
+            );
+            assert_eq!(l.a.peers[0].cookies.len(), 1);
+            assert!(l.a.peers[0].endpoint.is_none());
+        }
+        assert!(
+            l.a.on_relay_rx(&[2; 16], [17; 16], RelayKind::Udp, &reply, l.now, l.unix)
+                .is_empty()
+        );
+        let (_, delivered) = pump(&mut l, vec![Out::Udp(ep(B_EP), first[0].1.clone())], vec![]);
+        assert_eq!(
+            delivered.len(),
+            1,
+            "valid Noise response still completes the original attempt"
+        );
+    }
+
+    #[test]
+    fn cookie_retries_obey_candidate_send_and_attempt_budgets() {
+        let mut l = lab();
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix));
+        let reply = reply_for(&first[0].1, &l.b.keys.public, &[9; 16]);
+        let mut sends = 1;
+        for _ in 0..39 {
+            sends += udp_of(&l.a.on_udp(ep(B_EP), &reply, l.now, l.unix)).len();
+            assert!(l.a.on_udp(ep(B_EP), &reply, l.now, l.unix).is_empty());
+            l.now += Duration::from_millis(250);
+            sends += udp_of(&l.a.on_tick(l.now, l.unix)).len();
+        }
+        assert!(sends <= 12, "{sends} sends exceeded per-candidate budget");
+        assert_eq!(
+            l.a.peers[0].pending.as_ref().unwrap().1 + PROBE_WINDOW,
+            l.now + Duration::from_millis(250)
+        );
+        l.now += Duration::from_millis(250);
+        assert!(l.a.on_udp(ep(B_EP), &reply, l.now, l.unix).is_empty());
+        l.a.on_tick(l.now, l.unix);
+        assert!(l.a.peers[0].pending.is_none());
+        assert_eq!(l.a.counters.0["probe_failed"], 1);
+    }
+
+    #[test]
+    fn candidate_cookies_are_isolated_and_nat_rebind_is_challenged() {
+        let mut l = lab();
+        require_cookie(&mut l);
+        let first = udp_of(&l.a.on_peer_candidates(
+            &[2; 16],
+            vec![ep(B_EP), ep("192.0.2.3:51820")],
+            l.now,
+            l.unix,
+        ));
+        let challenge = udp_of(&l.b.on_udp(ep(A_EP), &first[0].1, l.now, l.unix));
+        let retry = udp_of(&l.a.on_udp(ep(B_EP), &challenge[0].1, l.now, l.unix));
+        assert_eq!(retry.len(), 1);
+        let peer = &mut l.a.peers[0];
+        let other = peer
+            .send_init(
+                Via::Direct(ep("192.0.2.3:51820")),
+                &NET,
+                &[1; 16],
+                l.now,
+                false,
+            )
+            .unwrap();
+        assert_eq!(udp_of(&[other])[0].1[130..], [0; 16]);
+        let rebound = ep("192.0.2.1:51821");
+        let rebound_challenge = udp_of(&l.b.on_udp(rebound, &retry[0].1, l.now, l.unix));
+        assert!(matches!(
+            proto::parse(&rebound_challenge[0].1),
+            Ok(Packet::CookieReply { .. })
+        ));
+        assert!(
+            l.b.peers[0].next.is_none(),
+            "old-port cookie cannot reach DH"
+        );
+        let rebound_retry = udp_of(&l.a.on_udp(ep(B_EP), &rebound_challenge[0].1, l.now, l.unix));
+        assert!(rebound_retry.is_empty(), "one cookie retry per round");
+        l.now = l.a.peers[0].probe.as_ref().unwrap().next_at;
+        let next = udp_of(&l.a.on_tick(l.now, l.unix));
+        let dg = &next.iter().find(|(addr, _)| *addr == ep(B_EP)).unwrap().1;
+        require_cookie(&mut l);
+        assert_eq!(l.b.on_udp(rebound, dg, l.now, l.unix).len(), 1);
+        assert!(
+            l.b.peers[0].next.is_some(),
+            "new-port cookie allows the unchanged Noise INIT"
+        );
+    }
+
+    #[test]
+    fn engine_cookie_rotation_accepts_previous_then_expires_it() {
+        for skipped in [false, true] {
+            let mut l = lab();
+            l.b.cookie_secrets = Some(CookieSecrets::new(l.now).unwrap());
+            let source = Source::direct(ep("198.51.100.9:9")).unwrap();
+            let value = l.b.cookie_secrets.as_ref().unwrap().cookie(&source);
+            let dg = cookie::encode_init(
+                1,
+                &[0; proto::NOISE_MSG1_LEN],
+                &l.b.keys.public,
+                Some(&value),
+            )
+            .unwrap();
+            l.now += cookie::COOKIE_TTL * if skipped { 2 } else { 1 };
+            require_cookie(&mut l);
+            let out = l.b.on_udp(ep("198.51.100.9:9"), &dg, l.now, l.unix);
+            if skipped {
+                assert!(matches!(
+                    proto::parse(&udp_of(&out)[0].1),
+                    Ok(Packet::CookieReply { .. })
+                ));
+                assert!(l.b.origins.is_empty());
+            } else {
+                assert!(out.is_empty());
+                assert_eq!(l.b.counters.0["rx_init_invalid"], 2);
+                l.now += cookie::COOKIE_TTL;
+                require_cookie(&mut l);
+                let out = udp_of(&l.b.on_udp(ep("198.51.100.9:9"), &dg, l.now, l.unix));
+                assert!(matches!(
+                    proto::parse(&out[0].1),
+                    Ok(Packet::CookieReply { .. })
+                ));
+                assert_eq!(l.b.counters.0["rx_init_invalid"], 3);
+            }
+        }
+    }
+
+    #[test]
+    fn relay_cookie_is_bound_to_id_direction_and_pending_transport() {
+        let mut l = lab();
+        require_cookie(&mut l);
+        l.a.on_tun(&v4(1, 2, b"relay-cookie"), l.now, l.unix);
+        let sent =
+            l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now);
+        let init = sent
+            .iter()
+            .find_map(|o| match o {
+                Out::Relay {
+                    relay_id,
+                    kind: RelayKind::Udp,
+                    dg,
+                    ..
+                } => {
+                    assert_eq!(*relay_id, [17; 16]);
+                    Some(dg.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let challenge =
+            l.b.on_relay_rx(&[1; 16], [17; 16], RelayKind::Udp, &init, l.now, l.unix);
+        let Out::Relay {
+            relay_id,
+            dg: reply,
+            ..
+        } = &challenge[0]
+        else {
+            panic!()
+        };
+        assert_eq!(*relay_id, [17; 16]);
+        for (peer, id, kind) in [
+            ([2; 16], [18; 16], RelayKind::Udp),
+            ([2; 16], [17; 16], RelayKind::Tls),
+            ([3; 16], [17; 16], RelayKind::Udp),
+        ] {
+            assert!(
+                l.a.on_relay_rx(&peer, id, kind, reply, l.now, l.unix)
+                    .is_empty()
+            );
+            assert!(l.a.peers[0].pending.is_some());
+            assert!(l.a.peers[0].cookies.is_empty());
+        }
+        let retry =
+            l.a.on_relay_rx(&[2; 16], [17; 16], RelayKind::Udp, reply, l.now, l.unix);
+        let Out::Relay { relay_id, dg, .. } = &retry[0] else {
+            panic!()
+        };
+        assert_eq!(*relay_id, [17; 16]);
+        assert_eq!(dg[..130], init[..130]);
+        assert!(l.a.peers[0].stat.iter().all(|s| s.last_rx.is_none()));
+        let wrong =
+            l.b.on_relay_rx(&[1; 16], [18; 16], RelayKind::Udp, dg, l.now, l.unix);
+        let Out::Relay {
+            dg: wrong_reply, ..
+        } = &wrong[0]
+        else {
+            panic!()
+        };
+        assert!(matches!(
+            proto::parse(wrong_reply),
+            Ok(Packet::CookieReply { .. })
+        ));
+        assert!(l.b.peers[0].next.is_none());
+        let accepted =
+            l.b.on_relay_rx(&[1; 16], [17; 16], RelayKind::Udp, dg, l.now, l.unix);
+        let Out::Relay { dg: response, .. } = &accepted[0] else {
+            panic!()
+        };
+        assert!(matches!(proto::parse(response), Ok(Packet::Resp { .. })));
+        assert!(l.b.peers[0].next.is_some());
+    }
+
+    #[test]
+    fn configured_cookie_reservations_complete_under_unknown_load_direct_and_relay() {
+        for relay in [false, true] {
+            let mut l = lab();
+            require_cookie(&mut l);
+            let init = garbage_init(99, &l.b.keys.public);
+            let start = l.now;
+            for n in 0..50_000u32 {
+                let now = start + Duration::from_micros(u64::from(n) * 20);
+                let from = SocketAddr::from(([203, (n / 256) as u8, (n % 256) as u8, 1], 9));
+                l.b.on_udp(from, &init, now, l.unix);
+            }
+            l.now = start + Duration::from_micros(999_980);
+            assert!(l.b.cookie_global.tokens < 1.0);
+            assert_eq!(l.b.peers[0].cookie_limiter.tokens, 4.0);
+            assert_eq!(l.b.limiter.tokens, INIT_RATE);
+            if relay {
+                l.direct_ok = false;
+                l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now);
+                l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now);
+            }
+            let pkt = v4(1, 2, b"reserva");
+            let initial = l.a.on_tun(&pkt, l.now, l.unix);
+            let challenge = if relay {
+                let dg = initial
+                    .iter()
+                    .find_map(|o| match o {
+                        Out::Relay { dg, .. } => Some(dg),
+                        _ => None,
+                    })
+                    .unwrap();
+                l.b.on_relay_rx(&[1; 16], [17; 16], RelayKind::Udp, dg, l.now, l.unix)
+            } else {
+                l.b.on_udp(ep(A_EP), &udp_of(&initial)[0].1, l.now, l.unix)
+            };
+            assert_eq!(
+                challenge.len(),
+                1,
+                "el cupo desconocido no consume la reserva"
+            );
+            let (_, delivered) = pump(&mut l, vec![], challenge);
+            assert_eq!(delivered, vec![pkt]);
+            assert!(l.a.peers[0].current.is_some());
+            assert!(l.b.peers[0].current.is_some());
+        }
+    }
+
+    #[test]
+    fn configured_cookie_reservations_isolate_peers_unknowns_and_refill() {
+        let mut l = lab();
+        let mut cfg = l.cfg_b.clone();
+        cfg.peers.push(CfgPeer {
+            device_id: [3; 16],
+            noise_pubkey: StaticKeypair::generate().public,
+            addrs: vec![ip("10.77.0.3")],
+            endpoints: vec![ep("198.51.100.33:3333")],
+            routes: vec![],
+        });
+        l.b.apply_config(&cfg);
+        require_cookie(&mut l);
+        let dg = garbage_init(99, &l.b.keys.public);
+        for n in 0..50u32 {
+            let out = l.b.on_udp(ep(A_EP), &dg, l.now, l.unix);
+            assert_eq!(out.len(), usize::from(n < 4));
+        }
+        assert_eq!(l.b.cookie_global.tokens, 100.0);
+        assert!(l.b.cookie_origins.is_empty());
+        assert_eq!(l.b.peers[0].cookie_limiter.tokens, 0.0);
+        assert_eq!(l.b.peers[1].cookie_limiter.tokens, 4.0);
+        assert_eq!(
+            l.b.on_udp(ep("198.51.100.33:3333"), &dg, l.now, l.unix)
+                .len(),
+            1
+        );
+        let before = l.b.peers[1].cookie_limiter.tokens;
+        // Mismo host, otro puerto: no acredita un endpoint configurado.
+        let mut other_port = ep(A_EP);
+        other_port.set_port(other_port.port() + 1);
+        assert_eq!(l.b.on_udp(other_port, &dg, l.now, l.unix).len(), 1);
+        assert_eq!(l.b.cookie_global.tokens, 99.0);
+        assert_eq!(l.b.peers[0].cookie_limiter.tokens, 0.0);
+        assert_eq!(l.b.peers[1].cookie_limiter.tokens, before);
+        l.b.peers[0].endpoint = Some(ep("198.51.100.44:4444"));
+        l.b.peers[0].candidates.push(ep("198.51.100.55:5555"));
+        for from in [
+            ep("198.51.100.44:4444"),
+            ep("198.51.100.55:5555"),
+            crate::net::to_wire(ep(A_EP), true).unwrap(),
+        ] {
+            assert!(l.b.on_udp(from, &dg, l.now, l.unix).is_empty());
+        }
+        for kind in [RelayKind::Udp, RelayKind::Tls] {
+            assert!(
+                l.b.on_relay_rx(&[1; 16], [17; 16], kind, &dg, l.now, l.unix)
+                    .is_empty()
+            );
+        }
+        assert_eq!(l.b.cookie_global.tokens, 99.0);
+        assert_eq!(
+            l.b.on_relay_rx(&[3; 16], [17; 16], RelayKind::Udp, &dg, l.now, l.unix)
+                .len(),
+            1
+        );
+        l.now += Duration::from_millis(499);
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        l.now += Duration::from_millis(1);
+        assert_eq!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).len(), 1);
+        assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        l.now += Duration::from_millis(500);
+        // La ventana de carga también avanza: preparar su primer INIT sin gastar la reserva.
+        l.b.on_udp(ep("203.0.113.1:9"), &dg, l.now, l.unix);
+        assert_eq!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).len(), 1);
+    }
+
+    #[test]
+    fn cookie_counters_record_only_the_corresponding_events_in_status() {
+        fn count(e: &Engine, name: &str) -> u64 {
+            e.counters.0.get(name).copied().unwrap_or(0)
+        }
+        let mut l = lab();
+        require_cookie(&mut l);
+        let first = udp_of(&l.a.on_tun(&v4(1, 2, b"contadores"), l.now, l.unix));
+        let init = &first[0].1;
+        let challenge = udp_of(&l.b.on_udp(ep(A_EP), init, l.now, l.unix));
+        assert_eq!(count(&l.b, "init_challenged"), 1);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 1);
+        assert_eq!(count(&l.b, "mac2_accepted"), 0);
+        for _ in 0..4 {
+            l.b.on_udp(ep(A_EP), init, l.now, l.unix);
+        }
+        assert_eq!(count(&l.b, "init_challenged"), 5);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 4);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_peer"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_unknown"), 0);
+        for n in 0..101u8 {
+            l.b.on_udp(SocketAddr::from(([203, 0, 113, n], 9)), init, l.now, l.unix);
+        }
+        assert_eq!(count(&l.b, "init_challenged"), 106);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited"), 2);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_peer"), 1);
+        assert_eq!(count(&l.b, "cookie_reply_ratelimited_unknown"), 1);
+        let mut bad_init = init.clone();
+        bad_init[114] ^= 1;
+        l.b.on_udp(ep(A_EP), &bad_init, l.now, l.unix);
+        assert_eq!(count(&l.b, "init_challenged"), 106);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        let reply = &challenge[0].1;
+        let mut bad_reply = reply.clone();
+        bad_reply[61] ^= 1;
+        assert!(l.a.on_udp(ep(B_EP), &bad_reply, l.now, l.unix).is_empty());
+        let unknown = proto::encode_cookie_reply(0, &[0; 24], &[0; 32]);
+        assert!(l.a.on_udp(ep(B_EP), &unknown, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 2);
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 0);
+        let retry = udp_of(&l.a.on_udp(ep(B_EP), reply, l.now, l.unix));
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 1);
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 2);
+        let mut bad_mac2 = retry[0].1.clone();
+        bad_mac2[130] ^= 1;
+        assert!(l.b.on_udp(ep(A_EP), &bad_mac2, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.b, "mac2_accepted"), 0);
+        let response = l.b.on_udp(ep(A_EP), &retry[0].1, l.now, l.unix);
+        assert_eq!(count(&l.b, "mac2_accepted"), 1);
+        assert_eq!(count(&l.b, "init_challenged"), 107);
+        assert_eq!(count(&l.b, "tx_cookie_reply"), 104);
+        pump(&mut l, vec![], response);
+        assert!(l.a.on_udp(ep(B_EP), reply, l.now, l.unix).is_empty());
+        assert_eq!(count(&l.a, "rx_cookie_reply"), 1);
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 3);
+        assert!(
+            l.a.on_udp(ep(B_EP), &reply[..reply.len() - 1], l.now, l.unix)
+                .is_empty()
+        );
+        assert_eq!(count(&l.a, "rx_cookie_reply_invalid"), 4);
+        let snapshot = serde_json::to_value(l.b.status(l.now, l.unix)).unwrap();
+        for (name, expected) in [
+            ("tx_cookie_reply", 104),
+            ("init_challenged", 107),
+            ("cookie_reply_ratelimited", 3),
+            ("cookie_reply_ratelimited_peer", 2),
+            ("cookie_reply_ratelimited_unknown", 1),
+            ("mac2_accepted", 1),
+        ] {
+            assert_eq!(snapshot["counters"][name], expected);
+        }
+        let snapshot = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert_eq!(snapshot["counters"]["rx_cookie_reply"], 1);
+        assert_eq!(snapshot["counters"]["rx_cookie_reply_invalid"], 4);
+    }
+
+    #[test]
+    fn mac2_counter_counts_valid_mac_without_load_but_not_zero_or_invalid() {
+        let mut l = lab();
+        let source = Source::direct(ep(A_EP)).unwrap();
+        let value = l.b.cookie_secrets.as_ref().unwrap().cookie(&source);
+        let noise = [0; proto::NOISE_MSG1_LEN];
+        for cookie in [None, Some(&[9; 16]), Some(&*value)] {
+            let dg = cookie::encode_init(9, &noise, &l.b.keys.public, cookie).unwrap();
+            assert!(l.b.on_udp(ep(A_EP), &dg, l.now, l.unix).is_empty());
+        }
+        assert_eq!(l.b.counters.0["mac2_accepted"], 1);
+        assert!(!l.b.counters.0.contains_key("init_challenged"));
+        assert!(!l.b.counters.0.contains_key("tx_cookie_reply"));
     }
 }

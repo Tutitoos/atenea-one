@@ -1,5 +1,8 @@
 use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group, now};
-use atenea_relay_core::{ALPN, FrameDecoder, MAGIC, Message, encode_frame, parse, ty};
+use atenea_relay_core::{
+    ALPN, ErrCode, FrameDecoder, MAGIC, Message, ParseError, VERSION, encode_alloc_err,
+    encode_frame, parse, ty,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem};
 use std::{
     fs::File,
@@ -159,9 +162,20 @@ async fn serve(
             n = read.read(&mut buf) => {
                 let n = n?; if n == 0 { return Ok(()); } last_rx = Instant::now(); decoder.push(&buf[..n]);
                 while let Some(body) = decoder.next_frame().map_err(|_| io::Error::other("longitud de trama inválida"))? {
-                    if matches!(parse(&body),Ok(Message::CookieReq | Message::Cookie {..})) { return Err(io::Error::other("cookie prohibida en TCP")); }
-                    // Antes de asignarse solo cabe ALLOC: el resto no puede ser válido y costaría mutex global.
-                    if !allocated && !body.starts_with(&[MAGIC, ty::ALLOC]) { return Err(io::Error::other("trama previa a ALLOC")); }
+                    let parsed = parse(&body);
+                    if let Err(error) = parsed {
+                        let code = if error == ParseError::UnsupportedVersion { ErrCode::UnsupportedVersion } else { ErrCode::Malformed };
+                        {
+                            let mut shared=runtime.shared.lock().unwrap();
+                            *shared.state.counters.rejects.entry(code as u8).or_default()+=1;
+                        }
+                        let frame = encode_frame(&encode_alloc_err(code)).expect("error acotado");
+                        tokio::time::timeout_at(deadline, write.write_all(&frame)).await.map_err(io::Error::other)??;
+                        return Err(io::Error::other("cuerpo relay inválido"));
+                    }
+                    if matches!(parsed,Ok(Message::CookieReq {..} | Message::Cookie {..})) { return Err(io::Error::other("cookie prohibida en TCP")); }
+                    // Antes de asignarse solo cabe ALLOC.
+                    if !allocated && !body.starts_with(&[MAGIC, VERSION, ty::ALLOC]) { return Err(io::Error::other("trama previa a ALLOC")); }
                     allocated |= runtime.message(binding,&body).await;
                 }
             }

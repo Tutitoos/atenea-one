@@ -47,30 +47,38 @@ struct RawEvent {
     #[serde(default)]
     candidates: Vec<String>,
     #[serde(default)]
-    token: Option<String>,
-    #[serde(default)]
     relays: Vec<RelayEndpoint>,
 }
 
 #[derive(Deserialize)]
 struct RawRelay {
-    token: String,
     #[serde(default)]
     relays: Vec<RelayEndpoint>,
 }
 
-/// Token de asignación del coordinator y relays a los que sirve.
+/// Concesiones individuales, una por audiencia de relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayGrant {
-    pub token: Vec<u8>,
     pub relays: Vec<RelayEndpoint>,
 }
 
-fn grant(token_b64: &str, relays: Vec<RelayEndpoint>) -> Option<RelayGrant> {
-    let token = base64::engine::general_purpose::STANDARD
-        .decode(token_b64)
-        .ok()?;
-    (token.len() == atenea_relay_core::TOKEN_LEN).then_some(RelayGrant { token, relays })
+fn grant(relays: Vec<RelayEndpoint>) -> Option<RelayGrant> {
+    if relays.is_empty() || relays.len() > MAX_RELAYS {
+        return None;
+    }
+    for (i, relay) in relays.iter().enumerate() {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&relay.token)
+            .ok()?;
+        let token = atenea_relay_core::RelayToken::parse(&bytes).ok()?;
+        if relay.relay_id == [0; 16]
+            || token.relay_id != relay.relay_id
+            || relays[..i].iter().any(|r| r.relay_id == relay.relay_id)
+        {
+            return None;
+        }
+    }
+    Some(RelayGrant { relays })
 }
 
 fn parse_candidates(list: &[String]) -> Vec<SocketAddr> {
@@ -101,8 +109,11 @@ async fn vet_addr(addr: &str, tunnel_only: &[Prefix]) -> Option<String> {
 /// Acota y sanea los destinos de una concesión de relay. Los que se devuelven llevan la IP ya
 /// verificada: el cliente de relay conecta a ellas y no vuelve a resolver el nombre.
 pub async fn vet_relays(relays: Vec<RelayEndpoint>, tunnel_only: &[Prefix]) -> Vec<RelayEndpoint> {
+    if relays.len() > MAX_RELAYS {
+        return Vec::new();
+    }
     let mut out = Vec::new();
-    for mut relay in relays.into_iter().take(MAX_RELAYS) {
+    for mut relay in relays {
         if let Some(addr) = relay.udp.take() {
             relay.udp = vet_addr(&addr, tunnel_only).await;
         }
@@ -251,7 +262,7 @@ pub fn relay(
         200 => {
             let bytes = read_limited(&mut response)?;
             let raw: RawRelay = serde_json::from_slice(&bytes).map_err(|_| "respuesta inválida")?;
-            grant(&raw.token, raw.relays).ok_or("respuesta inválida")
+            grant(raw.relays).ok_or("respuesta inválida")
         }
         503 => Err("relay no disponible"),
         c => Err(status_error(c)),
@@ -290,7 +301,7 @@ pub fn events(
                         }),
                         "relay" => Some(Event::Relay {
                             peer,
-                            grant: grant(e.token.as_deref()?, e.relays.clone())?,
+                            grant: grant(e.relays.clone())?,
                         }),
                         _ => None,
                     }
@@ -366,6 +377,8 @@ mod tests {
             len: 16,
         }];
         let endpoint = |udp: &str, tls: Option<&str>| RelayEndpoint {
+            relay_id: [1; 16],
+            token: String::new(),
             name: "r".into(),
             udp: Some(udp.into()),
             tls: tls.map(Into::into),
@@ -377,15 +390,11 @@ mod tests {
                 endpoint("169.254.169.254:80", None),
                 endpoint("10.1.2.3:4000", Some("[::1]:443")),
                 endpoint("198.51.100.7:4000", Some("localhost:443")),
-                endpoint("198.51.100.8:4000", None),
-                endpoint("198.51.100.9:4000", None),
-                endpoint("198.51.100.10:4000", None),
-                endpoint("198.51.100.11:4000", None),
             ],
             &tunnel,
         )
         .await;
-        // Solo se consideran 4 relays; de ellos, uno conserva su UDP público y pierde el TLS a loopback.
+        // Uno conserva su UDP público y pierde el TLS a loopback.
         assert_eq!(vetted.len(), 1);
         assert_eq!(vetted[0].udp.as_deref(), Some("198.51.100.7:4000"));
         assert!(vetted[0].tls.is_none());
@@ -443,41 +452,64 @@ mod tests {
     #[test]
     fn relay_grant_and_relay_events() {
         let key = atenea_identity::signing_key([1; 32]);
-        let token = base64::engine::general_purpose::STANDARD.encode([7u8; 173]);
-        let relays = r#"[{"name":"r1","udp":"198.51.100.10:443","tls":"198.51.100.10:443","tls_name":"relay.atenea.one"}]"#;
+        let token = atenea_relay_core::RelayToken::issue(
+            &key,
+            [1; 16],
+            [7; 16],
+            [2; 16],
+            [3; 16],
+            key.verifying_key().to_bytes(),
+            100,
+            400,
+            [4; 8],
+        )
+        .encode();
+        let endpoint = RelayEndpoint {
+            relay_id: [1; 16],
+            token: base64::engine::general_purpose::STANDARD.encode(token),
+            name: "r1".into(),
+            udp: Some("198.51.100.10:443".into()),
+            tls: Some("198.51.100.10:443".into()),
+            tls_name: Some("relay.atenea.one".into()),
+        };
+        let relays = serde_json::to_string(&vec![endpoint.clone()]).unwrap();
         let (url, h) = serve(
             "200 OK",
-            &format!(r#"{{"token":"{token}","relays":{relays},"ttl_secs":300}}"#),
+            &format!(r#"{{"relays":{relays},"ttl_secs":300}}"#),
         );
         let g = relay(&cfg(&url), &key, [2; 16], [3; 16], 100).unwrap();
-        assert_eq!(g.token, vec![7u8; 173]);
-        assert_eq!(g.relays.len(), 1);
-        assert_eq!(g.relays[0].tls_name.as_deref(), Some("relay.atenea.one"));
+        assert_eq!(g.relays, vec![endpoint.clone()]);
         assert!(h.join().unwrap().starts_with("POST /v1/relay"));
-        // token de longitud incorrecta: se rechaza
-        let short = base64::engine::general_purpose::STANDARD.encode([7u8; 10]);
-        let (url, h) = serve("200 OK", &format!(r#"{{"token":"{short}","relays":[]}}"#));
-        assert_eq!(
-            relay(&cfg(&url), &key, [2; 16], [3; 16], 100),
-            Err("respuesta inválida")
-        );
-        h.join().unwrap();
-        // evento relay válido y evento relay con token corrupto (ignorado)
         let peer = "03".repeat(16);
-        let body = format!(
-            r#"{{"events":[{{"kind":"relay","peer":"{peer}","token":"{token}","relays":{relays}}},{{"kind":"relay","peer":"{peer}","token":"!!","relays":[]}}]}}"#
+        let (url, h) = serve(
+            "200 OK",
+            &format!(r#"{{"events":[{{"kind":"relay","peer":"{peer}","relays":{relays}}}]}}"#),
         );
-        let (url, h) = serve("200 OK", &body);
-        let ev = events(&cfg(&url), &key, [2; 16], 100, 1).unwrap();
-        assert_eq!(ev.len(), 1);
-        match &ev[0] {
-            Event::Relay { peer, grant } => {
-                assert_eq!(*peer, [3; 16]);
-                assert_eq!(grant.token.len(), 173);
-            }
-            other => panic!("{other:?}"),
-        }
+        assert_eq!(
+            events(&cfg(&url), &key, [2; 16], 100, 1).unwrap(),
+            vec![Event::Relay {
+                peer: [3; 16],
+                grant: g
+            }]
+        );
         h.join().unwrap();
+        assert!(grant(vec![endpoint.clone(); 5]).is_none());
+        assert!(grant(vec![endpoint.clone(); 2]).is_none());
+        let mut wrong = endpoint;
+        wrong.relay_id = [9; 16];
+        assert!(grant(vec![wrong]).is_none());
+        for body in [
+            r#"{"token":"old","relays":[{"name":"old","udp":"198.51.100.10:443"}]}"#,
+            r#"{"relays":[{"relay_id":"00000000000000000000000000000000","token":"x"}]}"#,
+            r#"{"relays":[{"relay_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","token":"x"}]}"#,
+        ] {
+            let (url, h) = serve("200 OK", body);
+            assert_eq!(
+                relay(&cfg(&url), &key, [2; 16], [3; 16], 100),
+                Err("respuesta inválida")
+            );
+            h.join().unwrap();
+        }
     }
     #[test]
     fn announce_sends_base64_config_and_maps_errors() {

@@ -67,13 +67,16 @@ try:
     run('bash', 'tests/network-lab/nat/gen-certs.sh', '/tmp/lab/certs')
     (LAB / 'signing').write_text(os.urandom(32).hex())
     (LAB / 'signing').chmod(0o600)
+    relay_id = os.urandom(16).hex()
+    assert int(relay_id, 16) != 0
+    (LAB / 'relay-id').write_text(relay_id)
     os.environ['ATENEA_COORD_RELAY_SIGNING_KEY_FILE'] = '/tmp/lab/signing'
     pub = run('atenea-coordinator', '--print-relay-key')
     spawn('inet', 'atenea-coordinator', 'coord.log', ATENEA_COORD_LISTEN='0.0.0.0:8081',
           ATENEA_COORD_STUN_BIND='0.0.0.0', ATENEA_COORD_ANCHORS=json.dumps([root]),
-          ATENEA_COORD_RELAYS=json.dumps([{'name':'lab', 'udp':'198.51.100.10:443',
+          ATENEA_COORD_RELAYS=json.dumps([{'relay_id': relay_id, 'name':'lab', 'udp':'198.51.100.10:443',
                                          'tls':'198.51.100.10:443', 'tls_name':'relay.atenea.one'}]))
-    spawn('inet', 'atenea-relay', 'relay.log', ATENEA_RELAY_UDP_LISTEN='0.0.0.0:443',
+    spawn('inet', 'atenea-relay', 'relay.log', ATENEA_RELAY_ID=relay_id, ATENEA_RELAY_UDP_LISTEN='0.0.0.0:443',
           ATENEA_RELAY_TCP_LISTEN='0.0.0.0:443', ATENEA_RELAY_COORDINATOR_KEYS=json.dumps([pub]),
           ATENEA_RELAY_TLS_CERT_FILE='/tmp/lab/certs/relay.pem',
           ATENEA_RELAY_TLS_KEY_FILE='/tmp/lab/certs/relay.key',

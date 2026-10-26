@@ -6,6 +6,7 @@ use atenea_crypto::{StaticKeypair, hex};
 use atenea_identity::{DeviceId, NetworkId, Prefix, PublicKey, SigningKey, signing_key};
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
@@ -14,6 +15,8 @@ use zeroize::Zeroizing;
 struct RawConfig {
     interface: String,
     listen: SocketAddr,
+    #[serde(default = "default_cookie_threshold")]
+    handshake_cookie_threshold_per_second: NonZeroU32,
     ipc_socket: PathBuf,
     status_socket: Option<PathBuf>,
     status_gid: Option<u32>,
@@ -35,6 +38,7 @@ struct RawConfig {
 pub struct Config {
     pub interface: String,
     pub listen: SocketAddr,
+    pub handshake_cookie_threshold_per_second: NonZeroU32,
     pub ipc_socket: PathBuf,
     pub status_socket: Option<PathBuf>,
     pub status_gid: Option<u32>,
@@ -63,6 +67,10 @@ pub struct SyncConfig {
 
 fn default_interval() -> u64 {
     60
+}
+
+fn default_cookie_threshold() -> NonZeroU32 {
+    atenea_crypto::cookie::DEFAULT_THRESHOLD
 }
 
 /// Coordinator y STUN propios (docs/protocol/coordinator-v1.md §4). No es de confianza: solo aporta pistas.
@@ -218,6 +226,7 @@ impl Config {
                 .ok_or("trust_anchor: se esperan 64 dígitos hex")?,
             interface: raw.interface,
             listen: raw.listen,
+            handshake_cookie_threshold_per_second: raw.handshake_cookie_threshold_per_second,
             ipc_socket: raw.ipc_socket,
             status_socket: raw.status_socket,
             status_gid: raw.status_gid,
@@ -309,6 +318,26 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         assert!(c.advertise_routes.is_empty());
         assert!(c.status_socket.is_none());
         assert!(c.status_gid.is_none());
+        assert_eq!(c.handshake_cookie_threshold_per_second.get(), 100);
+    }
+
+    #[test]
+    fn cookie_threshold_is_a_positive_u32() {
+        for value in [1, 100, u32::MAX] {
+            let cfg = Config::parse(&format!(
+                "{GOOD}\nhandshake_cookie_threshold_per_second = {value}"
+            ))
+            .unwrap();
+            assert_eq!(cfg.handshake_cookie_threshold_per_second.get(), value);
+        }
+        for value in ["0", "-1", "4294967296", "1.5", "\"100\""] {
+            assert!(
+                Config::parse(&format!(
+                    "{GOOD}\nhandshake_cookie_threshold_per_second = {value}"
+                ))
+                .is_err()
+            );
+        }
     }
 
     #[test]

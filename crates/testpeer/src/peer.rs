@@ -81,7 +81,11 @@ impl Peer {
             Packet::Init {
                 sender_index,
                 noise,
+                ..
             } => {
+                if !crypto::cookie::verify_mac1(bytes, &self.keys.public) {
+                    return Err(());
+                }
                 let incoming = crypto::read_init(&self.keys, &self.network, noise, sender_index)
                     .map_err(|_| ())?;
                 if incoming.remote_static != self.agent_key {
@@ -145,7 +149,7 @@ impl Peer {
                 self.echo_replies += 1;
                 Ok(Some(datagram))
             }
-            Packet::Resp { .. } => Err(()),
+            Packet::Resp { .. } | Packet::CookieReply { .. } => Err(()),
         }
     }
 

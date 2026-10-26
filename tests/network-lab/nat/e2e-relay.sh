@@ -37,6 +37,9 @@ bash tests/network-lab/nat/gen-certs.sh $LAB/certs > /dev/null
 ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > $LAB/relay-signing.hex )
 export ATENEA_COORD_RELAY_SIGNING_KEY_FILE=$LAB/relay-signing.hex
 RELAY_PUB=$(atenea-coordinator --print-relay-key)
+# Audiencia creada con el material del laboratorio, nunca en start_services.
+RELAY_ID=$(python3 -c 'import secrets; value = secrets.token_hex(16); assert int(value, 16) != 0; print(value)')
+printf '%s\n' "$RELAY_ID" > "$LAB/relay-id"
 
 spec() {
   cat > $LAB/$1.spec.toml <<EOF
@@ -107,9 +110,9 @@ start_services() {
   issue a; issue b
   agentcfg a; agentcfg b
   ATENEA_COORD_LISTEN="[::]:8081" ATENEA_COORD_STUN_BIND="::" ATENEA_COORD_ANCHORS="[\"$ROOT_PUB\"]" \
-    ATENEA_COORD_RELAYS='[{"name":"lab","udp":"198.51.100.10:443","tls":"198.51.100.10:443","tls_name":"relay.atenea.one"}]' \
+    ATENEA_COORD_RELAYS="[{\"relay_id\":\"$RELAY_ID\",\"name\":\"lab\",\"udp\":\"198.51.100.10:443\",\"tls\":\"198.51.100.10:443\",\"tls_name\":\"relay.atenea.one\"}]" \
     ip netns exec inet atenea-coordinator > $LAB/coord.log 2>&1 &
-  ATENEA_RELAY_UDP_LISTEN=0.0.0.0:443 ATENEA_RELAY_TCP_LISTEN=127.0.0.1:8443 \
+  ATENEA_RELAY_ID="$RELAY_ID" ATENEA_RELAY_UDP_LISTEN=0.0.0.0:443 ATENEA_RELAY_TCP_LISTEN=127.0.0.1:8443 \
     ATENEA_RELAY_COORDINATOR_KEYS="[\"$RELAY_PUB\"]" \
     ATENEA_RELAY_TLS_CERT_FILE=$LAB/certs/relay.pem ATENEA_RELAY_TLS_KEY_FILE=$LAB/certs/relay.key \
     ATENEA_RELAY_PROXY_PROTOCOL=true ATENEA_RELAY_STATUS_SOCKET=$LAB/relay.sock \

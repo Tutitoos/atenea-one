@@ -1,0 +1,13 @@
+# Se superpone a producción + tests/stack/compose.yaml: cero puertos del host y cero egreso.
+services:
+  control-plane:
+    environment:
+      ATENEA_CP_METRICS_LISTEN: 0.0.0.0:9101
+  coordinator:
+    environment:
+      ATENEA_COORD_METRICS_LISTEN: 0.0.0.0:9102
+      # Ensayo explícito de admisión 1k/5k/10k; el producto conserva su default de 4096.
+      ATENEA_COORD_MAX_PRESENCES: '10000'
+  relay:
+    environment:
+      ATENEA_RELAY_METRICS_LISTEN: 0.0.0.0:9103

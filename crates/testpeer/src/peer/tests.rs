@@ -30,7 +30,7 @@ fn fixture() -> (Peer, StaticKeypair, Instant) {
 fn connect(peer: &mut Peer, agent: &StaticKeypair, now: Instant, unix: u64, index: u32) -> Session {
     let (mut pending, noise) =
         crypto::initiate(agent, &peer.keys.public, &NETWORK, index, unix).unwrap();
-    let request = proto::encode_init(index, &noise).unwrap();
+    let request = crypto::cookie::encode_init(index, &noise, &peer.keys.public, None).unwrap();
     let response = peer.receive(endpoint(), &request, now, unix).unwrap();
     assert_eq!(
         peer.receive(endpoint(), &request, now, unix),
@@ -191,7 +191,7 @@ fn malformed_packets_and_unauthorized_sources_are_discarded() {
             assert!(peer.receive(endpoint(), &bytes, now, UNIX).is_none());
         }
     }
-    for bytes in [&[][..], &[1, 3][..], &[1, 99][..], &[2, 1][..]] {
+    for bytes in [&[][..], &[1, 3][..], &[2, 99][..], &[2, 1][..]] {
         assert!(peer.receive(endpoint(), bytes, now, UNIX).is_none());
     }
     let bytes = session.encrypt(&request(false), now).unwrap();
@@ -219,7 +219,7 @@ fn wrong_key_network_timestamp_do_not_pin_endpoint() {
         assert!(
             peer.receive(
                 endpoint(),
-                &proto::encode_init(5, &noise).unwrap(),
+                &crypto::cookie::encode_init(5, &noise, &peer.keys.public, None).unwrap(),
                 now,
                 UNIX
             )
@@ -246,4 +246,74 @@ fn rekey_promotes_only_after_confirmation_and_preserves_old_session() {
     assert!(decrypt(&mut new, &keepalive, later + Duration::from_secs(15)).is_empty());
     let expired = later + Duration::from_secs(180);
     assert!(peer.keepalive(expired).is_none());
+}
+
+#[test]
+fn invalid_init_envelopes_do_not_create_state() {
+    let (mut peer, agent, now) = fixture();
+    let (_, noise) = crypto::initiate(&agent, &peer.keys.public, &NETWORK, 9, UNIX).unwrap();
+    let init = crypto::cookie::encode_init(9, &noise, &peer.keys.public, None).unwrap();
+    assert_eq!(init.len(), proto::INIT_LEN);
+    assert_eq!(&init[..2], &[2, proto::TYPE_INIT]);
+    for offset in [2, 6, proto::INIT_MAC1_OFFSET] {
+        let mut bad = init.clone();
+        bad[offset] ^= 1;
+        assert!(peer.receive(endpoint(), &bad, now, UNIX).is_none());
+    }
+    for version in [1, 3, 255] {
+        let mut bad = init.clone();
+        bad[0] = version;
+        assert!(peer.receive(endpoint(), &bad, now, UNIX).is_none());
+    }
+    for len in 0..init.len() {
+        assert!(peer.receive(endpoint(), &init[..len], now, UNIX).is_none());
+    }
+    let mut trailing = init.clone();
+    trailing.push(0);
+    assert!(peer.receive(endpoint(), &trailing, now, UNIX).is_none());
+    let wrong_key = crypto::cookie::encode_init(9, &noise, &agent.public, None).unwrap();
+    assert!(peer.receive(endpoint(), &wrong_key, now, UNIX).is_none());
+    assert!(peer.endpoint.is_none());
+    assert!(peer.last_init.is_none());
+    assert!(peer.cached.is_none());
+    assert!(peer.next.is_none());
+    assert!(peer.current.is_none());
+    let response = peer.receive(endpoint(), &init, now, UNIX).unwrap();
+    assert!(matches!(proto::parse(&response), Ok(Packet::Resp { .. })));
+    let mut bad_retry = init.clone();
+    bad_retry[proto::INIT_MAC1_OFFSET] ^= 1;
+    assert!(peer.receive(endpoint(), &bad_retry, now, UNIX).is_none());
+    assert_eq!(peer.receive(endpoint(), &init, now, UNIX), Some(response));
+}
+
+#[test]
+fn mac2_is_not_required_by_the_laboratory_responder() {
+    for cookie in [None, Some([5; 16])] {
+        let (mut peer, agent, now) = fixture();
+        let (_, noise) = crypto::initiate(&agent, &peer.keys.public, &NETWORK, 9, UNIX).unwrap();
+        let init =
+            crypto::cookie::encode_init(9, &noise, &peer.keys.public, cookie.as_ref()).unwrap();
+        assert!(crypto::cookie::verify_mac1(&init, &peer.keys.public));
+        if cookie.is_none() {
+            assert_eq!(&init[proto::INIT_MAC2_OFFSET..], &[0; 16]);
+        }
+        let response = peer.receive(endpoint(), &init, now, UNIX).unwrap();
+        assert!(matches!(proto::parse(&response), Ok(Packet::Resp { .. })));
+        assert!(!peer.next.as_ref().unwrap().is_confirmed());
+        assert!(peer.current.is_none());
+    }
+}
+
+#[test]
+fn unsolicited_cookie_reply_is_discarded_without_state() {
+    let (mut peer, agent, now) = fixture();
+    let cookie = proto::encode_cookie_reply(9, &[4; 24], &[5; 32]);
+    assert!(peer.receive(endpoint(), &cookie, now, UNIX).is_none());
+    assert_eq!(peer.discarded, 1);
+    assert!(peer.endpoint.is_none());
+    assert!(peer.last_init.is_none());
+    assert!(peer.cached.is_none());
+    assert!(peer.next.is_none());
+    assert!(peer.current.is_none());
+    connect(&mut peer, &agent, now, UNIX, 9);
 }

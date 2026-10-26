@@ -12,7 +12,7 @@ frontend entrada_443
     bind [::]:443 v6only
     tcp-request inspect-delay 5s
     tcp-request content accept if { req.ssl_hello_type 1 }
-    use_backend relay if { req.ssl_sni -i relay.atenea.one } { req.ssl_alpn -m str atenea-relay/1 }
+    use_backend relay if { req.ssl_sni -i relay.atenea.one } { req.ssl_alpn -m str atenea-relay/2 }
     default_backend web
 
 backend relay

@@ -36,10 +36,10 @@ pub enum Message {
 }
 
 /// Discriminación barata en el socket de datos compartido: un datagrama de Atenea tiene por primer
-/// byte la versión `1` y por segundo el tipo `1..=3`; un mensaje STUN lleva el `magic cookie` en
+/// byte la versión `2` y por segundo el tipo `1..=4`; un mensaje STUN lleva el `magic cookie` en
 /// los bytes 4..8, su longitud de atributos es múltiplo de 4 y el tipo es Binding (`0x0001` o `0x0101`).
-/// La coincidencia accidental de un Init de Atenea con esta forma tiene probabilidad ≈ 2⁻³²
-/// (el cliente reintenta el handshake).
+/// Los tipos Binding son distintos de las cabeceras Atenea; no se acepta un datagrama Atenea
+/// como STUN aunque contenga por casualidad el `magic cookie`.
 pub fn looks_like_stun(buf: &[u8]) -> bool {
     if buf.len() < HEADER_LEN || buf.len() > MAX_STUN_LEN || buf[0] & 0xC0 != 0 {
         return false;
@@ -276,17 +276,25 @@ mod tests {
         let r = encode_binding_request(&TX);
         assert_eq!(parse(&r), Ok(Message::BindingRequest { tx: TX }));
         assert!(looks_like_stun(&r));
-        // un Init de Atenea (versión 1, tipo 1, 114 bytes) no es STUN
-        let mut init = vec![0u8; 114];
-        init[0] = 1;
+        // Un INIT de Atenea (versión 2, tipo 1, 146 bytes) no es STUN.
+        let mut init = vec![0u8; 146];
+        init[0] = 2;
         init[1] = 1;
         assert!(!looks_like_stun(&init));
         // ni un datagrama de datos corto
         let data = [
-            1u8, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            2u8, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0,
         ];
         assert!(!looks_like_stun(&data));
+        // También se descartan las cuatro cabeceras v2 cuando contienen la cookie STUN.
+        for (kind, len) in [(1, 146), (2, 62), (3, 32), (4, 62)] {
+            let mut wire = vec![0; len];
+            wire[..2].copy_from_slice(&[2, kind]);
+            wire[2..4].copy_from_slice(&((len - HEADER_LEN) as u16).to_be_bytes());
+            wire[4..8].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
+            assert!(!looks_like_stun(&wire));
+        }
     }
 
     #[test]

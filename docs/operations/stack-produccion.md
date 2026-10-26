@@ -7,7 +7,7 @@
 | Puerto host | Destino |
 | --- | --- |
 | TCP 80 | Caddy, HTTP-01 y redirección a HTTPS |
-| TCP 443 | HAProxy: SNI del relay **y** ALPN `atenea-relay/1` → relay; todo lo demás → Caddy |
+| TCP 443 | HAProxy: SNI del relay **y** ALPN `atenea-relay/2` → relay; todo lo demás → Caddy |
 | UDP 443 | Relay |
 | UDP 3478 | STUN del coordinator; segundo socket 3479 interno |
 
@@ -50,6 +50,8 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose/prod/compose.yaml up -d 
 ```
 
 El bootstrap rehúsa sobrescribir un runtime existente. Genera contraseñas aleatorias, cliente OIDC, clave de emisor, semilla independiente de firma relay y certificado TLS de laboratorio; ejecuta `atenea root-init` y `atenea-coordinator --print-relay-key` en contenedores. Solo la **clave pública raíz** entra en las anclas del coordinator. La raíz y la CA privada permanecen en `offline/`, que jamás se monta en los servicios. No copie `offline/` al servidor. En producción transfiera los secretos por el procedimiento SOPS y sustituya el certificado efímero del relay por uno válido para `RELAY_HOST`.
+
+Relay-v2 exige una audiencia estable: el bootstrap genera una vez `config/relay-id` (16 bytes aleatorios del SO, 32 hex minúsculos no cero) y copia el mismo `relay_id` a `config/relay.toml` y a su entrada `[[relays]]` en `config/coordinator.toml`. Los arranques y la rotación TLS no regeneran ese ID. En despliegues preparados manualmente, persistir `relay_id` en TOML (o `ATENEA_RELAY_ID` en el proceso relay) y el mismo valor en la entrada de `ATENEA_COORD_RELAYS`; cada relay distinto necesita un ID distinto. Cambiarlo exige actualizar ambos lados y pedir tokens nuevos; no hay alias ni compatibilidad relay-v1. Cada entrada devuelta por `/v1/relay` lleva su propio token de 189 bytes, nunca un token raíz compartido.
 
 `ATENEA_RUNTIME_DIR` permite generar el material en otra ruta absoluta. El directorio predeterminado `.runtime/` y los runtimes de ensayo están ignorados; `.dockerignore` impide enviarlos al contexto de build. `stack.env` solo contiene nombres, rutas y referencias inmutables de imagen, nunca contraseñas. Las imágenes locales se fijan por ID SHA-256 de Docker; un release publicado debe sustituirlos por `repositorio@sha256:digest` del manifiesto firmado, sin publicar nada durante este ensayo. `.env.example` muestra exclusivamente ejemplos sintéticos.
 
@@ -96,6 +98,8 @@ Los agentes reales usan TUN, namespaces y NAT. Solo en el laboratorio, enrolamie
 La sonda prueba SNI+ALPN correcto, SNI desconocido, PROXYv2 forjado y que 8443 no es alcanzable desde `edge`; el recorrido crea red, enrola/aprueba dos agentes, transfiere 1MB por P2P, relay UDP y relay TLS443, y revoca un dispositivo. El runner imprime el tiempo real hasta salud de los ocho servicios, incluidas migraciones. Limpia únicamente recursos con su nombre de proyecto; no elimina imágenes ni volúmenes de laboratorios existentes.
 
 ### Resultado integrado (2026-10-25)
+
+La evidencia siguiente y las mediciones anteriores son históricas, anteriores al cutover wire-v2/relay-v2. No verifican ALPN `/2`, las audiencias ni los fixtures actualizados; estos ensayos no se han ejecutado durante el cutover.
 
 Ejecución secuencial `tests/stack/run.sh`, código de salida 0, **76,60 s** de pared. Salida funcional completa (sin las líneas de progreso de creación/health de Compose):
 

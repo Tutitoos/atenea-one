@@ -107,7 +107,7 @@ for binary, prefix, field in [('atenea-control-plane','ATENEA_CP_','CONFIG_VALID
 import ssl
 context = ssl.create_default_context(cafile=str(LAB/'certs/ca.pem'))
 private += [base64.b64encode((LAB/'a.cfg').read_bytes()).decode()]
-context.set_alpn_protocols(['atenea-relay/1'])
+context.set_alpn_protocols(['atenea-relay/2'])
 with socket.create_connection(('198.51.100.10',443), timeout=3) as connection:
     with context.wrap_socket(connection, server_hostname='relay.atenea.one') as tls:
         tls.sendall(b'GET /metrics HTTP/1.1\r\nHost: relay.atenea.one\r\n\r\n')

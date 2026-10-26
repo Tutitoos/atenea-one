@@ -1,3 +1,7 @@
+# Generar una vez 16 bytes con RNG del SO; persistir el mismo ID en la entrada del coordinator.
+# Exactamente 32 hex minúsculos no cero; distinto del principal y de cualquier otro relay.
+# No regenerar al arrancar, converger Ansible o rotar TLS. ALPN exclusivo: atenea-relay/2.
+relay_id = "REEMPLAZAR_POR_32_HEX_MINUSCULOS_NO_CERO"
 udp_listen = "0.0.0.0:443"
 tcp_listen = "0.0.0.0:443"
 proxy_protocol = false

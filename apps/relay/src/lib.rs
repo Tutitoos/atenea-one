@@ -89,7 +89,7 @@ impl Runtime {
             .state
             .process(binding, body, now());
         let allocated = outputs.iter().any(|(to, out)| {
-            *to == binding && out.get(1) == Some(&atenea_relay_core::ty::ALLOC_OK)
+            *to == binding && out.get(2) == Some(&atenea_relay_core::ty::ALLOC_OK)
         });
         self.dispatch(outputs).await;
         allocated
@@ -104,7 +104,7 @@ impl Runtime {
             .values()
             .filter(|a| matches!(a.binding, Binding::Udp(_)))
             .count();
-        serde_json::json!({"allocations":s.state.table.entries.len(),"bound_udp":udp,"bound_tcp":s.state.table.entries.len()-udp,"tcp_connections":s.clients.len(),"traffic":s.state.counters})
+        serde_json::json!({"relay_id":s.state.config.relay_id,"allocations":s.state.table.entries.len(),"bound_udp":udp,"bound_tcp":s.state.table.entries.len()-udp,"tcp_connections":s.clients.len(),"traffic":s.state.counters})
     }
     fn metrics_text(&self) -> String {
         use std::fmt::Write;
@@ -162,7 +162,7 @@ impl Runtime {
                 c.drops.get(reason).unwrap_or(&0)
             );
         }
-        for code in 1..=8 {
+        for code in 1..=11 {
             let _ = writeln!(
                 out,
                 "atenea_relay_rejects_total{{code=\"{code}\"}} {}",
@@ -283,7 +283,14 @@ mod tests {
         let runtime = Runtime {
             udp: UdpSocket::bind("127.0.0.1:0").await.unwrap(),
             shared: Mutex::new(Shared {
-                state: State::new(Config::default(), vec![], [0; 32]),
+                state: State::new(
+                    Config {
+                        relay_id: "11".repeat(16),
+                        ..Config::default()
+                    },
+                    vec![],
+                    [0; 32],
+                ),
                 clients: HashMap::from([(1, (ip, tx))]),
             }),
         };

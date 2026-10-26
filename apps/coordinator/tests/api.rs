@@ -631,11 +631,23 @@ impl RelayKey {
         Self(path)
     }
     fn config(&self) -> Config {
+        self.config_with_relays(2)
+    }
+    fn config_with_relays(&self, count: u8) -> Config {
         Config {
             relay_signing_key_file: Some(self.0.clone()),
-            relays: serde_json::from_value(json!([{
-                "name":"lab", "udp":"relay.example:443", "tls":"[2001:db8::1]:443", "tls_name":"relay.example"
-            }])).unwrap(),
+            relays: (1..=count)
+                .map(|id| {
+                    serde_json::from_value(json!({
+                        "relay_id":hex::encode([id; 16]),
+                        "name":format!("lab-{id}"),
+                        "udp":"relay.example:443",
+                        "tls":"[2001:db8::1]:443",
+                        "tls_name":"relay.example"
+                    }))
+                    .unwrap()
+                })
+                .collect(),
             ..Config::default()
         }
     }
@@ -646,13 +658,21 @@ impl Drop for RelayKey {
     }
 }
 
-fn checked_token(value: &Value, src: u8, dst: u8) -> atenea_relay_core::RelayToken {
-    let bytes = STANDARD.decode(value.as_str().unwrap()).unwrap();
-    assert_eq!(bytes.len(), 173);
+fn checked_token(
+    value: &Value,
+    relay: u8,
+    src: u8,
+    dst: u8,
+    now: u64,
+) -> atenea_relay_core::RelayToken {
+    assert_eq!(value["relay_id"], hex::encode([relay; 16]));
+    let bytes = STANDARD.decode(value["token"].as_str().unwrap()).unwrap();
+    assert_eq!(bytes.len(), 189);
     let token = atenea_relay_core::RelayToken::parse(&bytes).unwrap();
     token
-        .verify(&[signing_key([90; 32]).verifying_key().to_bytes()], 1000)
+        .verify(&[signing_key([90; 32]).verifying_key().to_bytes()], now)
         .unwrap();
+    assert_eq!(token.relay_id, [relay; 16]);
     assert_eq!(token.network_id, [4; 16]);
     assert_eq!(token.src_device, [src; 16]);
     assert_eq!(token.dst_device, [dst; 16]);
@@ -660,56 +680,104 @@ fn checked_token(value: &Value, src: u8, dst: u8) -> atenea_relay_core::RelayTok
         token.src_identity_pub,
         signing_key([src; 32]).verifying_key().to_bytes()
     );
-    assert_eq!(token.not_before, 1000);
-    assert_eq!(token.not_after, 1300);
+    assert_eq!(token.not_before, now);
+    assert_eq!(token.not_after, now + 300);
     token
 }
 
 #[tokio::test]
-async fn relay_tokens_inverse_event_and_independent_limits() {
+async fn relay_two_and_four_audiences_inverse_events_and_grant_limits() {
     let key = RelayKey::new();
-    let l = Lab::new(key.config());
-    l.announce(3, &[4]).await;
-    l.announce(4, &[3]).await;
-    assert_eq!(
-        l.request("POST", "/v1/rendezvous", peer(4), 3).await.0,
-        StatusCode::OK
-    );
-    let (status, response) = l.request("POST", "/v1/relay", peer(4), 3).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(response["ttl_secs"], 300);
-    assert_eq!(
-        response["relays"],
-        serde_json::to_value(key.config().relays).unwrap()
-    );
-    let token = checked_token(&response["token"], 3, 4);
-    let events = l
-        .request("GET", "/v1/events?wait=0", Value::Null, 4)
-        .await
-        .1;
-    assert_eq!(events["events"][0]["kind"], "connect");
-    let event = &events["events"][1];
-    assert_eq!(event["kind"], "relay");
-    assert_eq!(event["peer"], hex::encode([3; 16]));
-    assert_eq!(event["seq"], 2);
-    assert_eq!(event["relays"], response["relays"]);
-    assert!(event.get("candidates").is_none());
-    let inverse = checked_token(&event["token"], 4, 3);
-    assert_ne!(token.token_id, inverse.token_id);
-    assert_eq!(
-        l.request("POST", "/v1/relay", peer(3), 4).await.0,
-        StatusCode::TOO_MANY_REQUESTS
-    );
-    l.advance(5);
-    assert_eq!(
-        l.request("POST", "/v1/relay", peer(3), 4).await.0,
-        StatusCode::OK
-    );
-    l.advance(5);
-    assert_eq!(
-        l.request("POST", "/v1/relay", peer(4), 3).await.0,
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    for count in [2, 4] {
+        let config = key.config_with_relays(count);
+        let endpoints = serde_json::to_value(&config.relays).unwrap();
+        let l = Lab::new(config);
+        assert_eq!(l.announce(3, &[4]).await.0, StatusCode::OK);
+        assert_eq!(l.announce(4, &[3]).await.0, StatusCode::OK);
+        assert_eq!(
+            l.request("POST", "/v1/rendezvous", peer(4), 3).await.0,
+            StatusCode::OK
+        );
+        let (status, response) = l.request("POST", "/v1/relay", peer(4), 3).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response["ttl_secs"], 300);
+        assert!(response.get("token").is_none());
+        assert_eq!(response.as_object().unwrap().len(), 2);
+        assert_eq!(
+            response["relays"].as_array().unwrap().len(),
+            usize::from(count)
+        );
+        let events = l
+            .request("GET", "/v1/events?wait=0", Value::Null, 4)
+            .await
+            .1;
+        assert_eq!(events["events"][0]["kind"], "connect");
+        let event = &events["events"][1];
+        assert_eq!(event["kind"], "relay");
+        assert_eq!(event["peer"], hex::encode([3; 16]));
+        assert_eq!(event["seq"], 2);
+        assert_eq!(event["ttl_secs"], 300);
+        assert!(event.get("token").is_none());
+        assert!(event.get("candidates").is_none());
+        assert_eq!(
+            event["relays"].as_array().unwrap().len(),
+            usize::from(count)
+        );
+        let mut token_ids = std::collections::HashSet::new();
+        for (index, relay) in (1..=count).enumerate() {
+            let grant = &response["relays"][index];
+            let inverse_grant = &event["relays"][index];
+            for (name, value) in endpoints[index].as_object().unwrap() {
+                assert_eq!(&grant[name], value);
+                assert_eq!(&inverse_grant[name], value);
+            }
+            let token = checked_token(grant, relay, 3, 4, 1000);
+            let inverse = checked_token(inverse_grant, relay, 4, 3, 1000);
+            assert!(token_ids.insert(token.token_id));
+            assert!(token_ids.insert(inverse.token_id));
+        }
+        assert_eq!(
+            l.request("POST", "/v1/relay", peer(3), 4).await.0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        l.advance(5);
+        let (status, second) = l.request("POST", "/v1/relay", peer(3), 4).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            second["relays"].as_array().unwrap().len(),
+            usize::from(count)
+        );
+        let second_events = l
+            .request("GET", "/v1/events?wait=0", Value::Null, 3)
+            .await
+            .1;
+        assert_eq!(second_events["events"].as_array().unwrap().len(), 1);
+        let inverse = &second_events["events"][0];
+        assert_eq!(inverse["peer"], hex::encode([4; 16]));
+        assert_eq!(
+            inverse["relays"].as_array().unwrap().len(),
+            usize::from(count)
+        );
+        for (index, relay) in (1..=count).enumerate() {
+            let token = checked_token(&second["relays"][index], relay, 4, 3, 1005);
+            let reverse = checked_token(&inverse["relays"][index], relay, 3, 4, 1005);
+            assert!(token_ids.insert(token.token_id));
+            assert!(token_ids.insert(reverse.token_id));
+        }
+        assert_eq!(token_ids.len(), 4 * usize::from(count));
+        l.advance(5);
+        assert_eq!(
+            l.request("POST", "/v1/relay", peer(4), 3).await.0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        l.advance(50);
+        assert_eq!(l.announce(3, &[4]).await.0, StatusCode::OK);
+        assert_eq!(l.announce(4, &[3]).await.0, StatusCode::OK);
+        assert_eq!(
+            l.request("POST", "/v1/relay", peer(4), 3).await.0,
+            StatusCode::OK
+        );
+    }
 }
 
 #[tokio::test]
@@ -787,7 +855,7 @@ async fn relay_authorization_matches_rendezvous_and_missing_configuration() {
 #[tokio::test]
 async fn relay_device_limit_and_shared_bounded_expiring_queue() {
     let key = RelayKey::new();
-    let mut config = key.config();
+    let mut config = key.config_with_relays(4);
     config.rendezvous_per_minute = 100;
     let l = Lab::new(config);
     let peers: Vec<u8> = (4..=14).collect();
@@ -850,17 +918,58 @@ fn relay_config_validation_key_permissions_and_print_command() {
     let mut config = key.config();
     config.anchors = vec![hex::encode(signing_key([1; 32]).verifying_key().to_bytes())];
     assert!(config.validate().is_ok());
-    for relays in [
+    for mut relays in [
         json!([{"name":"empty"}]),
         json!([{"name":"bad","udp":"host"}]),
         json!([{"name":"bad","udp":"host:0"}]),
         json!([{"name":"bad","udp":"host:65536"}]),
         json!([{"name":"bad","tls":"host:443"}]),
         json!([{"name":"bad","udp":":443"}]),
+        json!([{"name":"","udp":"host:443"}]),
+        json!([{"name":"  ","udp":"host:443"}]),
     ] {
+        relays[0]["relay_id"] = json!(hex::encode([1; 16]));
         config.relays = serde_json::from_value(relays).unwrap();
         assert!(Coordinator::new(config.clone()).is_err());
     }
+    let valid = json!({"relay_id":hex::encode([1; 16]),"name":"lab","udp":"host:443"});
+    let mut missing_id = valid.clone();
+    missing_id.as_object_mut().unwrap().remove("relay_id");
+    assert!(serde_json::from_value::<atenea_coordinator::config::Relay>(missing_id).is_err());
+    for id in [
+        "",
+        "1",
+        "111111111111111111111111111111111",
+        "11111111111111111111111111111111111",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "gggggggggggggggggggggggggggggggg",
+        "00000000000000000000000000000000",
+    ] {
+        let mut relay = valid.clone();
+        relay["relay_id"] = json!(id);
+        config.relays = serde_json::from_value(json!([relay])).unwrap();
+        assert!(Coordinator::new(config.clone()).is_err());
+    }
+    for duplicate_id in [true, false] {
+        config = key.config();
+        config.anchors = vec![hex::encode(signing_key([1; 32]).verifying_key().to_bytes())];
+        if duplicate_id {
+            config.relays[1].relay_id = config.relays[0].relay_id.clone();
+        } else {
+            config.relays[1].name = config.relays[0].name.clone();
+        }
+        assert!(Coordinator::new(config.clone()).is_err());
+    }
+    config = key.config_with_relays(4);
+    config.anchors = vec![hex::encode(signing_key([1; 32]).verifying_key().to_bytes())];
+    assert!(Coordinator::new(config.clone()).is_ok());
+    config.relays.push(
+        serde_json::from_value(json!({
+            "relay_id":hex::encode([5; 16]),"name":"fifth","udp":"host:443"
+        }))
+        .unwrap(),
+    );
+    assert!(Coordinator::new(config.clone()).is_err());
     config = key.config();
     config.relay_token_ttl_secs = 601;
     assert!(config.validate().is_err());
@@ -872,7 +981,7 @@ fn relay_config_validation_key_permissions_and_print_command() {
         .env("ATENEA_COORD_RELAY_SIGNING_KEY_FILE", &key.0)
         .env(
             "ATENEA_COORD_RELAYS",
-            r#"[{"name":"lab","udp":"relay.example:443"}]"#,
+            r#"[{"relay_id":"11111111111111111111111111111111","name":"lab","udp":"relay.example:443"}]"#,
         )
         .output()
         .unwrap();
@@ -885,7 +994,12 @@ fn relay_config_validation_key_permissions_and_print_command() {
         String::from_utf8(output.stdout).unwrap().trim(),
         hex::encode(signing_key([90; 32]).verifying_key().to_bytes())
     );
-    for invalid in [r#"[{"name":"lab","udp":"host"}]"#, "not json"] {
+    for invalid in [
+        r#"[{"relay_id":"11111111111111111111111111111111","name":"lab","udp":"host"}]"#,
+        r#"[{"name":"lab","udp":"host:443"}]"#,
+        r#"[{"relay_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","name":"lab","udp":"host:443"}]"#,
+        "not json",
+    ] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_atenea-coordinator"))
             .env_remove("ATENEA_COORD_CONFIG")
             .env(

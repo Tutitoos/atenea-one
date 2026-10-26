@@ -26,7 +26,7 @@ def exact(sock, size):
 def context(ca):
     ctx = ssl.create_default_context(cafile=ca)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-    ctx.set_alpn_protocols(["atenea-relay/1"])
+    ctx.set_alpn_protocols(["atenea-relay/2"])
     return ctx
 
 
@@ -47,7 +47,7 @@ def check(host, ca, expected):
     def relay():
         with socket.create_connection((host, 443), timeout=3) as raw:
             with context(ca).wrap_socket(raw, server_hostname="relay.atenea.one") as tls:
-                assert tls.selected_alpn_protocol() == "atenea-relay/1"
+                assert tls.selected_alpn_protocol() == "atenea-relay/2"
                 tls.sendall(b"echo")
                 result = json.loads(tls.recv(4096))
                 assert result == {"source": expected, "echo": "echo"}, result
@@ -102,7 +102,7 @@ def check(host, ca, expected):
 def serve(port, cert, key):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-    ctx.set_alpn_protocols(["atenea-relay/1"])
+    ctx.set_alpn_protocols(["atenea-relay/2"])
     ctx.load_cert_chain(cert, key)
 
     class Relay(socketserver.BaseRequestHandler):

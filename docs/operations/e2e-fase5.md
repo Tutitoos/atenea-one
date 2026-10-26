@@ -4,6 +4,8 @@
 - **Entorno:** contenedor Linux privilegiado (Docker Desktop, kernel linuxkit, nftables, HAProxy 2.6). Topologías de `tests/network-lab/nat/lib.sh`. En el namespace `inet` corren el coordinator (con STUN y firma de tokens), el relay (UDP 443 y TLS en loopback 8443 con PROXY v2) y HAProxy (TCP 443, SNI `relay.atenea.one` + ALPN `atenea-relay/1` → relay; resto → web falso). Dos agentes reales con TUN en `a` y `b`. Certificados y claves generados en cada ejecución.
 - **Reproducir:** `tests/network-lab/nat/run-e2e-relay.sh`. El comportamiento de los bloqueadores y de HAProxy, sin Atenea, se verifica aparte con `tests/network-lab/nat/run.sh relay`.
 
+**Evidencia histórica de relay-v1/wire-v1.** El cutover actual exige [relay-v2](../protocol/relay-v2.md), IDs persistentes distintos por relay, un token de 189 bytes por audiencia y ALPN exclusivo `atenea-relay/2`. Se conserva aquí `/1` como dato de aquella ejecución, no como configuración vigente. Estos resultados no verifican v2; el laboratorio no se ha vuelto a ejecutar durante el cutover.
+
 ## Resultados (ejecución final: 138 s, `E2E RELAY: TODO OK`)
 
 | Caso | Resultado |

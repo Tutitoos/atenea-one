@@ -133,6 +133,9 @@ pub struct AgentConfigArgs {
     interface: String,
     #[arg(long, default_value = "0.0.0.0:51820")]
     listen: std::net::SocketAddr,
+    /// INIT con MAC1 válido por segundo antes de exigir cookie; siempre positivo.
+    #[arg(long, default_value = "100")]
+    handshake_cookie_threshold_per_second: std::num::NonZeroU32,
     #[arg(long)]
     state_dir: Option<PathBuf>,
     #[arg(long)]
@@ -164,6 +167,10 @@ fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<Stri
     ] {
         table.insert(key.into(), value.into());
     }
+    table.insert(
+        "handshake_cookie_threshold_per_second".into(),
+        i64::from(args.handshake_cookie_threshold_per_second.get()).into(),
+    );
     for (key, path) in [
         ("noise_key_file", args.dir.join("noise.key")),
         ("identity_key_file", args.dir.join("identity.key")),
@@ -254,6 +261,7 @@ mod tests {
             out: "unused".into(),
             interface: "atenea0".into(),
             listen: "0.0.0.0:51820".parse().unwrap(),
+            handshake_cookie_threshold_per_second: std::num::NonZeroU32::new(7).unwrap(),
             state_dir: None,
             config_file: None,
             ipc_socket: None,
@@ -276,16 +284,19 @@ mod tests {
         assert_eq!(cfg.advertise_routes, args.advertise_routes);
         assert_eq!(cfg.status_socket, args.status_socket);
         assert_eq!(cfg.status_gid, Some(545));
+        assert_eq!(cfg.handshake_cookie_threshold_per_second.get(), 7);
         assert_eq!(cfg.sync.unwrap().interval_secs, 60);
         assert!(!text.contains("NO_GUARDAR"));
         args.advertise_routes.clear();
         args.status_socket = None;
         args.status_gid = None;
+        args.handshake_cookie_threshold_per_second = std::num::NonZeroU32::new(100).unwrap();
         let default_text = render(&join, &args, &[2; 16]).unwrap();
         let defaults = agent_config_contract::Config::parse(&default_text).unwrap();
         assert!(defaults.advertise_routes.is_empty());
         assert!(defaults.status_socket.is_none());
         assert!(defaults.status_gid.is_none());
+        assert_eq!(defaults.handshake_cookie_threshold_per_second.get(), 100);
         assert!(parse_join("{}", false).is_err());
         assert!(
             parse_join(

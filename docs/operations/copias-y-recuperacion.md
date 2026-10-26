@@ -40,6 +40,7 @@ El script tiene una lista cerrada de nombres; no archiva recursivamente ni incor
 2. Aprovisionar un nodo limpio con el mismo release/digests, PostgreSQL mayor 17, configuración sintética sustituida por la propia del operador y secretos restaurados por ficheros. Mantener el control plane detenido y la entrada pública cerrada.
 3. Recuperar el repositorio cifrado **desde fuera del nodo** y su secreto desde la custodia offline. No inicializar una BD nueva sobre los datos que se pretende restaurar.
 4. Seguir pérdida de BD y pérdida de emisor. Restaurar configuración del coordinator/relay y secretos OIDC; coordinator reconstruye presencia por anuncios, no tiene estado persistente que recuperar.
+   Conservar los `relay_id` persistidos y su coincidencia entre cada relay y su entrada del coordinator; son configuración pública, no claves regenerables al arrancar. Si se cambia deliberadamente un ID, actualizar ambos lados y emitir concesiones nuevas: los tokens de la audiencia anterior no sirven.
 5. Reabrir solo tras verificar BD, claves y un dispositivo conocido. Comprobar DNS, certificados, firewall, TCP/UDP 443 y STUN desde una red externa; no se han ensayado aquí.
 
 ## Pérdida de base de datos / DELETE accidental
