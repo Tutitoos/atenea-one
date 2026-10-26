@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Exige que el environment `release` tenga revisores y solo admita tags `v*`.
 
 Uso: check-environment.py ENVIRONMENT.json POLICIES.json

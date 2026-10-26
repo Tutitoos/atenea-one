@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Incorporación del dispositivo sin transmitir sus claves privadas.
 use atenea_crypto::hex;
 use atenea_identity::DeviceBundle;

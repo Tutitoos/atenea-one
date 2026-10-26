@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use super::*;
 use crate::{NOISE_PARAMS, StaticKeypair, prologue};
 include!("vectors.rs");

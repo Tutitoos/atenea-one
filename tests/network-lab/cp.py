@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Cliente mínimo del control plane para el laboratorio E2E (solo biblioteca estándar).
 
   cp.py login [usuario] [contraseña]      inicio de sesión OIDC real contra Dex; guarda cookies y CSRF

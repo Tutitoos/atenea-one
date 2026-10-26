@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # bash tests/load/stack.sh control | soak 30m | soak 2h (entero sin sufijo: minutos).
 # Prerrequisitos: imágenes locales, volumen atenea-lab-target RO y binarios nuevos
 # tests/load/results/bin/{atenea,atenea-agent,atenea-load-sign}; no instala/compila/descarga.

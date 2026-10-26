@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cabeceras IP mínimas del paquete interno (origen, destino y longitud total).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

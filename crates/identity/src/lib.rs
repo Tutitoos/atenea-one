@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Configuración firmada v1/v2: codificación única y verificación sin E/S ni reloj propio.
 pub mod api_auth;
 mod codec;

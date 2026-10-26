@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Sonda de permisos para CI: nunca interpreta ENOENT ni un fallo de ejecución como rechazo válido.
 #![forbid(unsafe_code)]
 

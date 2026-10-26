@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 
 use atenea_control_plane::{AppState, config::Config, router};
 use atenea_identity::{DeviceBundle, SigningKey, generate_seed, signing_key};

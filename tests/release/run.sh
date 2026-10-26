@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"

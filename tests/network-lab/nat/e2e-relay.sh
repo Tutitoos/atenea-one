@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 5 (dentro del contenedor, ver run-e2e-relay.sh): agentes + coordinator + relay reales
 # (UDP 443 y TLS/TCP 443 detrás de HAProxy por SNI/ALPN) tras los NAT de lib.sh. Fuerza cada camino
 # con los bloqueadores del laboratorio y comprueba conmutación, integridad, ausencia de texto claro

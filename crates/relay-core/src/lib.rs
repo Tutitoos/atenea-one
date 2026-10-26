@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Protocolo del relay v2 (docs/protocol/relay-v2.md). Sin E/S: solo formatos y comprobaciones.
 //!
 //! El relay reenvía datagramas de Atenea YA cifrados de extremo a extremo (ADR-001/003); nunca ve

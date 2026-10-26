@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Informes declarados, muestras reales y notificaciones efímeras del panel.
 use crate::{AppState, api::ApiError};
 use axum::{

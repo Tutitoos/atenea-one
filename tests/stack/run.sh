@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Ensayo del stack de producción, sin publicar puertos del host ni servicios externos.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

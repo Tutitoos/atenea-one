@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Aceptación contra Prometheus/Loki/Grafana reales; falla ante muestras ausentes."""
 import json
 import pathlib

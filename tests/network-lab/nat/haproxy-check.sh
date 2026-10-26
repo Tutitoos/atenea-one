@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Autónomo: topología plana dual-stack y servicios efímeros.
 set -Eeuo pipefail
 cd "$(dirname "$0")/../../.."

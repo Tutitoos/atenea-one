@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Envoltura v2, MAC1/MAC2, orden pre-DH y respuestas de cookie arbitrarias.
 #![no_main]
 use atenea_crypto::{StaticKeypair, read_init, cookie};

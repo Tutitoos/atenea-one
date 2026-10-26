@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 5: agentes + coordinator + relay (UDP y TLS tras HAProxy) con caminos forzados.
 # Todo en un contenedor privilegiado y desechable. Uso: tests/network-lab/nat/run-e2e-relay.sh
 set -euo pipefail

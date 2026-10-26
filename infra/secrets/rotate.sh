@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Ejecutar en el contenedor de herramientas con SOPS_AGE_KEY_FILE montado, no en el nodo.
 set -euo pipefail
 [[ $# == 2 ]] || { echo 'Uso: rotate.sh fichero.sops.yaml config.sops.yaml' >&2; exit 2; }

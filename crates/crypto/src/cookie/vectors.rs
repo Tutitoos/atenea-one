@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 // Vectores independientes: Python hashlib/cryptography; ver wire-v2 §7.
 const PUBLIC: &str = "132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472";
 const K_MAC1: &str = "4a4e96346463c2b0d438350c05db786c1c29ddd6016ade968070a94d76d07b81";

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Presencia y rendezvous sin estado duradero; las pistas nunca autentican una ruta.
 mod auth;
 pub mod config;

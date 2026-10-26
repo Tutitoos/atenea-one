@@ -105,6 +105,7 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 
 ## Pendiente
 
+- Avisos: el [`NOTICE`](../../NOTICE) del repositorio declara `Copyright 2026 Tutitoos` (2026-10-26) y remite a este documento para los avisos de terceros; el instalador de Windows conserva `WINTUN-LICENSE.txt` de WireGuard LLC.
 - Wintun: excepción de controlador aceptada por el responsable el 2026-10-25; licencia de binarios oficiales revisada, véase fase 8 Windows abajo. `utoipa` 5.5.0 declara MIT OR Apache-2.0 en su manifiesto descargado.
 - `tun` (WTFPL) **no se adoptó**: `atenea-tunnel` usa `/dev/net/tun` directamente con `libc` (código `unsafe` acotado y comentado).
 - Escaneo de dependencias en CI (job `supply-chain`, también semanal): `cargo deny check advisories bans licenses sources` con `deny.toml` (solo grafo de producción; licencias permitidas: Apache-2.0, MIT, ISC, BSD-2/3-Clause, Unicode-3.0, Zlib, CDLA-Permissive-2.0, BSL-1.0, Unlicense; fuentes solo crates.io) y `pnpm audit --prod`. Dependabot propone actualizaciones de cargo, npm, GitHub Actions y Docker. Las excepciones requieren razón, responsable y fecha de revisión (véase abajo). Wintun no es un crate: su licencia y hash se revisan aparte y figuran en el SBOM de Windows. La auditoría usa el toolchain de `rust-toolchain.toml` tanto para instalarlo como para seleccionarlo dentro del contenedor de la acción. Todos los paquetes internos declaran `publish = false`: admiten dependencias por ruta sin versión sin permitir comodines externos.

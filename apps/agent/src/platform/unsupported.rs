@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Hasta implementar el backend real, ninguna operación del host aparenta éxito.
 use super::HostNetwork;
 use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};

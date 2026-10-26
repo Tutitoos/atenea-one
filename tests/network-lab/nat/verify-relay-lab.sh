@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Solo herramientas de red: no requiere compilar Rust ni agentes.
 set -Eeuo pipefail
 cd "$(dirname "$0")/../../.."

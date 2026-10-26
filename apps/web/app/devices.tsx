@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { useTable, tableFeatures, flexRender, type ColumnDef } from '@tanstack/react-table';
 import { api, type Model } from '@atenea/api-client';
 import { ActionForm, Dialog, Empty, RunButton } from './ui';

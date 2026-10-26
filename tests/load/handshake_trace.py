@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Cuenta retransmisiones por candidato/índice; RESP emparejada no sustituye Noise."""
 import socket
 import struct

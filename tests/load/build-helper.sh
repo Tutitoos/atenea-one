@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Compila clientes/agentes de carga actuales; cachés preexistentes solo lectura.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

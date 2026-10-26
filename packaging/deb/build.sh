@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Empaqueta binarios Linux ya compilados; no compila ni descarga nada.
 set -euo pipefail
 if [ "$#" -ne 4 ]; then

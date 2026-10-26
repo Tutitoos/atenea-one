@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Aserciones sobre Docker y nftables reales del nodo desechable."""
 import json
 from pathlib import Path

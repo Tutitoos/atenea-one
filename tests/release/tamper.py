@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Cada mutación conserva el resto del release; la copia original se restaura."""
 import json
 import subprocess

@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Aceptación real: ejecutar exclusivamente mediante run.sh en el runner desechable."""
 import ipaddress
 import json

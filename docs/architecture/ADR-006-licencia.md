@@ -18,6 +18,8 @@ Un repositorio público no concede por sí mismo ningún derecho de uso. El proy
 4. **Los artefactos distribuidos** (`.deb`, `.pkg`, ZIP de Windows, imágenes) incluyen el texto de la licencia y los avisos de terceros que exijan las licencias redistribuidas. El SBOM de cada release enumera los componentes y sus licencias.
 5. **Contribuciones:** se aceptan bajo la misma licencia (Apache-2.0, sección 5), salvo que el contribuyente indique expresamente lo contrario.
 
+6. **Titularidad (declarada por el responsable el 2026-10-26):** `Copyright 2026 Tutitoos`. Se declara en el fichero [`NOTICE`](../../NOTICE) y en dos líneas al principio de cada fichero fuente autorado (`Copyright 2026 Tutitoos` y `SPDX-License-Identifier: Apache-2.0`; tras el shebang si existe). `LICENSE` conserva el texto íntegro de Apache-2.0, sin rellenar el apéndice. No llevan cabecera los ficheros generados, lockfiles, JSON/TOML/YAML/MD/HTML/CSS, fixtures, semillas de fuzz ni las migraciones SQL (sqlx comprueba su checksum). `scripts/add-headers.py` las aplica de forma idempotente y `scripts/check-headers.py`, llamado desde `scripts/check.sh` (y por tanto en CI), falla si falta o difiere; `--fix` la añade a ficheros nuevos.
+
 ## Consecuencias
 
 - Quien reciba el software puede usarlo, modificarlo y redistribuirlo, incluso comercialmente, conservando los avisos y la licencia; la concesión de patentes se retira para quien litigue por patentes contra el proyecto.
@@ -26,6 +28,5 @@ Un repositorio público no concede por sí mismo ningún derecho de uso. El proy
 
 ## Pendiente
 
-- Titularidad del copyright: el texto de `LICENSE` es el de Apache-2.0 sin rellenar los campos de ejemplo del apéndice. Si el responsable quiere declarar un titular y año (cabeceras o un fichero `NOTICE`), debe indicarlo; no se inventa.
 - Revisión del texto de la licencia de `ring` antes del primer release.
 - Las licencias de las dependencias transitivas del frontend (pnpm) no se escanean con la misma lista cerrada que las de Rust.

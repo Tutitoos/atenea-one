@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Generación local en contenedor; no se reutiliza ningún secreto de ejemplo."""
 import os
 from pathlib import Path

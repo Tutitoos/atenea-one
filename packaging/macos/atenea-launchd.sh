@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # launchd puede reintentar; nunca arrancar sin configuración privada explícita.
 set -eu
 config='/Library/Application Support/Atenea/agent.toml'

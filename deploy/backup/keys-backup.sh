@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Ejecutar dentro de la imagen postgres-backup: sh /src/deploy/backup/keys-backup.sh DIR SALIDA DESTINATARIO...
 set -eu
 [ "$#" -ge 3 ] || { echo 'Uso: keys-backup.sh DIR SALIDA DESTINATARIO...' >&2; exit 2; }

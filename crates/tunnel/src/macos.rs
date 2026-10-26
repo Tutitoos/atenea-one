@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! utun entrega una cabecera de familia en orden de red; el agente solo ve IP.
 #![allow(unsafe_code)]
 use std::io;

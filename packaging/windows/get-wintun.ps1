@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Descarga oficial fijada: nunca se incluye una DLL en el repositorio ni en el ZIP de Atenea.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Destination)

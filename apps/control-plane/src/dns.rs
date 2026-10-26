@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! DNS dividido: servidores alcanzables y dominios de enrutamiento explícitos.
 use crate::{AppState, api::ApiError};
 use axum::{

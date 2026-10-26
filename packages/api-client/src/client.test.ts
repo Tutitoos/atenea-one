@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { expect, it, vi } from 'vitest';
 import { ApiError, createApi } from './index';
 it('obtiene CSRF en memoria y envía cookies same-origin al escribir',async()=>{

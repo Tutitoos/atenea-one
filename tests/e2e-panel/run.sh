@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E del panel (fase 6): Playwright (Chromium) maneja el panel real con control plane + PostgreSQL 17 +
 # Dex (OIDC) y dos agentes Linux con TUN tras NAT. Todo en contenedores desechables; requiere Docker.
 # Uso: tests/e2e-panel/run.sh

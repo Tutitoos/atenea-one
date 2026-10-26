@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 3B: control plane real + PostgreSQL 17 + Dex (OIDC) + agentes con TUN en namespaces.
 # Todo en contenedores desechables; no toca la red del host. Requiere Docker.
 set -euo pipefail

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { useId, useState } from 'react';
 import { useForm } from '@tanstack/react-form';
 import { Dialog as Primitive } from 'radix-ui';

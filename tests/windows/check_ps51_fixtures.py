@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Comprueba muestras recogidas por Windows PowerShell 5.1 antes del smoke nativo."""
 import argparse
 import json

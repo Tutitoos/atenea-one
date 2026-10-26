@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use atenea_identity::SigningKey;
 use atenea_relay::{Relay, config::Config};
 use atenea_relay_core::{self as w, Message, RelayToken};

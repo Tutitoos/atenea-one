@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Persistencia atómica del estado anti-rollback (contrato §3, "Estado persistente").
 
 use crate::platform::private_files::PrivateFiles;

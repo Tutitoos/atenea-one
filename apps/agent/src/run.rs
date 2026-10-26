@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Bucle de E/S: TUN, UDP, temporizador, recarga de configuración firmada e IPC.
 //! Toda la lógica de protocolo vive en `engine`; la verificación, en `atenea-identity`.
 

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 mod common;
 
 use atenea_control_plane::{AppState, config::Config, panel};

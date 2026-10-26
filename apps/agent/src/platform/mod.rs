@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Integración con el host; la política de red permanece en `netconf`.
 use atenea_identity::{AdvertisedRoute, DnsConfig, Prefix};
 use std::net::{IpAddr, SocketAddr};

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Exporta archivos Docker y manifiestos OCI originales de imágenes locales."""
 import hashlib
 import json

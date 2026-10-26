@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Descarga acotada: solo `poll_config` decide si la configuración es de confianza.
 use crate::config::SyncConfig;
 use crate::platform::private_files::PrivateFiles;

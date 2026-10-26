@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import a11y from 'eslint-plugin-jsx-a11y';

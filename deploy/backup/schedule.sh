@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -eu
 until pg_isready -h /var/run/postgresql -U postgres; do sleep 5; done
 pgbackrest --stanza=atenea stanza-create

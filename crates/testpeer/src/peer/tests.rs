@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use super::*;
 
 const NETWORK: [u8; 16] = [7; 16];

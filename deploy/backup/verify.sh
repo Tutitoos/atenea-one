@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # pgBackRest 2.59 verify puede devolver 0 con status: error; examinar también el informe.
 set -eu
 report=$(mktemp)

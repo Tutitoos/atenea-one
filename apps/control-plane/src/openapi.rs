@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Contrato de las rutas reales del control plane, construido con los tipos de utoipa.
 use utoipa::openapi::{
     ComponentsBuilder, Content, Header, Info, OpenApi, OpenApiBuilder, Ref, RefOr, Required,

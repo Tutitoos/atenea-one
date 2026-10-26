@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Ventana antirreplay deslizante de 2048 contadores (ADR-003).
 //!
 //! Uso obligatorio: `check` (solo lectura) → descifrar y autenticar → `update`.

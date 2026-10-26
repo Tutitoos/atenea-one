@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 4 (dentro del contenedor, ver run-e2e.sh): agentes reales + coordinator real tras
 # las topologías NAT de lib.sh. Las configuraciones firmadas no llevan endpoints: la conexión
 # directa solo puede salir de STUN + coordinator + hole punching.

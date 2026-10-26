@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Transporte Unix e identidad del par; la política de control vive en `ipc`.
 #[cfg(windows)]
 #[path = "windows_ipc.rs"]

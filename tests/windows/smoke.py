@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Aceptación real; run.ps1 la limita al runner elevado y desechable."""
 import ctypes
 from ctypes import wintypes

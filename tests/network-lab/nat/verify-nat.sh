@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # No compila ni ejecuta software de Atenea: solo namespaces, nftables y UDP.
 set -Eeuo pipefail
 cd "$(dirname "$0")/../../.."

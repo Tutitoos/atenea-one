@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 mod common;
 use atenea_identity::{AgentState, LocalKeys, generate_seed, signing_key, verify_config};
 use axum::{

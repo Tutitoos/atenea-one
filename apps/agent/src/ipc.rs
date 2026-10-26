@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Control local autenticado y socket separado de solo lectura.
 use crate::platform::LocalIpc;
 use crate::platform::local_ipc::{Listener, Stream};

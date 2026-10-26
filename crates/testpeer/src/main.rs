@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 mod peer;
 
 use atenea_crypto::{StaticKeypair, hex};

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Tres reinicios reales del motor: diagnóstico previo o recuperación automática."""
 import json
 import os

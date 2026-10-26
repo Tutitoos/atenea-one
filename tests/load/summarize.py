@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Cruza ventanas reales con /proc; resume soak sin convertir datos ausentes en éxito."""
 import json
 from pathlib import Path

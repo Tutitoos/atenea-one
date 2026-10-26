@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Configuración local del agente (TOML, sin firmar): rutas y arranque inicial.
 //! La autorización (peers, direcciones, ACL) viene de la configuración firmada (`config_file`).
 

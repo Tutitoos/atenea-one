@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # PostgreSQL real obligatorio; reutiliza el contenedor sin borrar datos ajenos.
 set -euo pipefail
 cd "$(dirname "$0")/../../.."

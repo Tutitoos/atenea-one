@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! STUN: `parse` y `looks_like_stun` nunca entran en pánico; lo que se acepta como éxito se
 //! re-codifica a un mensaje equivalente; los candidatos saneados cumplen siempre las reglas.
 #![no_main]

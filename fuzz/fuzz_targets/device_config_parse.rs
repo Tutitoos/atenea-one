@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! `DeviceConfig::parse`: nunca pánico y lo aceptado se re-codifica con los mismos bytes
 //! (codificación única, contrato §1).
 #![no_main]

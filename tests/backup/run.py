@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Dos desastres reproducibles. Nunca usa volúmenes de otros laboratorios."""
 import datetime
 import json

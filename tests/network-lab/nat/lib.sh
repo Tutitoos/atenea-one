@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Biblioteca para source dentro de un contenedor Linux privilegiado y desechable.
 # El llamador debe instalar: trap topo_teardown EXIT INT TERM.
 

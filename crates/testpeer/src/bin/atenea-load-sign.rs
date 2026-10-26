@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Fixtures y firmas del laboratorio de carga; nunca usar estas claves fuera del lab.
 use atenea_identity::{self as id, DeviceConfig, DnsConfig, Peer, Prefix};
 use ed25519_dalek::Signer;

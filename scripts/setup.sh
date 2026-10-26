@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Prepara el entorno de desarrollo sin modificar trabajo existente.
 set -euo pipefail
 cd "$(dirname "$0")/.."

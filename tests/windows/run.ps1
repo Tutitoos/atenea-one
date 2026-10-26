@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 #Requires -RunAsAdministrator
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

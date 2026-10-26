@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Par de pruebas sin E/S: autenticación, sesiones y eco IP estricto.
 use atenea_crypto::{self as crypto, Session, StaticKeypair};
 use atenea_protocol::{self as proto, Packet};

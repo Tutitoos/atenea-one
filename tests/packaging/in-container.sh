@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 export LC_ALL=C SYSTEMD_COLORS=0
 fail() { echo "FALLO: $*" >&2; journalctl -u atenea-agent --no-pager -n 60; exit 1; }

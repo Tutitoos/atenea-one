@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Laboratorio de la fase 7 (dentro del contenedor, ver run.sh): subred servida por un router (r) a un cliente (a),
 # con una LAN interna emulada (hosts h y h2), un segundo cliente (a2) con una LAN local solapada, control local
 # por sockets, SNAT y restauración. DNS: `resolvectl` simulado (la prueba real con systemd-resolved está en

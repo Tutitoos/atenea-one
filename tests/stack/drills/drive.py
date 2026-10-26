@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """El runner no recibe el socket Docker: solo este proceso administra su proyecto."""
 import json
 import subprocess

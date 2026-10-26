@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """ClientHello real y PROXY externo: ambos se comprueban contra HAProxy público."""
 import os
 import socket

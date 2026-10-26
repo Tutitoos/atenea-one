@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Pipes locales con DACL desde la creación; ninguna identidad Unix sintética.
 use std::path::{Path, PathBuf};
 use std::time::Duration;

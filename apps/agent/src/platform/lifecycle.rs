@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Solicitud de parada del host; la limpieza pertenece al bucle compartido.
 
 use std::io;

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod';
 import type { Model } from '@atenea/api-client';
 // La CSP no permite eval; incluso el sondeo JIT de Zod genera una infracción.

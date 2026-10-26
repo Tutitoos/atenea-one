@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Primitivas Windows compartidas; el agente y la CLI no contienen FFI.
 #![cfg(windows)]
 // SAFETY: buffers ABI alineados y válidos durante cada llamada; Handle/Local liberan los recursos.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """OIDC por código real, cookies/CSRF y agentes reales; navegador en tests/e2e-panel."""
 import http.cookiejar
 from html.parser import HTMLParser

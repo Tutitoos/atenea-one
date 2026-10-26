@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Protección pre-DH de wire-v2. No autentica pares ni confirma rutas.
 //!
 //! El motor llama `CookieSecrets::rotate` con `Instant::now()`, luego `pre_dh`.

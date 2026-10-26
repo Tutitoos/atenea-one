@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Ejecuta el laboratorio de red en un contenedor Linux privilegiado y desechable.
 # Requiere Docker. Uso: tests/network-lab/run.sh [lab.sh|shell]
 set -euo pipefail

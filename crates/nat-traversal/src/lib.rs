@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! STUN mínimo (RFC 8489: solo Binding sobre UDP, sin autenticación) y utilidades de candidatos.
 //!
 //! STUN descubre el endpoint que ve un servidor; no es una solución de NAT completa. Los endpoints

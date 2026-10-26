@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! `parse` nunca entra en pánico y todo lo aceptado se recodifica byte a byte igual.
 #![no_main]
 use atenea_protocol::{Packet, data_header, encode_init, encode_resp, encode_cookie_reply, parse};

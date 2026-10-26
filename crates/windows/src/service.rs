@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Adaptador SCM: el bucle compartido conserva la responsabilidad de limpiar la red.
 use std::ffi::OsString;
 use std::path::PathBuf;

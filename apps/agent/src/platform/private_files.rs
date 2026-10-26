@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Ficheros privados: permisos desde la creación y reemplazo duradero (ADR-007/008).
 
 use std::fs::File;

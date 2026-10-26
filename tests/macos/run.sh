@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # SOLO runner macOS desechable: modifica red y /etc/resolver como root.
 set -euo pipefail
 [[ $(uname -s) == Darwin && $(id -u) == 0 && ${GITHUB_ACTIONS:-} == true ]] || {

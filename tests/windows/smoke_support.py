@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Ayudas sin dependencias nativas; también se prueban fuera de Windows."""
 import json
 import ntpath

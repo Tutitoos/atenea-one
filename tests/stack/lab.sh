@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Reutiliza las operaciones de fase6; los servidores aquí son exclusivamente Compose.
 set -euo pipefail
 export LAB_ROOT=/src

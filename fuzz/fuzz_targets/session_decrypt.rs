@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Datagrama DATA v2 arbitrario contra sesión establecida; antirreplay sin cambios.
 //! Nunca pánico; un fallo no avanza la ventana (un paquete válido posterior sigue aceptándose).
 #![no_main]

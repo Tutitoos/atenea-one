@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Interfaz TUN L3 (IP sin cabecera PI) para Linux.
 //!
 //! Al cerrar el descriptor (drop) el kernel elimina la interfaz, con sus direcciones y rutas:

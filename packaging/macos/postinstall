@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -eu
 # No habilitar servicios en un volumen distinto del sistema arrancado.
 [ "${3:-/}" = / ] || exit 0

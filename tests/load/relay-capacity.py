@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Capacidad real con tokens v2, identidades efímeras y carga DATA opaca por N pares."""
 import json
 import os

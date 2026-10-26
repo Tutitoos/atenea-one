@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Pruebas locales sin SCM, PowerShell ni objetos nativos de Windows."""
 import io
 import json

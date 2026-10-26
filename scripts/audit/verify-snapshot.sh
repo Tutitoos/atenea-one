@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 if [ "$#" -gt 1 ]; then
     echo "Uso: $0 [DIRECTORIO_SNAPSHOT]" >&2

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 cargo build --release --locked -p atenea-cli -p atenea-agent -p atenea-control-plane -p atenea-coordinator -p atenea-relay
 export PATH="$CARGO_TARGET_DIR/release:$PATH"

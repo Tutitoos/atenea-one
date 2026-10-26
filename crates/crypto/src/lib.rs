@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Handshake Noise IK, sesiones con antirreplay y límites de rekey (ADR-001, ADR-003).
 //!
 //! Estado de sesión solo en memoria: tras reiniciar, handshake nuevo con efímeras nuevas,

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Configuración v2 y dominios DNS: parseo estricto y representación única.
 #![no_main]
 use atenea_identity::{DeviceConfig, valid_domain};

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Requiere imagen de herramientas preaprovisionada; jamás construye ni descarga.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)

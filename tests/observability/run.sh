@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Laboratorio efímero: sin puertos de host, sin cambios en imágenes/volúmenes anteriores.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

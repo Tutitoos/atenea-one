@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Relay TLS de eco de prueba, valida PROXY v2 antes del handshake."""
 import argparse
 import ipaddress

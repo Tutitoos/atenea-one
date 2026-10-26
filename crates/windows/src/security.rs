@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{self, Read, Write};

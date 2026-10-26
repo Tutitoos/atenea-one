@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! `classify` y `Policy::allows` sobre paquetes arbitrarios: nunca pánico; una política sin reglas deniega.
 #![no_main]
 use atenea_identity::{DeviceConfig, Prefix};

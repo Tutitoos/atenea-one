@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Órdenes Linux existentes, separadas de la política de rutas y estados.
 use super::HostNetwork;
 #[cfg(all(test, unix))]

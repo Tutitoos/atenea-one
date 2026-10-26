@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Exportador privado; las rutas proceden exclusivamente de MatchedPath, nunca de URI.
 use axum::{
     Router,

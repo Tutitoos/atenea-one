@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 4: coordinator + STUN propios y agentes reales tras NAT emulados (nftables).
 # Todo en un contenedor privilegiado y desechable. Uso: tests/network-lab/nat/run-e2e.sh
 set -euo pipefail

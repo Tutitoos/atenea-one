@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 pub mod alloc;
 pub mod config;
 pub mod limits;

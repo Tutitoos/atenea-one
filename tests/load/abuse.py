@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Sondas de abuso reales: no cuentan MAC1/cookie como autorización Noise."""
 import hashlib
 import json

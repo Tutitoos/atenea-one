@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use atenea_coordinator::{Coordinator, config::Config, router};
 use atenea_identity::{api_auth::sign_request, *};
 use axum::{

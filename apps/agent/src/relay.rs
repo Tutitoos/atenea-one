@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cliente de relay del agente (docs/protocol/relay-v2.md §6).
 
 use atenea_identity::{DeviceId, SigningKey};

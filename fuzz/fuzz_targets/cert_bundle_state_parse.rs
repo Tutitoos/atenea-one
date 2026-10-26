@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Parsers de `IssuerCert`, `DeviceBundle` y `AgentState`: nunca pánico; lo aceptado se re-codifica idéntico.
 #![no_main]
 use atenea_identity::{AgentState, DeviceBundle, IssuerCert};

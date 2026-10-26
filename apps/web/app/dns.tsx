@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, result } from '@atenea/api-client';
 import { dnsSchema } from './domain';

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Herramientas independientes de Atenea; sockets persistentes durante los bloqueos."""
 import errno
 import json

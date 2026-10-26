@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Invocado por api.py tras OIDC, alta y arranque reales. Nunca imprime secretos."""
 import os
 import sys

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Formato de datagrama v2 (wire-v2, ADR-003). Big-endian.
 //!
 //! Init:  `version type sender_index(4) noise_msg1(108) mac1(16) mac2(16)`

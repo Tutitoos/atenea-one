@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Descubrimiento de candidatos: interfaces locales y STUN sobre el MISMO socket de datos
 //! (el mapeo del NAT depende del puerto local; un socket distinto daría un endpoint inservible).
 

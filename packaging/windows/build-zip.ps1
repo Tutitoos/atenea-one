@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Solo construye el ZIP: no instala ni descarga controladores.
 [CmdletBinding()]
 param([string]$BinDir = (Join-Path $PSScriptRoot '../../target/release'))

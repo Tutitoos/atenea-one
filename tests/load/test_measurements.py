@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Pruebas de unidades de medida, sin Docker, red ni dependencias externas."""
 from pathlib import Path
 import sys

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Backends TUN L3: Linux y macOS; contrato IP puro.
 
 #[cfg(target_os = "linux")]

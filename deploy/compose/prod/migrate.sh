@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Ejecutar antes de arrancar/reemplazar control-plane, nunca con el rol de aplicación.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

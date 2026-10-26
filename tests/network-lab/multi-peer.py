@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Laboratorio multipar real; se ejecuta dentro de atenea-lab, sin compilación ni red externa."""
 import itertools
 import json

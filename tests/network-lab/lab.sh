@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Laboratorio (fases 2 y 3): dos agentes autorizados (A y B) y un tercero no autorizado (C) en namespaces
 # sobre un puente, con configuración firmada emitida por un "emisor" que es un bucle de reemisión.
 # Se ejecuta DENTRO del contenedor (ver run.sh). Sale con código != 0 si falla algún caso.

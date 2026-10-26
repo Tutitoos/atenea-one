@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Dentro del contenedor del E2E del panel: compila el backend, prepara la copia de trabajo de Node
 # (el repositorio está montado de solo lectura) y ejecuta Playwright.
 set -euo pipefail

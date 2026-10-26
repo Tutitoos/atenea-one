@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! `verify_config` con firmas válidas: la entrada son parámetros del certificado, del estado y del
 //! CUERPO de la configuración; el arnés firma con claves fijas de fuzz, de modo que cada mutación
 //! llega a los pasos posteriores a la firma (parseo del cuerpo, ámbito, antirrollback, lease,

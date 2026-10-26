@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::{
     config::Config,
     limits::{Bucket, ip_group},

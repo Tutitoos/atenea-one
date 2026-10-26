@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 #[path = "../../agent/src/build_info.rs"]
 mod build_info;
 use atenea_relay::{Relay, config::Config};

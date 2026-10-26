@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Wintun se carga por ruta absoluta; sólo se usa el controlador, nunca WireGuard.
 #![allow(unsafe_code)]
 use libloading::Library;

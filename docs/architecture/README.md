@@ -11,6 +11,7 @@
 | [007](ADR-007-subredes-dns-privilegios.md) | Subredes, DNS dividido y modelo de privilegios | Aceptado |
 | [008](ADR-008-clientes-windows-macos.md) | Clientes macOS y Windows (solo cliente; excepción Wintun) | Aceptado |
 | [009](ADR-009-operacion-y-releases.md) | Operación, disponibilidad, secretos y releases | Aceptado |
+| [010](ADR-010-l2-ethernet.md) | L2 Ethernet opt-in por red (fase 10): viabilidad por SO, modelo y trama | Propuesto |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 

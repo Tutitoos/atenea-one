@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Material de prueba exclusivamente; nunca escribirlo en el repositorio.
 set -euo pipefail
 [[ $# == 1 ]] || { echo 'Uso: gen-certs.sh <directorio>' >&2; exit 2; }

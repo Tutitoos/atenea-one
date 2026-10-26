@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Requiere Docker Linux con cgroup v2; no ejecutar sobre el host Proxmox.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)

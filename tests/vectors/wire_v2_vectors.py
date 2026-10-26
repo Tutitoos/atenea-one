@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Vectores wire-v2 independientes de Rust; solo stdlib y cryptography local.
 
 HChaCha20 y el transcript/KDF Noise se calculan aquí; X25519 y ChaCha20Poly1305

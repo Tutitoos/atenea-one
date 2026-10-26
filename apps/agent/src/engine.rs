@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Máquina de estados del agente: sin E/S. Recibe eventos y devuelve acciones.
 //!
 //! Un par puede alcanzarse por tres caminos (preferencia `directo > relay UDP > relay TLS`) que

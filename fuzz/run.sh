@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Uso: fuzz/run.sh [segundos=60] [objetivo]   (sin objetivo: todos)
 # Código de salida ≠ 0 si algún objetivo falla (crash, aserción o error de compilación).
 set -euo pipefail

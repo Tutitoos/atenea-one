@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """SBOM de Rust: solo producción, por raíz, con Wintun y dependencias del .deb."""
 import json
 import sys

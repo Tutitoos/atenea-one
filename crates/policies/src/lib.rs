@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Evaluación de ACL (contrato `signed-config-v1/v2`): denegación por defecto.
 //!
 //! Los puertos de una regla se comparan con el puerto de **destino**. Solo se leen puertos del

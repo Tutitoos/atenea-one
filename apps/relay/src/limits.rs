@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv6Addr},

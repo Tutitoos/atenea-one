@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cliente Windows: NetTCPIP y NRPT por dominio, sin DNS global ni rutas predeterminadas.
 use super::HostNetwork;
 #[cfg(all(test, unix))]

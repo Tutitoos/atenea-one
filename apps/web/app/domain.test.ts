@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
 import { device } from './device.fixture';
 import { connection, endpoint, endpointsSchema, networkSchema, policySchema, relays, rootAnchor } from './domain';

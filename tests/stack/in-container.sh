@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 export PATH=/cache/target/release:$PATH
 bash /src/tests/stack/lab.sh setup

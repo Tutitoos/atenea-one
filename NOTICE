@@ -1,0 +1,9 @@
+Atenea One
+Copyright 2026 Tutitoos
+
+Este producto se distribuye bajo la licencia Apache-2.0 (véase LICENSE).
+
+Los avisos de licencia de las dependencias de terceros están en
+docs/architecture/dependencies.md. El instalador de Windows conserva
+WINTUN-LICENSE.txt de WireGuard LLC; Wintun no forma parte del código ni se
+redistribuye en este repositorio.

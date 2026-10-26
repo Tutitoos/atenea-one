@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, result, type Model } from '@atenea/api-client';
 import { z } from 'zod';

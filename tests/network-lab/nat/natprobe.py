@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Sonda UDP independiente de Atenea; endpoints JSON [dirección, puerto]."""
 import argparse
 import json

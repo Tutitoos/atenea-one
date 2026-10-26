@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # El modo release de tests/packaging usa Debian/systemd precargado, sin apt.
 set -euo pipefail
 dist=$(cd "$1" && pwd)

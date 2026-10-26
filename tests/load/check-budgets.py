@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Comprueba resultados reales JSONL; nunca convierte ausencia de datos en verde."""
 import argparse
 import json

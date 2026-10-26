@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """El environment `release` debe exigir revisores y solo tags `v*`."""
 import importlib.util
 import unittest

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Emisión offline de claves y configuraciones firmadas (contrato `signed-config-v1/v2`).
 //! Corre en la estación de administración o en el emisor, nunca en el agente.
 

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::*;
 fn parsed_error(e: Error) -> ConfigError {
     match e {

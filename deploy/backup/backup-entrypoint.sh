@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -eu
 # El secreto se carga del fichero, nunca se incorpora a la imagen o Compose.
 export PGBACKREST_REPO1_CIPHER_PASS="$(cat /run/secrets/pgbackrest_cipher)"

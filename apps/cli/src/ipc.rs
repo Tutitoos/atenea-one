@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Conexión IPC local; el protocolo y los tiempos de espera viven en el cliente.
 use std::path::Path;
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Inventario CycloneDX 1.5 de fuentes y filesystem local, sin red."""
 import argparse
 import base64

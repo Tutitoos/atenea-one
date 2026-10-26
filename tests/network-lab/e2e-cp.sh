@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # E2E de la fase 3B dentro del contenedor del laboratorio (ver run-e2e.sh).
 # Control plane real (proceso) + PostgreSQL + Dex + dos agentes que se enrolan, sincronizan y se comunican.
 set -uo pipefail

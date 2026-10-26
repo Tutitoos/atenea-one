@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use sqlx::PgPool;
 pub async fn migrate(
     pool: &PgPool,

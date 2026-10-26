@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { renderToReadableStream } from 'react-dom/server';
 import { ServerRouter, type EntryContext } from 'react-router';
 // Solo se ejecuta al compilar la SPA; no hay servidor Node en producción.

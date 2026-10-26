@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Utilidades del laboratorio (solo biblioteca estándar)."""
 import hashlib
 import json

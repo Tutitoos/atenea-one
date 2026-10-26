@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cambios por enlace: nunca modifica rutas por defecto, sysctls ni resolv.conf.
 #[cfg(target_os = "linux")]
 pub use crate::platform::linux::Binaries;

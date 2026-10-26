@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::*;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV6};
 pub(crate) struct Reader<'a> {

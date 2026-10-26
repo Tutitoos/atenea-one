@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Upgrade real N (commit anterior a 0003) -> N+1 y rollback por ID sha256 local.
 # No ejecuta down migrations: el binario anterior debe funcionar con el esquema ampliado.
 set -euo pipefail

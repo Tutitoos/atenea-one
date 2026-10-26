@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Solo construye: no instala, no crea interfaces y no requiere sudo.
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)

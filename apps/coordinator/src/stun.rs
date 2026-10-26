@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::{config::Config, rate::Rates};
 use atenea_nat_traversal::{Message, encode_binding_success, looks_like_stun, parse};
 use std::{

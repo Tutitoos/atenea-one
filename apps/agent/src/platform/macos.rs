@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cliente macOS: órdenes nativas y resolutores por dominio, sin tocar DNS global ni pf.
 use super::HostNetwork;
 #[cfg(all(test, unix))]

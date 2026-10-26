@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Solo imágenes y binarios locales; un único contenedor de carga, sin egreso.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

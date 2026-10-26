@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! La política compartida no necesita procesos ni privilegios del host.
 use super::*;
 use atenea_identity::Peer;

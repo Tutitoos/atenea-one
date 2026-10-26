@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Regresiones sin privilegios del supervisor; no ejecutan red ni el agente."""
 import contextlib
 import io

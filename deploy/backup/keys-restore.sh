@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -eu
 [ "$#" -eq 3 ] || { echo 'Uso: keys-restore.sh COPIA IDENTITY DESTINO_NUEVO' >&2; exit 2; }
 umask 077

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Imágenes y binarios ya locales; no build/pull. Salida JSON con estado completo y métricas.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

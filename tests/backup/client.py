@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Ejercita el control plane y el lector real del agente; solo laboratorio desechable."""
 import json
 import os

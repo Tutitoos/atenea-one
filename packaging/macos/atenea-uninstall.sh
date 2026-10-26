@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Conserva claves y configuración; la eliminación de identidad requiere decisión explícita.
 set -eu
 [ "$(id -u)" = 0 ] || { echo 'Se requiere root' >&2; exit 1; }

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Autenticación de peticiones de dispositivo al control plane (docs/api/control-plane-v1.md §3.3).
 //!
 //! `Authorization: AtDevice v1 device=<hex16>, ts=<unix>, nonce=<hex16>, sig=<hex64>` con

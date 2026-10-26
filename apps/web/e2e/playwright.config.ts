@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { defineConfig } from '@playwright/test';
 
 // E2E del panel: hidratación y dos escenarios contra servicios reales compartidos.

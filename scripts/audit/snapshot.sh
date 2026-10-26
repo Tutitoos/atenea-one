@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 if [ "$#" -ne 0 ]; then
     echo "Uso: $0 (archiva HEAD, no el árbol de trabajo)" >&2

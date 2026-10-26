@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Vectores relay-v2: Ed25519/cryptography y hashlib, independientes de Rust.
 
 Sin red ni aleatoriedad; semillas fijas exclusivamente para reproducción.

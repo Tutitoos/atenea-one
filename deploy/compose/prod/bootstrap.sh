@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Solo estación administrativa: la raíz se genera offline y jamás se monta en servicios.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

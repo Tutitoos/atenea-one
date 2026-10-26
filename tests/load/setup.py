@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Reutiliza las funciones del laboratorio sin ejecutar su suite ni compilar."""
 import os
 from pathlib import Path

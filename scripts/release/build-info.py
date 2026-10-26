@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Identidad pública del paquete, sin claves ni rutas del compilador."""
 import json
 import os

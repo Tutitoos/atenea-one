@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Utilidades Unix de pruebas: publicación de scripts y procesos frente a forks paralelos.
 use std::fs::{File, OpenOptions, Permissions};
 use std::io::{self, Write};

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Mismas comprobaciones que CI.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+python3 scripts/check-headers.py
 
 # Cargo falla en un workspace virtual sin miembros (fase 1); se omite hasta que exista el primero.
 if cargo metadata --no-deps --format-version 1 --locked | grep -q '"packages":\[\]'; then

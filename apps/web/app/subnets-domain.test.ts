@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { expect, it } from 'vitest';
 import { dnsDomain, dnsSchema, privatePrefix } from './domain';
 it('solo acepta prefijos privados canónicos y acotados', () => {

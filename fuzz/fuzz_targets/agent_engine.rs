@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Máquina de estados del agente (ADR-003, fase 2): dos motores reales conectados por una red
 //! simulada que el fuzzer controla (pérdida, duplicado, reordenación, corrupción, basura, avance
 //! del reloj y caducidad del lease).

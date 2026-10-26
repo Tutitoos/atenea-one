@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::{codec::*, *};
 use std::collections::HashSet;
 impl DeviceConfig {

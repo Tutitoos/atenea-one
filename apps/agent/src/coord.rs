@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Cliente HTTP del coordinator (docs/protocol/coordinator-v1.md §3): anuncio de presencia,
 //! rendezvous y avisos. Todo lo que devuelve son PISTAS no autenticadas; la ruta solo existe
 //! cuando un paquete Noise autenticado llega desde un candidato.

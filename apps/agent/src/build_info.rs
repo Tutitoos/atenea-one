@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Identidad embebida; una compilación de desarrollo no pretende ser un release.
 const COMMIT: &str = match option_env!("ATENEA_BUILD_COMMIT") {
     Some(commit) => commit,

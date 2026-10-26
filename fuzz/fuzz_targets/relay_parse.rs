@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Relay: `parse`, `RelayToken::parse` y `FrameDecoder` nunca entran en pánico con entradas
 //! arbitrarias; un token aceptado se re-codifica idéntico y un decodificador no acumula más de lo debido.
 #![no_main]

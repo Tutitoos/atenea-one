@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { URL } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';

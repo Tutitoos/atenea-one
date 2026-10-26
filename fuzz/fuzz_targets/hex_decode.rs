@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! `hex::decode` contra un modelo: acepta ⇔ (tras `trim`) longitud 2N y solo dígitos hex; y ida y vuelta.
 #![no_main]
 use atenea_crypto::hex::{decode, encode};

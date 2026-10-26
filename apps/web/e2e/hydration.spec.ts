@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import { expect, test } from '@playwright/test';
 
 test('el build estático se hidrata con CSP y sin errores de React', async ({ page }) => {

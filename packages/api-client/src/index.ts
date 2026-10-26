@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 import createClient from 'openapi-fetch';
 import type { paths, components } from './schema.js';
 export type { paths, components } from './schema.js';

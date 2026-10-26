@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Comprueba enlaces locales e higiene del paquete; no modifica archivos ni usa red."""
 from pathlib import Path
 import re

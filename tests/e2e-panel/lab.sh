@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Pasos de laboratorio para el E2E del panel (los invoca la prueba de Playwright con child_process).
 # Corre dentro del contenedor de run.sh: PostgreSQL y Dex son contenedores hermanos (`postgres`, `dex`);
 # control plane y panel van en el espacio de nombres raíz (IP 198.51.100.254 en el puente público);

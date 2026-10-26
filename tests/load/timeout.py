@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """timeout local para macOS sin coreutils; TERM coordinado y KILL tras 60 s."""
 import os
 import signal

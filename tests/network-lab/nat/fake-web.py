@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Backend TCP sin TLS: el banner permite identificar la ruta de HAProxy."""
 import argparse
 import socketserver

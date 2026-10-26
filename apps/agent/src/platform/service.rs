@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Adaptador seguro entre SCM y el bucle compartido del agente.
 pub(crate) use atenea_windows::service_stop_receiver as stop_receiver;
 use std::path::PathBuf;

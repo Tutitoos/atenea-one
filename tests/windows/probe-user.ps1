@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Se ejecuta sin elevación; el resultado se recoge desde probe-access.ps1.
 param([Parameter(Mandatory)][string]$ResultPath)
 $ErrorActionPreference = 'Stop'

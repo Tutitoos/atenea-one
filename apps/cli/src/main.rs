@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! CLI sin privilegios de red: claves, emisión de configuraciones firmadas y control del agente por su socket Unix.
 
 #[path = "../../agent/src/build_info.rs"]

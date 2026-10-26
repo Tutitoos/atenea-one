@@ -1,4 +1,6 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Agente VPN: dueño de la TUN y de las claves del dispositivo (fase 2, configuración de laboratorio).
 
 mod build_info;

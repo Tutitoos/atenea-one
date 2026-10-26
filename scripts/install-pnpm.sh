@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Instala pnpm verificando la integridad SHA-512 que npm publica para la versión fijada.
 # Al subir de versión: `npm view pnpm@X dist.integrity` (base64) y convertir a hex.
 set -eu

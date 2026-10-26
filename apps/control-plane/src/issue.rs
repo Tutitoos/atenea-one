@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::{AppState, api::ApiError};
 use atenea_identity::{
     AdvertisedRoute, DeviceConfig, DnsConfig, IssuerCert, Peer, Prefix, Rule, Selector, api_auth,

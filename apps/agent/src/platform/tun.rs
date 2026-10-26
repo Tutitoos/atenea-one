@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Dispositivo L3: recibe y envía paquetes IP puros, sin cabecera de plataforma.
 
 use std::io;

@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 //! Secuencia arbitraria de contadores contra un modelo exacto (aceptado ⇔ no visto y dentro de ventana).
 #![no_main]
 use arbitrary::Unstructured;

@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Material efímero independiente para el segundo relay; CA del ensayo."""
 from pathlib import Path
 import json

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 """Tráfico real; reutiliza el cliente OIDC y el laboratorio de fases 5/6."""
 import base64
 import http.server

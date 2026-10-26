@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 # Simulacros reales, secuenciales, sin pull ni compilación. bash run.sh [lab|pilot]
 set -euo pipefail
 cd "$(dirname "$0")/../../.."

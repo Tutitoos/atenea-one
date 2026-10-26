@@ -1,3 +1,5 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group, now};
 use atenea_relay_core::{
     ALPN, ErrCode, FrameDecoder, MAGIC, Message, ParseError, VERSION, encode_alloc_err,
