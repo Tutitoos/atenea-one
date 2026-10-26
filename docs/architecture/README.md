@@ -11,4 +11,6 @@
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
+Paquete de entrega para la [auditoría independiente](../audit/README.md) (alcance, arquitectura, evidencia y reproducción; revisión externa pendiente).
+
 "Propuesto" = recomendación redactada, sin aceptar. Un ADR pasa a "Aceptado" cuando se registra la decisión del responsable; nada que dependa de él se implementa antes.
