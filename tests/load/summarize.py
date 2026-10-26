@@ -120,8 +120,6 @@ def steady_counters(traffic):
     errors = int(not rows)
     final = [r for r in traffic if r.get('kind') == 'soak-summary']
     duration = max(0, (final[-1]['wall_unix'] if final else rows[-1]['wall_unix'] if rows else mark['steady_since'])-mark['steady_since'])
-    relay_limit = int(duration//300)+1
-    known, relay_ready = {}, {}
     for agent in ('a', 'b'):
         baseline = mark['agent_states'][agent]['counters']
         before = mark['warmup_counters'][agent]
@@ -142,21 +140,24 @@ def steady_counters(traffic):
                 allowed = key in ('path_lost', 'probe_failed') and relay_active and mark.get('expected_blocked_path') == 'direct'
                 if allowed:
                     expected[agent][key] = expected[agent].get(key, 0)+delta
-                if delta < 0 or (delta > 0 and re.search(r'error|bad|fail|lost|down|drop|invalid', key) and not allowed and key != 'relay_down'):
+                if delta < 0 or (delta > 0 and re.search(r'error|bad|fail|lost|down|drop|invalid', key) and not allowed):
                     errors += abs(delta)
             previous = current
-        down = deltas[agent].get('relay_down', 0)
-        ready = previous.get('relay_ready', 0)
-        if down > relay_limit or ready != previous.get('relay_down', 0)+1 or deltas[agent].get('relay_ready', 0) != down:
+        for key in ('relay_down', 'relay_ready', 'relay_renewal_failed', 'relay_renewal_ok'):
+            deltas[agent].setdefault(key, 0)
+        if deltas[agent]['relay_ready'] or previous.get('relay_renewal_failed', 0):
             errors += 1
-        known[agent] = down
-        relay_ready[agent] = ready
+    renewal_ok = sum(d['relay_renewal_ok'] for d in deltas.values())
+    if duration > 300 and renewal_ok < 1:
+        errors += 1
     return dict(steady_since=mark['steady_since'], steady_errors=errors, steady_ok=not errors,
                 steady_samples=len(rows), steady_counter_deltas=deltas,
                 warmup_counter_deltas=warmup, expected_blocked_counter_deltas=expected,
-                known_finding='relay-token-cycle', known_finding_events=known,
-                known_finding_limit_per_agent=relay_limit, steady_duration_s=duration,
-                steady_relay_ready=relay_ready)
+                steady_duration_s=duration,
+                steady_relay_down=sum(d['relay_down'] for d in deltas.values()),
+                steady_relay_ready_changes=sum(d['relay_ready'] for d in deltas.values()),
+                steady_renewal_failed=sum(d['relay_renewal_failed'] for d in deltas.values()),
+                steady_renewal_ok=renewal_ok)
 
 
 def soak(directory):
@@ -244,9 +245,6 @@ def main():
     with output.open('w') as file:
         for row in rows:
             text=json.dumps(row);print(text,flush=True);file.write(text+'\n')
-            if row.get('known_finding_events') and any(row['known_finding_events'].values()):
-                print('CONOCIDO: relay-token-cycle; eventos por agente='+json.dumps(row['known_finding_events'])+
-                      '; máximo explícito='+str(row['known_finding_limit_per_agent']))
     if any(row.get('ok') is False for row in rows):raise SystemExit(1)
 
 if __name__=='__main__':main()

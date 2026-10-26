@@ -149,8 +149,45 @@ No se propone invalidar la sesión antigua por cualquier hint, quitar `init_floo
 3. Cubrir tres estados por par: ambos nuevos, un extremo nuevo frente a sesión antigua y ambos con pending simultáneo; NAT conservado/cambiado, INIT anterior a `init_floor`, replay, tie-break, cookie bajo carga y cuota agotada. La corrección no debe ampliar ventana/12 rondas ni aceptar INIT antiguo. Preservar regresiones multipar existentes.
 4. Tras autorización para nuevas mediciones, repetir control sin flood y después 1k/10k/50k con idéntica topología/fases y binarios identificados. Guardar por intento tiempos monotónicos de proceso listo/config válida/STUN/announce solicitado y resultado HTTP/cantidad de candidatos antes y después de saneado/rendezvous/primer INIT/COOKIE/RESP/eco, además de razones de rechazo; nunca tokens/claves. Comparar versión pre-v2 y actual con el mismo arnés si se pretende atribuir una regresión. Separar siempre shutdown, origen de captura y origen de eco. La aceptación de ≤30 s existente es alarma histórica, no la demostración de roaming rápido.
 
+## Aplicado
+
+Actualización posterior al diagnóstico de lectura: las secciones anteriores conservan el mecanismo, las propuestas y las pruebas de salida históricas; no describen el estado actual de implementación. Se aplicó la renovación anticipada con 60 s de margen, solicitante estable por par y refresco **in situ**: el token pendiente solo sustituye al vigente tras ALLOC_OK, manteniendo asignación, worker y camino. El fallo de renovación no extiende el deadline anterior ni elimina el corte fail-closed. No se implementa aquí solapamiento entre relays distintos. También se aplicó el reintento de presencia/candidatos pendiente, coalesciendo cambios sin esperar al siguiente refresco de 20 s. La medición posterior de reconexión se separa del histórico a continuación: los ≈15–25 s anteriores no son un resultado posterior ni una comparación A/B controlada.
+
+### Contadores y regresión real
+
+El IPC expone `relay_renewal_attempts` (peticiones anticipadas despachadas), `relay_renewal_ok` (respuesta HTTP con concesión válida), `relay_renewal_failed` (incluye 429, red y respuesta inválida) y `relay_renewal_throttled` (aplazamientos locales, una vez por episodio). No incluyen peticiones iniciales ni cuentan por audiencia; `ok` **no equivale a ALLOC_OK ni prueba tráfico E2E**. Véanse la [semántica y regresiones del agente](../../apps/agent/README.md#transporte-estado-y-recuperación) y `renewal_counters_count_attempt_results_and_deferrals_exactly_in_status` en `apps/agent/src/run.rs`.
+
+La regresión existente `real_coordinator_and_relay_renew_before_expiry_without_down` (`apps/agent/src/relay_real_tests.rs`) usa el router HTTP real del coordinator, configuraciones/peticiones firmadas, tokens reales y el relay UDP real mediante `Relay::bind_with_clock`. Con reloj Unix compartido inyectado, dos clientes y presencia/ALLOC periódicos, atraviesa t=300 hasta t=340: exige una única petición anticipada a t=240, recepción de la concesión inversa, tráfico bidireccional, dos asignaciones y el mismo `alloc_id`, sin Down/Ready adicional tras el Ready inicial. Es una regresión local de coordinator/relay, no un ensayo NAT ni una medición de reconexión. Esta actualización documental no la vuelve a ejecutar.
+
+### Resultado verificado: `atenea-load-74335`
+
+Evidencia existente no versionada: `tests/load/out/atenea-load-74335/` y `/tmp/g-soak.txt`. Ventana de **720 s, 72 muestras (12 min, no 72 h)**. El registro identifica SHA-256 del binario `atenea` `aa81fc739b9d3ad61e1e294a693f8aaf37f990aa9e59f527528a9eef71eed18e` y de `atenea-agent` `cefdd9e5cf2bf8b81d060f5de732af46228e075312a944ea606369a56053b327`. El soak anterior `atenea-load-44042` midió el binario antiguo montado desde `tests/load/results/bin`, no esta corrección; el stack ahora rechaza binarios anteriores a las fuentes y registra sus SHA-256.
+
+- En ambos agentes, `relay_down` y `relay_ready` permanecen sin cambios desde t≈5,4 s: **no se reproduce el ciclo de recreación cada ≈300 s**.
+- b renueva a t≈245,5/470/710 s; `relay_renewal_attempts` y `relay_renewal_ok` evolucionan 0→1→2→3, con `failed=0` y `throttled=0`. Junto al tráfico y la estabilidad de Ready/Down, esto verifica el refresco saludable en la ventana observada.
+- `path_lost` a ≈40 s y `probe_failed` a ≈50/90/160/290/545 s son esperados con el directo bloqueado; no son recreaciones del relay.
+- **12 transferencias con SHA-256 íntegro**, media **24,99 Mbit/s**. Ping: **3515 enviados/3513 recibidos**, pérdida **0,0569 %**, RTT mín/media/máx **0,233/1,248/33,578 ms**. Las pérdidas en secuencias 882/1769 (≈176/354 s) no coinciden con las renovaciones; no se promete pérdida cero.
+
+Comparación histórica, no SLA: `atenea-load-48076` registró Down a ≈305/605 s, un hueco entre respuestas de **406 ms** y pérdida **0,0847 %**. Ese hueco no era una cota superior de duración del corte. El resultado 74335 cierra el ciclo saludable observado, no las pruebas de fallos/cuotas, continuidad entre relays distintos, auditoría independiente ni soak ≥72 h.
+
+### Reconexión tras reinicio: antes y después
+
+**Después, MEDIDO:** `tests/load/out/handshake-after/handshake.jsonl` conserva **63 filas, 21 experimentos y 63 tiempos de primer eco, todos OK**: tres controles y dos repeticiones de cada combinación de `invalid-mac1`, `valid-mac1-no-cookie` y `valid-cookie` con 1k/10k/50k pps. Los binarios tienen los mismos SHA-256 registrados en `/tmp/g-soak.txt` para `atenea-load-74335`; las imágenes de coordinator/relay se reconstruyeron. Esta actualización documental incorpora registros existentes, no ejecuta otra prueba.
+
+| Par | Media, s | Mediana, s | Máximo, s |
+| --- | ---: | ---: | ---: |
+| a↔b | 0,34 | 0,065 | 3,564 |
+| c↔b | 0,60 | 0,173 | 4,675 |
+| a↔c | 5,13 | 5,072 | 5,317 |
+
+Los tres controles dan a↔b **0,06/0,06/0,06 s**, c↔b **4,68/0,17/0,18 s** y a↔c **5,07/5,17/5,18 s**. La parada anterior se mide aparte: **21/21 por debajo de 3 s**, máximo **2,084 s**; no se suma al tiempo de primer eco.
+
+**Antes, histórico no equivalente:** los 14 controles guardados proceden de distintas sesiones y variantes del arnés; a↔c tardaba ≈20 s en **14/14**, mientras a↔b y c↔b ya tenían muchas respuestas rápidas, con colas de ≈15–20 s dentro del histórico de ≈15–25 s. Ahora a↔c queda en **5,05–5,32 s en 21/21** (mínimo exacto 5,0546 s). La reducción observada de esa meseta no adjudica cada mejora al reintento aplicado ni demuestra causalidad: no es un A/B controlado, ni una comparación equivalente con pre-v2.
+
+**Residuo de diseño:** la meseta de ≈5 s es consistente con el rendezvous de **5 s por par no dirigido del coordinator**, que no se cambió; no se interpreta como ≈5 s de cálculo Noise ni como desaparición de todas las colas. El outlier histórico de **40,6 s** en `valid-mac1-no-cookie`, 50k pps, **no se reprodujo en las dos repeticiones**: el peor caso actual de ese modo a 50k, R2, fue a↔b **3,56 s** y c↔b **3,66 s**; a 1k llegó a **1,32 s**. Dos repeticiones no demuestran ausencia del problema histórico ni cierran su causa. El máximo observado de primer eco es **5,317 s (≤5,32 s)**, no un SLA.
+
 ## Cierre de esta investigación
 
-Entregable exclusivamente documental. Los mecanismos y límites indicados quedan trazados a código y registros; la causa intermedia no registrada no se sustituye por una cifra inventada. **A** tiene cadena causal estática completa y correlación fuerte, sin traza de expiración histórica. **B** queda localizado antes de Noise y tiene un defecto concreto de agenda/publicación que corregir y probar; la adjudicación de cada muestra a 429 y la comparación causal pre-v2 permanecen abiertas por la evidencia faltante identificada.
+Entregable exclusivamente documental. El diagnóstico histórico conserva la distinción entre mecanismo demostrado y causa intermedia no registrada. **A** tiene ahora corrección aplicada y ciclo saludable verificado durante 12 min. **B** tiene reintento de presencia aplicado y medición posterior de reconexión: 63/63 primeros ecos OK, a↔c en 5,05–5,32 s en 21/21, con residuo de ≈5 s consistente con el rendezvous no cambiado; la adjudicación de cada muestra histórica a 429 y la comparación causal pre-v2 permanecen abiertas.
 
-No se ejecutaron pruebas, soak, contenedores ni compilaciones; todas las pruebas de salida son propuestas. Riesgos que permanecen: disponibilidad bajo fallos/cuotas, replay intraaudiencia dentro de frescura y ausencia de validación externa/72 h; no se ha cambiado producción ni mitigado aún ninguno de los dos hallazgos.
+En esta actualización no se ejecutaron pruebas, soak, contenedores ni compilaciones: se incorporó evidencia existente, sin cambios de producción. Las pruebas de salida históricas no se dan por ejecutadas en su totalidad. Permanecen los límites bajo fallos/cuotas, replay intraaudiencia dentro de frescura y ausencia de validación externa/72 h.

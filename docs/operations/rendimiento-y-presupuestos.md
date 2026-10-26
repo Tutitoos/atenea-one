@@ -8,6 +8,13 @@ El checkout base es `d9ab7ec4b4af44dd022ab655b7747c16231a6f8b`, con cambios de t
 
 Se distinguen **MEDIDO** (salida de una ejecución real), **INFERIDO** (cálculo a partir de ella) y **SIN COMPROBAR**. Una prueba funcional previa, una cuota del código y una CI verde no son medidas de capacidad ni aceptación de producción. Véanse [ADR-009](../architecture/ADR-009-operacion-y-releases.md), [caídas y leases](caidas-y-leases.md), [matriz de aceptación](matriz-de-aceptacion.md) y [soporte y límites](soporte-limites-y-recuperacion.md).
 
+**Aplicado (2026-10-26):** renovación anticipada de concesión relay sin reiniciar
+el worker en el refresco exitoso de la misma asignación; announce pendiente
+coalescido con reintento tras cuota, sin ampliar límites. Los nuevos plazos se
+describen en el [README del agente](../../apps/agent/README.md#transporte-estado-y-recuperación).
+Las mediciones posteriores de reconexión (`handshake-after`) y soak (`74335`) se
+separan abajo de las series históricas; no equivalen a un A/B controlado ni a 72 h.
+
 ## Reproducción segura
 
 ```sh
@@ -88,7 +95,7 @@ La limpieza automática dejó **0 contenedores, 0 redes y 0 volúmenes propios**
 
 ### Ensayo de correlación MEDIDO: `atenea-load-48076` (12 min, autorizado)
 
-`timeout 1200 bash tests/load/stack.sh soak 12m`: **782,76 s** de pared total, carga **720,0092 s**, 72 muestras de agentes (**6/min en los doce minutos**), 75 muestras por proceso del stack y por estado de servicio. Doce transferencias SHA-256 íntegras, una por minuto; tasas mínimo/media/máximo **24,3489 / 24,9801 / 25,4247 Mbit/s**. Doce scrapes; errores de logs, DB, HTTP5xx, OOM y reinicios = 0. Ambos agentes siguieron vivos. Durante la ejecución, el criterio estricto inicial terminó **exit 1**, `steady_errors=4` por dos `relay_down` por agente; limpió automáticamente. Tras la decisión explícita del integrador, el **reanálisis de los mismos datos, sin otro ensayo Docker**, pasa B24 con tolerancia etiquetada **`CONOCIDO: relay-token-cycle`**. No se ha cambiado el motor ni desplazado el comienzo estable.
+`timeout 1200 bash tests/load/stack.sh soak 12m`: **782,76 s** de pared total, carga **720,0092 s**, 72 muestras de agentes (**6/min en los doce minutos**), 75 muestras por proceso del stack y por estado de servicio. Doce transferencias SHA-256 íntegras, una por minuto; tasas mínimo/media/máximo **24,3489 / 24,9801 / 25,4247 Mbit/s**. Doce scrapes; errores de logs, DB, HTTP5xx, OOM y reinicios = 0. Ambos agentes siguieron vivos. El criterio estricto inicial terminó **exit 1** por dos `relay_down` por agente y limpió automáticamente. Existió una tolerancia temporal del ciclo, ahora **eliminada**: con B24 actual este directorio vuelve a fallar y se conserva como evidencia **antes de la corrección**, no como aceptación.
 
 `steady_since=1792997655,034362` (**06:54:15,034362 UTC**), inmediatamente tras completar directo→relay UDP. Los contadores del calentamiento se conservan aparte (`tx_bad_source=1`, `relay_ready=1` y `path_switches=1` por agente; el delta estable de `tx_bad_source` es 0). Todas las muestras estables de ambos agentes informan `peers[0].path=relay-udp`; la ruta directa figura no saludable y no lista.
 
@@ -99,7 +106,7 @@ La limpieza automática dejó **0 contenedores, 0 redes y 0 volúmenes propios**
 | `relay_down` 0→1 | 30 | 305,3762 | **Hallazgo estable**, primera recreación de asignación. |
 | `relay_down` 1→2 | 60 | 605,4717 | **Hallazgo estable**, repetición ≈300 s después. |
 
-### Hallazgo: ciclo de recreación del relay cada ≈300 s
+### Ciclo de recreación del relay cada ≈300 s: CORREGIDO y verificado en soak
 
 Para `relay_down`, muestras anteriores/posteriores: **06:59:05,053800→06:59:20,413967 UTC** y **07:04:05,067679→07:04:20,506872 UTC**. En ambos agentes y ciclos la ruta muestreada es `relay-udp`→`relay-udp`, la entrada aparece `ready`→`ready`, se conserva `relay_id=9516a091e0fff9e07468fda68491d6d5`, pero `pings_sent` de la asignación se reinicia **60→3** y `relay_ready` avanza **1→2→3**; `path_switches` no aumenta. El agente a además pasa `relay.drops.unknown_origin_or_allocation` **1→2→3**. La repetición de recreación es **MEDIDA**; su vínculo causal con la caducidad del token de 300 s es **INFERIDO**, no demostrado por un log de renovación.
 
@@ -118,11 +125,31 @@ Los logs se copiaron **antes de limpiar**, acotados a 2000 líneas por agente y 
 
 Extremos muestreados: stack 737 s; agentes primera muestra hasta t≈710 s. Sin crecimiento sobre márgenes locales; no prueba ausencia de fuga. Limpieza automática incluso con `exit 1`: **0 recursos propios**, runtime eliminado, resultados conservados; inventarios finales iguales a los iniciales. Descargas detectadas **0**, ninguna instalación/compilación.
 
-**Impacto y decisión:** se observa recreación periódica aun manteniendo la ruta nominal; los huecos entre respuestas acotan el microcorte observado a **≈0,4 s** en este entorno (406 ms el mayor), sin romper las doce transferencias TCP con digest. No es una garantía de duración por ciclo ni de pérdida cero. Se registra como **HALLAZGO CONOCIDO de rendimiento/continuidad**, no como ausencia de defectos. Propuesta **NO implementada**: renovar **make-before-break** antes de caducar el token, sin cortar la asignación vigente; requiere una decisión de diseño de la interacción **coordinator-v1/relay-v2** antes de modificar el motor.
+**Impacto histórico y corrección aplicada:** antes se observaba recreación periódica aun manteniendo la ruta nominal, con un hueco máximo entre respuestas de 406 ms y sin romper las doce transferencias TCP. Se aplicó renovación anticipada con **refresco in situ**, sin cortar la asignación vigente, y contadores de intentos/éxitos/fallos/throttling. El ensayo posterior `atenea-load-74335` verifica que desaparecen los incrementos periódicos `relay_down` y `relay_ready`; ya no es un hallazgo abierto ni se tolera en B24. Reconexión tras reinicio: **histórico ≈15–25 s; después, máximo 5,317 s (≈5,3 s) en 63 tiempos de una ejecución homogénea de 21 experimentos**, con residuo ≈5 s de rendezvous. No es un A/B controlado.
 
-**Tolerancia B24 explícita:** `known_finding=relay-token-cycle`, máximo de `floor(duración_estable/300)+1` eventos `relay_down` por agente (**3** en 720 s), con `relay_ready=relay_down+1` y tantos incrementos `relay_ready` como `relay_down`. Se imprimen siempre los eventos conocidos (a=2, b=2); no se silencian. Solo se permiten `path_lost`/`probe_failed` del directo si el arnés lo declara bloqueado y la muestra confirma ruta `relay-udp`; otros incrementos inesperados, logs de error, pérdida de ping >1 %, contadores reiniciados o evidencia ausente siguen fallando. No se transforma la excepción conocida en una aceptación del soak de 72 h.
+**B24 actual, sin excepción conocida:** exige deltas estables `relay_down=0`, `relay_ready=0` y `relay_renewal_failed=0`; para una duración estable >300 s debe existir al menos una renovación OK en el par de agentes (solo uno puede solicitarla). Solo se permiten `path_lost`/`probe_failed` del directo si el arnés lo declara bloqueado y la muestra confirma ruta `relay-udp`. Errores de logs, pérdida de ping >1 %, contadores reiniciados o evidencia ausente siguen fallando. Se eliminó la tolerancia `floor(duración_estable/300)+1`, no se desplazó `steady_since`.
 
-**Validación sin Docker posterior:** `bash -n` pasa; **10 pruebas unitarias** pasan (reloj inyectado, fallo puntual, timeout coordinado, dos ciclos conocidos permitidos, caída adicional sin su `ready` rechazada, exceso del máximo rechazado y pérdida >1 % rechazada). `check-budgets.py --self-check` pasa. `summarize.py soak tests/load/out/atenea-load-48076` pasa e imprime `CONOCIDO`; `check-budgets.py --budgets tests/load/out/atenea-load-48076/B24-budgets.json tests/load/out/atenea-load-48076/soak-summary.jsonl` pasa con a=2/b=2. El fichero B24 es una copia exacta del presupuesto, no un umbral rebajado para el ensayo.
+### Después de la corrección: `atenea-load-74335` (12 min)
+
+Carga **720,0102 s**, **72 muestras**, doce transferencias SHA-256 íntegras, media **24,99196 Mbit/s**. Ambos agentes mantuvieron `relay_down` y `relay_ready` sin cambios tras la primera muestra a t≈5,4 s. El agente b renovó a **t≈245,5 / 470,0 / 710,0 s**: `relay_renewal_attempts` y `relay_renewal_ok` **0→1→2→3**, `relay_renewal_failed=0`, `relay_renewal_throttled=0`. Los `path_lost`/`probe_failed` a 40 / 50–90–160–290–545 s siguen siendo esperados por el directo bloqueado; no son recreaciones de relay.
+
+| Evidencia | Antes: `48076` | Después: `74335` |
+| --- | --- | --- |
+| Carga / muestras | 720,0092 s / 72 | 720,0102 s / 72 |
+| `relay_down`, por agente | 0→1→2 a t≈305/605 s | Delta 0 |
+| `relay_ready`, por agente | 1→2→3 | Sin cambios (1) |
+| Renovaciones anticipadas OK | Sin evidencia de renovación | 3, agente b; fallos/throttling 0 |
+| Transferencias SHA-256 / media | 12 / 24,9801 Mbit/s | 12 / 24,99196 Mbit/s |
+| Ping enviados / recibidos | 3540 / 3537 | 3515 / 3513 |
+| Pérdida | 0,0847458 % | 0,056899 % |
+| RTT min/medio/máximo | No usado para esta comparación | 0,233 / 1,248 / 33,578 ms |
+| Criterio B24 actual | Falla: recreación estable y sin renovación OK | Pasa: renovación sin recrear relay |
+
+Después se perdieron las secuencias **882 y 1769**, aproximadamente en **176 y 354 s**; no coinciden con las renovaciones ni prueban un ciclo de relay. No se atribuye toda pérdida residual a la renovación, ni se convierte la mejora observada en garantía de continuidad absoluta.
+
+**Incidente de procedencia:** el soak `atenea-load-44042` midió un binario **antiguo** montado desde `tests/load/results/bin`; no sirve para evaluar la corrección de producción. `stack.sh` ahora rechaza binarios anteriores a las fuentes y registra su SHA-256 antes de medir. En `74335`, registrados en `/tmp/g-soak.txt`: CLI `aa81fc739b9d3ad61e1e294a693f8aaf37f990aa9e59f527528a9eef71eed18e`; agente `cefdd9e5cf2bf8b81d060f5de732af46228e075312a944ea606369a56053b327`. Esta comprobación temporal evita el incidente observado; el hash identifica los bytes medidos, no demuestra por sí solo equivalencia reproducible con un commit.
+
+**Validación posterior sin Docker:** `python3 -m unittest discover -s tests/load -p 'test_*.py'` pasa **10 pruebas**; `check-budgets.py --self-check` pasa. El reanálisis `summarize.py soak` y B24 estricto pasan en `74335`: `steady_relay_down=0`, `steady_relay_ready_changes=0`, `steady_renewal_failed=0`, `steady_renewal_ok=3`. En `48076`, ambos comandos terminan **exit 1**, como regresión negativa: `steady_relay_down=4`, `steady_relay_ready_changes=4`, `steady_renewal_ok=0`, `steady_errors=7`. El presupuesto seleccionado se conserva en `tests/load/out/atenea-load-74335/B24-budgets.json` y es copia de B24 vigente; el resto de presupuestos requieren sus propias mediciones, no se declara aceptación global.
 
 El comando global pedido `python3 tests/load/check-budgets.py tests/load/out/*/*summary.jsonl` termina **exit 1**, de forma esperada: faltan muestras en **18 presupuestos de túnel/handshake/relay** (esas mediciones no están en esos directorios) y el resumen antiguo de 6 min carece de `steady_ok`/evidencia completa. No se presenta ese resultado como aceptación global ni se rellenan datos históricos ausentes.
 
@@ -257,6 +284,70 @@ python3 tests/load/check-budgets.py --self-check
 ```
 
 El piloto debe medir otros presupuestos sobre su propio hardware; superar estas cotas en una VM compartida ocupada es una alerta a investigar, no prueba aislada de defecto de producto.
+
+## Reconexión tras reinicio: antes y después de las correcciones
+
+**MEDIDO posterior**, `tests/load/out/handshake-after/handshake.jsonl`: ejecución
+`bash tests/load/run.sh handshake` sobre binarios recompilados con
+`build-helper.sh` (SHA-256 registrados en `/tmp/g-soak.txt`, los mismos CLI/agente
+identificados para `74335`) e imágenes coordinator/relay reconstruidas. Incluye
+**63 filas y 21 experimentos**: tres controles sin flood más
+`invalid-mac1` / `valid-mac1-no-cookie` / `valid-cookie` × 1k/10k/50k INIT/s × dos
+repeticiones. En cada experimento se midieron tres pares: **0 fallos en 63 tiempos**.
+Las **21/21** paradas `atenea down` fueron <3 s; máximo **2,084 s**.
+Estos tiempos de parada son distintos del primer eco tras arrancar.
+
+| Par | Antes: 14 controles históricos, rango s | Después: media s | Mediana s | Máximo s |
+| --- | ---: | ---: | ---: | ---: |
+| a↔b | 0,05–20,58 | 0,34 | 0,065 | 3,564 |
+| c↔b | 0,17–20,92 | 0,60 | 0,173 | 4,675 |
+| a↔c | 20,06–20,81 | 5,13 | 5,072 | 5,317 |
+
+| Controles sin flood | a↔b, s | c↔b, s | a↔c, s |
+| --- | --- | --- | --- |
+| Serie posterior, R1/R2/R3 | 0,06 / 0,06 / 0,06 | 4,68 / 0,17 / 0,18 | 5,07 / 5,17 / 5,18 |
+
+Los 14 controles de `tests/load/results/handshake.jsonl` son **históricos de
+varias ejecuciones**, no una serie homogénea. Valores por orden, redondeados a
+centésimas, conservados para no ocultar ni los rápidos ni las colas:
+
+| Par | 14 controles históricos, s |
+| --- | --- |
+| a↔b | 20,31; 20,34; 0,06; 0,06; 0,06; 15,83; 0,06; 0,06; 20,58; 0,06; 0,05; 15,82; 0,07; 0,06 |
+| c↔b | 20,88; 20,92; 0,17; 0,17; 4,43; 19,94; 3,32; 0,17; 20,16; 0,18; 0,17; 20,18; 3,33; 0,18 |
+| a↔c | 20,31; 20,81; 20,56; 20,06; 20,56; 20,30; 20,31; 20,55; 20,58; 20,68; 20,30; 20,32; 20,31; 20,57 |
+
+La mejora clara y repetida es **a↔c**, par nuevo que necesita rendezvous:
+≈20 s en **14/14** controles históricos frente a **5,05–5,32 s en 21/21**
+experimentos posteriores (mínimo exacto 5,0546 s). La mayoría rondan 5,07 s;
+no se eleva el mínimo a 5,07 omitiendo observaciones. a↔b y c↔b ya eran rápidos
+en muchas ejecuciones antiguas; las colas de ≈15–20 s no aparecen en esta serie.
+El residuo de ≈5 s coincide con el paso de rendezvous de **5 s por par no
+dirigido** del coordinator, límite de diseño no cambiado.
+
+**Cautelas:** no es un A/B controlado: las observaciones históricas proceden de
+sesiones/versiones de arnés diferentes, y no se atribuye cada mejora a una
+corrección concreta. El atípico histórico de **40,6 s** con MAC1 válido sin
+cookie a 50k **no se reprodujo en dos repeticiones**, lo que no demuestra su
+ausencia. En ese modo a 50k R2 los peores fueron **3,56 s a↔b / 3,66 s c↔b**;
+a 1k, hasta **1,32 s**. Los tiempos incluyen convergencia y primer eco, no solo
+handshake criptográfico; no se convierten en SLA.
+
+**B25, alarma de laboratorio:** a↔c ≤**11 s**, a↔b y c↔b ≤**9 s**, umbrales
+de regresión de aproximadamente dos veces el peor caso observado, no promesa de
+producción. Exige 21 experimentos y los tres pares `ok=true`; selecciona el
+SHA-256 del agente posterior para no aplicar los umbrales nuevos a la serie
+histórica. La evidencia ausente o un binario distinto falla cerrado. Las
+mediciones de control plane a escala tras el índice, soak de 72 h y auditoría
+independiente continúan pendientes.
+
+Validación sin Docker: **11 pruebas unitarias** pasan y
+`check-budgets.py --self-check` pasa. El normalizador existente genera
+`tests/load/out/handshake-after/handshake-summary.jsonl` con procedencia por hash.
+La comprobación B25 sobre ese resumen pasa:
+`python3 tests/load/check-budgets.py --budgets tests/load/out/handshake-after/B25-budgets.json tests/load/out/handshake-after/handshake-summary.jsonl`.
+El presupuesto seleccionado es copia del B25 vigente; no equivale a pasar todos
+los presupuestos históricos ni a aceptación de producción.
 
 ## Resultados MEDIDOS: handshake, antes de reservar cuota de cookie por par
 

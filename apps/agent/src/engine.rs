@@ -68,8 +68,8 @@ fn backoff(failures: u32) -> Duration {
 }
 
 /// Próximo reenvío del sondeo: 1 s ±25 %.
-fn next_probe(now: Instant) -> Instant {
-    now + Duration::from_millis(750 + u64::from(crypto::random_u32() % 501))
+fn next_probe(now: Instant, random: u32) -> Instant {
+    now + Duration::from_millis(750 + u64::from(random % 501))
 }
 
 /// Información de NAT y candidatos propios que muestra el estado.
@@ -570,6 +570,7 @@ pub struct Engine {
     config_version: u64,
     last_config_error: Option<&'static str>,
     nat: Option<NatStatus>,
+    probe_random: fn() -> u32,
 }
 
 impl Engine {
@@ -602,6 +603,7 @@ impl Engine {
             config_version: 0,
             last_config_error: None,
             nat: None,
+            probe_random: crypto::random_u32,
         }
     }
 
@@ -933,7 +935,7 @@ impl Engine {
         peer.init_routes.clear();
         peer.probe = probing.then(|| Probe {
             started: now,
-            next_at: next_probe(now),
+            next_at: next_probe(now, (self.probe_random)()),
             rounds: 1,
         });
         peer.last_attempt = Some(now);
@@ -1502,7 +1504,7 @@ impl Engine {
                     let needs_relay = now.duration_since(p.started) >= RELAY_AFTER_PROBE;
                     if due {
                         p.rounds += 1;
-                        p.next_at = next_probe(now);
+                        p.next_at = next_probe(now, (self.probe_random)());
                         for t in &targets {
                             if let Some(o) =
                                 peer.send_init(Via::Direct(*t), &self.net, &self.device, now, false)
@@ -1563,7 +1565,7 @@ impl Engine {
                             out.push(Out::Udp(*t, dg.clone()));
                         }
                         kp.rounds += 1;
-                        kp.next_at = next_probe(now);
+                        kp.next_at = next_probe(now, (self.probe_random)());
                         self.counters.inc("tx_probe_ka");
                     }
                 }
@@ -2012,6 +2014,8 @@ mod tests {
 
     fn mk(cfg: &DeviceConfig, keys: StaticKeypair, _now: Instant) -> Engine {
         let mut e = Engine::new(NET, keys, 0);
+        // Solo el jitter de agenda es fijo; claves, índices y efímeras siguen aleatorios.
+        e.probe_random = || 250;
         e.apply_config(cfg);
         e
     }
@@ -2880,16 +2884,22 @@ mod tests {
         ));
         assert_eq!(first.len(), 2);
         let mut resent = 0;
-        for _ in 0..40 {
+        for tick in 1..=40 {
             l.now += Duration::from_millis(250);
-            for (_, dg) in udp_of(&l.a.on_tick(l.now, l.unix)) {
+            let burst = udp_of(&l.a.on_tick(l.now, l.unix));
+            assert_eq!(
+                burst.len(),
+                if tick < 40 && tick % 4 == 0 { 2 } else { 0 },
+                "jitter fijo de 1000 ms, tick={tick}"
+            );
+            for (_, dg) in burst {
                 assert_eq!(dg, first[0].1, "se reenvía el mismo mensaje 1");
                 resent += 1;
             }
         }
-        assert!(
-            (16..=26).contains(&resent),
-            "≈ 1 ráfaga/s a 2 candidatos durante 10 s: {resent}"
+        assert_eq!(
+            resent, 18,
+            "nueve ráfagas de reenvío a dos candidatos antes de t=10"
         );
         assert_eq!(l.a.counters.0["probe_failed"], 1);
         assert_eq!(l.a.peers[0].path_name(l.now), "none");
@@ -2899,6 +2909,54 @@ mod tests {
         l.now += Duration::from_secs(31);
         l.unix += 31;
         assert_eq!(l.a.take_rendezvous(l.now), vec![[2u8; 16]]);
+    }
+
+    #[test]
+    fn probe_jitter_extremes_preserve_exact_tick_cadence_window_and_budget() {
+        type ProbeCase = (fn() -> u32, u64, usize);
+        let cases: [ProbeCase; 4] = [
+            (|| 0, 3, 22),
+            (|| 250, 4, 18),
+            // Un intervalo de 1001 ms ya se redondea a cinco ticks de 250 ms.
+            (|| 251, 5, 14),
+            (|| 500, 5, 14),
+        ];
+        for (random, period, expected) in cases {
+            let mut l = without_static_endpoints();
+            l.a.probe_random = random;
+            l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+            let first = udp_of(&l.a.on_peer_candidates(
+                &[2; 16],
+                vec![ep(B_EP), ep("203.0.113.9:7")],
+                l.now,
+                l.unix,
+            ));
+            assert_eq!(first.len(), 2);
+            let mut resent = 0;
+            for tick in 1..=40 {
+                l.now += Duration::from_millis(250);
+                let burst = udp_of(&l.a.on_tick(l.now, l.unix));
+                let due = tick < 40 && tick % period == 0 && resent < expected;
+                assert_eq!(
+                    burst.len(),
+                    if due { 2 } else { 0 },
+                    "sample={}, tick={tick}, reenvíos={resent}",
+                    random()
+                );
+                for (_, datagram) in &burst {
+                    assert_eq!(datagram, &first[0].1, "mismo INIT durante todo el intento");
+                }
+                resent += burst.len();
+            }
+            assert_eq!(resent, expected);
+            assert!(
+                first.len() + resent <= 24,
+                "máximo doce envíos por candidato"
+            );
+            assert_eq!(l.a.counters.0["probe_failed"], 1);
+            assert!(l.a.peers[0].probe.is_none());
+            assert_eq!(l.a.peers[0].path_name(l.now), "none");
+        }
     }
 
     #[test]
@@ -2970,6 +3028,135 @@ mod tests {
             Some(first)
         );
         assert!(l.a.counters.0["probe_failed"] >= 1);
+    }
+
+    #[tokio::test]
+    async fn initial_udp_timeout_is_retried_by_engine_and_recovers() {
+        use crate::relay::{RelayClient, RelayEndpoint, RelayEvent};
+        use atenea_relay_core as wire;
+        use base64::Engine as _;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        fn unix_now() -> u64 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        }
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = socket.local_addr().unwrap().to_string();
+        let cookie_requests = Arc::new(AtomicUsize::new(0));
+        let observed = cookie_requests.clone();
+        let server = tokio::spawn(async move {
+            let cookies = wire::CookieMaker::new([9; 32], [17; 16]);
+            let mut buf = [0; wire::MAX_FRAME];
+            loop {
+                let (n, src) = socket.recv_from(&mut buf).await.unwrap();
+                let response = match wire::parse(&buf[..n]).unwrap() {
+                    wire::Message::CookieReq { .. } => {
+                        // Agotar deliberadamente los tres intentos de la apertura inicial.
+                        if observed.fetch_add(1, Ordering::SeqCst) < 3 {
+                            continue;
+                        }
+                        wire::encode_cookie(&[17; 16], &cookies.cookie(src, unix_now()))
+                    }
+                    wire::Message::Alloc {
+                        relay_id,
+                        cookie,
+                        ts,
+                        token,
+                        sig,
+                    } => {
+                        assert!(cookies.verify(src, &cookie, unix_now()));
+                        assert!(ts.abs_diff(unix_now()) <= 30);
+                        let parsed = wire::RelayToken::parse(token).unwrap();
+                        parsed
+                            .verify(
+                                &[atenea_identity::signing_key([3; 32])
+                                    .verifying_key()
+                                    .to_bytes()],
+                                unix_now(),
+                            )
+                            .unwrap();
+                        assert!(wire::verify_alloc(
+                            &parsed.src_identity_pub,
+                            &relay_id,
+                            &cookie,
+                            ts,
+                            token,
+                            &sig
+                        ));
+                        wire::encode_alloc_ok(77, 120, true)
+                    }
+                    wire::Message::Ping { alloc_id, nonce } => {
+                        wire::encode_ping(alloc_id, nonce, true)
+                    }
+                    _ => panic!("unexpected initial relay message"),
+                };
+                socket.send_to(&response, src).await.unwrap();
+            }
+        });
+        let mut l = lab();
+        l.a.on_tun(&v4(1, 2, b"demanda"), l.now, l.unix);
+        l.now += SUSPECT_AFTER;
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.take_relay_requests(l.now), vec![[2; 16]]);
+        let identity = atenea_identity::signing_key([42; 32]);
+        let token = wire::RelayToken::issue(
+            &atenea_identity::signing_key([3; 32]),
+            [17; 16],
+            NET,
+            [1; 16],
+            [2; 16],
+            identity.verifying_key().to_bytes(),
+            unix_now().saturating_sub(1),
+            unix_now() + 300,
+            [4; 8],
+        )
+        .encode();
+        let grant = RelayEndpoint {
+            relay_id: [17; 16],
+            token: base64::engine::general_purpose::STANDARD.encode(token),
+            name: "loss".into(),
+            udp: Some(endpoint),
+            tls: None,
+            tls_name: None,
+        };
+        let (client, mut events) = RelayClient::new(Default::default(), identity, [1; 16], NET);
+        client.open([2; 16], vec![grant.clone()]);
+        let down = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(down, RelayEvent::Down { .. }), "{down:?}");
+        assert_eq!(
+            client.status().entries[0].last_error.as_deref(),
+            Some("udp_timeout")
+        );
+        assert_eq!(cookie_requests.load(Ordering::SeqCst), 3);
+        l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, false, l.now);
+        l.now += RELAY_REQUEST_INTERVAL;
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.take_relay_requests(l.now), vec![[2; 16]]);
+        client.open([2; 16], vec![grant]);
+        let ready = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(ready, RelayEvent::Ready { .. }),
+            "{ready:?}; {:?}",
+            client.status()
+        );
+        l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now);
+        assert!(l.a.peers[0].stat[PathKind::RelayUdp.idx()].ready);
+        assert_eq!(l.a.counters.0["relay_requests"], 2);
+        assert_eq!(l.a.counters.0["relay_down"], 1);
+        assert_eq!(l.a.counters.0["relay_ready"], 1);
+        assert!((4..=6).contains(&cookie_requests.load(Ordering::SeqCst)));
+        server.abort();
     }
 
     #[test]

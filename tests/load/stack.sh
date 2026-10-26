@@ -60,6 +60,21 @@ for binary in atenea atenea-agent; do
   # Los helpers anteponen /cache: el bind RO selecciona el binario nuevo sin escribir el volumen.
   RUNNER_OPTIONS+=(-v "$ROOT/tests/load/results/bin/$binary:/cache/target/release/$binary:ro")
 done
+# Un binario anterior a las fuentes invalida la medición sin avisar (ya ocurrió con la corrección del relay):
+# se exige recompilar con tests/load/build-helper.sh y se registra qué binario se midió.
+python3 - "$ROOT" <<'PY'
+import hashlib, os, subprocess, sys
+root = sys.argv[1]
+files = subprocess.check_output(
+    ["git", "-C", root, "ls-files", "-co", "--exclude-standard", "--", "apps", "crates", "Cargo.toml", "Cargo.lock"],
+    text=True).split()
+newest = max(os.path.getmtime(os.path.join(root, f)) for f in files if os.path.exists(os.path.join(root, f)))
+for binary in ("atenea", "atenea-agent"):
+    path = os.path.join(root, "tests/load/results/bin", binary)
+    if os.path.getmtime(path) < newest:
+        sys.exit(f"{binary} es anterior a las fuentes: ejecute bash tests/load/build-helper.sh")
+    print(f"binario medido {binary}: sha256={hashlib.sha256(open(path, 'rb').read()).hexdigest()}", file=sys.stderr)
+PY
 if [[ "$MODE" == control ]]; then
   [[ -x tests/load/results/bin/atenea-load-sign ]] || { echo 'Falta tests/load/results/bin/atenea-load-sign compilado offline' >&2; exit 2; }
   RUNNER_OPTIONS+=(-e ATENEA_LOAD_SIGNER=/load-bin/atenea-load-sign)

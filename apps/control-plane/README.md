@@ -64,6 +64,8 @@ cargo run -p atenea-control-plane -- --migrate
 
 `--migrate` aplica las migraciones y termina, sin arrancar el servidor. Arranque después el servicio con la URL del rol limitado. El servicio rechaza roles con permisos de modificación destructiva de auditoría. El administrador de PostgreSQL debe configurar separadamente la contraseña/autenticación del rol; no publique ese secreto. Las migraciones versionadas están en `migrations/`. Haga copia y ensaye restauración antes de actualizar producción.
 
+El release actual aplica **0001–0005**. Según ADR-009 §7, migre **antes de desplegar el binario nuevo**, con N todavía sobre el esquema ampliado de N+1; el rollback cambia binarios, no deshace el esquema. `0005_ip_allocations_device_family.sql` añade `ip_allocations_device_family(device_id,family) INCLUDE(addr)` mediante `CREATE INDEX IF NOT EXISTS` normal dentro de la transacción SQLx. La creación bloquea brevemente las escrituras de `ip_allocations`: reserve una ventana pequeña antes del despliegue. Se conservan ambos índices únicos anteriores; no cambia IPAM ni la API. No use `CREATE INDEX CONCURRENTLY` dentro de esa transacción.
+
 ## Emisor y certificado por red
 
 1. En la estación offline, `atenea root-init --out /ruta/offline/root.key` crea la raíz e imprime el ancla pública. Guarde esa raíz **fuera del control plane**.

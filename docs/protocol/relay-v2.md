@@ -114,6 +114,20 @@ Se conservan respuestas uniformes: 401 invalid_signature, 409 not_announced, 404
 
 Cliente: `open(peer, grants)` donde cada grant contiene endpoint+relay_id+token, sin token global. Verifica estructura v2 y coherencia de ID/src/dst/red antes de conectar (esto no sustituye la firma que verifica el relay); rechaza concesión antigua/incompleta con error local de protocolo, sin intentar v1. Conservar saneado de ≤4 destinos, DNS con plazo y conexión a la IP verificada, excluir loopback/link-local/multicast/redes del túnel y subredes servidas. Por relay candidato, UDP primero (cookie→ALLOC, 1 s, hasta tres intentos), luego TLS si está disponible, usando **su propio token**; renovar cada 60 s, volver a pedir concesión al caducar. Cambiar de relay exige el token de ese ID, nunca reciclar el anterior. PING cada 5 s. Eventos Rx deben incluir `relay_id` además de peer, transporte y bytes para la cookie E2E de wire-v2; metadatos tomados de la asignación local, no de bytes del peer.
 
+**Nota operativa del agente (aplicado el 2026-10-26, sin cambio del contrato
+de cable):** obtiene concesiones anticipadamente aun con el relay listo
+([plazos y backoff](../../apps/agent/README.md#transporte-estado-y-recuperación)).
+El `upsert` implementado conserva el `alloc_id` para la misma clave
+`(network,src,dst)`; refrescar con otro token válido del mismo relay y la misma
+vinculación no requiere dos filas ni reiniciar el worker. El cliente distingue
+la credencial confirmada de la pendiente: solo ALLOC_OK instala esta última.
+Un rechazo o pérdida conserva la autorización previa únicamente hasta el menor
+deadline vigente de token/asignación; el cliente corta en `not_after`, sin usar
+la tolerancia de 30 s del servidor. Retirar la audiencia sigue cerrando la
+asignación. Cada ALLOC conserva cookie, timestamp y prueba de posesión nuevos;
+la renovación no autoriza reutilizar un token entre IDs ni promete solapamiento
+entre relays o bindings distintos.
+
 ## 7. Caminos y despliegue
 
 Conservar preferencia directo > relay UDP > relay TLS; un camino solo sano tras datos de sesión autenticados en últimos 9 s. Keepalive 4 s con alternativa, 15 s si único. Tras 4 s de tráfico sin retorno o sondeo directo sin éxito, solicitar relay (≤cada 5 s); al estar listo, enviar keepalive si hay sesión o INIT pendiente. Handshakes pueden viajar por directo y relay, pero **cada envío INIT aplica MAC2 de su contexto**, no reutiliza ciegamente el datagrama con cookie de otro camino; respuesta/cookie vuelve por el camino de entrada. Respuesta de cookie no cuenta como salud. Reintentos conservan ventana 10 s y presupuesto 12/candidato.

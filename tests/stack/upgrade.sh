@@ -217,7 +217,7 @@ check_data
 printf 'PASS N schema=1,2; datos=%s\n' "$BASELINE"
 stop
 migrate "$NEW_DIGEST"
-check_versions 1,2,3,4
+check_versions 1,2,3,4,5
 start "$NEW_DIGEST"
 probe next
 check_data
@@ -226,7 +226,7 @@ stop
 start "$OLD_DIGEST"
 probe compatibility
 check_data
-check_versions 1,2,3,4
+check_versions 1,2,3,4,5
 printf 'PASS N sobre schema N+1 (sin down migrations)\n'
 stop
 start "$NEW_DIGEST"
@@ -236,7 +236,7 @@ stop
 start "$OLD_DIGEST"
 probe rollback
 check_data
-check_versions 1,2,3,4
+check_versions 1,2,3,4,5
 [ "$(sql -c "SELECT count(*) FROM organizations WHERE name IN ('write-initial','write-next','write-compatibility','write-before-rollback','write-rollback')")" = 5 ]
 [ "$(sql -c "SELECT dns_servers::text || '|' || dns_domains::text FROM networks WHERE id='00000000-0000-0000-0000-000000000003'")" = '["10.42.0.2"]|["upgrade.internal"]' ]
 printf 'PASS rollback digest=%s; datos=%s; 5 escrituras y DNS N+1 conservados\n' "$OLD_DIGEST" "$BASELINE"

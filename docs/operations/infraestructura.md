@@ -206,7 +206,7 @@ El rollback cambia **digests**, no deshace datos, configuración pública ni sec
 No combinar una rotación incompatible con un cambio de versión. Respetar
 expand/contract; no borrar columnas hasta retirar la versión anterior.
 La salud Compose no demuestra compatibilidad de datos: el ensayo específico de
-`tests/stack/upgrade.sh` cubre migración 0003 y datos entre binarios N/N+1;
+`tests/stack/upgrade.sh` exige actualmente las migraciones **0001–0005** de N+1 sobre N (0001/0002) y conserva datos entre ambos binarios; la evidencia histórica siguiente cubrió 0003, no acredita todavía el laboratorio con 0005;
 el ensayo Ansible usa imágenes locales y no prueba un release publicado.
 
 ## Ensayo reproducible y límites

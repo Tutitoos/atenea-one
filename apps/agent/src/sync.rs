@@ -357,6 +357,7 @@ mod tests {
             rx_packets: 0,
             drops: Default::default(),
             last_error: None,
+            renew_at: u64::MAX,
         });
         let known = serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap();
         assert_eq!(known["paths"][1]["relay"], "sintético");

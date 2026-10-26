@@ -1,6 +1,6 @@
 # Revisión interna de seguridad (fase 11): resumen sanitizado para el auditor externo
 
-Referencia de código: `git rev-parse HEAD` = `a0f8ac71b5e83607603c45b46113a2aa0ea607b6` (2026-10-26). Este documento **no es una auditoría ni una garantía**: resume una revisión interna hecha por lectura, lo que se cambió después y lo que sigue abierto. La auditoría independiente sigue pendiente y es bloqueante ([matriz, caso «Auditoría independiente»](../operations/matriz-de-aceptacion.md)).
+Referencia de código de la revisión histórica: `a0f8ac71b5e83607603c45b46113a2aa0ea607b6` (2026-10-26); las correcciones y mediciones posteriores se distinguen en §6.3 y no se atribuyen a ese commit. Este documento **no es una auditoría ni una garantía**: resume una revisión interna hecha por lectura, lo que se cambió después y lo que sigue abierto. La auditoría independiente sigue pendiente y es bloqueante ([matriz, caso «Auditoría independiente»](../operations/matriz-de-aceptacion.md)).
 
 ## Etiquetas de evidencia
 
@@ -8,7 +8,7 @@ Referencia de código: `git rev-parse HEAD` = `a0f8ac71b5e83607603c45b46113a2aa0
 - **PARCIAL**: hay evidencia, pero falta parte del criterio.
 - **SIN COMPROBAR**: no hay evidencia en el repositorio ni la he leído.
 - **INFERIDO**: deducción mía a partir de lo leído, no observada.
-- Nada de este documento afirma que se hayan ejecutado pruebas, builds o CI; las ejecuciones que se citan son las que **otros documentos** del repositorio declaran (se indica el documento).
+- No se ejecutaron pruebas, builds ni CI para esta actualización documental; se citan resultados declarados por otros documentos o comunicados del laboratorio, distinguiendo su procedencia.
 
 ## 1. Qué fue la revisión y qué límites tiene
 
@@ -56,7 +56,7 @@ Conclusión negativa declarada por los informes (no es garantía): no se encontr
 
 ## 4. Correcciones: qué consta en el repositorio
 
-Estado del código corregido = commits siguientes. **INFERIDO** que corrijan el hallazgo: lo he emparejado por nombre de prueba y mensaje de commit, **no** he ejecutado nada ni releído cada cambio línea a línea.
+Estado histórico del código corregido = commits siguientes. **INFERIDO** que corrijan el hallazgo: lo he emparejado por nombre de prueba y mensaje de commit, **no** he ejecutado nada ni releído cada cambio línea a línea. Las correcciones posteriores del índice de `ip_allocations`, renovación anticipada del relay y reintento de presencia se separan en §6.3.
 
 | Commit | Contenido (mensaje de git) |
 | --- | --- |
@@ -133,10 +133,20 @@ Fuente normativa: [modelo de amenazas](../security/threat-model.md), [wire-v2](.
 - **T29**: el entorno `release` y la protección de ramas/tags **no** son demostrables desde el repo; PKG/ZIP sin firma nativa; la clave de firma es un secreto de GitHub. La CI atestigua lo que pasó por el workflow, no una construcción reproducible. SIN COMPROBAR contra GitHub real.
 - **Fuzzing**: A señaló que `signed_config_verify` casi nunca superaba la verificación de firma y que faltaba un objetivo para la máquina de estados; `53351b6` añade `agent_engine` y rehace `signed_config_verify` (VERIFICADO por los ficheros del commit). La primera ejecución de los 13 objetivos se registra en `fuzz/README.md` (`954a503`); no repetida por mí. Resultados de cobertura y regresiones: PARCIAL.
 
-### 6.3 Evidencia operativa del cierre (VERIFICADO por lectura de los documentos citados)
+### 6.3 Evidencia operativa: corregidos tras revisión y límites abiertos
 
-- **Soak**: solo ensayos de 6 y 12 min; el de 72 h **no se ha ejecutado**. El ensayo de 12 min termina con hallazgo estable: la asignación de relay se recrea cada ≈ 300 s (3 pérdidas de ping en 3540, 0,085 %); el criterio estricto inicial falló y se añadió una excepción **declarada** («conocido»), sin que ello sea aceptación del soak ([rendimiento](../operations/rendimiento-y-presupuestos.md)). Intentos históricos fallidos documentados por problemas del arnés.
-- **Hallazgos de rendimiento abiertos**: un valor atípico de 40,6 s de primer eco con MAC1 válido bajo flood (R1) que R2 no reprodujo; reconexión tras reinicio hasta ≈ 25 s; control plane con 10 000 dispositivos **repartidos en 79 redes de hasta 128** (el máximo admitido por red es 256) y 200 clientes, con p95 ≈ 15–19,5 s (no aceptable como interactivo; [diagnóstico](../operations/diagnostico-control-plane-escala.md)); a 16 pares agregados por relay se perdió el 82–87 % con CPU ≈ un núcleo.
+**Corregidos tras revisión** (resultados comunicados del laboratorio; no ejecutados para esta actualización):
+
+- **Control plane**: aplicado el índice de `ip_allocations`; la mejora de extremo a extremo sigue sin medir ([diagnóstico](../operations/diagnostico-control-plane-escala.md)).
+- **Relay y presencia**: renovación anticipada con refresco in situ y reintento de presencia aplicados. El soak `tests/load/out/atenea-load-74335` duró 720 s con 72 muestras: no hubo cambios de `relay_down`/`relay_ready` tras t≈5,4 s en ambos agentes; b renovó a t≈245,5/470/710 s, con `attempts`/`ok` 0→1→2→3 y `failed`/`throttled` en 0. El anterior `48076` registró caídas a ≈305/605 s, hueco de 406 ms y pérdida de ping de 0,0847 %.
+- **Resultado y procedencia del soak corregido**: 12 SHA íntegros, media 24,99 Mbit/s, ping 3515/3513 (pérdida 0,0569 %), RTT mín./media/máx. 0,233/1,248/33,578 ms. Las pérdidas en secuencias 882/1769 (≈176/354 s) no coinciden con las renovaciones; `path_lost` a 40 s y `probe_failed` a 50/90/160/290/545 s son esperados con el directo bloqueado. `/tmp/g-soak.txt` registra hashes de `atenea` (`aa81fc73…ed18e`) y agente (`cefdd9e5…3b327`). El ensayo `44042` usó un binario antiguo montado desde `tests/load/results/bin`, no acredita las correcciones; el stack ahora rechaza binarios anteriores a fuentes y registra SHA-256. Detalle en [evidencia](evidencia.md#correcciones-posteriores-y-evidencia-operativa) y [rendimiento](../operations/rendimiento-y-presupuestos.md).
+- **Reconexión tras reinicio: corregida y medida en laboratorio**. `tests/load/out/handshake-after/handshake.jsonl`: 63 filas/tiempos, 21 experimentos (3 controles y 3 modos: `invalid-mac1`, `valid-mac1-no-cookie`, `valid-cookie` × 1k/10k/50k × 2 repeticiones), todos OK, **0 fallos**, máximo **5,317 s**. a-c queda en 5,05–5,32 s en 21/21 (mínimo exacto 5,0546 s); el residuo ≈5 s coincide con el rendezvous por par no dirigido de 5 s del coordinator, cuyo diseño no cambió. Parada <3 s en 21/21 (máximo 2,084 s). Se usaron los mismos hashes de `/tmp/g-soak.txt` que `74335`, con imágenes de coordinator/relay reconstruidas; las salidas son locales, no verificables desde un clon.
+- **Cautela de comparación**: los 14 controles históricos proceden de sesiones/arnés heterogéneos: a-c ≈20 s en 14/14 y a-b/c-b a menudo rápidos con colas de 15–20 s. **No es un A/B controlado ni permite adjudicar cada mejora a una corrección**. El atípico histórico de 40,6 s con MAC1 válido sin cookie a 50k no se reprodujo en las dos repeticiones actuales (50k R2: a-b/c-b 3,56/3,66 s; a 1k hasta 1,32 s), sin demostrar su ausencia futura. Detalle en [evidencia](evidencia.md#correcciones-posteriores-y-evidencia-operativa).
+
+**Abiertos o parciales**:
+
+- **Soak largo**: el corregido cubre **12 min, no 72 h**. El de 72 h no se ha ejecutado; no se declara aceptación del soak ni auditoría independiente.
+- **Rendimiento a escala**: control plane con 10 000 dispositivos **repartidos en 79 redes de hasta 128** (máximo 256 por red) y 200 clientes: p95 ≈15–19,5 s histórico, no una medición posterior al índice; mejora de extremo a extremo sin medir ([diagnóstico](../operations/diagnostico-control-plane-escala.md)). A 16 pares agregados por relay se perdió el 82–87 % con CPU ≈un núcleo.
 - **Multipar**: dos defectos de sondeo corregidos con pruebas que fallaban antes; N=8 bloqueado pasó de 17/28 a 28/28 con `MAX_PER_IP=64`, pero la atribución al episodio histórico sigue siendo **INFERENCIA** ([caídas y leases](../operations/caidas-y-leases.md)).
 - **Fallos y recuperación**: simulacros CP/BD con corte a `valid_until + 30 s` (medido, **histórico pre-v2**, no repetido tras el cutover); restauración medida con datos pequeños en Docker/Mac; destino off-node de copias y ensayo de pérdida simultánea sin comprobar ([copias](../operations/copias-y-recuperacion.md), [soporte](../operations/soporte-limites-y-recuperacion.md)).
 - **Procedencia de resultados LOCAL-V2**: las salidas `/tmp/v2-*.txt` **no están versionadas** y se ejecutaron sobre un árbol previo a `d9ab7ec` con ediciones entre tandas; solo la CI se atribuye a ese commit. Datos citados por la matriz, no verificables desde un clon.
@@ -169,7 +179,7 @@ Todas dependen de decisiones fuera de este documento; no son una afirmación de 
 
 1. Auditoría independiente de protocolo, crypto, privilegios y autorización con informe versionado, alcance y resolución de críticos/altos ([matriz](../operations/matriz-de-aceptacion.md)). **No cumplida.**
 2. Revalidar con wire v2 / relay v2 los simulacros de caída y lease del piloto (hoy históricos pre-v2) y archivar salidas sanitizadas para que se puedan reproducir desde un clon.
-3. Soak de 72 h con el piloto autorizado; resolver o aceptar por escrito el ciclo de ≈ 300 s del relay.
+3. Soak de 72 h con el piloto autorizado y binarios de procedencia registrada; comprobar en ese horizonte la renovación anticipada corregida. El ensayo de 12 min no cumple esta condición.
 4. Confirmar en GitHub el environment de `release` (revisores, solo tags) y decidir el custodio hardware de la clave de firma.
 5. Retirar las dos excepciones de `deny.toml` antes de 2027-01-23 o renovarlas con justificación nueva.
 6. Implementar o reevaluar ACL con seguimiento de conexiones (C-F6) y decidir sobre dominios DNS públicos (B-F7).

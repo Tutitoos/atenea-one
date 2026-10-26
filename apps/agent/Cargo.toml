@@ -37,6 +37,11 @@ socket2 = "0.6"
 clap.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+atenea-coordinator = { path = "../coordinator" }
+atenea-relay = { path = "../relay" }
+axum = "0.8"
+
 [dev-dependencies]
 rcgen = "0.14"
 

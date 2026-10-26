@@ -181,6 +181,38 @@ fn status_error(code: u16) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestError {
+    pub reason: &'static str,
+    pub retry_after: Option<Duration>,
+}
+
+impl From<&'static str> for RequestError {
+    fn from(reason: &'static str) -> Self {
+        Self {
+            reason,
+            retry_after: None,
+        }
+    }
+}
+
+fn response_error(response: &ureq::http::Response<ureq::Body>) -> RequestError {
+    let retry_after = response
+        .headers()
+        .get("Retry-After")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| {
+            s.parse::<u64>()
+                .ok()
+                .filter(|s| *s <= 60)
+                .map(Duration::from_secs)
+        });
+    RequestError {
+        reason: status_error(response.status().as_u16()),
+        retry_after,
+    }
+}
+
 /// Presencia: la configuración firmada vigente (el coordinator la verifica) y los candidatos propios.
 pub fn announce(
     cfg: &CoordinatorConfig,
@@ -189,7 +221,7 @@ pub fn announce(
     signed_config: &[u8],
     candidates: &[SocketAddr],
     ts: u64,
-) -> Result<(), &'static str> {
+) -> Result<(), RequestError> {
     let (url, pq) = target(cfg, "/v1/announce")?;
     let body = serde_json::json!({
         "config": base64::engine::general_purpose::STANDARD.encode(signed_config),
@@ -206,7 +238,7 @@ pub fn announce(
         .map_err(|_| "error de red")?;
     match response.status().as_u16() {
         200 => Ok(()),
-        c => Err(status_error(c)),
+        _ => Err(response_error(&response)),
     }
 }
 
@@ -248,7 +280,7 @@ pub fn relay(
     device: DeviceId,
     peer: DeviceId,
     ts: u64,
-) -> Result<RelayGrant, &'static str> {
+) -> Result<RelayGrant, RequestError> {
     let (url, pq) = target(cfg, "/v1/relay")?;
     let body = serde_json::json!({ "peer": atenea_crypto::hex::encode(&peer) })
         .to_string()
@@ -264,10 +296,10 @@ pub fn relay(
         200 => {
             let bytes = read_limited(&mut response)?;
             let raw: RawRelay = serde_json::from_slice(&bytes).map_err(|_| "respuesta inválida")?;
-            grant(raw.relays).ok_or("respuesta inválida")
+            grant(raw.relays).ok_or_else(|| "respuesta inválida".into())
         }
-        503 => Err("relay no disponible"),
-        c => Err(status_error(c)),
+        503 => Err("relay no disponible".into()),
+        _ => Err(response_error(&response)),
     }
 }
 
@@ -507,12 +539,39 @@ mod tests {
         ] {
             let (url, h) = serve("200 OK", body);
             assert_eq!(
-                relay(&cfg(&url), &key, [2; 16], [3; 16], 100),
+                relay(&cfg(&url), &key, [2; 16], [3; 16], 100).map_err(|e| e.reason),
                 Err("respuesta inválida")
             );
             h.join().unwrap();
         }
     }
+    #[test]
+    fn announce_and_relay_preserve_bounded_retry_after_seconds() {
+        let key = atenea_identity::signing_key([1; 32]);
+        for (header, expected) in [
+            ("7", Some(Duration::from_secs(7))),
+            ("0", Some(Duration::ZERO)),
+            ("61", None),
+            ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+            ("invalid", None),
+        ] {
+            let status = format!("429 Too Many Requests\r\nRetry-After: {header}");
+            let (url, server) = serve(&status, "{}");
+            let error = announce(&cfg(&url), &key, [2; 16], b"AOCF", &[], 100).unwrap_err();
+            assert_eq!(error.retry_after, expected);
+            assert_eq!(error.reason, "límite de tasa");
+            server.join().unwrap();
+            let (url, server) = serve(&status, "{}");
+            assert_eq!(
+                relay(&cfg(&url), &key, [2; 16], [3; 16], 100)
+                    .unwrap_err()
+                    .retry_after,
+                expected
+            );
+            server.join().unwrap();
+        }
+    }
+
     #[test]
     fn announce_sends_base64_config_and_maps_errors() {
         let key = atenea_identity::signing_key([1; 32]);
@@ -537,13 +596,14 @@ mod tests {
         ] {
             let (url, h) = serve(st, "{}");
             assert_eq!(
-                announce(&cfg(&url), &key, [2; 16], b"AOCF", &[], 100),
+                announce(&cfg(&url), &key, [2; 16], b"AOCF", &[], 100).map_err(|e| e.reason),
                 Err(msg)
             );
             h.join().unwrap();
         }
         assert_eq!(
-            announce(&cfg("http://127.0.0.1:1"), &key, [2; 16], b"AOCF", &[], 100),
+            announce(&cfg("http://127.0.0.1:1"), &key, [2; 16], b"AOCF", &[], 100)
+                .map_err(|e| e.reason),
             Err("error de red")
         );
     }

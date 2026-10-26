@@ -1178,9 +1178,21 @@
       "id": "B24-soak-steady",
       "match": {"kind": "soak-stack-summary"},
       "samples": 1,
-      "require": {"steady_ok": true, "ok": true, "known_finding": "relay-token-cycle"},
+      "require": {"steady_ok": true, "ok": true},
       "min": {"steady_samples": 2},
-      "max": {"steady_errors": 0, "ping_loss_percent": 1}
+      "max": {"steady_errors": 0, "ping_loss_percent": 1, "steady_relay_down": 0,
+              "steady_relay_ready_changes": 0, "steady_renewal_failed": 0}
+    },
+    {
+      "id": "B25-reconexion-post-correcciones",
+      "scope": "Alarma de regresión de laboratorio (~2x peor caso medido), no SLA ni A/B controlado",
+      "match": {
+        "kind": "handshake-flood",
+        "agent_sha256": "cefdd9e5cf2bf8b81d060f5de732af46228e075312a944ea606369a56053b327"
+      },
+      "samples": 21,
+      "require": {"timings.a-b.ok": true, "timings.c-b.ok": true, "timings.a-c.ok": true},
+      "max": {"timings.a-b.first_ping_s": 9, "timings.c-b.first_ping_s": 9, "timings.a-c.first_ping_s": 11}
     }
   ]
 }

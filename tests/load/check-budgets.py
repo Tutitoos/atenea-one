@@ -33,14 +33,8 @@ def check(rows, budgets):
                     if type(value) is not type(expected) or value != expected:
                         failures.append(f"{budget['id']}: {metric} no cumple {expected}")
                 if row.get('kind') == 'soak-stack-summary':
-                    limit = math.floor(nested(row, 'steady_duration_s')/300)+1
-                    if nested(row, 'known_finding_limit_per_agent') != limit:
-                        failures.append(budget['id']+': tolerancia de relay inválida')
-                    for agent in ('a', 'b'):
-                        down = nested(row, 'known_finding_events.'+agent)
-                        ready = nested(row, 'steady_relay_ready.'+agent)
-                        if down < 0 or down != int(down) or down > limit or ready != down+1:
-                            failures.append(budget['id']+': ciclo relay fuera de tolerancia: '+agent)
+                    if nested(row, 'steady_duration_s') > 300 and nested(row, 'steady_renewal_ok') < 1:
+                        failures.append(budget['id']+': faltan renovaciones relay OK en estado estable')
                 for metric, maximum in budget.get('max', {}).items():
                     value = nested(row, metric)
                     if value > maximum:
@@ -94,9 +88,6 @@ def main():
     failures=check(rows,json.loads(args.budgets.read_text())['budgets'])
     for failure in failures:print('FAIL '+failure,file=sys.stderr)
     if failures:raise SystemExit(1)
-    for row in rows:
-        if row.get('known_finding') == 'relay-token-cycle' and any(row.get('known_finding_events', {}).values()):
-            print('CONOCIDO relay-token-cycle: '+json.dumps(row['known_finding_events']))
     print('OK presupuestos locales Docker/Mac arm64; no dimensiona VPS')
 
 if __name__=='__main__':main()

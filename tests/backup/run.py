@@ -121,8 +121,8 @@ def cycle(n):
             assert sql('select count(*) from device_routes')=='0'
             assert sql('select max(committed_at) from restore_markers')==last_commit
             run('exec',pg,'pg_amcheck','-U','postgres','-d','atenea','--install-missing')
-            # Un esquema futuro real (columna + migración 4) no se abre con el migrador 0001–0003.
-            sql("ALTER TABLE devices ADD COLUMN restore_future boolean; INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(4,'esquema futuro del simulacro',true,decode('00','hex'),0)")
+            # Un esquema futuro real (columna + migración 6) no se abre con el migrador 0001–0005.
+            sql("ALTER TABLE devices ADD COLUMN restore_future boolean; INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(6,'esquema futuro del simulacro',true,decode('00','hex'),0)")
             mismatch=run('exec','-e',f'ATENEA_CP_DATABASE_URL=postgres://postgres:{password}@postgres/atenea',lab,'atenea-control-plane','--migrate',check=False)
             assert mismatch.returncode != 0, mismatch.stdout
             started=destroy(); restore('--type=time','--target='+target,'--target-action=promote'); start_lab(); client('probe')

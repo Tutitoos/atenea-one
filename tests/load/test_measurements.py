@@ -44,14 +44,19 @@ class Measurements(unittest.TestCase):
         self.assertFalse(summarize.steady_counters([])['steady_ok'])
         final = dict(kind='soak-summary', wall_unix=730)
         sample['wall_unix'] = 720
-        for n in ('a','b'):
-            sample['agent_counters'][n].update(relay_down=2, relay_ready=3)
+        sample['agent_counters']['a']['relay_down'] = 0
+        sample['agent_counters']['b'].update(relay_renewal_attempts=3, relay_renewal_ok=3, relay_renewal_failed=0)
         result = summarize.steady_counters([mark, sample, final])
         self.assertTrue(result['steady_ok'])
-        self.assertEqual(result['known_finding'], 'relay-token-cycle')
-        sample['agent_counters']['a']['relay_down'] = 3
+        self.assertEqual(result['steady_renewal_ok'], 3)
+        sample['agent_counters']['a']['relay_down'] = 1
         self.assertFalse(summarize.steady_counters([mark, sample, final])['steady_ok'])
-        sample['agent_counters']['a'].update(relay_down=4, relay_ready=5)
+        sample['agent_counters']['a']['relay_down'] = 0
+        sample['agent_counters']['b']['relay_renewal_ok'] = 0
+        self.assertFalse(summarize.steady_counters([mark, sample, final])['steady_ok'])
+        sample['agent_counters']['b'].update(relay_renewal_ok=3, relay_renewal_failed=1)
+        self.assertFalse(summarize.steady_counters([mark, sample, final])['steady_ok'])
+        sample['agent_counters']['b'].update(relay_renewal_failed=0, relay_ready=2)
         self.assertFalse(summarize.steady_counters([mark, sample, final])['steady_ok'])
 
     def test_soak_budget_rejects_missing_or_failed_steady_evidence(self):
@@ -59,14 +64,35 @@ class Measurements(unittest.TestCase):
         budget = [r for r in json.loads(Path(__file__).with_name('budgets.json').read_text())['budgets']
                   if r['id'] == 'B24-soak-steady']
         good = dict(kind='soak-stack-summary', steady_ok=True, ok=True, steady_samples=72, steady_errors=0,
-            known_finding='relay-token-cycle', steady_duration_s=720, known_finding_limit_per_agent=3,
-            known_finding_events={'a':2, 'b':2}, steady_relay_ready={'a':3, 'b':3}, ping_loss_percent=.085)
+            steady_duration_s=720, steady_relay_down=0, steady_relay_ready_changes=0,
+            steady_renewal_ok=3, steady_renewal_failed=0, ping_loss_percent=.085)
         self.assertEqual(budgets.check([good], budget), [])
         self.assertTrue(budgets.check([dict(good, steady_errors=1)], budget))
         self.assertTrue(budgets.check([dict(kind='soak-stack-summary', ok=True)], budget))
-        self.assertTrue(budgets.check([dict(good, known_finding_events={'a':4,'b':2}, steady_relay_ready={'a':5,'b':3})], budget))
-        self.assertTrue(budgets.check([dict(good, known_finding_events={'a':3,'b':2})], budget))
+        self.assertTrue(budgets.check([dict(good, steady_relay_down=1)], budget))
+        self.assertTrue(budgets.check([dict(good, steady_renewal_ok=0)], budget))
+        self.assertTrue(budgets.check([dict(good, steady_relay_ready_changes=1)], budget))
+        self.assertTrue(budgets.check([dict(good, steady_renewal_failed=1)], budget))
         self.assertTrue(budgets.check([dict(good, ping_loss_percent=1.01)], budget))
+
+    def test_reconnection_lab_alarm_rejects_slow_failed_or_missing_pairs(self):
+        import json
+        from copy import deepcopy
+        budget = next(r for r in json.loads(Path(__file__).with_name('budgets.json').read_text())['budgets']
+                      if r['id'] == 'B25-reconexion-post-correcciones')
+        good = dict(budget['match'], timings={pair:dict(ok=True, first_ping_s=seconds)
+                    for pair,seconds in (('a-b', 3.564), ('c-b', 4.675), ('a-c', 5.317))})
+        self.assertEqual(budgets.check([good]*21, [budget]), [])
+        self.assertTrue(budgets.check([good]*20, [budget]))
+        for pair,maximum in (('a-b', 9), ('c-b', 9), ('a-c', 11)):
+            bad = deepcopy(good)
+            bad['timings'][pair]['first_ping_s'] = maximum+.01
+            self.assertTrue(budgets.check([good]*20+[bad], [budget]))
+            bad['timings'][pair].update(first_ping_s=0, ok=False)
+            self.assertTrue(budgets.check([good]*20+[bad], [budget]))
+        bad = deepcopy(good)
+        del bad['timings']['a-c']
+        self.assertTrue(budgets.check([good]*20+[bad], [budget]))
 
     def test_deadline_terminates_process_group_and_waits_for_cleanup(self):
         with patch.object(load_timeout.subprocess, 'Popen') as popen, \

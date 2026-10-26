@@ -114,6 +114,8 @@ pub struct AllocationStatus {
     pub rx_packets: u64,
     pub drops: BTreeMap<String, u64>,
     pub last_error: Option<String>,
+    #[serde(skip)]
+    pub(crate) renew_at: u64,
 }
 
 struct Entry {
@@ -170,6 +172,7 @@ pub struct RelayClient {
     hub: Arc<OnceCell<Hub>>,
     drops: Arc<Mutex<BTreeMap<String, u64>>>,
     timing: Timing,
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 fn count(drops: &mut BTreeMap<String, u64>, reason: &str) {
@@ -231,6 +234,7 @@ impl RelayClient {
                 hub: Arc::new(OnceCell::new()),
                 drops: Arc::new(Mutex::new(BTreeMap::new())),
                 timing: Timing::default(),
+                clock: Arc::new(now),
             },
             rx,
         )
@@ -260,6 +264,7 @@ impl RelayClient {
             rx_packets: 0,
             drops: BTreeMap::new(),
             last_error: None,
+            renew_at: u64::MAX,
         }));
         let worker = Worker {
             peer,
@@ -273,6 +278,7 @@ impl RelayClient {
             hub: self.hub.clone(),
             drops: self.drops.clone(),
             timing: self.timing,
+            clock: self.clock.clone(),
         };
         let task = tokio::spawn(worker.run(grants_rx, rx));
         entries.insert(
@@ -321,6 +327,19 @@ impl RelayClient {
         }
     }
 
+    /// Solo la credencial confirmada por ALLOC_OK decide cuándo solicitar otra.
+    pub fn renewal_requests(&self, unix: u64) -> Vec<DeviceId> {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(peer, entry)| {
+                let status = entry.status.lock().unwrap();
+                (status.state == "ready" && unix >= status.renew_at).then_some(*peer)
+            })
+            .collect()
+    }
+
     pub fn status(&self) -> RelayStatus {
         let entries = self.entries.lock().unwrap();
         let mut statuses: Vec<_> = entries
@@ -355,6 +374,7 @@ struct Worker {
     hub: Arc<OnceCell<Hub>>,
     drops: Arc<Mutex<BTreeMap<String, u64>>>,
     timing: Timing,
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 enum Link {
@@ -429,7 +449,7 @@ impl Worker {
         }
     }
     fn alloc(&self, token: &[u8], cookie: &[u8; 16]) -> Vec<u8> {
-        let ts = now();
+        let ts = (self.clock)();
         wire::encode_alloc(
             &self.relay_id,
             cookie,
@@ -449,8 +469,8 @@ impl Worker {
         {
             return Err("token_identity");
         }
-        if t.not_after <= now()
-            || t.not_before > now().saturating_add(30)
+        if t.not_after <= (self.clock)()
+            || t.not_before > (self.clock)().saturating_add(30)
             || t.not_after <= t.not_before
             || t.not_after - t.not_before > wire::MAX_TOKEN_TTL_SECS
         {
@@ -458,6 +478,18 @@ impl Worker {
         }
         Ok(t.not_after)
     }
+
+    fn confirmed_token(&self, bytes: &[u8]) {
+        let token = wire::RelayToken::parse(bytes).expect("validated token");
+        let life = token.not_after.saturating_sub(token.not_before);
+        // El ID menor solicita primero; el otro toma el relevo si pierde el evento inverso.
+        let margin = if self.device < self.peer { 60 } else { 30 };
+        let jitter = u64::from(token.token_id[0] % 6);
+        self.status.lock().unwrap().renew_at = token
+            .not_after
+            .saturating_sub((margin + jitter).min(life / 3));
+    }
+
     async fn udp(
         &self,
         endpoint: &str,
@@ -678,7 +710,7 @@ impl Worker {
                 match self.udp(addr, &bytes).await {
                     Ok((link, first, cookie)) => {
                         error = self
-                            .connected(link, first, cookie, &mut grants, &mut out)
+                            .connected(link, first, cookie, bytes.clone(), &mut grants, &mut out)
                             .await;
                         self.down(error);
                     }
@@ -710,7 +742,7 @@ impl Worker {
                 match timeout(self.timing.connect, self.tls(&endpoint, &bytes)).await {
                     Ok(Ok((link, first, cookie))) => {
                         error = self
-                            .connected(link, first, cookie, &mut grants, &mut out)
+                            .connected(link, first, cookie, bytes, &mut grants, &mut out)
                             .await;
                     }
                     Ok(Err(e)) => error = e,
@@ -759,12 +791,19 @@ impl Worker {
                 .get_mut(&self.peer)
                 .ok_or("closed")?
                 .awaiting = true;
-            timeout(
+            let result = timeout(
                 self.timing.connect,
                 link.send(&wire::encode_cookie_req(&self.relay_id)),
             )
             .await
-            .map_err(|_| "renew_timeout")??;
+            .map_err(|_| "renew_timeout")
+            .and_then(|result| result);
+            if let Err(error) = result {
+                if let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) {
+                    route.awaiting = false;
+                }
+                return Err(error);
+            }
             Ok(Some(guard))
         } else {
             timeout(self.timing.connect, link.send(&self.alloc(bytes, &[0; 16])))
@@ -779,6 +818,7 @@ impl Worker {
         mut link: Link,
         first: Vec<u8>,
         _cookie: [u8; 16],
+        mut active: Vec<u8>,
         token: &mut watch::Receiver<Vec<RelayEndpoint>>,
         out: &mut mpsc::Receiver<([u8; 16], RelayKind, Vec<u8>)>,
     ) -> &'static str {
@@ -800,6 +840,7 @@ impl Worker {
             Ok(wire::Message::AllocErr { code }) => return alloc_error(code),
             _ => return "alloc_response",
         };
+        self.confirmed_token(&active);
         let kind = self.status.lock().unwrap().transport;
         self.event(RelayEvent::Ready {
             peer: self.peer,
@@ -813,28 +854,41 @@ impl Worker {
         let mut nonce = 0u64;
         let mut missed = 0;
         let mut renewal = None;
+        let mut candidate: Option<Vec<u8>> = None;
+        let mut renewal_until = Instant::now();
         loop {
-            let bytes = match self.grant_token(&token.borrow()) {
-                Ok(bytes) => bytes,
-                Err(e) => return e,
-            };
-            let expiry = match self.valid_token(&bytes) {
+            let expiry = match self.valid_token(&active) {
                 Ok(t) => t,
                 Err(e) => return e,
             };
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(expiry.saturating_sub(now()))) => return "token_expired",
+                _ = tokio::time::sleep(Duration::from_secs(expiry.saturating_sub((self.clock)()))) => return "token_expired",
                 _ = tokio::time::sleep_until(deadline) => return "allocation_expired",
+                _ = tokio::time::sleep_until(renewal_until), if candidate.is_some() => {
+                    candidate = None; renewal = None;
+                    if let Some(hub) = self.hub.get() && let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) { route.awaiting = false; }
+                    renew.reset_after(Duration::from_secs(5));
+                }
                 changed = token.changed() => {
                     if changed.is_err() { return "closed"; }
                     token.borrow_and_update();
-                    let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
-                    if let Err(e) = self.valid_token(&bytes) { return e; }
-                    if renewal.is_none() { match self.renew(&mut link, &bytes).await { Ok(guard) => renewal = guard, Err(e) => return e } }
+                    if !token.borrow().iter().any(|g| g.relay_id == self.relay_id) { return "concesión relay-v2 retirada"; }
+                    let updated = self.grant_token(&token.borrow());
+                    if candidate.is_none() && let Ok(bytes) = updated {
+                        match self.renew(&mut link, &bytes).await {
+                            Ok(guard) => { renewal = guard; candidate = Some(bytes); renewal_until = Instant::now() + self.timing.connect; }
+                            Err(e) => { self.status.lock().unwrap().last_error = Some(e.into()); }
+                        }
+                    }
                 }
                 _ = renew.tick() => {
-                    let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
-                    if renewal.is_none() { match self.renew(&mut link, &bytes).await { Ok(guard) => renewal = guard, Err(e) => return e } }
+                    if candidate.is_none() {
+                        let bytes = self.grant_token(&token.borrow()).unwrap_or_else(|_| active.clone());
+                        match self.renew(&mut link, &bytes).await {
+                            Ok(guard) => { renewal = guard; candidate = Some(bytes); renewal_until = Instant::now() + self.timing.connect; }
+                            Err(e) => { self.status.lock().unwrap().last_error = Some(e.into()); }
+                        }
+                    }
                 }
                 _ = ping.tick() => {
                     { let mut s = self.status.lock().unwrap(); if pending.is_some() { s.pings_lost += 1; missed += 1; } s.pings_sent += 1; }
@@ -852,15 +906,29 @@ impl Worker {
                     let body = match body { Ok(b) => b, Err(e) => return e };
                     match wire::parse(&body) {
                         Ok(wire::Message::Cookie { relay_id, cookie }) if renewal.is_some() && relay_id == self.relay_id => {
-                            let bytes = match self.grant_token(&token.borrow()) { Ok(bytes) => bytes, Err(e) => return e };
-                            if timeout(self.timing.connect, link.send(&self.alloc(&bytes, &cookie))).await != Ok(Ok(())) { return "renew_write"; }
+                            if let Some(bytes) = &candidate {
+                                if self.valid_token(bytes).is_err() { continue; }
+                                if timeout(self.timing.connect, link.send(&self.alloc(bytes, &cookie))).await != Ok(Ok(())) { return "renew_write"; }
+                            }
                         }
-                        Ok(wire::Message::AllocOk { alloc_id, ttl_secs, peer_ready }) if ttl_secs > 0 && ttl_secs <= 120 => {
+                        Ok(wire::Message::AllocOk { alloc_id, ttl_secs, peer_ready }) if candidate.is_some() && ttl_secs > 0 && ttl_secs <= 120 => {
+                            let bytes = candidate.take().expect("pending renewal");
+                            if self.valid_token(&bytes).is_err() { renewal = None; continue; }
+                            active = bytes; self.confirmed_token(&active);
                             id = alloc_id; deadline = Instant::now() + Duration::from_secs(ttl_secs.into()); self.status.lock().unwrap().peer_ready = peer_ready;
                             if let Some(hub) = self.hub.get() && let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) { route.id = Some(id); route.awaiting = false; }
                             renewal = None;
+                            self.status.lock().unwrap().last_error = None;
+                            if self.grant_token(&token.borrow()).is_ok_and(|latest| latest != active) {
+                                renew.reset_immediately();
+                            }
                         }
-                        Ok(wire::Message::AllocErr { code }) => return alloc_error(code),
+                        Ok(wire::Message::AllocErr { code }) if candidate.is_some() => {
+                            self.status.lock().unwrap().last_error = Some(alloc_error(code).into());
+                            candidate = None; renewal = None;
+                            if let Some(hub) = self.hub.get() && let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) { route.awaiting = false; }
+                            renew.reset_after(Duration::from_secs(5));
+                        }
                         Ok(wire::Message::Data { alloc_id, datagram }) if alloc_id == id && datagram.len() <= wire::MAX_RELAYED_DATAGRAM => {
                             { let mut s = self.status.lock().unwrap(); s.rx_packets += 1; s.rx_bytes += datagram.len() as u64; }
                             self.event(RelayEvent::Rx { peer: self.peer, relay_id: self.relay_id, kind, datagram: datagram.to_vec() });
@@ -880,6 +948,10 @@ impl Worker {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "relay_real_tests.rs"]
+mod real_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1518,8 +1590,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn token_refresh_keeps_allocation_and_expiry_emits_down() {
-        let (addr, allocations, server) = udp_server([6; 16], false).await;
+    async fn invalid_refresh_preserves_live_allocation() {
+        let (addr, _, server) = udp_server([6; 16], false).await;
         let (client, mut events) = client(None);
         let mut endpoint = RelayEndpoint {
             relay_id: [6; 16],
@@ -1531,36 +1603,198 @@ mod tests {
         };
         client.open([5; 16], vec![endpoint.clone()]);
         event(&mut events, |e| matches!(e, RelayEvent::Ready { .. })).await;
+        endpoint.token = "invalid".into();
+        client.open([5; 16], vec![endpoint]);
+        client.send([5; 16], [6; 16], RelayKind::Udp, datagram_bytes());
+        let observed = event(&mut events, |e| {
+            matches!(e, RelayEvent::Down { .. } | RelayEvent::Rx { .. })
+        })
+        .await;
+        assert!(matches!(observed, RelayEvent::Rx { .. }), "{observed:?}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn token_refresh_keeps_allocation_and_expiry_emits_down() {
+        token_renewal_with_clock(false).await;
+    }
+
+    #[tokio::test]
+    async fn rejected_refresh_keeps_old_deadline_and_fails_closed() {
+        token_renewal_with_clock(true).await;
+    }
+
+    async fn token_renewal_with_clock(reject: bool) {
+        use base64::Engine as _;
+        use std::sync::atomic::AtomicU64;
+        let base = now();
+        let clock = Arc::new(AtomicU64::new(base));
+        let server_clock = clock.clone();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap().to_string();
+        let (observed, mut allocations) = watch::channel((0, false));
+        let (allow_refresh, mut allow_refresh_rx) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            let cookies = wire::CookieMaker::new([9; 32], [6; 16]);
+            let mut count = 0;
+            let mut refresh_seen = false;
+            let mut buf = [0; wire::MAX_FRAME];
+            loop {
+                let (n, src) = socket.recv_from(&mut buf).await.unwrap();
+                let unix = server_clock.load(Ordering::SeqCst);
+                let response = match wire::parse(&buf[..n]).unwrap() {
+                    wire::Message::CookieReq { .. } => {
+                        wire::encode_cookie(&[6; 16], &cookies.cookie(src, unix))
+                    }
+                    wire::Message::Alloc {
+                        relay_id,
+                        cookie,
+                        ts,
+                        token,
+                        sig,
+                    } => {
+                        assert!(cookies.verify(src, &cookie, unix));
+                        assert!(unix.abs_diff(ts) <= 30);
+                        let token_parsed = wire::RelayToken::parse(token).unwrap();
+                        token_parsed
+                            .verify(
+                                &[SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes()],
+                                unix,
+                            )
+                            .unwrap();
+                        assert_eq!(relay_id, token_parsed.relay_id);
+                        assert!(wire::verify_alloc(
+                            &token_parsed.src_identity_pub,
+                            &relay_id,
+                            &cookie,
+                            ts,
+                            token,
+                            &sig
+                        ));
+                        count += 1;
+                        let refreshing = token_parsed.not_before == base + 240;
+                        if refreshing && !refresh_seen {
+                            refresh_seen = true;
+                            observed.send_replace((count, refresh_seen));
+                            allow_refresh_rx.wait_for(|allowed| *allowed).await.unwrap();
+                        }
+                        if reject && refreshing {
+                            wire::encode_alloc_err(wire::ErrCode::RateLimited)
+                        } else {
+                            wire::encode_alloc_ok(77, 120, true)
+                        }
+                    }
+                    wire::Message::Ping { alloc_id, nonce } => {
+                        wire::encode_ping(alloc_id, nonce, true)
+                    }
+                    wire::Message::Data { alloc_id, datagram } => {
+                        assert_eq!(alloc_id, 77);
+                        wire::encode_data(alloc_id, datagram)
+                    }
+                    _ => panic!("unexpected relay message"),
+                };
+                socket.send_to(&response, src).await.unwrap();
+                observed.send_replace((count, refresh_seen));
+            }
+        });
+        let (mut client, mut events) = client(None);
+        let client_clock = clock.clone();
+        client.clock = Arc::new(move || client_clock.load(Ordering::SeqCst));
+        client.timing = Timing::default();
+        let make_token = |start, end| {
+            base64::engine::general_purpose::STANDARD.encode(
+                wire::RelayToken::issue(
+                    &SigningKey::from_bytes(&[3; 32]),
+                    [6; 16],
+                    [1; 16],
+                    [2; 16],
+                    [5; 16],
+                    identity().verifying_key().to_bytes(),
+                    start,
+                    end,
+                    [4; 8],
+                )
+                .encode(),
+            )
+        };
+        let mut endpoint = RelayEndpoint {
+            relay_id: [6; 16],
+            token: make_token(base, base + 300),
+            name: "lab".into(),
+            udp: Some(addr),
+            tls: None,
+            tls_name: None,
+        };
         client.open([5; 16], vec![endpoint.clone()]);
+        event(&mut events, |e| matches!(e, RelayEvent::Ready { .. })).await;
+        // Encolar el RTT inicial antes de renovar: consumirlo NO confirma ALLOC_OK.
         timeout(Duration::from_secs(2), async {
-            while allocations.load(Ordering::SeqCst) < 2 {
-                event(&mut events, |e| matches!(e, RelayEvent::Rtt { .. })).await;
+            while client.status().entries[0].rtt_ms.is_none() {
+                tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
-        assert_eq!(client.status().allocations, 1);
-        let expired = wire::RelayToken::issue(
-            &SigningKey::from_bytes(&[3; 32]),
-            [6; 16],
-            [1; 16],
-            [2; 16],
-            [5; 16],
-            identity().verifying_key().to_bytes(),
-            now() - 10,
-            now() - 1,
-            [4; 8],
-        )
-        .encode()
-        .to_vec();
-        use base64::Engine as _;
-        endpoint.token = base64::engine::general_purpose::STANDARD.encode(expired);
+        assert!(client.renewal_requests(base + 230).is_empty());
+        clock.store(base + 240, Ordering::SeqCst);
+        for peer in client.renewal_requests(base + 240) {
+            endpoint.token = make_token(base + 240, base + 540);
+            client.open(peer, vec![endpoint.clone()]);
+            timeout(
+                Duration::from_secs(2),
+                allocations.wait_for(|(_, refresh_seen)| *refresh_seen),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
+        // El servidor ha recibido el refresco, pero todavía retiene ALLOC_OK/ERR.
+        // Incluso con un RTT disponible, la credencial confirmada sigue siendo la vieja.
+        event(&mut events, |e| matches!(e, RelayEvent::Rtt { .. })).await;
+        assert!(client.status().entries[0].renew_at < base + 300);
+        allow_refresh.send_replace(true);
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let status = client.status().entries[0].clone();
+                assert_eq!(status.state, "ready", "{status:?}");
+                let processed = if reject {
+                    status.last_error.as_deref() == Some("alloc_rejected")
+                } else {
+                    status.renew_at > base + 300
+                };
+                if processed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let after = client.status().entries[0].pings_sent;
+        let before_jump = client.status().entries[0].clone();
+        clock.store(base + if reject { 299 } else { 300 }, Ordering::SeqCst);
+        client.send([5; 16], [6; 16], RelayKind::Udp, datagram_bytes());
+        let received = event(&mut events, |e| {
+            matches!(e, RelayEvent::Rx { .. } | RelayEvent::Down { .. })
+        })
+        .await;
+        assert!(
+            matches!(received, RelayEvent::Rx { .. }),
+            "{received:?}; before_jump={before_jump:?}; after_jump={:?}",
+            client.status().entries[0]
+        );
+        assert!(client.status().entries[0].pings_sent >= after);
+        clock.store(base + if reject { 300 } else { 540 }, Ordering::SeqCst);
+        // Despertar el select tras adelantar el reloj Unix inyectado, sin esperar
+        // cinco segundos reales de heartbeat ni enviar un ALLOC nuevo.
+        endpoint.token = make_token(base, base + 300);
         client.open([5; 16], vec![endpoint]);
         event(&mut events, |e| matches!(e, RelayEvent::Down { .. })).await;
         assert_eq!(
             client.status().entries[0].last_error.as_deref(),
             Some("token_expired")
         );
+        assert!(allocations.borrow().0 <= 2, "no renewal storm");
         server.abort();
     }
 }

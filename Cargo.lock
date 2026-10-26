@@ -154,14 +154,17 @@ dependencies = [
 name = "atenea-agent"
 version = "0.1.0"
 dependencies = [
+ "atenea-coordinator",
  "atenea-crypto",
  "atenea-identity",
  "atenea-nat-traversal",
  "atenea-policies",
  "atenea-protocol",
+ "atenea-relay",
  "atenea-relay-core",
  "atenea-tunnel",
  "atenea-windows",
+ "axum",
  "base64 0.22.1",
  "clap",
  "rcgen",

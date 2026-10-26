@@ -19,6 +19,13 @@ Perfiles: laboratorio **60/20/30 s** (lease/sondeo de reemisión/tolerancia); pi
 
 **SIN COMPROBAR:** red real/proveedor, relojes desincronizados entre nodos y cargas altas. Todo corre en un único kernel Linux de Docker Desktop y comparte reloj; no se deduce HA multi-proveedor ni precisión de reloj distribuido.
 
+**Aplicado (2026-10-26):** el agente renueva anticipadamente la concesión relay
+con re-ALLOC in situ y conserva presencia/candidatos pendientes tras errores
+de announce, con coalescencia, backoff y cuotas sin ampliar. Véanse los plazos
+en [README del agente](../../apps/agent/README.md#transporte-estado-y-recuperación).
+Esto no modifica las cifras históricas siguientes ni acredita un nuevo ensayo
+Docker, de conmutación entre relays o de disponibilidad en producción.
+
 ## Resultados medidos: laboratorio 60/20/30
 
 Ejecución final `atenea-drill-14891`, salida **0**, **1340,45 s de pared**, sin reiniciar agentes. Dos repeticiones por caída de relay/coordinator/HAProxy y por componente emisor (una directa y una relay UDP); la combinada se hizo una vez. Las transiciones deliberadas para preparar el camino no se cuentan como pérdida causada por la caída. Una transferencia íntegra precedió a cada inyección; los conteos de pérdida son **sondas**, no porcentaje de paquetes de carga.

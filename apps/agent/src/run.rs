@@ -375,6 +375,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let vet_slots = Arc::new(tokio::sync::Semaphore::new(4));
     let (cand_tx, cand_rx) = tokio::sync::watch::channel::<Vec<SocketAddr>>(Vec::new());
     let announce_now = Arc::new(Notify::new());
+    let mut relay_requests = RelayRequests::default();
     let (coord_tx, coord_rx) =
         tokio::sync::watch::channel(cfg.coordinator.as_ref().map(|c| CoordStatus {
             url: c.url.clone(),
@@ -391,14 +392,22 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             coord_tx.clone(),
         );
         coord_tasks.push(tokio::spawn(async move {
-            let mut every = tokio::time::interval(Duration::from_secs(20));
-            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut agenda = AnnounceAgenda::new(Instant::now());
             loop {
-                tokio::select! { _ = every.tick() => {}, _ = n1.notified() => {} }
+                tokio::select! {
+                    _ = tokio::time::sleep_until(agenda.wake().into()) => {},
+                    _ = n1.notified() => agenda.changed(),
+                }
+                let now = Instant::now();
+                if !agenda.due(now) {
+                    continue;
+                }
                 let Ok(bytes) = std::fs::read(&path1) else {
+                    agenda.finished(now, false, None);
                     continue;
                 };
                 if !bytes.starts_with(b"AOCF") {
+                    agenda.finished(now, false, None);
                     continue;
                 }
                 let cands = rx1.borrow().clone();
@@ -407,7 +416,12 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     crate::coord::announce(&c, &k, device, &bytes, &cands, unix_now())
                 })
                 .await
-                .unwrap_or(Err("fallo de la tarea"));
+                .unwrap_or(Err("fallo de la tarea".into()));
+                agenda.finished(
+                    Instant::now(),
+                    res.is_ok(),
+                    res.as_ref().err().and_then(|e| e.retry_after),
+                );
                 tx1.send_modify(|s| {
                     if let Some(s) = s {
                         s.announces += 1;
@@ -416,7 +430,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                                 s.last_announce_ok_unix = Some(unix_now());
                                 s.last_error = None;
                             }
-                            Err(e) => s.last_error = Some(e),
+                            Err(e) => s.last_error = Some(e.reason),
                         }
                     }
                 });
@@ -558,9 +572,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 let now = Instant::now();
                 ticks += 1;
                 if ticks.is_multiple_of(4) {
-                    status_tx.send_replace(std::sync::Arc::<str>::from(
-                        ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status()).to_string()
-                    ));
+                    let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
+                    relay_requests.renewals.write_to(&mut snapshot);
+                    status_tx.send_replace(std::sync::Arc::<str>::from(snapshot.to_string()));
                     if endpoint_task.as_ref().is_some_and(|task| task.is_finished())
                         && let Some(task) = endpoint_task.take()
                     {
@@ -581,7 +595,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         endpoint_task = Some(tokio::task::spawn_blocking(move || protected_endpoints(sync, coordinator)));
                         endpoint_started = Some(now);
                     }
+                    let previous_config = rt.seen;
                     rt.poll_config(unix);
+                    if rt.seen != previous_config { announce_now.notify_one(); }
                     let before = cand_tx.borrow().len();
                     cand_tx.send_modify(|cands| net::exclude_tunnel_candidates(cands, &rt.candidate_exclusions));
                     if cand_tx.borrow().len() != before { announce_now.notify_one(); }
@@ -657,25 +673,38 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     }
                 }
                 // Relay: petición cuando el directo no llega; se libera cuando el directo es estable.
-                if relay_on && let Some(c) = rt.cfg.coordinator.clone() {
+                if relay_on && rt.engine.lease_active(unix) && let Some(c) = rt.cfg.coordinator.clone() {
+                    relay_requests.peers.retain(|peer, p| rt.engine.knows_peer(peer)
+                        || p.in_flight || p.attempts.back().is_some_and(|t| now.duration_since(*t) < Duration::from_secs(60)));
+                    for (peer, p) in &mut relay_requests.peers {
+                        if !rt.engine.knows_peer(peer) { p.pending = false; }
+                    }
                     for peer in rt.engine.take_relay_requests(now) {
+                        if rt.engine.knows_peer(&peer) { relay_requests.want(peer); }
+                    }
+                    for peer in relay.renewal_requests(unix) {
+                        if rt.engine.knows_peer(&peer) { relay_requests.want_renewal(peer); }
+                    }
+                    for peer in relay_requests.take(now) {
                         let (c, k, tx) = (c.clone(), identity.clone(), msg_tx.clone());
                         tokio::spawn(async move {
                             let res = tokio::task::spawn_blocking(move || {
                                 crate::coord::relay(&c, &k, device, peer, unix_now())
                             })
                             .await
-                            .unwrap_or(Err("fallo de la tarea"));
+                            .unwrap_or(Err("fallo de la tarea".into()));
+                            let _ = tx.send(CoordMsg::RelayRequestFinished(peer, res.is_ok(), res.as_ref().err().and_then(|e| e.retry_after))).await;
                             match res {
                                 Ok(g) => {
                                     let _ = tx.send(CoordMsg::Relay(peer, g)).await;
                                 }
-                                Err(e) => tracing::debug!("relay {}: {e}", atenea_crypto::hex::encode(&peer)),
+                                Err(e) => tracing::debug!("relay {}: {}", atenea_crypto::hex::encode(&peer), e.reason),
                             }
                         });
                     }
                     for peer in rt.engine.take_relay_releases(now) {
                         relay.close(peer);
+                        relay_requests.forget(peer);
                     }
                 }
                 rt.engine.on_tick(now, unix)
@@ -713,6 +742,10 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 Vec::new()
             },
             Some(msg) = msg_rx.recv() => match msg {
+                CoordMsg::RelayRequestFinished(peer, success, retry_after) => {
+                    relay_requests.finished(peer, Instant::now(), success, retry_after);
+                    Vec::new()
+                }
                 CoordMsg::Candidates(peer, cands) => {
                     rt.engine.on_peer_candidates(&peer, cands, Instant::now(), unix_now())
                 }
@@ -735,7 +768,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     Vec::new()
                 }
                 CoordMsg::RelayVetted(peer, relays) => {
-                    if relay_on && rt.engine.knows_peer(&peer) { relay.open(peer, relays); }
+                    if relay_on && rt.engine.lease_active(unix_now()) && rt.engine.knows_peer(&peer) { relay.open(peer, relays); }
                     Vec::new()
                 }
             },
@@ -830,6 +863,181 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn jitter() -> Duration {
+    Duration::from_millis(u64::from(atenea_identity::generate_seed()[0]) * 2)
+}
+
+struct AnnounceAgenda {
+    pending: bool,
+    next: Instant,
+    periodic: Instant,
+    failures: u32,
+}
+impl AnnounceAgenda {
+    fn new(now: Instant) -> Self {
+        Self {
+            pending: true,
+            next: now,
+            periodic: now + Duration::from_secs(20),
+            failures: 0,
+        }
+    }
+    fn changed(&mut self) {
+        self.pending = true;
+    }
+    fn wake(&self) -> Instant {
+        if self.pending {
+            self.next.min(self.periodic)
+        } else {
+            self.periodic
+        }
+    }
+    fn due(&mut self, now: Instant) -> bool {
+        if now >= self.periodic {
+            self.pending = true;
+            self.periodic = now + Duration::from_secs(20);
+        }
+        self.pending && now >= self.next
+    }
+    fn finished(&mut self, now: Instant, success: bool, retry_after: Option<Duration>) {
+        self.pending = !success;
+        self.failures = if success {
+            0
+        } else {
+            (self.failures + 1).min(3)
+        };
+        let backoff = Duration::from_secs(2_u64.pow(self.failures.max(1)).min(10));
+        self.next = now + backoff.max(retry_after.unwrap_or_default()) + jitter();
+    }
+}
+
+#[derive(Default)]
+struct RenewalCounters {
+    attempts: u64,
+    ok: u64,
+    failed: u64,
+    throttled: u64,
+}
+impl RenewalCounters {
+    fn write_to(&self, status: &mut serde_json::Value) {
+        for (name, value) in [
+            ("relay_renewal_attempts", self.attempts),
+            ("relay_renewal_ok", self.ok),
+            ("relay_renewal_failed", self.failed),
+            ("relay_renewal_throttled", self.throttled),
+        ] {
+            status["counters"][name] = value.into();
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct RelayRequests {
+    peers: std::collections::BTreeMap<atenea_identity::DeviceId, RelayRequest>,
+    attempts: std::collections::VecDeque<Instant>,
+    renewals: RenewalCounters,
+}
+struct RelayRequest {
+    pending: bool,
+    in_flight: bool,
+    pending_renewal: bool,
+    in_flight_renewal: bool,
+    renewal_throttled: bool,
+    next: Option<Instant>,
+    failures: u32,
+    attempts: std::collections::VecDeque<Instant>,
+}
+impl RelayRequests {
+    pub(crate) fn want(&mut self, peer: atenea_identity::DeviceId) {
+        self.peers
+            .entry(peer)
+            .or_insert_with(|| RelayRequest {
+                pending: true,
+                in_flight: false,
+                pending_renewal: false,
+                in_flight_renewal: false,
+                renewal_throttled: false,
+                next: None,
+                failures: 0,
+                attempts: Default::default(),
+            })
+            .pending = true;
+    }
+    pub(crate) fn want_renewal(&mut self, peer: atenea_identity::DeviceId) {
+        self.want(peer);
+        self.peers
+            .get_mut(&peer)
+            .expect("pending request")
+            .pending_renewal = true;
+    }
+    pub(crate) fn take(&mut self, now: Instant) -> Vec<atenea_identity::DeviceId> {
+        self.attempts
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+        let mut ready = Vec::new();
+        for (peer, p) in &mut self.peers {
+            p.attempts
+                .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+            // También los rechazos consumen presupuesto: no amplificar 429 con reintentos.
+            if !p.pending || p.in_flight {
+                continue;
+            }
+            if p.next.is_some_and(|t| now < t) || p.attempts.len() >= 2 || self.attempts.len() >= 10
+            {
+                if p.pending_renewal && !p.renewal_throttled {
+                    self.renewals.throttled += 1;
+                    p.renewal_throttled = true;
+                }
+                continue;
+            }
+            p.in_flight = true;
+            p.pending = false;
+            p.in_flight_renewal = p.pending_renewal;
+            p.pending_renewal = false;
+            p.renewal_throttled = false;
+            if p.in_flight_renewal {
+                self.renewals.attempts += 1;
+            }
+            p.attempts.push_back(now);
+            self.attempts.push_back(now);
+            ready.push(*peer);
+        }
+        ready
+    }
+    pub(crate) fn finished(
+        &mut self,
+        peer: atenea_identity::DeviceId,
+        now: Instant,
+        success: bool,
+        retry_after: Option<Duration>,
+    ) {
+        if let Some(p) = self.peers.get_mut(&peer) {
+            if p.in_flight_renewal {
+                if success {
+                    self.renewals.ok += 1;
+                } else {
+                    self.renewals.failed += 1;
+                }
+            }
+            p.pending_renewal = !success && p.in_flight_renewal;
+            p.in_flight_renewal = false;
+            p.in_flight = false;
+            p.pending = !success;
+            p.failures = if success { 0 } else { (p.failures + 1).min(3) };
+            let backoff =
+                Duration::from_secs((5 * 2_u64.pow(p.failures.saturating_sub(1))).min(30));
+            p.next = Some(now + backoff.max(retry_after.unwrap_or_default()) + jitter());
+        }
+    }
+    fn forget(&mut self, peer: atenea_identity::DeviceId) {
+        // Conservar ventanas de cuota aunque se libere la asignación.
+        if let Some(p) = self.peers.get_mut(&peer) {
+            p.pending = false;
+            p.pending_renewal = false;
+            p.renewal_throttled = false;
+        }
+    }
+}
+
 /// Mensajes de las tareas del coordinator hacia el bucle principal.
 enum CoordMsg {
     /// Candidatos de un par (por rendezvous propio o por aviso del coordinator): solo pistas.
@@ -838,6 +1046,7 @@ enum CoordMsg {
     Relay(atenea_identity::DeviceId, crate::coord::RelayGrant),
     /// Relays de una concesión ya resueltos y verificados (IP literal).
     RelayVetted(atenea_identity::DeviceId, Vec<crate::relay::RelayEndpoint>),
+    RelayRequestFinished(atenea_identity::DeviceId, bool, Option<Duration>),
 }
 
 #[derive(Clone, Default, serde::Serialize)]
@@ -917,6 +1126,230 @@ mod tests {
         mpsc,
     };
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn announce_retries_quota_and_coalesces_candidate_bursts() {
+        let start = Instant::now();
+        let mut agenda = super::AnnounceAgenda::new(start);
+        assert!(agenda.due(start));
+        agenda.finished(start, false, None);
+        for millis in 1..2000 {
+            agenda.changed();
+            assert!(!agenda.due(start + Duration::from_millis(millis)));
+        }
+        assert!(agenda.due(start + Duration::from_millis(2510)));
+        agenda.finished(start + Duration::from_millis(2510), true, None);
+        assert!(!agenda.due(start + Duration::from_secs(19)));
+        assert!(agenda.due(start + Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn announce_obeys_retry_after_and_minimum_rate_under_changes() {
+        let start = Instant::now();
+        let mut agenda = super::AnnounceAgenda::new(start);
+        agenda.finished(start, false, Some(Duration::from_secs(7)));
+        for millis in 0..7000 {
+            agenda.changed();
+            assert!(!agenda.due(start + Duration::from_millis(millis)));
+        }
+        assert!(agenda.due(start + Duration::from_millis(7510)));
+        let mut attempts = Vec::new();
+        for millis in 7510..60_000 {
+            let now = start + Duration::from_millis(millis);
+            agenda.changed();
+            if agenda.due(now) {
+                attempts.push(now);
+                agenda.finished(now, true, None);
+            }
+        }
+        assert!(attempts.len() <= 27);
+        assert!(
+            attempts
+                .windows(2)
+                .all(|w| w[1].duration_since(w[0]) >= Duration::from_secs(2))
+        );
+    }
+
+    #[test]
+    fn relay_requests_coalesce_and_bound_pair_device_and_inflight_attempts() {
+        let start = Instant::now();
+        let mut requests = super::RelayRequests::default();
+        for _ in 0..100 {
+            requests.want([1; 16]);
+        }
+        assert_eq!(requests.take(start), vec![[1; 16]]);
+        requests.want([1; 16]);
+        assert!(requests.take(start + Duration::from_secs(30)).is_empty());
+        requests.finished([1; 16], start, false, Some(Duration::from_secs(7)));
+        assert!(
+            requests
+                .take(start + Duration::from_millis(6999))
+                .is_empty()
+        );
+        assert_eq!(requests.take(start + Duration::from_secs(8)), vec![[1; 16]]);
+        requests.finished([1; 16], start + Duration::from_secs(8), false, None);
+        assert!(requests.take(start + Duration::from_secs(59)).is_empty());
+        assert_eq!(
+            requests.take(start + Duration::from_secs(60)),
+            vec![[1; 16]]
+        );
+        for i in 2..20 {
+            requests.want([i; 16]);
+        }
+        assert_eq!(requests.take(start + Duration::from_secs(60)).len(), 8);
+        assert!(requests.take(start + Duration::from_secs(61)).is_empty());
+    }
+
+    #[test]
+    fn renewal_counters_count_attempt_results_and_deferrals_exactly_in_status() {
+        let start = Instant::now();
+        let peer = [1; 16];
+        let mut requests = super::RelayRequests::default();
+        let mut status = serde_json::json!({"counters": {"relay_requests": 7}});
+        // La solicitud inicial no es una renovación.
+        requests.want(peer);
+        assert_eq!(requests.take(start), vec![peer]);
+        requests.finished(peer, start, true, None);
+        requests.renewals.write_to(&mut status);
+        assert_eq!(
+            status["counters"],
+            serde_json::json!({
+                "relay_requests": 7, "relay_renewal_attempts": 0, "relay_renewal_ok": 0,
+                "relay_renewal_failed": 0, "relay_renewal_throttled": 0,
+            })
+        );
+        requests.want_renewal(peer);
+        for millis in 0..5000 {
+            assert!(
+                requests
+                    .take(start + Duration::from_millis(millis))
+                    .is_empty()
+            );
+        }
+        assert_eq!(requests.take(start + Duration::from_secs(6)), vec![peer]);
+        requests.want_renewal(peer);
+        assert!(requests.take(start + Duration::from_secs(7)).is_empty());
+        requests.finished(peer, start + Duration::from_secs(6), true, None);
+        requests.want_renewal(peer);
+        assert!(requests.take(start + Duration::from_secs(59)).is_empty());
+        assert_eq!(requests.take(start + Duration::from_secs(60)), vec![peer]);
+        requests.finished(
+            peer,
+            start + Duration::from_secs(60),
+            false,
+            Some(Duration::from_secs(10)),
+        );
+        for millis in 61000..70000 {
+            assert!(
+                requests
+                    .take(start + Duration::from_millis(millis))
+                    .is_empty()
+            );
+        }
+        assert_eq!(requests.take(start + Duration::from_secs(71)), vec![peer]);
+        requests.finished(peer, start + Duration::from_secs(71), true, None);
+        requests.renewals.write_to(&mut status);
+        assert_eq!(
+            status["counters"],
+            serde_json::json!({
+                "relay_requests": 7, "relay_renewal_attempts": 3, "relay_renewal_ok": 2,
+                "relay_renewal_failed": 1, "relay_renewal_throttled": 3,
+            })
+        );
+    }
+
+    #[test]
+    fn announce_publishes_latest_candidates_after_test_coordinator_quota() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::AtomicU64;
+        let unix = Arc::new(AtomicU64::new(100));
+        let server_clock = unix.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = crate::config::CoordinatorConfig {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+            stun: vec![],
+            relay: "off".into(),
+            relay_ca_file: None,
+            insecure_http: true,
+        };
+        let server = std::thread::spawn(move || {
+            let mut last = None;
+            let mut accepted = Vec::new();
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw);
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text[..end]
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        if raw.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let now = server_clock.load(Ordering::SeqCst);
+                let limited = last.is_some_and(|t| now < t + 2);
+                if !limited {
+                    last = Some(now);
+                    accepted.push(String::from_utf8(raw).unwrap());
+                }
+                let status = if limited {
+                    "429 Too Many Requests"
+                } else {
+                    "200 OK"
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+                )
+                .unwrap();
+            }
+            accepted
+        });
+        let key = atenea_identity::signing_key([1; 32]);
+        let publish = |candidates: &[std::net::SocketAddr]| {
+            crate::coord::announce(
+                &config,
+                &key,
+                [2; 16],
+                b"AOCF",
+                candidates,
+                unix.load(Ordering::SeqCst),
+            )
+        };
+        publish(&[]).unwrap();
+        let start = Instant::now();
+        let mut agenda = super::AnnounceAgenda::new(start);
+        let failed = publish(&["192.0.2.1:1".parse().unwrap()]).unwrap_err();
+        agenda.finished(start, false, failed.retry_after);
+        for _ in 0..100 {
+            agenda.changed();
+        }
+        assert!(!agenda.due(start + Duration::from_millis(1999)));
+        assert!(agenda.due(start + Duration::from_millis(2510)));
+        unix.store(102, Ordering::SeqCst);
+        publish(&["192.0.2.1:99".parse().unwrap()]).unwrap();
+        agenda.finished(start + Duration::from_millis(2510), true, None);
+        assert!(!agenda.due(start + Duration::from_secs(19)));
+        let accepted = server.join().unwrap();
+        assert_eq!(accepted.len(), 2);
+        assert!(accepted[1].contains("192.0.2.1:99"));
+        assert!(!accepted[1].contains("192.0.2.1:1"));
+    }
 
     #[test]
     fn shutdown_finishes_after_cleanup_without_waiting_for_blocking_http() {

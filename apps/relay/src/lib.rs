@@ -38,8 +38,12 @@ pub(crate) struct Shared {
 pub(crate) struct Runtime {
     shared: Mutex<Shared>,
     udp: UdpSocket,
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 impl Runtime {
+    fn now(&self) -> u64 {
+        (self.clock)()
+    }
     pub(crate) async fn dispatch(&self, outputs: Vec<Output>) {
         for (binding, body) in outputs {
             let forwarded = matches!(
@@ -89,7 +93,7 @@ impl Runtime {
             .lock()
             .unwrap()
             .state
-            .process(binding, body, now());
+            .process(binding, body, self.now());
         let allocated = outputs.iter().any(|(to, out)| {
             *to == binding && out.get(2) == Some(&atenea_relay_core::ty::ALLOC_OK)
         });
@@ -186,6 +190,14 @@ pub struct Relay {
 }
 impl Relay {
     pub async fn bind(config: Config) -> io::Result<Self> {
+        Self::bind_with_clock(config, Arc::new(now)).await
+    }
+
+    /// Reloj Unix en milisegundos, compartido por UDP, TCP y barrido.
+    pub async fn bind_with_clock(
+        config: Config,
+        clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+    ) -> io::Result<Self> {
         let keys = config.validate().map_err(io::Error::other)?;
         let tls = tcp::tls_config(&config)?;
         let udp = UdpSocket::bind(config.udp_listen).await?;
@@ -198,6 +210,7 @@ impl Relay {
         rand::rngs::OsRng.fill_bytes(&mut secret);
         let runtime = Arc::new(Runtime {
             udp,
+            clock,
             shared: Mutex::new(Shared {
                 state: State::new(config, keys, secret),
                 clients: HashMap::new(),
@@ -254,7 +267,7 @@ impl Relay {
                     // Una lectura lenta no ocupa una tarea ni bloquea el relay indefinidamente.
                     let _ = tokio::time::timeout(std::time::Duration::from_millis(100),stream.write_all(&body)).await;
                 },
-                _ = tick.tick() => { let out = self.runtime.shared.lock().unwrap().state.sweep(now()); self.runtime.dispatch(out).await; },
+                _ = tick.tick() => { let out = self.runtime.shared.lock().unwrap().state.sweep(self.runtime.now()); self.runtime.dispatch(out).await; },
                 Some(result) = tasks.join_next(), if !tasks.is_empty() => { if result.is_err() { tracing::warn!("tarea TCP terminada"); } },
             }
         }
@@ -284,6 +297,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let runtime = Runtime {
             udp: UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            clock: Arc::new(now),
             shared: Mutex::new(Shared {
                 state: State::new(
                     Config {

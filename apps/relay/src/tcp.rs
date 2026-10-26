@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group, now};
+use crate::{Runtime, alloc::Binding, config::Config, limits::ip_group};
 use atenea_relay_core::{
     ALPN, ErrCode, FrameDecoder, MAGIC, Message, ParseError, VERSION, encode_alloc_err,
     encode_frame, parse, ty,
@@ -98,7 +98,7 @@ pub async fn connection(
             .filter(|a| matches!(a.binding,Binding::Tcp(n,_) if n == id))
             .map(|a| a.id)
             .collect();
-        s.state.remove(ids, now())
+        s.state.remove(ids, runtime.now())
     };
     runtime.dispatch(outputs).await;
 }

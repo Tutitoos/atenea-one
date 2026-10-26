@@ -129,3 +129,22 @@ cada 60 segundos y PING cada cinco segundos. Las pruebas internas cubren
 incoherencias de concesión, fallback entre audiencias, COOKIE de otro ID/origen,
 prueba de posesión v2, renovación y propagación del ID; su ejecución corresponde
 a la integración, no se afirma verificación por esta descripción.
+
+### Nota operativa del cliente (2026-10-26)
+
+Aplicado en el agente sin cambiar JSON, códigos ni cuotas: conserva una sola
+publicación pendiente de presencia/candidatos/configuración hasta éxito y
+coalesce cambios mientras espera. El refresco sigue siendo de 20 s; los cambios
+respetan al menos 2 s entre respuestas e intentos, con jitter de hasta 510 ms.
+Tras fallo, la agenda reintenta a los 2/4/8 s más jitter, no al próximo refresco.
+Un `Retry-After` entero entre 0 y 60 s puede ampliar la espera; otros formatos
+usan el backoff normal. El coordinator actual no necesita emitir esa cabecera.
+
+Para renovar una concesión confirmada de 300 s, el ID menor solicita con
+60–65 s restantes; el mayor dispone de takeover con 30–35 s restantes si pierde
+el evento inverso. El margen se acota a un tercio de la vida de cada token.
+Las solicitudes se coalescen, con una en vuelo por par y backoff HTTP de
+5/10/20 s más jitter. El presupuesto local cuenta también rechazos: dos
+intentos por par y diez por dispositivo en 60 s. No se relajan las cuotas del
+servidor ni la autorización mutua; sin renovación, manda el deadline vigente.
+

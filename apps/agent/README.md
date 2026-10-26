@@ -44,6 +44,52 @@ Solo borra la hora máxima observada; conserva versión, serial y anclas.
 
 Las concesiones de relay del coordinator se aceptan solo para pares de la configuración, como mucho cuatro relays por concesión y cuatro resoluciones en vuelo; cada dirección se resuelve con plazo y el cliente conecta a la IP verificada (se descartan loopback, enlace local, multicast, la red del túnel y las subredes servidas). Cada entrada lleva `relay_id` y su token de audiencia propio: no se comparte un token entre relays. Solo se admite wire-v2/relay-v2 (TLS ALPN `atenea-relay/2`), sin fallback v1. Las cookies INIT se ligan al endpoint directo o al contexto `(relay_id, red, emisor, receptor)`; UDP y TLS del mismo relay comparten ese contexto. El mensaje 1 conserva sus cupos pre-DH por par configurado y por origen desconocido.
 
+**Renovación y presencia (aplicado el 2026-10-26).** Un relay listo ya no impide
+pedir credenciales nuevas. Para tokens de 300 s, el dispositivo de ID menor
+solicita la renovación cuando quedan 60–65 s; el otro toma el relevo al quedar
+30–35 s si no recibe la concesión inversa. El margen nunca supera un tercio de
+la vida del token. El jitter de esta elección procede del token; los reintentos
+HTTP usan backoff de 5/10/20 s más 0–510 ms de jitter, con una única petición en
+vuelo por par. El agente limita **todos los intentos**, incluidos los fallidos,
+a dos por par y diez por dispositivo en cada ventana de 60 s, sin ampliar las
+cuotas del coordinator. Un `Retry-After` entero de 0 a 60 s puede retrasar más
+el intento; otros formatos se ignoran.
+
+El token nuevo solo pasa a ser vigente tras un ALLOC_OK en la misma audiencia
+y vinculación. El re-ALLOC conserva `alloc_id`, worker, contadores y camino;
+no crea dos asignaciones simultáneas. Un rechazo, token inválido o respuesta
+perdida no prolonga la autorización anterior: se conserva hasta su `not_after`
+o el vencimiento anterior de la asignación. Las renovaciones ALLOC fallidas
+se reintentan tras cinco segundos; retirar la audiencia sigue cerrándola.
+No se usan los 30 s de tolerancia del servidor para prolongar el token local.
+Una caída del transporte sigue causando Down; no se promete continuidad
+entre relays distintos ni disponibilidad cuando se agotan las cuotas.
+
+El objeto IPC `counters` expone cuatro contadores de la **obtención HTTP de
+concesiones para una asignación ya lista**, separados de `relay_requests`
+(peticiones de fallback del engine):
+
+- `relay_renewal_attempts`: peticiones anticipadas despachadas por la agenda.
+- `relay_renewal_ok`: respuestas HTTP con una concesión relay-v2 válida.
+- `relay_renewal_failed`: peticiones fallidas, incluidos 429, errores de red o
+  respuestas inválidas. Un reintento posterior es otro intento.
+- `relay_renewal_throttled`: renovaciones pendientes aplazadas por backoff o
+  presupuesto local; una vez por episodio de espera, no por tick de 250 ms.
+
+No se cuentan las peticiones iniciales ni se multiplican los intentos por los
+tokens de cada audiencia. `relay_renewal_ok` no equivale a ALLOC_OK ni acredita
+tráfico E2E: el estado y `last_error` de la asignación siguen mostrando el
+resultado del refresco en el relay. Los cuatro valores aparecen incluso a cero.
+
+La presencia mantiene su refresco de 20 s, pero conserva una única actualización
+pendiente de candidatos/configuración, incluso cuando la cantidad de candidatos
+no cambia. Los cambios se coalescen y se publica el último snapshot al permitirlo
+la cuota: separación mínima de 2 s más jitter de 0–510 ms desde la respuesta
+anterior. Los fallos reintentan con backoff de 2/4/8 s más ese jitter, respetando
+el `Retry-After` entero acotado anterior. Un 429 ya no obliga a esperar el tick
+de 20 s. HTTP conserva su timeout de 15 s; estos plazos de agenda no son un SLA
+de reconexión ni sustituyen autorización, cookie, frescura, `init_floor` o lease.
+
 ## Aplicación por enlace
 
 Linux necesita `ip`, `nft` y, para DNS dividido, `resolvectl` con systemd-resolved activo, invocados por ruta absoluta (`/usr/sbin/ip`, `/usr/sbin/nft`, `/usr/bin/resolvectl`; sustituibles con `ATENEA_IP`, `ATENEA_NFT` y `ATENEA_RESOLVECTL`) y con entorno vacío; el ejecutable y su directorio deben ser de root o del proceso y sin escritura de grupo/otros. El servicio necesita `CAP_NET_ADMIN`; no necesita `CAP_NET_RAW`. No modifica `/etc/resolv.conf` ni sysctls globales. El administrador debe habilitar explícitamente el forwarding de las familias servidas; `forwarding_ok` lo lee de nuevo en cada consulta de estado y en cada informe, sin esperar una nueva configuración ni intentar repararlo. Es nulo cuando la configuración aplicada no anuncia subredes.
@@ -89,6 +135,50 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 La política de `netconf` usa un backend `HostNetwork` en memoria para probar rutas, diferencias, conflictos, DNS y capacidades en cualquier plataforma, sin procesos ni privilegios. Las pruebas adicionales del backend Linux inyectan las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls; usan ejecutables simulados y ficheros temporales y no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.
 
 La regresión `udp_timeout_falls_back_to_tls_custom_ca_queue_and_renewal` usa sockets locales y respuestas TLS fragmentadas. Espera una notificación del servidor tras escribir la respuesta de renovación, independiente de los eventos RTT; mantiene el intervalo normal de heartbeat para no mezclar esa comprobación con las pruebas de caducidad aceleradas.
+
+Las regresiones `token_refresh_keeps_allocation_and_expiry_emits_down` y
+`rejected_refresh_keeps_old_deadline_and_fails_closed` adelantan el reloj Unix,
+no los temporizadores de transporte: mantienen los plazos normales de retry y
+heartbeat. Retienen deliberadamente ALLOC_OK/ERR con un RTT inicial ya encolado
+para demostrar que ese RTT no confirma la renovación. Solo avanzan hasta el
+deadline tras observar que el cliente procesó la confirmación o el rechazo,
+no solo que el servidor escribió la respuesta. Exigen Rx sin Down con token
+vigente y Down por `token_expired` al alcanzar el deadline efectivo.
+
+`real_coordinator_and_relay_renew_before_expiry_without_down` usa el router real
+del coordinator en HTTP local (configuraciones y peticiones firmadas), su
+`with_clock`, dos clientes y la biblioteca real del relay con
+`Relay::bind_with_clock` (Unix en milisegundos). Comparte reloj Unix inyectado,
+mantiene presencia y ALLOC periódicos y atraviesa t=300 hasta t=340 con tráfico
+bidireccional, una única petición anticipada y concesión inversa, sin Down/Ready
+adicional ni cambio de `alloc_id`. Solo el destino loopback es específico del
+laboratorio; no sustituye el ensayo NAT ni la comprobación de saneado de destinos.
+`renewal_counters_count_attempt_results_and_deferrals_exactly_in_status` comprueba
+incrementos exactos y su publicación en `counters`, sin alterar los del engine.
+Coordinator, relay y axum son dependencias exclusivamente de pruebas Unix del
+agente (el relay usa un socket de estado Unix); no entran en builds de producción
+ni en las pruebas Windows.
+
+La preparación admite como máximo tres aperturas iniciales normales tras
+`udp_timeout` y registra `initial_open_attempts`; después del primer Ready no
+tolera ninguna caída ni recreación. El relay local reserva UDP en `[::]:0` y
+anuncia IPv4 loopback: evita que macOS asigne al hub dual-stack el mismo puerto
+efímero que a un listener IPv4 local, sin alterar los plazos del cliente.
+`initial_udp_timeout_is_retried_by_engine_and_recovers` descarta deliberadamente
+los tres COOKIE_REQ iniciales, comprueba `udp_timeout` y verifica que el engine
+respeta su intervalo y solicita de nuevo, hasta obtener Ready en la segunda
+apertura. No depende de contención de CPU para provocar la pérdida.
+
+Los fixtures del motor fijan solo la fuente del jitter de sondeo a 1000 ms;
+claves, índices y efímeras conservan su RNG criptográfico. El motor de producción
+sigue usando `crypto::random_u32` para el intervalo de 750–1250 ms. Con ticks de
+250 ms, intervalos de 1001–1250 ms se ejecutan a los 1250 ms: siete reenvíos a dos
+candidatos antes de t=10 son catorce datagramas legítimos, no una pérdida de ráfagas.
+La regresión de cadencia central exige nueve ráfagas exactas de reenvío (18
+datagramas, más los dos iniciales), el mismo INIT y el backoff tras fallar.
+`probe_jitter_extremes_preserve_exact_tick_cadence_window_and_budget` comprueba
+también los extremos y la cuantización, sin ampliar la ventana de 10 s ni el
+presupuesto de doce envíos por candidato.
 
 ## macOS
 
