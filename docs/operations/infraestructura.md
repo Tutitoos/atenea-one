@@ -365,5 +365,23 @@ Un único VPS Debian 13 (6 vCPU, 11,7 GiB de RAM), desplegado con este rol desde
 - **Un cambio en un fichero montado no llegaba al contenedor (corregido).** `ansible.builtin.copy` reemplaza `Caddyfile`, `haproxy.cfg`, las configuraciones públicas y los secretos de forma atómica (inodo nuevo) y los contenedores seguían montando el inodo antiguo: el host mostraba la configuración nueva mientras Caddy servía la antigua, y `compose up -d` no recrea el servicio porque su definición no cambia. Hubo que recrear Caddy a mano. Ahora `apply.yml` ejecuta `docker compose up -d --force-recreate --wait` cuando la distribución, la configuración pública o los secretos cambian y ya había contenedores (en el primer despliegue no hace nada extra; un upgrade que solo cambia digests no lo dispara). Se recrean todos los servicios juntos para conservar la unión netns/HAProxy/relay, con la interrupción breve que eso implica. Regresión en `tests/infra/in-container.sh`: añade una marca a `coordinator.toml`, converge y exige que el contenedor en ejecución la vea y se haya recreado. Con el rol anterior ese test falla (verificado con el árbol de `HEAD`); con el arreglo, `tests/infra` completo termina en `INFRA OK` (554 s).
 - **El STUN queda sin clasificar:** el Compose solo publica el 3478/udp y el agente necesita también el 3479 para distinguir mapeo independiente de dependiente; sin él informa `mapping = "unknown"` (degradado, no roto).
 
-**SIN COMPROBAR:** conectividad extremo a extremo con agentes reales (enrolamiento, P2P, relay UDP/TLS con datos), reinicio en frío del nodo, restauración de copias en este VPS, soak de 72 h, ACME del relay, cobertura IPv6, y el efecto del firewall de entrada del proveedor más allá de los puertos probados.
+### Enrolamiento y caminos reales (2026-10-27)
+
+Una organización y una red (`10.77.0.0/24` y una ULA `/64`) con el certificado de emisor firmado por la raíz offline (30 días), y **dos agentes de `v0.1.0`**: un Mac arm64 (binarios macOS del release, hash comprobado contra el manifiesto firmado) y la propia VPS (`.deb` del release, hash igual al del manifiesto). Ambos se enrolaron con token de un solo uso y se aprobaron comparando la huella del bundle.
+
+| Camino | Resultado medido |
+| --- | --- |
+| Directo | Funciona, pero **por Tailscale**: los dos hosts están en la misma tailnet y el agente ofrece esa IP como candidato. Ping 30/30, 16 MiB con SHA-256 íntegro (≈58 Mbit/s), RTT ≈108–111 ms. No prueba conectividad por Internet público. |
+| Directo por Internet (Tailscale bloqueado) | **No se estableció**: ambos agentes quedaron sin camino 135 s. Causa **sin determinar** (el firewall de entrada de la VPS descarta el UDP 51820 no solicitado, y el NAT doméstico puede impedir el perforado). |
+| Relay UDP | Ambos agentes en `relay-udp`: 6/6 descargas (64 KiB, 1 MiB y 8 MiB, dos rondas) con el **mismo SHA-256**; 8 MiB en 4,8–5,9 s (≈11–14 Mbit/s); ping 20/20 sin pérdida, RTT ≈111 ms. |
+| Relay TLS (HAProxy 443, SNI + ALPN) | Ambos agentes en `relay-tls`: 6/6 descargas íntegras (8 MiB en 3,4–7,3 s); ping 20/20 sin pérdida, RTT medio ≈119 ms (máx. 224 ms). |
+
+Método: tabla `nft` temporal en la VPS (retirada siempre al terminar) para bloquear el UDP 51820 de Tailscale y del Mac, y después el UDP 443 del Mac y de la VPS hacia sí misma, con la transferencia HTTP servida por el Mac a través del túnel. Un intento previo dio un falso «SHA-256 distinto» por un servidor HTTP viejo que contestaba 404 y por un error de la comparación en awk, no por el relay.
+
+**Hallazgos de esta prueba:**
+
+- **Un registro AAAA sin servicio rompe el relay.** El agente usa la primera dirección que resuelve (sin alternar entre familias), así que con AAAA apuntando a un nodo que solo escucha en IPv4, el relay TLS fallaba con `tcp_connect` en ambos agentes. Hasta que el stack escuche en IPv6, publicar solo registros A. Tras borrar los AAAA, el agente de la VPS recuperó el relay UDP; el del Mac solo tras pedir una concesión nueva (conserva la anterior mientras el camino directo funcione).
+- **El perforado por Internet es el camino sin probar con éxito:** hay que repetirlo con agentes en dos redes domésticas distintas o abriendo el UDP del agente en el firewall de la VPS (el rol solo abre 443 y 3478).
+
+**SIN COMPROBAR:** P2P directo por Internet público, revocación y varios pares, reinicio en frío del nodo, restauración de copias en este VPS, soak de 72 h, ACME del relay, cobertura IPv6, el rendimiento del relay más allá de 8 MiB y el efecto del firewall de entrada del proveedor más allá de los puertos probados.
 
