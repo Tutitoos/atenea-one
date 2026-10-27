@@ -30,6 +30,7 @@ ENTRYPOINT ["/usr/local/bin/atenea"]
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e AS runtime
 ARG ATENEA_BUILD_COMMIT=unknown
 LABEL org.opencontainers.image.revision=$ATENEA_BUILD_COMMIT
+LABEL org.opencontainers.image.source=https://github.com/Tutitoos/atenea-one
 COPY --from=build /out/atenea-relay /usr/local/bin/atenea-relay
 COPY --from=build /out/healthcheck /usr/local/bin/healthcheck
 USER 65532:65532

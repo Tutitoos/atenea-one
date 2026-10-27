@@ -22,6 +22,7 @@ RUN rustc --edition=2024 -O /healthcheck.rs -o /out/healthcheck \
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e AS tools
 ARG ATENEA_BUILD_COMMIT=unknown
 LABEL org.opencontainers.image.revision=$ATENEA_BUILD_COMMIT
+LABEL org.opencontainers.image.source=https://github.com/Tutitoos/atenea-one
 COPY --from=build /out/atenea /usr/local/bin/atenea
 COPY --from=build /out/atenea-coordinator /usr/local/bin/atenea-coordinator
 USER 65532:65532
