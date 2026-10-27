@@ -123,6 +123,8 @@ respuestas; ninguna aplicación puede publicar 5432/8080/8081 hacia Internet por
 el mero hecho de usar `ports:`. No se añade al administrador al grupo docker.
 El firewall externo debe repetir este contrato en ambos protocolos IP.
 
+`atenea_extra_udp_ports` (lista, vacía por defecto) añade puertos UDP de entrada al principal o al relay. Un nodo que ejecuta además un **agente** necesita abrir el `51820/udp` (su puerto de escucha por defecto) para tener camino directo por Internet: con el firewall del rol, un paquete no solicitado a ese puerto se descarta. Solo afecta a la cadena `input` (el agente corre en el host, no en un contenedor); el `forward` de Docker no cambia. `tests/infra` cubre las dos ramas: el principal del ensayo abre el 51820 y el relay comprueba el comportamiento por defecto.
+
 ## OpenTofu y estado
 
 `infra/tofu/modules/server` y `dns_records` son interfaces tipadas con
@@ -372,7 +374,7 @@ Una organización y una red (`10.77.0.0/24` y una ULA `/64`) con el certificado 
 | Camino | Resultado medido |
 | --- | --- |
 | Directo | Funciona, pero **por Tailscale**: los dos hosts están en la misma tailnet y el agente ofrece esa IP como candidato. Ping 30/30, 16 MiB con SHA-256 íntegro (≈58 Mbit/s), RTT ≈108–111 ms. No prueba conectividad por Internet público. |
-| Directo por Internet (Tailscale bloqueado) | **No se estableció**: ambos agentes quedaron sin camino 135 s. Causa **sin determinar** (el firewall de entrada de la VPS descarta el UDP 51820 no solicitado, y el NAT doméstico puede impedir el perforado). |
+| Directo por Internet (Tailscale bloqueado) | Con el firewall del rol por defecto **no se estableció** (ambos agentes sin camino 135 s). Tras abrir el `51820/udp` de entrada con `atenea_extra_udp_ports`, **se establece**: endpoints públicos en ambos lados, ping 20/20 sin pérdida, RTT ≈106 ms, 8 MiB íntegros en 1,54 s (≈44 Mbit/s); contadores nft: 6 325 paquetes (9,2 MB) del Mac a la VPS y 2 736 de vuelta por la IP pública. La causa era el firewall de entrada de la VPS, no el NAT doméstico. |
 | Relay UDP | Ambos agentes en `relay-udp`: 6/6 descargas (64 KiB, 1 MiB y 8 MiB, dos rondas) con el **mismo SHA-256**; 8 MiB en 4,8–5,9 s (≈11–14 Mbit/s); ping 20/20 sin pérdida, RTT ≈111 ms. |
 | Relay TLS (HAProxy 443, SNI + ALPN) | Ambos agentes en `relay-tls`: 6/6 descargas íntegras (8 MiB en 3,4–7,3 s); ping 20/20 sin pérdida, RTT medio ≈119 ms (máx. 224 ms). |
 
@@ -381,7 +383,7 @@ Método: tabla `nft` temporal en la VPS (retirada siempre al terminar) para bloq
 **Hallazgos de esta prueba:**
 
 - **Un registro AAAA sin servicio rompe el relay.** El agente usa la primera dirección que resuelve (sin alternar entre familias), así que con AAAA apuntando a un nodo que solo escucha en IPv4, el relay TLS fallaba con `tcp_connect` en ambos agentes. Hasta que el stack escuche en IPv6, publicar solo registros A. Tras borrar los AAAA, el agente de la VPS recuperó el relay UDP; el del Mac solo tras pedir una concesión nueva (conserva la anterior mientras el camino directo funcione).
-- **El perforado por Internet es el camino sin probar con éxito:** hay que repetirlo con agentes en dos redes domésticas distintas o abriendo el UDP del agente en el firewall de la VPS (el rol solo abre 443 y 3478).
+- **Un nodo con agente debe abrir su UDP de escucha.** Sin `51820/udp` abierto en el firewall del rol, dos agentes (uno de ellos tras un NAT doméstico) no conseguían camino directo por Internet y quedaban sin camino hasta tener relay; abierto el puerto, el directo se establece en segundos. Para agentes en equipos normales (sin firewall de entrada estricto) no hace falta.
 
-**SIN COMPROBAR:** P2P directo por Internet público, revocación y varios pares, reinicio en frío del nodo, restauración de copias en este VPS, soak de 72 h, ACME del relay, cobertura IPv6, el rendimiento del relay más allá de 8 MiB y el efecto del firewall de entrada del proveedor más allá de los puertos probados.
+**SIN COMPROBAR:** el directo por Internet con ambos agentes tras NAT domésticos distintos (aquí uno de los dos tiene IP pública), revocación y varios pares, reinicio en frío del nodo, restauración de copias en un VPS nuevo, soak de 72 h, ACME del relay, cobertura IPv6, el rendimiento más allá de 8 MiB y el efecto del firewall de entrada del proveedor más allá de los puertos probados.
 

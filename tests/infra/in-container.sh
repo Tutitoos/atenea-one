@@ -46,6 +46,7 @@ vars = {'atenea_node_role': 'principal', 'atenea_admin_user': 'operador',
  'atenea_admin_public_key': Path('/lab/admin.pub').read_text().strip(),
  'atenea_ssh_sources': ['192.0.2.0/24', '2001:db8::/32'],
  'atenea_apt_update_cache': False,
+ 'atenea_extra_udp_ports': [51820],
  'atenea_secrets_source': '/lab/secrets.sops.yaml', 'atenea_config_source': str(public),
  'atenea_compose_source': '/src/deploy/compose/prod',
  'atenea_stack_images': {k: v for k,v in images.items() if k != 'tools'},
@@ -139,6 +140,7 @@ inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
 inv['all']['children'] = {'relays': {'hosts': {'localhost': {'ansible_connection': 'local'}}}}
 v = inv['all']['vars']
 v.update(atenea_node_role='relay', atenea_stack_dir='/opt/atenea-relay', atenea_secrets_source='/lab/relay.sops.yaml')
+v.pop('atenea_extra_udp_ports')  # el relay comprueba el comportamiento por defecto (solo 443 y 3478)
 v['atenea_env']['ATENEA_RUNTIME_DIR'] = '/opt/atenea-relay'
 v['atenea_stack_images'] = {'relay': v['atenea_stack_images']['relay'], 'stun': v['atenea_stack_images']['coordinator']}
 p = Path('/lab/public/config/relay.toml')

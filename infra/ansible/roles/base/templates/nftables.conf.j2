@@ -10,7 +10,7 @@ table inet atenea_host {
     {{ 'ip6' if ':' in source else 'ip' }} saddr {{ source }} tcp dport 22 accept
 {% endfor %}
     tcp dport { {{ '80, 443' if atenea_node_role == 'principal' else '443' }} } accept
-    udp dport { 443, 3478 } accept
+    udp dport { 443, 3478{% for port in base_extra_udp_ports %}, {{ port }}{% endfor %} } accept
   }
   chain input {
     type filter hook input priority -10; policy drop;

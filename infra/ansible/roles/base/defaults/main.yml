@@ -1,3 +1,5 @@
 ---
 base_admin_user: "{{ atenea_admin_user | default('operador') }}"
 base_ssh_sources: "{{ atenea_ssh_sources | default([]) }}"
+# Puertos UDP adicionales de entrada (p. ej. 51820 si el propio nodo ejecuta un agente y quiere camino directo).
+base_extra_udp_ports: "{{ atenea_extra_udp_ports | default([]) }}"

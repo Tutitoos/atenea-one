@@ -65,7 +65,8 @@ for entry in rules:
         if payload.get('field') == 'dport':
             value = match['right']
             allowed[payload['protocol']].update(value['set'] if isinstance(value, dict) else [value])
-assert allowed == {'tcp': {22, 443} if relay else {22, 80, 443}, 'udp': {443, 3478}}, allowed
+# El principal del ensayo abre además el UDP 51820 (atenea_extra_udp_ports); el relay conserva los de siempre.
+assert allowed == {'tcp': {22, 443} if relay else {22, 80, 443}, 'udp': {443, 3478} if relay else {443, 3478, 51820}}, allowed
 for secret in (root / 'secrets').iterdir():
     stat = secret.stat()
     assert stat.st_mode & 0o777 == 0o400, secret
