@@ -66,6 +66,15 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 
 **Residual tras una caída sin limpieza** (SIGKILL, pánico, corte de energía): `/etc/resolver/<dominio>` es global del sistema, no se retira con la utun, y sigue apuntando a IPs del túnel hasta que launchd relanza el lanzador (`ThrottleInterval` de 10 s mientras exista `agent.toml`), que ejecuta `cleanup` antes de `run`. En ese intervalo, en una red no confiable, las consultas de esos dominios pueden salir por el adaptador físico. Si el agente no se relanza (configuración retirada, `bootout`, ruta del lanzador rechazada), ejecutar `cleanup` a mano. Un fichero ajeno o no UTF-8 en `/etc/resolver` no impide la limpieza: solo se retiran los que comienzan por la marca de Atenea y se leen únicamente esos primeros bytes.
 
+## Panel local
+
+`atenea ui --socket /var/run/atenea/status.sock [--port 8787]` abre un panel de **solo lectura** en `http://127.0.0.1:PUERTO/` (hay que dejar el proceso abierto; Ctrl+C lo cierra). No requiere `sudo`: lee el socket de estado, que es legible por el grupo `staff`. Muestra el lease, el NAT, la sincronización con el control plane y el coordinator, y, por cada par, el camino en uso (`direct`, `relay-udp`, `relay-tls`), los caminos alternativos listos, bytes recibidos/enviados con su tasa, la última sesión y la dirección remota. Avisa si no hay lease o si falla la sincronización o el coordinator.
+
+- **Nombres:** la configuración firmada solo lleva claves y direcciones, no nombres. El panel muestra la IP del túnel y permite poner un nombre local por dispositivo; se guarda en el almacenamiento del navegador, no en el agente ni en la red.
+- **Direcciones:** `addrs` (propias y de cada par) aparece en el estado a partir de la versión con este cambio; con un agente anterior el panel muestra solo la clave abreviada.
+- **Latencia:** el agente mide el RTT por relay, no por el camino directo; en directo la columna sale vacía.
+- **Seguridad:** solo escucha en loopback, rechaza cualquier cabecera `Host` que no sea la propia (contra DNS rebinding), solo acepta `GET` y no envía CORS ni ofrece órdenes de control. El socket que se le pasa debe ser el de estado, no el de control. Cualquier proceso local con acceso a ese puerto lo lee: no es un límite entre usuarios de la misma máquina.
+
 ## Desinstalación
 
 ```sh

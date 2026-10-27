@@ -512,6 +512,8 @@ pub struct PathStatus {
 pub struct PeerStatus {
     pub device_id: DeviceId,
     pub public_key: String,
+    /// Direcciones del túnel del par (de la configuración firmada; el nombre no viaja en ella).
+    pub addrs: Vec<String>,
     pub endpoint: Option<String>,
     pub session: Option<String>,
     pub last_handshake_secs_ago: Option<u64>,
@@ -536,6 +538,8 @@ pub struct ConfigStatus {
 pub struct Status {
     pub nat: Option<NatStatus>,
     pub public_key: String,
+    /// Direcciones del túnel de este dispositivo.
+    pub addrs: Vec<String>,
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
@@ -1863,6 +1867,7 @@ impl Engine {
     pub fn status(&self, now: Instant, unix: u64) -> Status {
         Status {
             public_key: crypto::hex::encode(&self.keys.public),
+            addrs: self.own.iter().map(|a| a.to_string()).collect(),
             counters: self.counters.0.clone(),
             config: ConfigStatus {
                 version: self.config_version,
@@ -1877,6 +1882,7 @@ impl Engine {
                 .map(|p| PeerStatus {
                     device_id: p.device_id,
                     public_key: crypto::hex::encode(&p.public),
+                    addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
                         .current

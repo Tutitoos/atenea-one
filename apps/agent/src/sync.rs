@@ -291,6 +291,7 @@ mod tests {
                 candidates: vec!["192.0.2.1:1234".into()],
             }),
             public_key: "clave local".into(),
+            addrs: vec!["10.0.0.9".into()],
             counters: Default::default(),
             config: ConfigStatus {
                 version: 1,
@@ -303,6 +304,7 @@ mod tests {
                 .map(|path| PeerStatus {
                     device_id: [0xab; 16],
                     public_key: "no es el identificador".into(),
+                    addrs: vec!["10.0.0.8".into()],
                     endpoint: Some("203.0.113.1:1234".into()),
                     session: Some("sesión".into()),
                     last_handshake_secs_ago: Some(1),
