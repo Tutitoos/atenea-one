@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atenea One</title>
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1><img src="icon.svg" alt="" width="28" height="28"> Atenea One <span class="dot" id="dot"></span> <span class="sub" id="upd"></span></h1>
+<div id="alerts"></div>
+<div class="card"><div class="grid" id="self"></div></div>
+<div class="card"><table><thead><tr>
+  <th>Dispositivo</th><th>Camino</th><th>Latencia</th><th>Tráfico (↓ / ↑)</th><th>Última sesión</th><th>Dirección remota</th>
+</tr></thead><tbody id="peers"></tbody></table>
+<div class="sub" id="empty" hidden>Sin pares en la configuración actual.</div></div>
+<div class="sub">Los nombres son locales a esta aplicación (clic en un nombre para cambiarlo): la configuración firmada solo lleva claves y direcciones.</div>
+<script src="app.js"></script>
+</body>
+</html>

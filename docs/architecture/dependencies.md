@@ -393,3 +393,18 @@ secreto de cookies al destruirlo, y `subtle` 2.6.1 (BSD-3-Clause, ya transitiva 
 dalek) para comparar cookies en tiempo constante. No se añade ningún paquete,
 versión ni checksum al lock; solo listas de dependencias. Conserva
 `atenea-protocol` para reutilizar las constantes normativas de wire-v2 sin deriva.
+
+
+### Aplicación de escritorio (ADR-011)
+
+`apps/desktop` tiene `Cargo.lock` propio (417 paquetes en el lock, que incluye los de las tres plataformas; árbol de producción medido el 2026-10-27 con `cargo tree --locked -e normal`: 213 en macOS, 254 en Linux, 222 en Windows). Directas:
+
+| Crate | Versión fijada | Licencia | Uso |
+| --- | --- | --- | --- |
+| `tauri` | 2.12.5 | Apache-2.0 OR MIT | Ventana, webview del sistema, bandeja (`tray-icon`) e imagen PNG (`image-png`) |
+| `tauri-build` | 2.x (lock) | Apache-2.0 OR MIT | Script de compilación y esquemas de permisos |
+| `serde_json` | 1.x (lock) | MIT OR Apache-2.0 | Validar y leer la respuesta de estado |
+| `atenea-windows` | ruta local | Apache-2.0 | Canalización con nombre (solo Windows) |
+
+Licencias: todo el árbol está en la lista permitida **salvo cinco crates con MPL-2.0** (`cssparser`, `cssparser-macros`, `selectors`, `dtoa-short`, `option-ext`), admitidos como excepciones por crate en `deny.toml` (ADR-011 §5). La comprobación inicial se hizo con un script sobre `cargo tree`; `cargo-deny` (advisories incluidos) lo ejecuta la CI en el job `supply-chain`, con un resultado que no se conocía al escribir esto.
+

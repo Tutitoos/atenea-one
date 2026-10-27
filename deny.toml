@@ -30,6 +30,16 @@ allow = [
     "Unlicense",
 ]
 confidence-threshold = 0.93
+# MPL-2.0 (copyleft de fichero) solo para estos crates, sin modificar, que trae Tauri (ADR-011):
+# cssparser, cssparser-macros, selectors y dtoa-short entran por la macro de compilación
+# (tauri-codegen); option-ext va enlazado (dirs). No se añade MPL-2.0 a `allow` de forma global.
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "cssparser" },
+    { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+    { allow = ["MPL-2.0"], crate = "selectors" },
+    { allow = ["MPL-2.0"], crate = "dtoa-short" },
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
 
 [bans]
 multiple-versions = "warn"

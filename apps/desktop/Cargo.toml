@@ -1,0 +1,29 @@
+[package]
+name = "atenea-desktop"
+version = "0.1.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Tutitoos/atenea-one"
+rust-version = "1.99"
+description = "Aplicación de escritorio de Atenea One: bandeja del sistema y ventana de solo lectura con el estado del agente"
+
+# Workspace propio: Tauri exige WebKitGTK en Linux y no debe entrar en `cargo ... --workspace`
+# del laboratorio ni en el grafo del resto del producto. Se construye en macOS y Windows.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+atenea-windows = { path = "../../crates/windows" }

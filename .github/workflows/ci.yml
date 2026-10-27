@@ -66,8 +66,13 @@ jobs:
           cargo check --workspace
       - name: Compilar cliente y par de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
-      - name: Construir la app de barra de menús (sin instalar)
-        run: apps/macos-menu/build.sh "$RUNNER_TEMP/menu"
+      - name: Aplicación de escritorio (Tauri, workspace propio)
+        working-directory: apps/desktop
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked
       - name: Construir paquete sin firmar (sin instalar)
         run: |
           ATENEA_BIN_DIR="$PWD/target/debug" packaging/macos/build-pkg.sh
@@ -97,6 +102,13 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Aplicación de escritorio (Tauri, workspace propio)
+        working-directory: apps/desktop
+        run: |
+          cargo clippy --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Compilar cliente y par real de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
       - name: Construir ZIP sin firmar y sin DLL
@@ -125,6 +137,16 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.audit-toolchain.outputs.version }}
         with:
           rust-version: ${{ steps.audit-toolchain.outputs.version }}
+          command: check
+          arguments: --all-features
+          command-arguments: advisories bans licenses sources
+      # La aplicación de escritorio tiene workspace y Cargo.lock propios: mismo deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.audit-toolchain.outputs.version }}
+        with:
+          rust-version: ${{ steps.audit-toolchain.outputs.version }}
+          manifest-path: apps/desktop/Cargo.toml
           command: check
           arguments: --all-features
           command-arguments: advisories bans licenses sources

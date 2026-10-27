@@ -7,7 +7,6 @@ mod build_info;
 mod enroll;
 mod ipc;
 mod issue;
-mod ui;
 
 #[cfg(test)]
 #[path = "../../agent/src/platform/private_files.rs"]
@@ -130,13 +129,6 @@ enum Cmd {
         #[arg(long)]
         socket: PathBuf,
     },
-    /// Panel local de solo lectura (navegador) con el estado del agente. Usa el socket de solo lectura.
-    Ui {
-        #[arg(long)]
-        socket: PathBuf,
-        #[arg(long, default_value_t = 8787)]
-        port: u16,
-    },
 }
 
 fn main() -> ExitCode {
@@ -199,7 +191,6 @@ fn run(cmd: Cmd) -> Result<(), String> {
             ask(&socket, "reload")?;
             Ok(())
         }
-        Cmd::Ui { socket, port } => ui::serve(&socket, port),
     }
 }
 

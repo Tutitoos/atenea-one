@@ -66,22 +66,15 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 
 **Residual tras una caída sin limpieza** (SIGKILL, pánico, corte de energía): `/etc/resolver/<dominio>` es global del sistema, no se retira con la utun, y sigue apuntando a IPs del túnel hasta que launchd relanza el lanzador (`ThrottleInterval` de 10 s mientras exista `agent.toml`), que ejecuta `cleanup` antes de `run`. En ese intervalo, en una red no confiable, las consultas de esos dominios pueden salir por el adaptador físico. Si el agente no se relanza (configuración retirada, `bootout`, ruta del lanzador rechazada), ejecutar `cleanup` a mano. Un fichero ajeno o no UTF-8 en `/etc/resolver` no impide la limpieza: solo se retiran los que comienzan por la marca de Atenea y se leen únicamente esos primeros bytes.
 
-## Panel local
+## Aplicación de escritorio
 
-`atenea ui --socket /var/run/atenea/status.sock [--port 8787]` abre un panel de **solo lectura** en `http://127.0.0.1:PUERTO/` (hay que dejar el proceso abierto; Ctrl+C lo cierra). No requiere `sudo`: lee el socket de estado, que es legible por el grupo `staff`. Muestra el lease, el NAT, la sincronización con el control plane y el coordinator, y, por cada par, el camino en uso (`direct`, `relay-udp`, `relay-tls`), los caminos alternativos listos, bytes recibidos/enviados con su tasa, la última sesión y la dirección remota. Avisa si no hay lease o si falla la sincronización o el coordinator.
+`apps/desktop` (Tauri 2, ADR-011) pone el casco en la barra de menús con un punto de color y abre una ventana con el estado. **Solo lee** el socket de estado (`/var/run/atenea/status.sock`, o el de `ATENEA_STATUS_SOCKET`) y no necesita `sudo`. Se construye sin instalar nada: `cd apps/desktop && cargo build --release --locked`.
 
-- **Nombres:** la configuración firmada solo lleva claves y direcciones, no nombres. El panel muestra la IP del túnel y permite poner un nombre local por dispositivo; se guarda en el almacenamiento del navegador, no en el agente ni en la red.
-- **Direcciones:** `addrs` (propias y de cada par) aparece en el estado a partir de la versión con este cambio; con un agente anterior el panel muestra solo la clave abreviada.
-- **Latencia:** el agente mide el RTT por relay, no por el camino directo; en directo la columna sale vacía.
-- **Seguridad:** solo escucha en loopback, rechaza cualquier cabecera `Host` que no sea la propia (contra DNS rebinding), solo acepta `GET` y no envía CORS ni ofrece órdenes de control. El socket que se le pasa debe ser el de estado, no el de control. Cualquier proceso local con acceso a ese puerto lo lee: no es un límite entre usuarios de la misma máquina.
-
-## Icono en la barra de menús
-
-`apps/macos-menu/build.sh [DIR]` construye `Atenea One.app` (Swift, solo `swiftc` y `codesign`; no instala nada). Muestra el casco con un punto de color: verde (todos los pares en directo), naranja (sincronización o coordinator con error, o algún par por relay o sin camino), rojo (sin lease o error de configuración) y gris (agente parado o sin acceso al socket). El menú lista los pares con su camino, tráfico y última sesión, y «Abrir panel…» arranca `atenea ui` (puerto 8790) y abre el navegador. Lee el mismo socket de solo lectura que el panel y no envía órdenes. `AteneaMenu --print` hace una lectura sin interfaz, útil para diagnosticar.
-
-- **Verificado:** la lectura real del socket de un agente en marcha (`--print`) y el icono con su punto en la barra de un Mac. **Sin verificar:** el menú desplegado con clic y «Abrir panel…» (no se pudo automatizar sin permisos de accesibilidad), el comportamiento con varios monitores y con un agente que se para y rearranca, y macOS anterior a 27 (se compila con destino 13.0, pero solo se ha ejecutado en 27).
-- **Firma:** firma ad hoc local, sin certificado de desarrollador ni notarización: Gatekeeper pedirá permiso en otro Mac. Compila solo la arquitectura del equipo que construye. No va todavía en el `.pkg` firmado ni se arranca solo al iniciar sesión.
-- **Entrega:** el punto de estado es distinto del estado de salud de la red: «verde» solo dice que los caminos del agente están en directo, no que haya conectividad de extremo a extremo.
+- **Punto de color:** verde (todos los pares en directo), naranja (error de sincronización o de coordinator, o algún par por relay o sin camino), rojo (sin lease o error de configuración), gris (agente parado o sin acceso al socket). El menú de la bandeja muestra el resumen, «Abrir Atenea One» y «Salir». Cerrar la ventana la oculta; la aplicación sigue en la bandeja.
+- **Ventana:** lease, NAT, estado del control plane y del coordinator, y por cada par el camino en uso, los alternativos listos, bytes recibidos y enviados con su tasa, última sesión y dirección remota. `Atenea One --open` abre la ventana al arrancar.
+- **Nombres:** la configuración firmada solo lleva claves y direcciones. La IP del túnel aparece cuando el agente es de esta versión o posterior; con un agente anterior solo se ve la clave abreviada. Un nombre local por dispositivo se guarda en el almacenamiento del webview, no en el agente ni en la red.
+- **Latencia:** el agente mide RTT por relay, no por directo; en directo sale vacía.
+- **Verificado:** compilación, pruebas y clippy; lectura de un agente real y ventana con tráfico en vivo. **Sin verificar:** el menú de la bandeja con clic, varios monitores, macOS anterior a 27, Windows y Linux en ejecución. Sin firma ni notarización (Gatekeeper pedirá permiso en otro Mac) y no arranca con la sesión.
 
 ## Desinstalación
 

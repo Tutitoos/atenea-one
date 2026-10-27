@@ -12,6 +12,8 @@ if cargo metadata --no-deps --format-version 1 --locked | grep -q '"packages":\[
   echo "cargo: workspace sin miembros, omitido"
 else
   cargo fmt --all --check
+  # Workspace propio (Tauri): solo el formato es comprobable sin WebKitGTK; el resto va en los jobs de macOS y Windows.
+  cargo fmt --manifest-path apps/desktop/Cargo.toml --check
   cargo clippy --workspace --all-targets --locked -- -D warnings
   cargo test --workspace --locked
 fi

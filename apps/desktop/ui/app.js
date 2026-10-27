@@ -1,38 +1,5 @@
-<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Atenea One</title>
-<link rel="icon" type="image/svg+xml" href="/icon.svg">
-<style>
-  :root { color-scheme: light dark; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; --mut: #6e7781; --bd: #8884; }
-  body { font: 14px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 980px; padding: 16px; }
-  h1 { font-size: 18px; margin: 0 0 12px; display: flex; gap: 10px; align-items: center; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--mut); display: inline-block; }
-  .card { border: 1px solid var(--bd); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; }
-  .k { color: var(--mut); font-size: 12px; } .v { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bd); vertical-align: top; }
-  th { color: var(--mut); font-weight: 500; font-size: 12px; }
-  .tag { padding: 1px 8px; border-radius: 10px; color: #fff; font-size: 12px; white-space: nowrap; }
-  .direct { background: var(--ok); } .relay-udp, .relay-tls, .probing { background: var(--warn); } .none { background: var(--bad); }
-  .alert { border-color: var(--bad); color: var(--bad); } .mut { color: var(--mut); }
-  .name { cursor: pointer; border-bottom: 1px dotted var(--mut); }
-  .sub { font-size: 12px; color: var(--mut); }
-</style>
-</head>
-<body>
-<h1><img src="/icon.svg" alt="" width="28" height="28"> Atenea One <span class="dot" id="dot"></span> <span class="sub" id="upd"></span></h1>
-<div id="alerts"></div>
-<div class="card"><div class="grid" id="self"></div></div>
-<div class="card"><table><thead><tr>
-  <th>Dispositivo</th><th>Camino</th><th>Latencia</th><th>Tráfico (↓ / ↑)</th><th>Última sesión</th><th>Dirección remota</th>
-</tr></thead><tbody id="peers"></tbody></table>
-<div class="sub" id="empty" hidden>Sin pares en la configuración actual.</div></div>
-<div class="sub">Los nombres son locales a este navegador (clic en un nombre para cambiarlo): la configuración firmada solo lleva claves y direcciones.</div>
-<script>
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
 const $ = (id) => document.getElementById(id);
 const NAMES = 'atenea-names';
 const names = JSON.parse(localStorage.getItem(NAMES) || '{}');
@@ -95,18 +62,13 @@ function render(s, dt) {
 let last = 0;
 async function tick() {
   try {
-    const r = await fetch('/status', { cache: 'no-store' });
-    if (!r.ok) throw new Error(await r.text());
     const now = Date.now() / 1000;
-    render(await r.json(), last ? now - last : 0);
+    render(JSON.parse(await window.__TAURI__.core.invoke('status')), last ? now - last : 0);
     last = now;
     $('upd').textContent = 'actualizado ' + new Date().toLocaleTimeString();
   } catch (e) {
     $('dot').style.background = 'var(--bad)';
-    $('alerts').replaceChildren(el('div', 'No se puede leer el estado del agente: ' + e.message, 'card alert'));
+    $('alerts').replaceChildren(el('div', 'No se puede leer el estado del agente: ' + (e.message || e), 'card alert'));
   }
 }
 tick(); setInterval(tick, 2000);
-</script>
-</body>
-</html>

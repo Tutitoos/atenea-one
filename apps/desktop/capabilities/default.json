@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Sin permisos de plugins: la ventana solo puede invocar la orden `status` de la aplicación.",
+  "windows": ["main"],
+  "permissions": []
+}
