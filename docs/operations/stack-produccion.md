@@ -67,7 +67,7 @@ PostgreSQL crea `atenea_migrator`, propietario de BD/esquema, y `atenea_app`, ro
 
 ### HTTPS y OIDC
 
-Para laboratorio `CADDY_TLS=internal`; el navegador debe confiar en la CA de Caddy o el runner debe declararlo como laboratorio. Para producción use el correo ACME como `CADDY_TLS`, DNS correcto para `PANEL_HOST` y TCP80 accesible. Caddy usa HTTP-01 porque HAProxy ocupa 443. Registre el callback exacto `https://PANEL_HOST/auth/callback`. Dex se publica bajo `/dex`; `/coord/` sirve el coordinator. No active cookies inseguras.
+Para laboratorio `CADDY_TLS=internal`; el navegador debe confiar en la CA de Caddy o el runner debe declararlo como laboratorio. Para producción use el correo ACME como `CADDY_TLS`, DNS correcto para `PANEL_HOST` y TCP80 accesible. Caddy usa HTTP-01 porque HAProxy ocupa 443. Registre el callback exacto `https://PANEL_HOST/auth/callback`. Dex se publica bajo `/dex`; el coordinator, en `/v1/*` **sin reescribir la ruta**: el agente firma la ruta exacta de cada petición, así que un prefijo que el proxy elimine invalida la firma (`401`). Los agentes usan `coordinator.url = "https://PANEL_HOST"` (sin prefijo). Este recorrido por Caddy no estaba cubierto por `tests/stack`, donde el agente habla directo con el coordinator. No active cookies inseguras.
 
 Crear organización/red y certificar el emisor son operaciones posteriores: use la raíz offline con `atenea issuer-cert` para el UUID real de red y suba solo el certificado por el panel. Los agentes conservan claves locales y ancla pública propia.
 

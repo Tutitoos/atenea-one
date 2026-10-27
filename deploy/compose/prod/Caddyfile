@@ -17,8 +17,9 @@
   handle /dex/* {
     reverse_proxy dex:5556
   }
-  handle /coord/* {
-    uri strip_prefix /coord
+  # El agente firma la ruta exacta de cada petición (coord.rs `target`): no se reescribe ni se quita un prefijo.
+  # Las rutas del coordinator (/v1/*) no se solapan con las del control plane (/api/v1/*, /auth, /healthz).
+  handle /v1/* {
     reverse_proxy coordinator:8081
   }
   handle {
