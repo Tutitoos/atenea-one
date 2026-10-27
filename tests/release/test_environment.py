@@ -20,9 +20,13 @@ class Environment(unittest.TestCase):
     def test_good_configuration_passes(self):
         self.assertEqual(check.problems(GOOD, TAGS), [])
 
-    def test_missing_reviewers_self_review_and_branches_fail(self):
-        self.assertTrue(check.problems({**GOOD, "protection_rules": []}, TAGS))
+    def test_self_review_is_accepted_for_single_maintainer(self):
         rule = {"type": "required_reviewers", "prevent_self_review": False, "reviewers": [{}]}
+        self.assertEqual(check.problems({**GOOD, "protection_rules": [rule]}, TAGS), [])
+
+    def test_missing_reviewers_and_branches_fail(self):
+        self.assertTrue(check.problems({**GOOD, "protection_rules": []}, TAGS))
+        rule = {"type": "required_reviewers", "prevent_self_review": False, "reviewers": []}
         self.assertTrue(check.problems({**GOOD, "protection_rules": [rule]}, TAGS))
         self.assertTrue(check.problems({**GOOD, "deployment_branch_policy": None}, TAGS))
         self.assertTrue(check.problems(GOOD, {"branch_policies": [{"name": "main", "type": "branch"}]}))

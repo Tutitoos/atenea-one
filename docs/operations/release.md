@@ -159,7 +159,7 @@ El repositorio no puede aplicarlos; `publish` los **comprueba** antes de tocar e
 secreto (`scripts/release/check-environment.py`, con `actions: read`) y falla si
 no se cumplen. Settings > Environments > release:
 
-- [ ] Revisores obligatorios (al menos uno) y «Prevent self-review».
+- [ ] Revisores obligatorios (al menos uno). «Prevent self-review» **no** se exige: con un único mantenedor, una segunda cuenta propia no aporta separación real (decisión del responsable, 2026-10-27). Riesgo residual: quien controla la cuenta del mantenedor puede lanzar y aprobar un release; lo limitan la política de solo tags `v*`, el ruleset que impide mover o borrar esos tags y la atestación de procedencia por fichero y commit, no una segunda persona.
 - [ ] Deployment branches and tags: política personalizada **solo con tags `v*`**
       (y reglas de protección/ruleset de tags `v*` en el repositorio).
 - [ ] El secreto `ATENEA_RELEASE_ED25519_PEM` es un secreto **del environment**, no

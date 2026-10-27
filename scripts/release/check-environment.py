@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exige que el environment `release` tenga revisores y solo admita tags `v*`.
 
+No exige «Prevent self-review»: el proyecto tiene un único mantenedor y una segunda
+cuenta suya no aportaría separación real (riesgo residual aceptado en ADR-009).
+
 Uso: check-environment.py ENVIRONMENT.json POLICIES.json
 (salidas de `gh api repos/R/environments/release` y `.../deployment-branch-policies`).
 """
@@ -15,8 +18,7 @@ def problems(environment, policies):
     rules = [r for r in environment.get("protection_rules", []) if r.get("type") == "required_reviewers"]
     if not any(r.get("reviewers") for r in rules):
         found.append("sin revisores obligatorios")
-    elif not all(r.get("prevent_self_review") for r in rules):
-        found.append("quien lanza el release puede aprobarse a sí mismo")
+    # «prevent_self_review» no se comprueba: ver arriba.
     if not (environment.get("deployment_branch_policy") or {}).get("custom_branch_policies"):
         found.append("sin restricción de ramas/tags por política personalizada")
     listed = policies.get("branch_policies", [])
