@@ -564,7 +564,20 @@ Cada celda es **media / peor entre dos repeticiones**: menor req/s, mayor p95 y 
 |10000|200|Lectura|16.06 /15.86|15095.13 /15201.23|4.25 /5.00|23518 /24124|20.25 /23.00|149108 /156808|
 |10000|200|Emisión|10.86 /10.58|19002.11 /19509.73|5.25 /6.00|23190 /23736|9.50 /10.00|154702 /162736|
 
-**Hallazgo de rendimiento:** a 10k dispositivos en total (79 redes) y 200 clientes, lectura alcanza p95≈15.2s y emisión≈19.5s, aun sin errores. No es una experiencia interactiva aceptada ni un SLO de producción. **Causa parcialmente demostrada** ([diagnóstico](diagnostico-control-plane-escala.md)): las consultas por `device_id` sobre `ip_allocations` no pueden usar el índice existente (empieza por `network_id`) y recorren unas 20 000 filas por consulta, y la emisión añade 2N consultas secuenciales bajo el bloqueo exclusivo de la fila de la red. Un índice `(device_id, family) INCLUDE (addr)` ensayado **solo en una base privada ya borrada** reduce el listado de 128 dispositivos de ≈108–128 ms a ≈0,9–1,2 ms; el efecto de extremo a extremo y el reparto causal del p95 histórico **siguen SIN COMPROBAR**. El CPU bajo del proceso CP y el máximo individual de un backend no descartan saturación agregada de PostgreSQL. No se modifica el motor ni se atribuye el resultado al VPS.
+**Hallazgo de rendimiento (histórico, antes del índice):** a 10k dispositivos en total (79 redes) y 200 clientes, lectura alcanzaba p95≈15.2s y emisión≈19.5s, aun sin errores. **Causa parcialmente demostrada** ([diagnóstico](diagnostico-control-plane-escala.md)): las consultas por `device_id` sobre `ip_allocations` no podían usar el índice existente (empieza por `network_id`) y recorrían unas 20 000 filas por consulta, y la emisión añade 2N consultas secuenciales bajo el bloqueo exclusivo de la fila de la red. Un índice `(device_id, family) INCLUDE (addr)` ensayado en una base privada ya borrada redujo el listado de 128 dispositivos de ≈108–128 ms a ≈0,9–1,2 ms; la migración `0005` lo aplica y su efecto de extremo a extremo se midió después (sección siguiente). El CPU bajo del proceso CP y el máximo individual de un backend no descartan saturación agregada de PostgreSQL. No se atribuye el resultado al VPS.
+
+**Medición posterior a la migración `0005` (2026-10-27, `tests/load/out/atenea-load-97970`, misma matriz, solo fase control plane + PostgreSQL, 0 errores en los 24 perfiles).** Imagen `atenea/control-plane:local` cuyo binario contiene la migración `0005` (comprobado en el binario); su etiqueta de revisión dice `5f57810`, porque se construyó del árbol de trabajo antes del commit `2fd928c`. Línea base: `atenea-load-85467` (la tabla de arriba). Media de las dos repeticiones de emisiones o lecturas por segundo útiles y peor p95 de las dos:
+
+| Dispositivos | Carga | Clientes | Antes (rps / p95 s) | Después (rps / p95 s) | Factor rps |
+| --- | --- | --- | --- | --- | --- |
+| 1 000 | emisión | 50 / 200 | 81,9 / 0,80 · 78,6 / 2,79 | 177,7 / 0,50 · 193,6 / 1,37 | ×2 |
+| 1 000 | lectura | 50 / 200 | 168,7 / 0,51 · 189,7 / 1,20 | 959,7 / 0,09 · 726,2 / 0,48 | ×4–6 |
+| 5 000 | emisión | 50 / 200 | 20,6 / 2,89 · 21,4 / 9,60 | 196,0 / 0,36 · 208,5 / 1,10 | ×9–10 |
+| 5 000 | lectura | 50 / 200 | 31,4 / 4,18 · 32,7 / 9,49 | 928,0 / 0,09 · 802,8 / 0,34 | ×25–30 |
+| 10 000 | emisión | 50 / 200 | 10,9 / 5,42 · 10,9 / 19,51 | 141,7 / 0,81 · 177,0 / 1,41 | ×13–16 |
+| 10 000 | lectura | 50 / 200 | 14,4 / 7,71 · 16,1 / 15,20 | 808,7 / 0,13 · 787,8 / 0,43 | ×49–56 |
+
+A 10 000 dispositivos (79 redes) y 200 clientes, el p95 de lectura pasa de 15,2 s a 0,43 s y el de emisión de 19,5 s a 1,41 s. Ahora el rendimiento ya no cae al crecer la población (emisión ≈140–210/s a 1 000, 5 000 y 10 000), lo que confirma la hipótesis del diagnóstico (barridos por `device_id` sin índice). **Límites:** no es un A/B aislado, porque la línea base se midió en otra sesión y sobre otra imagen, y no se ha repetido en un VPS; es un generador en el mismo Mac que los servicios; dos repeticiones por perfil; no se han fijado umbrales de aceptación, y 79 redes de ≤128 no son una sola red grande. La causa atribuida al índice sigue respaldada por el plan de consultas (`EXPLAIN`) y por esta mejora, pero esta medición no prueba por sí sola que sea la única contribución.
 
 ### Almacenamiento y WebSocket
 
