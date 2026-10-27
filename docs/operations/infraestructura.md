@@ -309,7 +309,7 @@ ni contenedores anidados.
 bloqueos, consola/SSH remoto, NTP real del VPS, firewall externo, alcanzabilidad
 IPv4/IPv6 UDP/TCP 443 y UDP 3478, ACME público y su renovación, conmutación entre
 proveedores, y actualización desde un release publicado firmado.
-No se ha tocado ninguna infraestructura real ni publicado imágenes.
+Esta evidencia es de laboratorio: no tocó infraestructura real ni publicó imágenes.
 
 ### Revalidación tras gestionar el ciclo Docker (2026-10-25)
 
@@ -347,3 +347,20 @@ retenido de diagnóstico. No se descargaron ni instalaron imágenes, crates,
 paquetes o herramientas; Docker anidado estuvo `--network none`. No se alteraron
 tags protegidos del host. El detalle frío antes/después y las limitaciones están
 en [Caídas y leases](caidas-y-leases.md#ampliación-reinicio-del-motor-docker).
+
+## Despliegue del piloto (2026-10-27)
+
+Un único VPS Debian 13 (6 vCPU, 11,7 GiB de RAM), desplegado con este rol desde un contenedor de herramientas, con `v0.1.0` (imágenes por digest `linux/amd64`). Los nombres, direcciones, inventario y secretos reales viven en un inventario privado fuera del repositorio.
+
+**Verificado en el nodo y desde Internet:** los ocho servicios `healthy`; migraciones 1–5; certificado del panel emitido por Let's Encrypt con HTTP-01 (el puerto 80 es alcanzable desde fuera); HTTPS con la cadena pública sin desactivar la verificación y redirección 80→443; relay por TLS 443 con su SNI y ALPN `atenea-relay/2` verificado contra la CA del piloto, y rechazo del ALPN `atenea-relay/1`; STUN 3478/udp y relay 443/udp (IPv4) con COOKIE válida y silencio ante un `relay_id` ajeno; login OIDC real (Dex) con cookie `Secure` y escritura sin CSRF rechazada; acceso SSH solo desde la red de administración, `root` y contraseña desactivados; segunda convergencia con `changed=0` (33 tareas correctas).
+
+**Hallazgos del despliegue real:**
+
+- El VPS traía Docker CE (repositorio de Docker) y el rol instala el motor de Debian: **no son compatibles**. Antes de converger se retiró Docker CE y su repositorio (0 contenedores, 0 volúmenes). El rol no gestiona esa migración.
+- **IPv6 no se sirve:** Docker publica los puertos solo en IPv4 (`0.0.0.0`), por lo que un registro AAAA apunta a una dirección sin servicio aunque el nodo tenga IPv6. Este documento ya decía no publicar AAAA sin ruta IPv6 operativa: hay que publicar solo registros A mientras el stack no escuche en IPv6.
+- Un `ANSIBLE_REMOTE_TEMP` fijo creado por `root` en la primera fase impide a otro usuario trabajar en la segunda: usar el predeterminado por usuario.
+- El cortafuegos del rol no abre el UDP 41641 de Tailscale: si el acceso de administración va por Tailscale, funcionará por relay DERP, con más latencia.
+- El certificado TLS del relay lo firma una CA propia del piloto (caduca a los 90 días, renovación manual): los agentes necesitan `relay_ca_file`.
+
+**SIN COMPROBAR:** conectividad extremo a extremo con agentes reales (enrolamiento, P2P, relay UDP/TLS con datos), reinicio en frío del nodo, restauración de copias en este VPS, soak de 72 h, ACME del relay, cobertura IPv6, y el efecto del firewall de entrada del proveedor más allá de los puertos probados.
+
