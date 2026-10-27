@@ -75,13 +75,38 @@ fn checked(line: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn status() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| ask(&socket_path()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(|| {
+        let status: Value =
+            serde_json::from_str(&ask(&socket_path())?).map_err(|e| e.to_string())?;
+        let a = assess(&status);
+        Ok(serde_json::json!({
+            "status": status,
+            "health": { "level": a.level(), "text": a.text, "reasons": a.reasons },
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Estado global y una línea de resumen, con el mismo criterio que el panel y la app de menús.
-fn assess(s: &Value) -> (Health, String) {
+struct Assessment {
+    health: Health,
+    text: String,
+    reasons: Vec<String>,
+}
+
+impl Assessment {
+    fn level(&self) -> &'static str {
+        match self.health {
+            Health::Ok => "ok",
+            Health::Degraded => "degraded",
+            Health::Down | Health::Stopped => "down",
+        }
+    }
+}
+
+/// Estado global y su resumen: lo comparten la bandeja y la ventana (el frontend no lo recalcula).
+fn assess(s: &Value) -> Assessment {
     let mut health = Health::Ok;
     let mut why: Vec<String> = Vec::new();
     let mut worsen = |h: Health, text: Option<String>| {
@@ -118,7 +143,11 @@ fn assess(s: &Value) -> (Health, String) {
             why.first().map_or("sin detalle", String::as_str)
         ),
     };
-    (health, text)
+    Assessment {
+        health,
+        text,
+        reasons: why,
+    }
 }
 
 /// Icono de la bandeja: el casco con un punto del color del estado en la esquina inferior derecha.
@@ -186,10 +215,13 @@ fn main() {
             std::thread::spawn(move || {
                 loop {
                     let (health, text) = match ask(&socket_path()) {
-                        Ok(json) => serde_json::from_str(&json)
-                            .map_or((Health::Stopped, "Estado ilegible".to_string()), |v| {
-                                assess(&v)
-                            }),
+                        Ok(json) => serde_json::from_str(&json).map_or(
+                            (Health::Stopped, "Estado ilegible".to_string()),
+                            |v| {
+                                let a = assess(&v);
+                                (a.health, a.text)
+                            },
+                        ),
                         Err(_) => (
                             Health::Stopped,
                             "Agente parado o sin acceso al estado".to_string(),
@@ -226,21 +258,23 @@ mod tests {
 
     #[test]
     fn health_follows_lease_errors_and_paths() {
-        assert_eq!(assess(&status(true, "direct")).0, Health::Ok);
-        assert_eq!(assess(&status(true, "relay-udp")).0, Health::Degraded);
-        assert_eq!(assess(&status(true, "none")).0, Health::Degraded);
-        let (h, text) = assess(&status(false, "direct"));
+        assert_eq!(assess(&status(true, "direct")).health, Health::Ok);
+        assert_eq!(assess(&status(true, "relay-udp")).health, Health::Degraded);
+        assert_eq!(assess(&status(true, "none")).health, Health::Degraded);
+        let a = assess(&status(false, "direct"));
         assert_eq!(
-            (h, text.as_str()),
-            (Health::Down, "Sin conexión: sin lease activo")
+            (a.health, a.text.as_str(), a.level()),
+            (Health::Down, "Sin conexión: sin lease activo", "down")
         );
+        assert_eq!(a.reasons, ["sin lease activo"]);
         let mut s = status(true, "direct");
         s["sync"]["last_error"] = json!("acceso denegado");
+        let a = assess(&s);
         assert_eq!(
-            assess(&s),
+            (a.health, a.text.as_str()),
             (
                 Health::Degraded,
-                "Degradado: control plane: acceso denegado".into()
+                "Degradado: control plane: acceso denegado"
             )
         );
     }

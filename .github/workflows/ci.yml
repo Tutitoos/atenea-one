@@ -47,7 +47,14 @@ jobs:
       - run: pnpm -r run typecheck
       - run: pnpm -r run test
       - run: pnpm -r run build
+      # Tauri embebe estos ficheros al compilar: macOS y Windows no necesitan Node ni pnpm.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-ui
+          path: apps/desktop/build/client
+          if-no-files-found: error
   macos:
+    needs: panel
     if: github.event_name != 'schedule'
     runs-on: macos-latest
     timeout-minutes: 20
@@ -66,6 +73,10 @@ jobs:
           cargo check --workspace
       - name: Compilar cliente y par de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-ui
+          path: apps/desktop/build/client
       - name: Aplicación de escritorio (Tauri, workspace propio)
         working-directory: apps/desktop
         run: |
@@ -81,6 +92,7 @@ jobs:
         timeout-minutes: 12
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
   windows:
+    needs: panel
     if: github.event_name != 'schedule'
     runs-on: windows-latest
     timeout-minutes: 20
@@ -102,6 +114,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-ui
+          path: apps/desktop/build/client
       - name: Aplicación de escritorio (Tauri, workspace propio)
         working-directory: apps/desktop
         run: |

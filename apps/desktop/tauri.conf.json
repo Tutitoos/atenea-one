@@ -3,11 +3,11 @@
   "productName": "Atenea One",
   "version": "0.1.0",
   "identifier": "one.atenea.desktop",
-  "build": { "frontendDist": "./ui" },
+  "build": { "frontendDist": "./build/client" },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
-      { "label": "main", "title": "Atenea One", "width": 980, "height": 640, "visible": false }
+      { "label": "main", "title": "Atenea One", "width": 920, "height": 600, "minWidth": 760, "minHeight": 460, "visible": false }
     ],
     "security": {
       "csp": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"

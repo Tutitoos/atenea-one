@@ -1,0 +1,40 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { invoke } from '@tauri-apps/api/core';
+import { reply, type Reply } from './status';
+
+export type Rate = { down: number; up: number };
+export type Sample = { reply: Reply; rates: Record<string, Rate> };
+
+/** Calcula bytes/s por par entre dos lecturas consecutivas (la primera no tiene tasa). */
+export function createSampler() {
+  let prev: { at: number; bytes: Map<string, { rx: number; tx: number }> } | undefined;
+  return (current: Reply, now: number): Sample => {
+    const dt = prev ? (now - prev.at) / 1000 : 0;
+    const rates: Record<string, Rate> = {};
+    const bytes = new Map<string, { rx: number; tx: number }>();
+    for (const p of current.status.peers) {
+      const old = prev?.bytes.get(p.public_key);
+      if (old && dt > 0) rates[p.public_key] = { down: Math.max(0, p.rx_bytes - old.rx) / dt, up: Math.max(0, p.tx_bytes - old.tx) / dt };
+      bytes.set(p.public_key, { rx: p.rx_bytes, tx: p.tx_bytes });
+    }
+    prev = { at: now, bytes };
+    return { reply: current, rates };
+  };
+}
+
+const sampler = createSampler();
+
+/** Única orden del frontend hacia Rust: lectura del estado. Rechaza respuestas con otra forma. */
+export async function readAgent(): Promise<Sample> {
+  let raw: string;
+  try {
+    raw = await invoke<string>('status');
+  } catch (e) {
+    // Tauri rechaza con el texto devuelto por la orden, no con un Error.
+    throw new Error(typeof e === 'string' ? e : 'No se pudo leer el estado del agente.', { cause: e });
+  }
+  const parsed = reply.safeParse(JSON.parse(raw));
+  if (!parsed.success) throw new Error('El agente respondió con un formato inesperado.');
+  return sampler(parsed.data, Date.now());
+}

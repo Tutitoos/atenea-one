@@ -1,0 +1,41 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { z } from 'zod';
+
+// Frontera con el agente: se valida lo que se usa y se toleran campos ausentes (agentes anteriores
+// no informan `addrs`) o añadidos. Cualquier otra forma se rechaza con un error visible.
+const path = z.object({ kind: z.string(), ready: z.boolean(), healthy: z.boolean(), rtt_ms: z.number().nullish() });
+const peer = z.object({
+  public_key: z.string(),
+  addrs: z.array(z.string()).default([]),
+  endpoint: z.string().nullish(),
+  session: z.string().nullish(),
+  last_handshake_secs_ago: z.number().nullish(),
+  tx_bytes: z.number(),
+  rx_bytes: z.number(),
+  path: z.string(),
+  candidates: z.number().default(0),
+  paths: z.array(path).default([]),
+});
+const status = z.object({
+  public_key: z.string(),
+  addrs: z.array(z.string()).default([]),
+  config: z.object({ version: z.number(), valid_until_unix: z.number().nullish(), lease_active: z.boolean(), last_error: z.string().nullish() }),
+  nat: z.object({ mapping: z.string(), reflexive: z.string().nullish() }).nullish(),
+  sync: z.object({ last_ok_unix: z.number().nullish(), last_error: z.string().nullish() }).nullish(),
+  coordinator: z.object({ last_announce_ok_unix: z.number().nullish(), last_error: z.string().nullish() }).nullish(),
+  relay: z.object({ allocations: z.number().default(0), drops: z.record(z.string(), z.number()).default({}), entries: z.array(z.record(z.string(), z.unknown())).default([]) }).nullish(),
+  counters: z.record(z.string(), z.number()).default({}),
+  peers: z.array(peer).default([]),
+});
+
+// `health` lo calcula Rust (src/main.rs::assess): la bandeja y la ventana comparten criterio.
+export const reply = z.object({
+  status,
+  health: z.object({ level: z.enum(['ok', 'degraded', 'down']), text: z.string(), reasons: z.array(z.string()) }),
+});
+
+export type Reply = z.infer<typeof reply>;
+export type Status = Reply['status'];
+export type Peer = Status['peers'][number];
+export type Level = Reply['health']['level'];
