@@ -71,6 +71,18 @@ El [verificador](../../scripts/audit/verify-snapshot.sh) comprueba hashes, proce
 
 Ambas archivaron `a0f8ac71b5e83607603c45b46113a2aa0ea607b6`, sin los nuevos archivos de esta entrega. La evidencia de este ensayo es la salida local de los scripts; el binario generado permanece ignorado y no se presenta como artefacto publicado. Para compartirlo, transmitir también un hash esperado por un canal independiente; una modificación conjunta de tarball y `SHA256SUMS` no se detecta como falsificación.
 
+### Firma de la instantánea (responsable)
+
+`SHA256SUMS` solo da integridad. El responsable lo firma con una clave **Ed25519 propia**, generada y guardada fuera de este repositorio (`openssl genpkey -algorithm ed25519`); la misma operación que firma el manifiesto de release (`openssl pkeyutl -rawin`). La clave privada no se entrega a terceros ni a asistentes.
+
+```sh
+scripts/audit/snapshot.sh && scripts/audit/verify-snapshot.sh
+scripts/audit/sign-snapshot.sh RUTA/clave-privada.pem    # crea SHA256SUMS.sig y signer-public.pem; imprime la huella
+scripts/audit/verify-signature.sh HUELLA_ESPERADA        # el auditor, con la huella recibida por otro canal
+```
+
+`sign-snapshot.sh` rechaza claves que no sean Ed25519 o estén dentro del repositorio. `verify-signature.sh` exige la huella SHA-256 de la clave pública (SPKI DER) obtenida por un canal **independiente**: el `signer-public.pem` del directorio no es confianza por sí mismo. Si tarball, firma y clave pública viajan juntos, la firma solo demuestra coherencia, no autoría. Se ensayó con una clave desechable (firma válida, huella distinta rechazada, `SHA256SUMS` alterado rechazado, clave dentro del repo rechazada); **no se ha firmado con la clave real del responsable**. Además se recomienda un tag Git firmado sobre el commit del snapshot (`git tag -s`), cuya clave y publicación decide el responsable.
+
 ## Comprobación documental
 
 El [comprobador de solo lectura](../../scripts/audit/check-docs.py) comprueba destinos relativos (incluidos fragmentos de encabezado), nombres privados prohibidos, rutas personales y patrones de credenciales de `docs/audit/*.md`. Ejecutar:
