@@ -66,6 +66,8 @@ jobs:
           cargo check --workspace
       - name: Compilar cliente y par de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+      - name: Construir la app de barra de menús (sin instalar)
+        run: apps/macos-menu/build.sh "$RUNNER_TEMP/menu"
       - name: Construir paquete sin firmar (sin instalar)
         run: |
           ATENEA_BIN_DIR="$PWD/target/debug" packaging/macos/build-pkg.sh

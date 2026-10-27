@@ -75,6 +75,14 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 - **Latencia:** el agente mide el RTT por relay, no por el camino directo; en directo la columna sale vacía.
 - **Seguridad:** solo escucha en loopback, rechaza cualquier cabecera `Host` que no sea la propia (contra DNS rebinding), solo acepta `GET` y no envía CORS ni ofrece órdenes de control. El socket que se le pasa debe ser el de estado, no el de control. Cualquier proceso local con acceso a ese puerto lo lee: no es un límite entre usuarios de la misma máquina.
 
+## Icono en la barra de menús
+
+`apps/macos-menu/build.sh [DIR]` construye `Atenea One.app` (Swift, solo `swiftc` y `codesign`; no instala nada). Muestra el casco con un punto de color: verde (todos los pares en directo), naranja (sincronización o coordinator con error, o algún par por relay o sin camino), rojo (sin lease o error de configuración) y gris (agente parado o sin acceso al socket). El menú lista los pares con su camino, tráfico y última sesión, y «Abrir panel…» arranca `atenea ui` (puerto 8790) y abre el navegador. Lee el mismo socket de solo lectura que el panel y no envía órdenes. `AteneaMenu --print` hace una lectura sin interfaz, útil para diagnosticar.
+
+- **Verificado:** la lectura real del socket de un agente en marcha (`--print`) y el icono con su punto en la barra de un Mac. **Sin verificar:** el menú desplegado con clic y «Abrir panel…» (no se pudo automatizar sin permisos de accesibilidad), el comportamiento con varios monitores y con un agente que se para y rearranca, y macOS anterior a 27 (se compila con destino 13.0, pero solo se ha ejecutado en 27).
+- **Firma:** firma ad hoc local, sin certificado de desarrollador ni notarización: Gatekeeper pedirá permiso en otro Mac. Compila solo la arquitectura del equipo que construye. No va todavía en el `.pkg` firmado ni se arranca solo al iniciar sesión.
+- **Entrega:** el punto de estado es distinto del estado de salud de la red: «verde» solo dice que los caminos del agente están en directo, no que haya conectividad de extremo a extremo.
+
 ## Desinstalación
 
 ```sh

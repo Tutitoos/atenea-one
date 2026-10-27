@@ -15,7 +15,7 @@ TITULAR = "Copyright 2026 Tutitoos"
 SPDX = "SPDX-License-Identifier: Apache-2.0"
 PREFIX = {
     ".rs": "//", ".ts": "//", ".tsx": "//", ".mjs": "//", ".js": "//",
-    ".py": "#", ".sh": "#", ".ps1": "#",
+    ".py": "#", ".sh": "#", ".ps1": "#", ".swift": "//",
 }
 EXCLUIDOS = {"node_modules", "target", "dist", "build", "vendor", "__pycache__"}
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
