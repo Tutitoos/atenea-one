@@ -208,11 +208,10 @@ En macOS: `cargo fmt --all`, clippy de los cinco paquetes con
 `--offline --locked --all-targets -- -D warnings` y **155 pruebas correctas**,
 con `CARGO_BUILD_JOBS=2`. No se repitió clippy/test Linux del workspace.
 
-**SIN COMPROBAR:** ejecución del workflow en GitHub, publicación real en
-GHCR/Releases, digest real de registro, reconstrucción completa del panel en el
-ensayo local, firmas de plataforma/notarización macOS y Authenticode Windows,
-ensamblado de `.pkg`/ZIP en runners durante este ensayo, clave real del responsable
-y token hardware. Tampoco se han ejecutado las atestaciones de procedencia, su
-verificación con `gh attestation verify`, la lectura del environment por API ni los
-SBOM por objetivo en los runners (el SBOM se probó con `cargo metadata` local y
-pruebas unitarias). No se ha publicado nada, creado tags, hecho commit ni push.
+### Publicación real de `v0.1.0` (2026-10-27)
+
+El tag firmado `v0.1.0` se publicó con autorización expresa del responsable tras **cuatro intentos**: el primero falló en el job `linux` porque `dpkg-deb --compression=xz` no existe en el `dpkg-deb` 1.21 del runner (ahora `-Zxz`); el segundo y el tercero, en `publish`, porque GHCR rechazó con 403 el manifiesto de la imagen (la etiqueta apuntaba a un manifiesto de atestación de BuildKit; el tercero ya llevaba la etiqueta OCI de origen); el cuarto construyó con `--provenance=false --sbom=false` y publicó. Los intentos fallidos no dejaron release; sus paquetes huérfanos de GHCR se borraron. El tag `v0.1.0` se recreó tres veces sobre commits distintos mientras no existía release; hoy apunta a `107fd0d` y el ruleset impide moverlo o borrarlo.
+
+Resultado: GitHub Release con **33 ficheros** (binarios Linux/macOS/Windows, `.deb`, `.pkg` y ZIP sin firma nativa, SBOM, manifiesto y firma) y tres imágenes públicas en GHCR por digest (`control-plane`, `coordinator`, `relay`). `scripts/release/verify.sh` pasó con la clave pública del responsable obtenida fuera del release (firma Ed25519, identidad, artefactos, SBOM y `SHA256SUMS`); el manifiesto de cada imagen se lee sin credenciales. Los digests de registro están en `images.json` del release. El job `publish` ejecutó el comprobador del environment y `gh attestation verify` por fichero.
+
+**SIN COMPROBAR:** que el 403 de GHCR se debiera a la atestación de BuildKit (se deduce del contenido del registro, no se reprodujo en local); firmas de plataforma/notarización macOS y Authenticode Windows (los instaladores van sin firmar); token hardware para la clave de firma; la instalación de los artefactos publicados en un host real. La clave de firma del release está en un fichero local del responsable, sin passphrase ni copia de seguridad verificada. Un solo mantenedor aprueba y publica (ADR-009). `0.1.0` es una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
