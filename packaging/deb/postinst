@@ -11,6 +11,13 @@ case "${1:-}" in
         install -d -o root -g atenea -m 0700 /var/lib/atenea
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload
+            # Solo tras una actualización con el agente en marcha: una instalación nueva no arranca nada.
+            if [ -e /run/atenea-agent.restart-after-upgrade ]; then
+                rm -f /run/atenea-agent.restart-after-upgrade
+                systemctl start atenea-agent.service
+                echo 'Atenea actualizado: agente reiniciado.'
+                exit 0
+            fi
         fi
         echo 'Atenea instalado sin habilitar ni arrancar: configure /etc/atenea/agent.toml primero.'
         ;;

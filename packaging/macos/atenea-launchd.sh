@@ -17,6 +17,12 @@ for path in /Library /Library/Atenea "$bin" "$bin/atenea-agent" "$bin/atenea-lau
     esac
 done
 
-install -d -o root -g wheel -m 0700 /var/run/atenea
+# Con `status_gid` en la configuración, ese grupo atraviesa el directorio (0750) para llegar al socket
+# de estado (solo lectura); sin él, solo root. El agente nunca cambia permisos del directorio.
+gid=$(/usr/bin/awk -F= '$1 ~ /^[ \t]*status_gid[ \t]*$/ { gsub(/[ \t]/, "", $2); print $2; exit }' "$config")
+case "$gid" in
+'' | *[!0-9]*) install -d -o root -g wheel -m 0700 /var/run/atenea ;;
+*) install -d -o root -g "$gid" -m 0750 /var/run/atenea ;;
+esac
 "$bin/atenea-agent" cleanup --config "$config"
 exec "$bin/atenea-agent" run --config "$config"

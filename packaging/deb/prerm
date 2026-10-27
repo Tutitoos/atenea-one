@@ -5,6 +5,10 @@ set -eu
 case "${1:-}" in
     remove|deconfigure|upgrade)
         if [ -d /run/systemd/system ]; then
+            # En una actualización se recuerda si estaba en marcha para volver a arrancarlo (postinst).
+            if [ "${1:-}" = upgrade ] && systemctl is-active --quiet atenea-agent.service; then
+                : > /run/atenea-agent.restart-after-upgrade
+            fi
             systemctl stop atenea-agent.service
         fi
         ;;
