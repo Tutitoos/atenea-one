@@ -12,6 +12,13 @@ root = Path('/runtime')
 panel, relay = os.environ['PANEL_HOST'], os.environ['RELAY_HOST']
 # Los nombres se interpolan en YAML/TOML y certificados, nunca admiten sintaxis.
 assert all(name and all(c.isalnum() or c in '.-' for c in name) for name in (panel, relay))
+# Laboratorio por defecto; un piloto fija validez, correo de Dex y nombre del relay por entorno.
+days_ca, days_cert = os.environ.get('ATENEA_CA_DAYS', '2'), os.environ.get('ATENEA_CERT_DAYS', '2')
+dex_email = os.environ.get('ATENEA_DEX_EMAIL', 'admin@example.test')
+relay_name = os.environ.get('ATENEA_RELAY_NAME', 'lab')
+assert days_ca.isdigit() and days_cert.isdigit() and 0 < int(days_cert) <= int(days_ca)
+assert dex_email.count('@') == 1 and all(c.isalnum() or c in '@.-_+' for c in dex_email)
+assert relay_name and all(c.isalnum() or c in '.-_' for c in relay_name)
 
 def save(name, value, mode=0o400, uid=65532):
     path = root / name
@@ -50,15 +57,15 @@ staticClients:
     secret: {passwords['oidc']}
     redirectURIs: ['https://{panel}/auth/callback']
 staticPasswords:
-  - email: admin@example.test
+  - email: {dex_email}
     hash: BCRYPT_RUNTIME
     username: admin
     userID: 08a8684b-db88-4b73-90a9-3cd1661f5466
 ''')
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ed25519', '-nodes', '-days', '2', '-keyout', str(root/'offline/ca.key'), '-out', str(root/'certs/ca.pem'), '-subj', '/CN=Atenea Stack CA', '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign'], check=True)
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ed25519', '-nodes', '-days', days_ca, '-keyout', str(root/'offline/ca.key'), '-out', str(root/'certs/ca.pem'), '-subj', '/CN=Atenea Stack CA', '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign'], check=True)
     subprocess.run(['openssl', 'req', '-new', '-newkey', 'ed25519', '-nodes', '-keyout', str(root/'secrets/relay.key'), '-out', str(root/'offline/relay.csr'), '-subj', f'/CN={relay}'], check=True)
     save('offline/relay.ext', f'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:{relay},DNS:{panel}\n', uid=0)
-    subprocess.run(['openssl', 'x509', '-req', '-in', str(root/'offline/relay.csr'), '-CA', str(root/'certs/ca.pem'), '-CAkey', str(root/'offline/ca.key'), '-set_serial', '1', '-days', '2', '-extfile', str(root/'offline/relay.ext'), '-out', str(root/'certs/relay.pem')], check=True)
+    subprocess.run(['openssl', 'x509', '-req', '-in', str(root/'offline/relay.csr'), '-CA', str(root/'certs/ca.pem'), '-CAkey', str(root/'offline/ca.key'), '-set_serial', '1', '-days', days_cert, '-extfile', str(root/'offline/relay.ext'), '-out', str(root/'certs/relay.pem')], check=True)
     (root/'secrets/relay.key').chmod(0o400)
     os.chown(root/'secrets/relay.key', 65532, 65532)
 else:
@@ -72,7 +79,7 @@ stun_ports = [3478, 3479]
 anchors = ["{anchor}"]
 [[relays]]
 relay_id = "{relay_id}"
-name = "lab"
+name = "{relay_name}"
 udp = "{relay}:443"
 tls = "{relay}:443"
 tls_name = "{relay}"

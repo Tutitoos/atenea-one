@@ -14,7 +14,7 @@ export RELAY_HOST=${RELAY_HOST:-relay.stack.test}
 CADDY_IMAGE=caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
 # El hash bcrypt lo genera Caddy; la contraseña existe únicamente en el runtime privado.
 docker run --rm --user 0 -v "$RUNTIME:/runtime" -v "$ROOT:/src:ro" \
-  -e PANEL_HOST -e RELAY_HOST atenea-panel-lab python3 /src/deploy/compose/prod/bootstrap.py
+  -e PANEL_HOST -e RELAY_HOST -e ATENEA_CA_DAYS -e ATENEA_CERT_DAYS -e ATENEA_DEX_EMAIL -e ATENEA_RELAY_NAME atenea-panel-lab python3 /src/deploy/compose/prod/bootstrap.py
 PASSWORD=$(docker run --rm --user 0 -v "$RUNTIME:/runtime:ro" atenea-panel-lab cat /runtime/offline/dex-password)
 HASH=$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$PASSWORD")
 unset PASSWORD
@@ -22,11 +22,11 @@ docker run --rm --user 0 -v "$RUNTIME:/runtime" -e DEX_HASH="$HASH" atenea-panel
 unset HASH
 docker run --rm --user 0 -v "$RUNTIME:/runtime" "$TOOLS_IMAGE" root-init --out /runtime/offline/root.key > "$RUNTIME/config/root.pub"
 RELAY_PUB=$(docker run --rm --user 0 -v "$RUNTIME:/runtime:ro" -e ATENEA_COORD_RELAY_SIGNING_KEY_FILE=/runtime/secrets/relay-signing.hex --entrypoint /usr/local/bin/atenea-coordinator "$TOOLS_IMAGE" --print-relay-key)
-docker run --rm --user 0 -v "$RUNTIME:/runtime" -v "$ROOT:/src:ro" -e RELAY_PUB="$RELAY_PUB" -e PANEL_HOST -e RELAY_HOST atenea-panel-lab python3 /src/deploy/compose/prod/bootstrap.py config
+docker run --rm --user 0 -v "$RUNTIME:/runtime" -v "$ROOT:/src:ro" -e RELAY_PUB="$RELAY_PUB" -e PANEL_HOST -e RELAY_HOST -e ATENEA_RELAY_NAME atenea-panel-lab python3 /src/deploy/compose/prod/bootstrap.py config
 for entry in CONTROL_PLANE:control-plane COORDINATOR:coordinator RELAY:relay; do
   variable=${entry%%:*}; service=${entry#*:}
   printf '%s_IMAGE=%s\n' "$variable" "$(docker image inspect "atenea/$service:local" --format '{{.Id}}')" >> "$RUNTIME/stack.env"
 done
-printf 'ATENEA_RUNTIME_DIR=%s\nPANEL_HOST=%s\nRELAY_HOST=%s\nCADDY_TLS=internal\n' "$RUNTIME" "$PANEL_HOST" "$RELAY_HOST" >> "$RUNTIME/stack.env"
+printf 'ATENEA_RUNTIME_DIR=%s\nPANEL_HOST=%s\nRELAY_HOST=%s\nCADDY_TLS=%s\n' "$RUNTIME" "$PANEL_HOST" "$RELAY_HOST" "${CADDY_TLS:-internal}" >> "$RUNTIME/stack.env"
 chmod 600 "$RUNTIME/stack.env"
 echo "Bootstrap listo: $RUNTIME/stack.env (CA privada solo laboratorio; raíz en offline/)"
