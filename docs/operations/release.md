@@ -147,6 +147,7 @@ con el toolchain de `rust-toolchain.toml`, y cada uno **atesta la procedencia** 
 sus ficheros (`actions/attest-build-provenance`, permisos `id-token` y
 `attestations` solo en esos jobs). El runner Linux sí puede descargar
 dependencias para el build completo; esto no es parte del ensayo offline del Mac.
+Las imágenes se construyen con `--provenance=false --sbom=false`: con el almacén containerd, BuildKit adjunta por defecto un manifiesto de atestación que convierte la imagen en un índice, y GHCR rechazó (403) el `docker push` de ese índice en el primer intento de publicación. La procedencia ya se atesta por fichero con `actions/attest-build-provenance` y el SBOM se genera con `scripts/release/sbom.py`, así que la atestación de BuildKit era redundante.
 
 Todas las acciones, también `actions/upload-artifact` y `download-artifact`, se
 fijan por SHA completo (comentario con la etiqueta); Dependabot propone las

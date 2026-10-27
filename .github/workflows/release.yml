@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           for service in control-plane coordinator relay; do
-            docker build --build-arg "ATENEA_BUILD_COMMIT=$GITHUB_SHA" -t "atenea-release/$service:build" -f "deploy/images/$service/Dockerfile" .
+            docker build --provenance=false --sbom=false --build-arg "ATENEA_BUILD_COMMIT=$GITHUB_SHA" -t "atenea-release/$service:build" -f "deploy/images/$service/Dockerfile" .
             test "$(docker run --rm --network none "atenea-release/$service:build" --version)" = "atenea-$service $ATENEA_VERSION ($GITHUB_SHA)"
           done
           python3 scripts/release/images.py dist "$GITHUB_SHA" "$ATENEA_VERSION" control-plane=atenea-release/control-plane:build coordinator=atenea-release/coordinator:build relay=atenea-release/relay:build
