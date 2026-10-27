@@ -14,7 +14,7 @@ La fase 9 convierte el código en algo instalable, recuperable y actualizable. N
 - **Nodo principal** (un VPS con IPv4+IPv6): HAProxy (TCP 443, L4, SNI según ADR-004), Caddy (TLS del panel; HTTP-01 en 80), control plane, coordinator, PostgreSQL, OIDC (Dex en el piloto), relay y STUN. Todo en Docker Compose con redes internas; solo HAProxy, Caddy (80) y los puertos UDP del relay/STUN publican en el host.
 - **Nodo relay secundario** (proveedor distinto): solo `relay` + STUN + exportador de métricas. Sin base de datos, sin claves de firma de configuración. Se registra en `ATENEA_COORD_RELAYS` del coordinator.
 - **Raíz**: la clave raíz **nunca** vive en ningún nodo (ADR-005). Los nodos tienen la clave de emisor (con caducidad) y la semilla de firma de tokens del relay.
-- Nombres: `panel.atenea.one`, `relay.atenea.one` (y `relay2.atenea.one` para el segundo).
+- Nombres: `panel.<dominio>`, `relay.<dominio>` (y `relay2.<dominio>` para el segundo), con el dominio aportado por el operador en su inventario privado ([ADR-004](ADR-004-entrada-443.md)); registros solo DNS, sin proxy.
 
 ### 2. Disponibilidad: qué se promete y qué no
 
