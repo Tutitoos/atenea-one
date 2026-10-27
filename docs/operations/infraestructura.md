@@ -395,3 +395,7 @@ Método: tabla `nft` temporal en la VPS (retirada siempre al terminar) para bloq
 
 **SIN COMPROBAR:** el directo por Internet con ambos agentes tras NAT domésticos distintos (aquí uno de los dos tiene IP pública), revocación por relay o con más pares, restauración de copias en un VPS nuevo, soak de 72 h, ACME del relay, cobertura IPv6, el rendimiento más allá de 8 MiB, el efecto del firewall de entrada del proveedor más allá de los puertos probados y un reinicio con la red de administración caída.
 
+
+**Cliente Linux en un LXC (tercera máquina).** Contenedor Debian 13 sin privilegios en un Proxmox doméstico (2 núcleos, 4 GB de RAM, 30 GB de disco) con el `.deb` de `v0.1.0`, enrolado como tercer par (`10.77.0.3`). Mallado de tres máquinas: contenedor ↔ Mac directo por la LAN (RTT ≈1 ms), contenedor ↔ VPS directo por Internet (≈110 ms), y Mac ↔ VPS directo; sin pérdida tras el primer apretón de manos (2–5 s). **Límite:** el contenedor comparte NAT con el Mac. Detalles de instalación y la trampa de DNS en [instalación Linux](instalacion-linux.md#cliente-en-un-contenedor-lxc-de-proxmox-verificado-2026-10-27).
+
+**Hallazgo de herramientas de medición.** Un recolector lanzado por `launchd` con el Python de Homebrew no podía llegar a máquinas de la LAN (`No route to host`): el permiso de «Red local» de macOS bloquea a los binarios sin firma de Apple y sin interfaz, mientras que `ssh`, `ping` y el Python del sistema funcionan. Además, con más de un par `peers[0]` no es estable: hay que identificar al par por su clave pública.
