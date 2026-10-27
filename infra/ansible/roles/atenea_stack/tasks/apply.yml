@@ -1,4 +1,9 @@
 ---
+- name: Detectar contenedores ya creados del proyecto
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", ps, --all, -q]
+  register: atenea_stack_existing
+  changed_when: false
 - name: Migrar antes de reemplazar aplicaciones
   when: atenea_node_role != 'relay'
   block:
@@ -60,3 +65,22 @@
           {{ atenea_failed_status.stdout }}.
           Últimos registros: {{ atenea_failed_logs.stdout | default('') }}.
           Consultar docker compose logs en {{ atenea_stack_dir }}.
+- name: Recrear servicios para que vean los ficheros reemplazados
+  # copy sustituye cada fichero de forma atómica (inodo nuevo) y los contenedores siguen montando el antiguo;
+  # Compose no recrea nada si su definición no cambia. Se recrean todos juntos para reunir netns/HAProxy/relay.
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ atenea_stack_dir }}"
+      - up
+      - -d
+      - --force-recreate
+      - --wait
+      - --wait-timeout
+      - "{{ atenea_stack_health_timeout | string }}"
+  when:
+    - atenea_stack_existing.stdout | length > 0
+    - atenea_stack_distribution.changed or atenea_stack_config.changed or atenea_stack_secrets.changed
+  changed_when: true

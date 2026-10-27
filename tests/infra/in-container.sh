@@ -70,6 +70,18 @@ ansible-playbook -i /lab/inventory.yml site.yml
 echo "PASS convergencia real en $((SECONDS-start)) s"
 ansible-playbook -i /lab/inventory.yml site.yml | tee /lab/second.log
 python3 /src/tests/infra/check.py principal /lab/second.log
+# Ansible reemplaza los ficheros con un inodo nuevo: el contenedor en ejecución debe verlos tras converger.
+coord=$(docker compose --project-directory /opt/atenea ps -q coordinator)
+seen() { cat "/proc/$(docker inspect -f '{{.State.Pid}}' "$1")/root/etc/atenea/coordinator.toml"; }
+started=$(docker inspect -f '{{.State.StartedAt}}' "$coord")
+if seen "$coord" | grep -q regresion-fichero-reemplazado; then echo 'ERROR: marca previa inesperada' >&2; exit 1; fi
+printf '# regresion-fichero-reemplazado\n' >> /lab/public/config/coordinator.toml
+ansible-playbook -i /lab/inventory.yml site.yml
+coord=$(docker compose --project-directory /opt/atenea ps -q coordinator)
+seen "$coord" | grep -q regresion-fichero-reemplazado
+test "$(docker inspect -f '{{.State.StartedAt}}' "$coord")" != "$started"
+python3 /src/tests/infra/check.py principal
+echo 'PASS fichero de configuración reemplazado visible en el contenedor tras recrearlo'
 python3 /src/tests/infra/restart-docker.py
 # CA interna copiada desde Caddy: verificación TLS, nunca --insecure.
 caddy=$(docker compose --project-directory /opt/atenea ps -q caddy)
