@@ -5,6 +5,7 @@ use crate::config::SyncConfig;
 use crate::platform::private_files::PrivateFiles;
 use atenea_identity::{DeviceId, MAX_BODY_LEN, SigningKey, api_auth::sign_request};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
@@ -137,6 +138,8 @@ pub struct Report {
     dns: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     routes: Option<Vec<crate::netconf::RouteStatus>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hostname: Option<String>,
 }
 
 impl Report {
@@ -168,6 +171,7 @@ pub fn build_report(
         forwarding_ok: None,
         dns: None,
         routes: None,
+        hostname: status.hostname.clone(),
         nat_mapping: status.nat.as_ref().map(|nat| nat.mapping),
         paths: status
             .peers
@@ -224,6 +228,72 @@ pub fn send_report(
         serde_json::to_vec(report).map_err(|_| "informe inválido")?,
         ts,
     )
+}
+
+/// Nombres de visualización de los pares (ADR-012). Tope de respuesta propio: son solo texto.
+const NAMES_LIMIT: usize = 256 * 1024;
+
+/// `Ok(vacío)` si el control plane es anterior y no tiene el endpoint. Un fallo aquí no afecta al
+/// estado de la sincronización: los nombres son solo para mostrar.
+pub fn fetch_peer_names(
+    cfg: &SyncConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    ts: u64,
+) -> Result<HashMap<DeviceId, String>, &'static str> {
+    cfg.endpoint().map_err(|_| "URL inválida")?;
+    let url = format!("{}/api/v1/device/peers", cfg.url.trim_end_matches('/'));
+    let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
+    let path = uri.path_and_query().ok_or("URL inválida")?.as_str();
+    let mut nonce = [0; 16];
+    nonce.copy_from_slice(&atenea_identity::generate_seed()[..16]);
+    let authorization = sign_request(key, device, "GET", path, &[], ts, nonce);
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut response = agent
+        .get(&url)
+        .header("Authorization", &authorization)
+        .call()
+        .map_err(|_| "error de red")?;
+    match response.status().as_u16() {
+        200 => (),
+        404 => return Ok(HashMap::new()),
+        401 | 403 => return Err("acceso denegado"),
+        _ => return Err("error HTTP del control plane"),
+    }
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take((NAMES_LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "respuesta ilegible")?;
+    parse_peer_names(&bytes)
+}
+
+/// Cada entrada se valida por separado: un nombre inválido se descarta sin perder los demás.
+fn parse_peer_names(body: &[u8]) -> Result<HashMap<DeviceId, String>, &'static str> {
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        device_id: String,
+        name: String,
+    }
+    if body.len() > NAMES_LIMIT {
+        return Err("respuesta demasiado grande");
+    }
+    let entries: Vec<Entry> = serde_json::from_slice(body).map_err(|_| "nombres inválidos")?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|e| {
+            let id = atenea_crypto::hex::decode::<16>(&e.device_id.replace('-', ""))?;
+            Some((id, crate::names::accept(&e.name)?))
+        })
+        .collect())
 }
 
 pub fn declare_routes(
@@ -292,6 +362,7 @@ mod tests {
             }),
             public_key: "clave local".into(),
             addrs: vec!["10.0.0.9".into()],
+            hostname: None,
             counters: Default::default(),
             config: ConfigStatus {
                 version: 1,
@@ -305,6 +376,8 @@ mod tests {
                     device_id: [0xab; 16],
                     public_key: "no es el identificador".into(),
                     addrs: vec!["10.0.0.8".into()],
+                    // El informe es una lista blanca: el nombre del par no debe aparecer en él.
+                    name: Some("nombre del par".into()),
                     endpoint: Some("203.0.113.1:1234".into()),
                     session: Some("sesión".into()),
                     last_handshake_secs_ago: Some(1),
@@ -371,6 +444,33 @@ mod tests {
             serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap(),
             serde_json::json!({"nat_mapping": null, "paths": []})
         );
+        status.hostname = Some("equipo de prueba".into());
+        assert_eq!(
+            serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap(),
+            serde_json::json!({"nat_mapping": null, "paths": [], "hostname": "equipo de prueba"})
+        );
+    }
+
+    #[test]
+    fn peer_names_keep_valid_entries_and_drop_hostile_or_malformed_ones() {
+        let ok = "ab".repeat(16);
+        let dashed = "12345678-1234-1234-1234-123456789abc";
+        let body = serde_json::json!([
+            {"device_id": ok, "name": "  portátil de Ana "},
+            {"device_id": dashed, "name": "servidor"},
+            {"device_id": "cd".repeat(16), "name": "falso\u{202e}nombre"},
+            {"device_id": "ef".repeat(16), "name": ""},
+            {"device_id": "no es un id", "name": "huérfano"},
+            {"device_id": "01".repeat(16), "name": "x".repeat(65)},
+        ])
+        .to_string();
+        let names = parse_peer_names(body.as_bytes()).unwrap();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[&[0xab; 16]], "portátil de Ana");
+        let id = atenea_crypto::hex::decode::<16>("12345678123412341234123456789abc").unwrap();
+        assert_eq!(names[&id], "servidor");
+        assert!(parse_peer_names(br#"{"device_id":"x"}"#).is_err());
+        assert!(parse_peer_names(&vec![b' '; NAMES_LIMIT + 1]).is_err());
     }
     fn cfg(url: &str) -> SyncConfig {
         SyncConfig {

@@ -24,7 +24,7 @@ La instalación crea **solo el grupo** de sistema `atenea`, no un usuario: el ag
    sudo atenea device-init --dir /var/lib/atenea/device
    ```
 
-3. Ejecutar `atenea enroll --url https://control.example.test --token "$TOKEN" --dir /var/lib/atenea/device --name router-laboratorio` como root. Es un dominio sintético: sustituirlo. El token es de un uso; no guardarlo en scripts, historial ni registros. La CLI actual lo recibe por argumento: puede ser visible en la lista de procesos; hacerlo en una máquina de administración confiable.
+3. Ejecutar `atenea enroll --url https://control.example.test --token "$TOKEN" --dir /var/lib/atenea/device --name router-laboratorio` como root. `--name` es opcional: sin él, el dispositivo se llama como el equipo (`/proc/sys/kernel/hostname`) y sigue el nombre si se cambia; con él, el nombre queda fijado a mano (ADR-012). Es un dominio sintético: sustituirlo. El token es de un uso; no guardarlo en scripts, historial ni registros. La CLI actual lo recibe por argumento: puede ser visible en la lista de procesos; hacerlo en una máquina de administración confiable.
 4. El administrador compara la huella pública por otro canal y aprueba el dispositivo en el panel. El enrolamiento no equivale a aprobación de subredes.
 5. Guardar temporalmente el `join` recibido en un fichero root 0600 y generar el TOML:
 

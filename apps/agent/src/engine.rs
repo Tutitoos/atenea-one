@@ -514,6 +514,8 @@ pub struct PeerStatus {
     pub public_key: String,
     /// Direcciones del túnel del par (de la configuración firmada; el nombre no viaja en ella).
     pub addrs: Vec<String>,
+    /// Nombre de visualización que reparte el control plane (ADR-012); no firmado, solo para mostrar.
+    pub name: Option<String>,
     pub endpoint: Option<String>,
     pub session: Option<String>,
     pub last_handshake_secs_ago: Option<u64>,
@@ -540,6 +542,8 @@ pub struct Status {
     pub public_key: String,
     /// Direcciones del túnel de este dispositivo.
     pub addrs: Vec<String>,
+    /// Nombre del sistema de este dispositivo (ADR-012).
+    pub hostname: Option<String>,
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
@@ -574,6 +578,9 @@ pub struct Engine {
     config_version: u64,
     last_config_error: Option<&'static str>,
     nat: Option<NatStatus>,
+    /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
+    names: HashMap<DeviceId, String>,
+    hostname: Option<String>,
     probe_random: fn() -> u32,
 }
 
@@ -607,6 +614,8 @@ impl Engine {
             config_version: 0,
             last_config_error: None,
             nat: None,
+            names: HashMap::new(),
+            hostname: None,
             probe_random: crypto::random_u32,
         }
     }
@@ -1864,10 +1873,16 @@ impl Engine {
         self.nat = Some(nat);
     }
 
+    pub fn set_names(&mut self, hostname: Option<String>, peers: HashMap<DeviceId, String>) {
+        self.hostname = hostname;
+        self.names = peers;
+    }
+
     pub fn status(&self, now: Instant, unix: u64) -> Status {
         Status {
             public_key: crypto::hex::encode(&self.keys.public),
             addrs: self.own.iter().map(|a| a.to_string()).collect(),
+            hostname: self.hostname.clone(),
             counters: self.counters.0.clone(),
             config: ConfigStatus {
                 version: self.config_version,
@@ -1883,6 +1898,7 @@ impl Engine {
                     device_id: p.device_id,
                     public_key: crypto::hex::encode(&p.public),
                     addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
+                    name: self.names.get(&p.device_id).cloned(),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
                         .current
@@ -3794,6 +3810,27 @@ mod tests {
         let snapshot = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
         assert_eq!(snapshot["counters"]["rx_cookie_reply"], 1);
         assert_eq!(snapshot["counters"]["rx_cookie_reply_invalid"], 4);
+    }
+
+    #[test]
+    fn display_names_reach_the_status_without_touching_identity() {
+        let mut l = lab();
+        let before = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert!(before["peers"][0]["name"].is_null() && before["hostname"].is_null());
+        let names = HashMap::from([
+            ([2; 16], "el otro".to_string()),
+            ([9; 16], "sin par".to_string()),
+        ]);
+        l.a.set_names(Some("este equipo".into()), names);
+        let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert_eq!(after["hostname"], "este equipo");
+        assert_eq!(after["peers"][0]["name"], "el otro");
+        // Un nombre sin par en la configuración no crea pares ni cambia claves.
+        assert_eq!(after["peers"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            after["peers"][0]["public_key"],
+            before["peers"][0]["public_key"]
+        );
     }
 
     #[test]

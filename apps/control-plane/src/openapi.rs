@@ -103,6 +103,12 @@ fn schemas() -> ComponentsBuilder {
             "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
         ))
         .into();
+    let device_name: RefOr<Schema> = ObjectBuilder::new()
+        .schema_type(Type::String)
+        .min_length(Some(1))
+        .max_length(Some(64))
+        .description(Some("Nombre recortado de 1 a 64 caracteres Unicode; sin controles C0/C1 (U+0000–U+001F, U+007F–U+009F) ni U+202A–U+202E o U+2066–U+2069. Solo visualización; no es identidad, DNS ni autorización."))
+        .into();
     let endpoints: RefOr<Schema> = ArrayBuilder::new()
         .items(text())
         .max_items(Some(4))
@@ -115,6 +121,9 @@ fn schemas() -> ComponentsBuilder {
         ("Error", complete(&[("error", complete(&[("code", text()), ("message", text())]))])),
         ("Role", choices(&["owner", "admin", "member"])),
         ("DeviceStatus", choices(&["pending", "approved", "revoked"])),
+        ("DeviceName", device_name),
+        ("DeviceNameSource", choices(&["admin", "device"])),
+        ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName"))])),
         ("Name", complete(&[("name", name.clone())])),
         ("OrganizationCreated", complete(&[("id", uuid()), ("name", text())])),
         ("Organization", complete(&[("id", uuid()), ("name", text()), ("role", named("Role"))])),
@@ -132,12 +141,12 @@ fn schemas() -> ComponentsBuilder {
         ], &["ttl_secs"])),
         ("Join", complete(&[("url", text()), ("token", text()), ("network_id", uuid()), ("root_anchor", hex(32))])),
         ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join"))])),
-        ("Enrollment", complete(&[("token", text()), ("bundle", hex(146)), ("name", name.clone())])),
+        ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("status", named("DeviceStatus")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceId", complete(&[("device_id", uuid())])),
-        ("DeviceUpdate", object(&[("name", name), ("endpoints", endpoints)], &[])),
+        ("DeviceUpdate", object(&[("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
         ("Id", complete(&[("id", uuid())])),
         ("Selector", object(&[("kind", choices(&["any", "device", "prefix"])), ("device_id", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).into()), ("prefix", nullable_text())], &["kind"])),
         ("NewPolicy", object(&[
@@ -162,7 +171,7 @@ fn schemas() -> ComponentsBuilder {
         ("DnsState",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).enum_values(Some([serde_json::json!("applied"),serde_json::json!("unsupported"),serde_json::json!("none"),serde_json::Value::Null])).into()),
         ("RouteReport",object(&[("prefix",text()),("state",choices(&["installed","conflict","pending"])),("reason",nullable_text())], &["prefix","state"])),
         ("RouteReports",utoipa::openapi::schema::OneOfBuilder::new().item(ArrayBuilder::new().items(named("RouteReport")).max_items(Some(256))).item(ObjectBuilder::new().schema_type(Type::Null)).into()),
-        ("DeviceReportInput", object(&[("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into()),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))], &["paths"])),
+        ("DeviceReportInput", object(&[("hostname", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).min_length(Some(1)).max_length(Some(64)).description(Some("Nombre del sistema opcional; misma normalización que DeviceName. Inválido: 400 invalid_report. Ausente o null conserva el último hostname; solo actualiza name si name_source=device.")).into()),("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into()),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))], &["paths"])),
         ("DeviceReport", complete(&[("reported_at",timestamp()),("age_secs",integer()),("nat_mapping",named("NatMapping")),("paths",named("[]DevicePath")),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))])),
         ("NetworkSample",complete(&[("at",timestamp()),("total",integer()),("direct",integer()),("relay",integer()),("probing",integer()),("unknown",integer()),("offline",integer())])),
         ("NetworkEvent",object(&[("type",choices(&["hello","changed"])),("seq",integer()),("scope",choices(&["devices","policies","audit","network","metrics","routes","dns"]))], &["type","seq"])),
@@ -459,6 +468,16 @@ pub fn document() -> OpenApi {
             "SignedConfig",
         ),
         (
+            Get,
+            "/api/v1/device/peers",
+            "getDevicePeers",
+            "Nombres de los pares autorizados para un dispositivo aprobado",
+            "device",
+            "200",
+            "",
+            "[]DevicePeer",
+        ),
+        (
             Post,
             "/api/v1/device/routes",
             "declareRoutes",
@@ -700,7 +719,12 @@ pub fn document() -> OpenApi {
         }
         if matches!(
             id,
-            "oidcLogin" | "oidcCallback" | "logout" | "getSession" | "getDeviceConfiguration"
+            "oidcLogin"
+                | "oidcCallback"
+                | "logout"
+                | "getSession"
+                | "getDeviceConfiguration"
+                | "getDevicePeers"
         ) {
             response = response.header(
                 "Cache-Control",
@@ -747,7 +771,11 @@ pub fn document() -> OpenApi {
         }
         if matches!(
             id,
-            "enrollDevice" | "reportDeviceStatus" | "networkEvents" | "declareRoutes"
+            "enrollDevice"
+                | "reportDeviceStatus"
+                | "networkEvents"
+                | "declareRoutes"
+                | "getDevicePeers"
         ) {
             operation = operation.response(
                 "429",
@@ -773,6 +801,19 @@ pub fn document() -> OpenApi {
         if id == "getDeviceConfiguration" {
             operation = operation.description(Some("Respuesta firmada con versión estrictamente creciente. Sin políticas no hay pares. Excluye dispositivos pendientes/revocados. Incluye reglas inversas sin puertos. not_after no supera el certificado del emisor; duración por defecto 300 s."));
         }
+        if id == "getDevicePeers" {
+            operation = operation.description(Some("Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos."));
+        }
+        if id == "updateDevice" {
+            operation = operation.description(Some("name fija name_source=admin y conserva hostname. use_system_name=true restaura el último hostname y fija name_source=device; sin hostname: 409 no_system_name. name junto con use_system_name=true: 400 invalid_request. Nombre inválido: 400 invalid_name."));
+            operation = operation.response("409", ResponseBuilder::new().description("no_system_name: el dispositivo todavía no ha informado un nombre del sistema").content("application/json", Content::new(Some(named("Error")))));
+        }
+        if id == "enrollDevice" {
+            operation = operation.description(Some("name obligatorio; name_auto opcional y false por defecto. true inicializa name_source=device y hostname con name; false conserva el comportamiento administrativo y hostname=null. Nombre inválido: 400 invalid_name."));
+        }
+        if id == "reportDeviceStatus" {
+            operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -787,7 +828,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 31);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 32);
         assert_eq!(
             document["paths"]["/api/v1/session"]["get"]["responses"]["200"]["content"]["application/json"]
                 ["schema"]["$ref"],
@@ -813,5 +854,37 @@ mod tests {
                 .get("connection")
                 .is_some()
         );
+        assert_eq!(
+            document["components"]["schemas"]["Enrollment"]["properties"]["name_auto"]["default"],
+            false
+        );
+        assert!(
+            document["components"]["schemas"]["DeviceUpdate"]["properties"]
+                .get("use_system_name")
+                .is_some()
+        );
+        assert!(
+            document["components"]["schemas"]["DeviceReportInput"]["properties"]
+                .get("hostname")
+                .is_some()
+        );
+        for field in ["name_source", "hostname"] {
+            assert!(
+                document["components"]["schemas"]["Device"]["properties"]
+                    .get(field)
+                    .is_some()
+            );
+        }
+        let peers = &document["paths"]["/api/v1/device/peers"]["get"];
+        assert!(peers["security"][0].get("device").is_some());
+        assert_eq!(
+            peers["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"],
+            "#/components/schemas/DevicePeer"
+        );
+        assert_eq!(
+            peers["responses"]["200"]["headers"]["Cache-Control"]["schema"]["enum"][0],
+            "no-store"
+        );
+        assert!(peers["responses"].get("429").is_some());
     }
 }

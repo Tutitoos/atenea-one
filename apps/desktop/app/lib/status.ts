@@ -8,6 +8,8 @@ const path = z.object({ kind: z.string(), ready: z.boolean(), healthy: z.boolean
 const peer = z.object({
   public_key: z.string(),
   addrs: z.array(z.string()).default([]),
+  // Nombre de visualización que reparte el control plane (ADR-012); los agentes anteriores no lo informan.
+  name: z.string().nullish(),
   endpoint: z.string().nullish(),
   session: z.string().nullish(),
   last_handshake_secs_ago: z.number().nullish(),
@@ -20,6 +22,7 @@ const peer = z.object({
 const status = z.object({
   public_key: z.string(),
   addrs: z.array(z.string()).default([]),
+  hostname: z.string().nullish(),
   config: z.object({ version: z.number(), valid_until_unix: z.number().nullish(), lease_active: z.boolean(), last_error: z.string().nullish() }),
   nat: z.object({ mapping: z.string(), reflexive: z.string().nullish() }).nullish(),
   sync: z.object({ last_ok_unix: z.number().nullish(), last_error: z.string().nullish() }).nullish(),

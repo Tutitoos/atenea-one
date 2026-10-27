@@ -158,6 +158,116 @@
         ]
       }
     },
+    "/api/v1/device/peers": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Nombres de los pares autorizados para un dispositivo aprobado",
+        "description": "Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos.",
+        "operationId": "getDevicePeers",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DevicePeer"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/device/routes": {
       "post": {
         "tags": [
@@ -263,6 +373,7 @@
           "system"
         ],
         "summary": "Reemplaza el informe declarado del dispositivo",
+        "description": "hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo.",
         "operationId": "reportDeviceStatus",
         "requestBody": {
           "content": {
@@ -362,6 +473,7 @@
           "devices"
         ],
         "summary": "Consume un token una sola vez y valida DeviceBundle",
+        "description": "name obligatorio; name_auto opcional y false por defecto. true inicializa name_source=device y hostname con name; false conserva el comportamiento administrativo y hostname=null. Nombre inválido: 400 invalid_name.",
         "operationId": "enrollDevice",
         "requestBody": {
           "content": {
@@ -868,6 +980,7 @@
           "devices"
         ],
         "summary": "Actualiza nombre o endpoints; requiere admin u owner",
+        "description": "name fija name_source=admin y conserva hostname. use_system_name=true restaura el último hostname y fija name_source=device; sin hostname: 409 no_system_name. name junto con use_system_name=true: 400 invalid_request. Nombre inválido: 400 invalid_name.",
         "operationId": "updateDevice",
         "parameters": [
           {
@@ -951,7 +1064,7 @@
             }
           },
           "409": {
-            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "description": "no_system_name: el dispositivo todavía no ha informado un nombre del sistema",
             "content": {
               "application/json": {
                 "schema": {
@@ -3732,6 +3845,8 @@
           "id",
           "device_id",
           "name",
+          "name_source",
+          "hostname",
           "status",
           "endpoints",
           "fingerprint",
@@ -3774,6 +3889,12 @@
           "fingerprint": {
             "type": "string"
           },
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -3799,6 +3920,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "name_source": {
+            "$ref": "#/components/schemas/DeviceNameSource"
           },
           "report": {
             "oneOf": [
@@ -3834,6 +3958,19 @@
           }
         }
       },
+      "DeviceName": {
+        "type": "string",
+        "description": "Nombre recortado de 1 a 64 caracteres Unicode; sin controles C0/C1 (U+0000–U+001F, U+007F–U+009F) ni U+202A–U+202E o U+2066–U+2069. Solo visualización; no es identidad, DNS ni autorización.",
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "DeviceNameSource": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "device"
+        ]
+      },
       "DevicePath": {
         "type": "object",
         "required": [
@@ -3867,6 +4004,22 @@
               "null"
             ],
             "minimum": 0
+          }
+        }
+      },
+      "DevicePeer": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "name"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DeviceName"
           }
         }
       },
@@ -3927,6 +4080,15 @@
               "null"
             ]
           },
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Nombre del sistema opcional; misma normalización que DeviceName. Inválido: 400 invalid_report. Ausente o null conserva el último hostname; solo actualiza name si name_source=device.",
+            "maxLength": 64,
+            "minLength": 1
+          },
           "nat_mapping": {
             "$ref": "#/components/schemas/NatMapping"
           },
@@ -3978,10 +4140,11 @@
             "maxItems": 4
           },
           "name": {
-            "type": "string",
-            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
-            "maxLength": 255,
-            "minLength": 1
+            "$ref": "#/components/schemas/DeviceName"
+          },
+          "use_system_name": {
+            "type": "boolean",
+            "description": "true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen."
           }
         }
       },
@@ -4063,10 +4226,12 @@
             "pattern": "^[0-9a-fA-F]+$"
           },
           "name": {
-            "type": "string",
-            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
-            "maxLength": 255,
-            "minLength": 1
+            "$ref": "#/components/schemas/DeviceName"
+          },
+          "name_auto": {
+            "type": "boolean",
+            "description": "true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.",
+            "default": false
           },
           "token": {
             "type": "string"

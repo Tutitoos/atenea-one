@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import type { Rate } from '../lib/agent';
-import { ago, bytes, ipKind, levelTone, pathLabel, peerName, type Tone } from '../lib/format';
+import { ago, bytes, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
@@ -48,15 +48,17 @@ const Addresses = ({ addrs }: { addrs: string[] }) => (
 
 function SelfDetail({ reply }: { reply: Reply }) {
   const { status, health } = reply;
+  const names = useNames();
   const left = status.config.valid_until_unix ? Math.round(status.config.valid_until_unix - Date.now() / 1000) : null;
   const seen = (unix?: number | null) => (unix ? `ok hace ${ago(Date.now() / 1000 - unix)}` : null);
   return (
     <>
-      <Title id="self" name="Este dispositivo" editable={false} />
+      <Title id={status.public_key} name={selfName(status, names)} editable />
       <State tone={levelTone(health.level)}>{health.text}</State>
       <Addresses addrs={status.addrs} />
       <Heading>Detalles</Heading>
       <Card>
+        <Row label="Nombre del sistema">{status.hostname}</Row>
         <Row label="Lease">{left == null ? null : left > 0 ? `válido ${ago(left)}` : 'caducado'}</Row>
         <Row label="Configuración">{`v${status.config.version}`}</Row>
         <Row label="NAT">{status.nat?.mapping}</Row>
@@ -83,6 +85,7 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
       <Addresses addrs={peer.addrs} />
       <Heading>Detalles</Heading>
       <Card>
+        <Row label="Nombre en la red">{peer.name}</Row>
         <Row label="Camino en uso">{label}</Row>
         <Row label="Caminos listos">{ready}</Row>
         <Row label="Latencia">{used?.rtt_ms == null ? null : `${used.rtt_ms} ms`}</Row>

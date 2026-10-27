@@ -39,7 +39,9 @@ El administrador entrega el objeto `join` por un canal de confianza: comprueba s
 
 ```sh
 atenea device-init --dir ./dispositivo
-atenea enroll --url https://vpn.example.test --token TOKEN --dir ./dispositivo --name portatil
+# Sin --name, el dispositivo se llama como el sistema y se actualiza solo si lo renombras;
+# con --name NOMBRE el nombre queda fijado (un administrador también puede cambiarlo en el panel).
+atenea enroll --url https://vpn.example.test --token TOKEN --dir ./dispositivo
 atenea agent-config --join join.json --dir ./dispositivo --out agent.toml
 sudo atenea up --config agent.toml
 ```

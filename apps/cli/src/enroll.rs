@@ -65,14 +65,27 @@ pub fn enroll(
     url: &str,
     token: &str,
     dir: &Path,
-    name: &str,
+    name: Option<&str>,
     insecure_http: bool,
 ) -> Result<(), String> {
     let url = format!("{}/api/v1/enroll", base_url(url, insecure_http)?);
     let bundle = bundle(dir)?;
-    let body =
-        serde_json::json!({"token": token, "bundle": hex::encode(&bundle.encode()), "name": name})
-            .to_string();
+    // Sin --name: el nombre del sistema, que el control plane mantiene al día mientras nadie lo
+    // fije a mano (ADR-012).
+    let (name, auto) = match name {
+        Some(name) => (name.to_string(), false),
+        None => (
+            crate::names::system_name()
+                .ok_or("no se pudo leer el nombre del sistema: indica --name")?,
+            true,
+        ),
+    };
+    let mut body =
+        serde_json::json!({"token": token, "bundle": hex::encode(&bundle.encode()), "name": name});
+    if auto {
+        body["name_auto"] = true.into();
+    }
+    let body = body.to_string();
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(5)))
         .timeout_global(Some(Duration::from_secs(15)))

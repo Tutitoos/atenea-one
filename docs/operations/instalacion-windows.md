@@ -54,7 +54,8 @@ El administrador de la red entrega un `join.json` auténtico (URL, ID de red y a
 $Cli = Join-Path $env:ProgramFiles 'Atenea/atenea.exe'
 $Data = Join-Path $env:ProgramData 'Atenea'
 & $Cli device-init --dir "$Data/device"
-& $Cli enroll --url $Url --token $Token --dir "$Data/device" --name $env:COMPUTERNAME
+# Sin --name, el dispositivo se llama como el equipo ($env:COMPUTERNAME) y sigue el nombre si se cambia (ADR-012).
+& $Cli enroll --url $Url --token $Token --dir "$Data/device"
 & $Cli agent-config --join $Join --dir "$Data/device" --out "$Data/agent.toml" `
   --interface atenea0 --state-dir "$Data/state" --config-file "$Data/config.bin" `
   --ipc-socket '\\.\pipe\atenea-control' --status-socket '\\.\pipe\atenea-status' --status-gid 545

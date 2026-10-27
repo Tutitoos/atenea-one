@@ -22,7 +22,7 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
 | `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
 | `LOGIN_PER_MINUTE` | `20`; intentos de `GET /auth/login` por IP cliente (`429 rate_limited`); además máximo 10 000 flujos OIDC vigentes |
-| `DEVICE_PER_MINUTE` | `30`; peticiones firmadas por minuto y dispositivo (`config`, `status`, `routes`), comprobado tras verificar firma y antes de bloquear filas |
+| `DEVICE_PER_MINUTE` | `30`; peticiones firmadas por minuto y dispositivo (`config`, `peers`, `status`, `routes`), comprobado tras verificar firma y antes de bloquear filas |
 | `TRUSTED_PROXIES` | Lista de CIDR, p. ej. `["172.30.84.2/32"]`; vacía por defecto. Solo si el peer TCP pertenece a ella se usa `X-Real-IP` como IP cliente; en otro caso se ignora toda cabecera |
 | `APPLICATION_ROLE` | Rol que recibe permisos limitados al aplicar migraciones |
 | `WEB_DIR` | Opcional: directorio `apps/web/build/client`; sirve SPA y assets desde este mismo origen |
@@ -85,6 +85,16 @@ estrictamente unidireccional ni retorno limitado a conexiones ya iniciadas.
 
 Cree un token de enrolamiento desde la red y entregue `join` por un canal seguro: contiene URL, token de un uso y ancla de confianza. El operador genera las claves con `atenea device-init --dir DIR` y ejecuta `atenea enroll --url URL --token TOKEN --dir DIR --name NOMBRE`. Compare la huella del bundle por otro canal antes de aprobar. Nunca coloque tokens reales en historial compartido ni documentación.
 
+### Nombres de dispositivo (ADR-012)
+
+Aplique también la migración `0006`: añade `name_source` (`admin` por defecto) y `hostname` nullable. Los nombres existentes se conservan como administrativos. Despliegue primero el servidor; actualizar agentes y CLI es una entrega separada.
+
+El API de enrolamiento mantiene `name` obligatorio y admite `name_auto:true` para declararlo como nombre del sistema (`name_source=device`, `hostname=name`); omitido o `false` conserva el comportamiento anterior. Los informes de clientes compatibles admiten `hostname` opcional: se guarda el último conocido y solo cambia `name` cuando el origen es `device`.
+
+Un administrador puede fijar `name` mediante el `PATCH` existente (pasa a `admin`) o enviar `{"use_system_name":true}` para restaurar el último hostname (`409 no_system_name` si aún no existe). Combinar esa opción con `name` devuelve `400 invalid_request`. Se recortan espacios y se admiten 1..64 caracteres Unicode sin controles C0/C1 ni U+202A–U+202E/U+2066–U+2069; el rechazo es `invalid_name` o `invalid_report`, según la ruta.
+
+El inventario expone `name_source` y `hostname`. `GET /api/v1/device/peers`, con petición AtDevice firmada y dispositivo aprobado, devuelve únicamente `{device_id,name}` de los mismos pares que config, bajo el mismo límite de tasa y con `Cache-Control: no-store`. Son nombres no firmados para mostrar, nunca para identificar, autorizar, resolver DNS o enrutar. No cambia `DeviceConfig` ni añade UI. Detalle y compatibilidad: [contrato API §12](../../docs/api/control-plane-v1.md#12-nombres-de-dispositivo-adr-012).
+
 ## Panel, informes y métricas
 
 Tras compilar `apps/web`, configure `ATENEA_CP_WEB_DIR` con su `build/client`.
@@ -102,7 +112,7 @@ notificaciones son locales al proceso.
 
 Los agentes con `[sync]` y lease vigente envían cada 15 s un informe firmado
 a `POST /api/v1/device/status`. Los informes no contienen IPs externas ni claves,
-solo UUID de pares, caminos, edad de recepción, RTT y nombre del relay conocido.
+solo UUID de pares, caminos, edad de recepción, RTT y nombre del relay conocido; los clientes compatibles también pueden informar el nombre del sistema (`hostname`).
 Los fallos no bloquean el agente y aumentan `sync.report_errors` en su estado IPC.
 El inventario distingue `online` (<90 s), `stale` (<600 s), `offline` y `unknown`;
 es información declarada por el dispositivo, no una comprobación independiente.
@@ -167,7 +177,7 @@ Cobertura implementada de §8:
 - CSRF ausente/incorrecto, expiración absoluta, inactividad y logout.
 - Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso. La clave RSA de 2048 bits se genera en memoria una vez por proceso de pruebas; no se almacena ni se publica ninguna clave privada.
 - Eventos de todas las escrituras enumeradas y denegación real de UPDATE/DELETE con `SET ROLE` sobre el rol limitado.
-- Igualdad del OpenAPI publicado con `openapi()` generado. Regeneración: `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json`.
+- Igualdad del OpenAPI publicado con `openapi()` generado. Regeneración: `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json` y después `pnpm --filter @atenea/api-client generate`.
 - Panel: inventario con IPs e informe firmado, validación y límite de tasa; muestreo/retención con reloj explícito; aislamiento de métricas y eventos; WebSocket TCP real con hello/cambios/Origin/límites; SPA, rutas reservadas, CSP y caché.
 
 ## E2E de laboratorio

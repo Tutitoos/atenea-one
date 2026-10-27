@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { levelTone, pathLabel, peerName, type Tone } from '../lib/format';
+import { levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { useNames } from '../lib/names';
 import { Dot, Empty } from '../ui';
@@ -34,8 +34,8 @@ export default function Devices() {
   const sample = agent.sample;
   const status = sample?.reply.status;
 
-  const self: Entry[] = status && sample ? [{ id: 'self', name: 'Este dispositivo', addr: status.addrs[0] ?? '', tone: levelTone(sample.reply.health.level), haystack: `este dispositivo ${status.addrs.join(' ')} ${status.public_key}` }] : [];
-  const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.addrs.join(' ')} ${p.public_key}` }));
+  const self: Entry[] = status && sample ? [{ id: 'self', name: selfName(status, names), addr: status.addrs[0] ?? '', tone: levelTone(sample.reply.health.level), haystack: `${selfName(status, names)} ${status.hostname ?? ''} este dispositivo ${status.addrs.join(' ')} ${status.public_key}` }] : [];
+  const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}` }));
   const q = query.trim().toLowerCase();
   const match = (e: Entry) => !q || e.haystack.toLowerCase().includes(q);
   const visible = [...self.filter(match), ...peers.filter(match)];

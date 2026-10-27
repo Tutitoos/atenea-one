@@ -7,6 +7,9 @@ mod build_info;
 mod enroll;
 mod ipc;
 mod issue;
+// Mismo código que el agente: el nombre del sistema se lee igual al enrolar y al informar.
+#[path = "../../agent/src/names.rs"]
+mod names;
 
 #[cfg(test)]
 #[path = "../../agent/src/platform/private_files.rs"]
@@ -54,8 +57,9 @@ enum Cmd {
         token: String,
         #[arg(long)]
         dir: PathBuf,
+        /// Nombre del dispositivo. Sin él se usa el nombre del sistema (ADR-012).
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// Solo laboratorio: acepta `http://` hacia un host que no sea loopback.
         #[arg(long)]
         insecure_http: bool,
@@ -152,7 +156,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
             dir,
             name,
             insecure_http,
-        } => enroll::enroll(&url, &token, &dir, &name, insecure_http),
+        } => enroll::enroll(&url, &token, &dir, name.as_deref(), insecure_http),
         Cmd::IssuerCert(args) => issue::issuer_cert(args),
         Cmd::AgentConfig(args) => enroll::agent_config(args),
         Cmd::RootInit { out } => issue::root_init(&out),

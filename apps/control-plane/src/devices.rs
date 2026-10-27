@@ -13,6 +13,19 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::net::SocketAddr;
 use uuid::Uuid;
+pub fn name(value: &str) -> Result<&str, ApiError> {
+    if value
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+    {
+        return Err(ApiError::bad("invalid_name"));
+    }
+    let value = value.trim();
+    if !(1..=64).contains(&value.chars().count()) {
+        return Err(ApiError::bad("invalid_name"));
+    }
+    Ok(value)
+}
 #[derive(Deserialize)]
 pub struct Token {
     ttl_secs: u64,
@@ -66,6 +79,8 @@ pub struct Enrollment {
     token: String,
     bundle: String,
     name: String,
+    #[serde(default)]
+    name_auto: bool,
 }
 pub async fn enroll(
     State(s): State<AppState>,
@@ -75,7 +90,7 @@ pub async fn enroll(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
     crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
-    crate::orgs::name(&b.name)?;
+    let name = name(&b.name)?;
     let bytes = hex::decode(&b.bundle).map_err(|_| ApiError::bad("invalid_bundle"))?;
     let bundle = atenea_identity::DeviceBundle::parse(&bytes)
         .map_err(|_| ApiError::bad("invalid_bundle"))?;
@@ -91,7 +106,7 @@ pub async fn enroll(
         .bind(net)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle) VALUES($1,$2,$3,'pending',$4,$5,$6)").bind(dev).bind(net).bind(&b.name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if b.name_auto { "device" } else { "admin" }).bind(b.name_auto.then_some(name)).execute(&mut *tx).await?;
     if auto {
         networks::allocate(&mut tx, net, dev).await?;
         sqlx::query("UPDATE devices SET status='approved',approved_at=now() WHERE id=$1")
@@ -129,13 +144,15 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
     let rows = sqlx::query(
-        "SELECT d.id,d.name,d.status,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
+        "SELECT d.id,d.name,d.name_source,d.hostname,d.status,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
     )
     .bind(net)
     .fetch_all(&s.pool)
     .await?;
     let mut out = Vec::new();
     for r in rows {
+        let name_source: String = r.get("name_source");
+        let hostname: Option<String> = r.get("hostname");
         let bytes: Vec<u8> = r.get("bundle");
         let b = atenea_identity::DeviceBundle::parse(&bytes).map_err(|_| ApiError::internal())?;
         let reported_at: Option<chrono::DateTime<chrono::Utc>> = r.get("reported_at");
@@ -150,7 +167,7 @@ pub async fn list(
             "offline"
         };
         let report = reported_at.map(|at|json!({"reported_at":at,"age_secs":age,"nat_mapping":r.get::<Option<String>,_>("nat_mapping"),"paths":r.get::<Value,_>("paths"),"forwarding_ok":r.get::<Option<bool>,_>("forwarding_ok"),"dns":r.get::<Option<String>,_>("dns"),"routes":r.get::<Option<Value>,_>("routes")}));
-        out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"status":r.get::<String,_>("status"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
+        out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"name_source":name_source,"hostname":hostname,"status":r.get::<String,_>("status"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
     }
     Ok(Json(json!(out)))
 }
@@ -249,6 +266,8 @@ pub async fn revoke(
 #[derive(Deserialize)]
 pub struct Update {
     name: Option<String>,
+    #[serde(default)]
+    use_system_name: bool,
     endpoints: Option<Vec<SocketAddr>>,
 }
 pub async fn update(
@@ -258,9 +277,10 @@ pub async fn update(
     Json(b): Json<Update>,
 ) -> Result<Json<Value>, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
-    if let Some(n) = &b.name {
-        crate::orgs::name(n)?;
+    if b.name.is_some() && b.use_system_name {
+        return Err(ApiError::bad("invalid_request"));
     }
+    let name = b.name.as_deref().map(name).transpose()?;
     let endpoints = b.endpoints.map(|mut e| {
         e.sort();
         e.dedup();
@@ -278,7 +298,19 @@ pub async fn update(
         .bind(net)
         .execute(&mut *tx)
         .await?;
-    let result=sqlx::query("UPDATE devices SET name=COALESCE($3,name),endpoints=COALESCE($4,endpoints) WHERE id=$1 AND network_id=$2").bind(dev).bind(net).bind(b.name).bind(endpoints).execute(&mut *tx).await?;
+    if b.use_system_name {
+        let hostname: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT hostname FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE",
+        )
+        .bind(dev)
+        .bind(net)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if hostname.ok_or_else(ApiError::not_found)?.is_none() {
+            return Err(ApiError::conflict("no_system_name"));
+        }
+    }
+    let result=sqlx::query("UPDATE devices SET name=CASE WHEN $5 THEN hostname ELSE COALESCE($3,name) END,name_source=CASE WHEN $5 THEN 'device' WHEN $3 IS NOT NULL THEN 'admin' ELSE name_source END,endpoints=COALESCE($4,endpoints) WHERE id=$1 AND network_id=$2").bind(dev).bind(net).bind(name).bind(endpoints).bind(b.use_system_name).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found());
     }

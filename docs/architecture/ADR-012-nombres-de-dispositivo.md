@@ -1,6 +1,6 @@
 # ADR-012: Nombres de dispositivo (nombre del sistema, personalizable)
 
-- **Estado:** **Propuesto** (2026-10-27). No hay código: espera la aceptación del responsable.
+- **Estado:** **Aceptado** por el responsable el 2026-10-27 (nombres sin firmar, como metadato de visualización). Implementado en el repositorio (control plane, agente, CLI y aplicación de escritorio); **sin desplegar**.
 - **Relacionados:** ADR-005 (contrato y autenticación de dispositivo), ADR-007, ADR-011 (aplicación de escritorio).
 
 ## Contexto
@@ -49,4 +49,6 @@ Prioridad al mostrar un par: **alias local** (almacenamiento del webview de la a
 - **Un dispositivo aprobado elige su propio nombre** y puede poner uno confuso; el administrador lo corrige con `admin`.
 - La aplicación y el panel muestran el nombre «tal cual» tras la normalización: no se garantiza unicidad.
 - Cambia la API del control plane (`DeviceReportInput`, nuevo endpoint, `PATCH`) y por tanto el OpenAPI y `packages/api-client`; hace falta una migración SQL (`0006`).
-- Sin implementar y sin medir nada todavía. No se despliega nada sin autorización explícita (control plane del piloto y agentes) y los agentes del soak no se tocan hasta que termine.
+- **Probado:** 47 pruebas del control plane contra PostgreSQL real (migración, enrolamiento con y sin `name_auto`, informe, `PATCH`, `use_system_name`, validación y `/peers` con política, revocados y pendientes), pruebas del agente (análisis de la respuesta, informe sin nombres de pares, nombres en el estado del motor, validación) y 9 del frontend. **Sin probar:** el flujo completo entre un control plane desplegado y agentes reales, `scutil` en un Mac distinto y los nombres con alfabetos bidireccionales legítimos (se rechazan solo los caracteres de formato, no el texto árabe o hebreo).
+- **Medido nada:** no hay medición de rendimiento del endpoint nuevo.
+- No se despliega nada sin autorización explícita (control plane del piloto y agentes) y los agentes del soak no se tocan hasta que termine. Orden de despliegue: control plane (migración `0006`), luego agentes.

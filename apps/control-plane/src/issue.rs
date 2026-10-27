@@ -146,6 +146,23 @@ pub async fn get(
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    respond(s, h, uri, body, false).await
+}
+pub async fn peers(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    uri: Uri,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    respond(s, h, uri, body, true).await
+}
+async fn respond(
+    s: AppState,
+    h: HeaderMap,
+    uri: Uri,
+    body: axum::body::Bytes,
+    names_only: bool,
+) -> Result<Response, ApiError> {
     let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = api_auth::parse_authorization(
         h.get("authorization")
@@ -190,22 +207,6 @@ pub async fn get(
     if status != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
-    let unavailable = || ApiError(StatusCode::SERVICE_UNAVAILABLE, "issuer_unavailable");
-    let cert = IssuerCert::parse(
-        &n.get::<Option<Vec<u8>>, _>("issuer_cert")
-            .ok_or_else(unavailable)?,
-    )
-    .map_err(|_| unavailable())?;
-    let end = now
-        .checked_add(s.config.config_validity_secs)
-        .ok_or_else(unavailable)?;
-    if cert.not_before > now
-        || cert.not_after < end
-        || s.config.config_validity_secs == 0
-        || s.config.config_validity_secs > 3600
-    {
-        return Err(unavailable());
-    }
     let devices = load_devices(&mut tx, net).await?;
     let own = devices
         .iter()
@@ -230,6 +231,38 @@ pub async fn get(
         return Err(ApiError::conflict("invalid_network_prefix"));
     }
     let (peers, rules) = compile(own, &devices, &policies, &network_prefixes)?;
+    if names_only {
+        let ids: Vec<Uuid> = peers
+            .iter()
+            .map(|p| Uuid::from_bytes(p.device_id))
+            .collect();
+        let rows = sqlx::query("SELECT id,name FROM devices WHERE id=ANY($1) ORDER BY id")
+            .bind(ids)
+            .fetch_all(&mut *tx)
+            .await?;
+        let names: Vec<_> = rows
+            .iter()
+            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name")}))
+            .collect();
+        tx.commit().await?;
+        return Ok(([("cache-control", "no-store")], axum::Json(names)).into_response());
+    }
+    let unavailable = || ApiError(StatusCode::SERVICE_UNAVAILABLE, "issuer_unavailable");
+    let cert = IssuerCert::parse(
+        &n.get::<Option<Vec<u8>>, _>("issuer_cert")
+            .ok_or_else(unavailable)?,
+    )
+    .map_err(|_| unavailable())?;
+    let end = now
+        .checked_add(s.config.config_validity_secs)
+        .ok_or_else(unavailable)?;
+    if cert.not_before > now
+        || cert.not_after < end
+        || s.config.config_validity_secs == 0
+        || s.config.config_validity_secs > 3600
+    {
+        return Err(unavailable());
+    }
     let mut dns = crate::dns::load(&mut tx, net).await?;
     dns.servers.retain(|a| {
         network_prefixes.iter().any(|p| p.contains(*a))

@@ -365,6 +365,46 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             }
         })
     });
+    // Nombres de visualización (ADR-012): el del sistema y los de los pares. Un fallo aquí no toca el
+    // estado de la sincronización (ni la salud que ve el usuario): solo deja a los pares sin nombre.
+    type Names = (
+        Option<String>,
+        std::collections::HashMap<atenea_identity::DeviceId, String>,
+    );
+    let (names_tx, mut names_rx) = tokio::sync::watch::channel::<Names>((None, Default::default()));
+    let names_task = cfg.sync.clone().map(|sync| {
+        let (identity, device) = (identity.clone(), cfg.device_id);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(sync.interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let own = tokio::task::spawn_blocking(crate::names::system_name)
+                    .await
+                    .ok()
+                    .flatten();
+                let (sync, identity) = (sync.clone(), identity.clone());
+                let peers = tokio::task::spawn_blocking(move || {
+                    crate::sync::fetch_peer_names(&sync, &identity, device, unix_now())
+                })
+                .await;
+                let peers = match peers {
+                    Ok(Ok(peers)) => Some(peers),
+                    Ok(Err(error)) => {
+                        tracing::debug!(error, "nombres de pares no disponibles");
+                        None
+                    }
+                    Err(_) => None,
+                };
+                names_tx.send_modify(|names| {
+                    names.0 = own;
+                    if let Some(peers) = peers {
+                        names.1 = peers;
+                    }
+                });
+            }
+        })
+    });
     let mut engine = Engine::new(cfg.network_id, noise, unix_now());
     engine.set_cookie_threshold(cfg.handshake_cookie_threshold_per_second);
     let dual = cfg.listen.is_ipv6();
@@ -572,6 +612,10 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 let now = Instant::now();
                 ticks += 1;
                 if ticks.is_multiple_of(4) {
+                    if names_rx.has_changed().unwrap_or(false) {
+                        let (own, peers) = names_rx.borrow_and_update().clone();
+                        rt.engine.set_names(own, peers);
+                    }
                     let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
                     relay_requests.renewals.write_to(&mut snapshot);
                     status_tx.send_replace(std::sync::Arc::<str>::from(snapshot.to_string()));
@@ -839,6 +883,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         }
     }
     if let Some(task) = sync_task {
+        task.abort();
+    }
+    if let Some(task) = names_task {
         task.abort();
     }
     if let Some(task) = report_task {

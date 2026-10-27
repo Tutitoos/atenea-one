@@ -8,6 +8,7 @@ mod config;
 mod coord;
 mod engine;
 mod ipc;
+mod names;
 mod net;
 mod netconf;
 mod packet;

@@ -105,6 +105,7 @@ pub fn router(s: AppState) -> Router {
         .route("/api/v1/networks/{net}/audit", get(crate::audit::list))
         .route("/api/v1/enroll", post(devices::enroll))
         .route("/api/v1/device/config", get(issue::get))
+        .route("/api/v1/device/peers", get(issue::peers))
         .route("/api/v1/device/routes", post(crate::routes::declare))
         .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
         .route(

@@ -31,5 +31,8 @@ export const pathLabel = (path: string): { label: string; tone: Tone } => {
 
 export const levelTone = (level: Level): Tone => ({ ok: 'ok', degraded: 'warn', down: 'bad' } as const)[level];
 
-/** Nombre local si existe; si no, la IP del túnel y, en último caso, la clave abreviada. */
-export const peerName = (peer: Peer, names: Record<string, string>) => names[peer.public_key] || peer.addrs[0] || peer.public_key.slice(0, 8);
+/** Alias local > nombre de la red (el del sistema o el fijado por un administrador) > IP del túnel > clave abreviada. */
+export const peerName = (peer: Peer, names: Record<string, string>) => names[peer.public_key] || peer.name || peer.addrs[0] || peer.public_key.slice(0, 8);
+
+/** Este dispositivo: alias local > nombre del sistema > texto genérico. */
+export const selfName = (status: { public_key: string; hostname?: string | null }, names: Record<string, string>) => names[status.public_key] || status.hostname || 'Este dispositivo';

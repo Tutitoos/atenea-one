@@ -73,6 +73,31 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
         definition,
         "CREATE INDEX ip_allocations_device_family ON public.ip_allocations USING btree (device_id, family) INCLUDE (addr)"
     );
+    let defaults: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE name_source='admin' AND hostname IS NULL",
+    )
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(defaults, 10000);
+    // Reconstruye el estado 0005 con filas previas para comprobar el backfill de 0006.
+    t.pool
+        .execute(
+            "ALTER TABLE devices DROP COLUMN name_source, DROP COLUMN hostname;
+        DELETE FROM _sqlx_migrations WHERE version=6;",
+        )
+        .await
+        .unwrap();
+    atenea_control_plane::db::migrate(&t.pool, None)
+        .await
+        .unwrap();
+    let preserved: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE name_source='admin' AND hostname IS NULL AND name LIKE 'device-%'",
+    )
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(preserved, 10000);
     // TestApp ya ha migrado: una segunda pasada conserva índice, datos e historial.
     atenea_control_plane::db::migrate(&t.pool, None)
         .await
@@ -82,7 +107,7 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
             .fetch_all(&t.pool)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
     let allocations: i64 = sqlx::query_scalar("SELECT count(*) FROM ip_allocations")
         .fetch_one(&t.pool)
         .await
