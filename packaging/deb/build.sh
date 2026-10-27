@@ -43,4 +43,4 @@ Recommends: systemd-resolved
 Description: Agente y CLI de Atenea One
  Red privada con configuración firmada, rutas aprobadas y DNS dividido.
 EOF
-dpkg-deb --root-owner-group --compression=xz --build "$stage" "$output"
+dpkg-deb --root-owner-group -Zxz --build "$stage" "$output"
