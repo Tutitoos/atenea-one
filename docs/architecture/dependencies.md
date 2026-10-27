@@ -406,5 +406,5 @@ versión ni checksum al lock; solo listas de dependencias. Conserva
 | `serde_json` | 1.x (lock) | MIT OR Apache-2.0 | Validar y leer la respuesta de estado |
 | `atenea-windows` | ruta local | Apache-2.0 | Canalización con nombre (solo Windows) |
 
-Licencias: todo el árbol está en la lista permitida **salvo cinco crates con MPL-2.0** (`cssparser`, `cssparser-macros`, `selectors`, `dtoa-short`, `option-ext`), admitidos como excepciones por crate en `deny.toml` (ADR-011 §5). La comprobación inicial se hizo con un script sobre `cargo tree`; `cargo-deny` (advisories incluidos) lo ejecuta la CI en el job `supply-chain`, con un resultado que no se conocía al escribir esto.
+Licencias: todo el árbol está en la lista permitida **salvo cinco crates con MPL-2.0** (`cssparser`, `cssparser-macros`, `selectors`, `dtoa-short`, `option-ext`), admitidos como excepciones por crate en `deny.toml` (ADR-011 §5). La comprobación local con un script sobre `cargo tree` **no vio** una licencia más: `target-lexicon` (`Apache-2.0 WITH LLVM-exception`, solo en el árbol de Linux, vía `system-deps` de las GTK), que `cargo-deny` rechazó en la primera ejecución de CI (los avisos de seguridad, los `bans` y las fuentes pasaron). Esa licencia es Apache-2.0 con permisos adicionales y se añadió a la lista permitida de `deny.toml`. Las excepciones MPL-2.0 funcionaron.
 

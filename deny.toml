@@ -19,6 +19,7 @@ ignore = [
 # docs/architecture/dependencies.md.
 allow = [
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception", # target-lexicon (compilación de las GTK de Tauri en Linux)
     "MIT",
     "ISC",
     "BSD-2-Clause",

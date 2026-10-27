@@ -32,7 +32,7 @@ Se ejecuta como usuario normal. Lee el mismo socket que `atenea status`: en macO
 
 ### 5. Licencia MPL-2.0 acotada
 
-El árbol de Tauri incluye cinco crates con **MPL-2.0** (copyleft a nivel de fichero): `cssparser`, `cssparser-macros`, `selectors` y `dtoa-short`, que entran por la macro de compilación (`tauri-codegen` → `dom_query`), y `option-ext`, que se enlaza (`dirs`). Se admiten **solo esos cinco, sin modificar**, mediante `exceptions` en `deny.toml`; MPL-2.0 no se añade a la lista global. La obligación asociada es conservar sus avisos y poder indicar dónde está su código fuente (crates.io, versión fijada en `apps/desktop/Cargo.lock`).
+El árbol de Tauri incluye cinco crates con **MPL-2.0** (copyleft a nivel de fichero): `cssparser`, `cssparser-macros`, `selectors` y `dtoa-short`, que entran por la macro de compilación (`tauri-codegen` → `dom_query`), y `option-ext`, que se enlaza (`dirs`). Se admiten **solo esos cinco, sin modificar**, mediante `exceptions` en `deny.toml`; MPL-2.0 no se añade a la lista global. Además se permite `Apache-2.0 WITH LLVM-exception` (Apache-2.0 con permisos adicionales; solo `target-lexicon`, árbol de Linux). La obligación asociada es conservar sus avisos y poder indicar dónde está su código fuente (crates.io, versión fijada en `apps/desktop/Cargo.lock`).
 
 ## Alternativas descartadas
 
