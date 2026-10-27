@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 
 const PAGE: &str = include_str!("ui.html");
+const ICON: &str = include_str!("icon.svg");
 const MAX_HEAD: usize = 8192;
 
 pub fn serve(socket: &Path, port: u16) -> Result<(), String> {
@@ -57,6 +58,7 @@ fn respond(head: &[u8], port: u16, status: &dyn Fn() -> Result<String, String>) 
     }
     match path {
         "/" => reply(200, "text/html; charset=utf-8", PAGE),
+        "/icon.svg" => reply(200, "image/svg+xml", ICON),
         "/status" => match status() {
             Ok(json) => reply(200, "application/json", &json),
             Err(e) => reply(502, "text/plain", &e),
@@ -75,7 +77,7 @@ fn reply(code: u16, kind: &str, body: &str) -> Vec<u8> {
         _ => "Bad Gateway",
     };
     format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
     .into_bytes()
@@ -101,6 +103,10 @@ mod tests {
                 .starts_with("HTTP/1.1 403")
         );
         assert!(get("GET /status HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 403"));
+        assert!(
+            get("GET /icon.svg HTTP/1.1\r\nHost: 127.0.0.1:8787\r\n\r\n")
+                .contains("Content-Type: image/svg+xml")
+        );
     }
 
     #[test]
