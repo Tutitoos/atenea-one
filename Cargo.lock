@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atenea-coordinator",
  "atenea-crypto",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atenea-crypto",
  "atenea-identity",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-control-plane"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atenea-identity",
  "atenea-nat-traversal",
@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-coordinator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atenea-identity",
  "atenea-nat-traversal",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-relay"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atenea-identity",
  "atenea-observability",
