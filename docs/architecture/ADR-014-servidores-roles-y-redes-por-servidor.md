@@ -24,13 +24,14 @@ Con la aplicación funcionando contra el piloto, el responsable pidió (cuatro c
 | Información que **no** existe | Versión de cada servicio del servidor, reloj del servidor frente al local, caducidad del certificado de emisor de la red. El control plane solo expone `/healthz`. |
 | Servidor con varias redes | **Sí** en el servidor: organizaciones → redes; coordinator y relay separan por `network_id` (ADR-013 §2). **No** en el cliente: la aplicación no agrupa redes por servidor. |
 | El VPS en varias redes | Un agente es de una red (ADR-013): para estar en varias necesita una instancia por red. El VPS sigue con la instancia heredada (una sola red). |
+| Par en estado `none` | El agente establece el camino **bajo demanda**: pide candidatos al coordinator solo cuando hay tráfico hacia un par sin camino. Sin tráfico, el par queda en `none` indefinidamente. **Observado el 2026-10-28:** tras reiniciar los tres agentes, el CT mostraba `none` con los dos pares y contadores a cero; con unos pings desde él pasaron a `direct` en menos de 5 s. La aplicación lo pinta hoy en rojo («sin camino»), como si fuera un fallo. |
 | Marca «Servidor» actual | Local a un equipo, en el almacenamiento del webview, activada a mano. No viaja. |
 
 ## 3. Propuesta
 
 ### 3.1 Pulido de presentación (fase 1)
 
-Centrado vertical del estado (punto y texto en la misma línea base) y un botón de copiar con **icono** (accesible: `aria-label` y confirmación breve) en cada dirección del túnel y en los valores copiables de los detalles. Sin cambios de servidor ni de versión.
+Un par `none` **sin tráfico** se muestra como **«Inactivo»** en tono neutro y no como «Sin camino» en rojo (hoy confunde: no es un fallo); se mantiene el aviso solo cuando hay tráfico reciente sin camino. Centrado vertical del estado (punto y texto en la misma línea base) y un botón de copiar con **icono** (accesible: `aria-label` y confirmación breve) en cada dirección del túnel y en los valores copiables de los detalles. Sin cambios de servidor ni de versión.
 
 ### 3.2 Rol de servidor, asignado por el administrador y detectado después sin intervención (fases 2–3)
 
