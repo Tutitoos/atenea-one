@@ -134,16 +134,20 @@ fn schemas() -> ComponentsBuilder {
         ("Membership", complete(&[("org_id", uuid()), ("role", named("Role"))])),
         ("Session", complete(&[("user", named("User")), ("csrf_token", text()), ("memberships", named("[]Membership"))])),
         ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
-        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean())])),
+        ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
+        ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
+        ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text())])),
+        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("join_policy", named("JoinPolicy"))])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
         ], &["ttl_secs"])),
         ("Join", complete(&[("url", text()), ("token", text()), ("network_id", uuid()), ("root_anchor", hex(32))])),
-        ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join"))])),
+        ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join")), ("code", nullable_text()), ("root_anchor_fingerprint", text())])),
         ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceId", complete(&[("device_id", uuid())])),
         ("DeviceUpdate", object(&[("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
@@ -368,6 +372,26 @@ pub fn document() -> OpenApi {
             "EnrollmentToken",
         ),
         (
+            Put,
+            "/api/v1/networks/{net}/join-policy",
+            "setJoinPolicy",
+            "Fija la política de unión de la red; requiere admin u owner",
+            "write",
+            "200",
+            "JoinPolicyBody",
+            "JoinPolicyBody",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/join-code",
+            "getJoinCode",
+            "Código de red sin token y huella de la raíz; requiere admin u owner",
+            "read",
+            "200",
+            "",
+            "JoinCode",
+        ),
+        (
             Get,
             "/api/v1/networks/{net}/devices",
             "listDevices",
@@ -455,6 +479,16 @@ pub fn document() -> OpenApi {
             "public",
             "201",
             "Enrollment",
+            "EnrolledDevice",
+        ),
+        (
+            Post,
+            "/api/v1/networks/{net}/join-requests",
+            "requestJoin",
+            "Solicitud de unión sin token; crea un dispositivo pendiente si la red es con_solicitud",
+            "public",
+            "201",
+            "JoinRequest",
             "EnrolledDevice",
         ),
         (
@@ -587,6 +621,7 @@ pub fn document() -> OpenApi {
                 "policies"
             } else if path.contains("devices")
                 || id == "enrollDevice"
+                || id == "requestJoin"
                 || id == "createEnrollmentToken"
             {
                 "devices"
@@ -725,6 +760,7 @@ pub fn document() -> OpenApi {
                 | "getSession"
                 | "getDeviceConfiguration"
                 | "getDevicePeers"
+                | "getJoinCode"
         ) {
             response = response.header(
                 "Cache-Control",
@@ -759,7 +795,7 @@ pub fn document() -> OpenApi {
             if code == "500"
                 || code == "400"
                 || access != "public"
-                || matches!(id, "oidcCallback" | "enrollDevice")
+                || matches!(id, "oidcCallback" | "enrollDevice" | "requestJoin")
             {
                 operation = operation.response(
                     code,
@@ -772,6 +808,7 @@ pub fn document() -> OpenApi {
         if matches!(
             id,
             "enrollDevice"
+                | "requestJoin"
                 | "reportDeviceStatus"
                 | "networkEvents"
                 | "declareRoutes"
@@ -811,6 +848,18 @@ pub fn document() -> OpenApi {
         if id == "enrollDevice" {
             operation = operation.description(Some("name obligatorio; name_auto opcional y false por defecto. true inicializa name_source=device y hostname con name; false conserva el comportamiento administrativo y hostname=null. Nombre inválido: 400 invalid_name."));
         }
+        if id == "requestJoin" {
+            operation = operation.description(Some("Sin autenticación. Red inexistente y red con política cerrada responden igual (404 not_found). Mismas validaciones de name y bundle que enrollDevice y mismo límite por IP (enroll_per_minute, 429 rate_limited). Al superar max_pending_join_requests pendientes de esa red: 429 too_many_pending. Las solicitudes pendientes más antiguas que join_request_ttl_secs se eliminan de forma perezosa. El dispositivo queda pending con join_origin=request y requiere aprobación de un administrador comparando huellas."));
+        }
+        if id == "setJoinPolicy" {
+            operation = operation.description(Some("policy: cerrada | con_solicitud; cualquier otro valor: 400 invalid_request. Queda auditado (network.join_policy)."));
+        }
+        if id == "getJoinCode" {
+            operation = operation.description(Some("code no lleva token. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles) o 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final). Cache-Control: no-store."));
+        }
+        if id == "createEnrollmentToken" {
+            operation = operation.description(Some("code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código."));
+        }
         if id == "reportDeviceStatus" {
             operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo."));
         }
@@ -828,7 +877,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 32);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 35);
         assert_eq!(
             document["paths"]["/api/v1/session"]["get"]["responses"]["200"]["content"]["application/json"]
                 ["schema"]["$ref"],

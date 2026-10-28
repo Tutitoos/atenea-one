@@ -13,7 +13,7 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `DATABASE_URL`, `DATABASE_URL_FILE` | URL PostgreSQL del rol de aplicación, obligatoria; alternativa por fichero de secreto |
 | `LISTEN` | `127.0.0.1:8080` |
 | `METRICS_LISTEN` | `127.0.0.1:9101`; `GET /metrics` en listener separado sin autenticación; nunca publicar/proxificar. [Operación](../../docs/operations/observabilidad.md) |
-| `PUBLIC_URL` | URL pública que se entrega en `join`; valor local predeterminado `http://127.0.0.1:8080` |
+| `PUBLIC_URL` | URL pública que se entrega en `join` y en el código de red (debe ser `https://`, sin barra final, ≤ 100 bytes para generar el código); valor local predeterminado `http://127.0.0.1:8080` |
 | `OIDC_ISSUER` | URL del emisor; discovery y JWKS validan los ID tokens |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_CLIENT_SECRET_FILE` | Cliente OIDC registrado; secreto directo o por fichero |
 | `OIDC_REDIRECT_URL` | URL pública exacta de `/auth/callback` |
@@ -21,6 +21,8 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `CONFIG_VALIDITY_SECS` | `300`; máximo `3600`, coherente con el lease del agente |
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
 | `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
+| `MAX_PENDING_JOIN_REQUESTS` | `20`; solicitudes de unión pendientes (`POST …/join-requests`) admitidas a la vez por red; la siguiente recibe `429 too_many_pending` |
+| `JOIN_REQUEST_TTL_SECS` | `604800` (7 días); máximo `31536000`; las solicitudes pendientes de origen `request` más antiguas se eliminan de forma perezosa al recibir otra solicitud de la misma red. Nunca se tocan dispositivos aprobados, revocados ni pendientes creados con token |
 | `LOGIN_PER_MINUTE` | `20`; intentos de `GET /auth/login` por IP cliente (`429 rate_limited`); además máximo 10 000 flujos OIDC vigentes |
 | `DEVICE_PER_MINUTE` | `30`; peticiones firmadas por minuto y dispositivo (`config`, `peers`, `status`, `routes`), comprobado tras verificar firma y antes de bloquear filas |
 | `TRUSTED_PROXIES` | Lista de CIDR, p. ej. `["172.30.84.2/32"]`; vacía por defecto. Solo si el peer TCP pertenece a ella se usa `X-Real-IP` como IP cliente; en otro caso se ignora toda cabecera |

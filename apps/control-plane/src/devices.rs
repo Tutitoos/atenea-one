@@ -46,10 +46,18 @@ pub async fn token(
     let id = Uuid::now_v7();
     let expires = chrono::Utc::now() + chrono::Duration::seconds(b.ttl_secs as i64);
     let mut tx = s.pool.begin().await?;
-    let root: Vec<u8> = sqlx::query_scalar("SELECT root_anchor FROM networks WHERE id=$1")
+    let r = sqlx::query("SELECT root_anchor,name FROM networks WHERE id=$1")
         .bind(net)
         .fetch_one(&mut *tx)
         .await?;
+    let (root, net_name): (Vec<u8>, String) = (r.get("root_anchor"), r.get("name"));
+    // Un nombre o URL que no caben en el código no impiden crear el token: `code` es null.
+    let code = networks::join_code(&s, net, &net_name, &root, Some(&raw)).ok();
+    let anchor: [u8; 32] = root
+        .as_slice()
+        .try_into()
+        .map_err(|_| ApiError::internal())?;
+    let fingerprint = atenea_identity::anchor_fingerprint(&anchor);
     sqlx::query("INSERT INTO enrollment_tokens(id,network_id,token_hash,created_by,expires_at,auto_approve) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(net).bind(Sha256::digest(raw.as_bytes()).as_slice()).bind(u).bind(expires).bind(b.auto_approve).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
@@ -70,7 +78,7 @@ pub async fn token(
             ("x-content-type-options", "nosniff"),
         ],
         Json(
-            json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)}}),
+            json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)},"code":code,"root_anchor_fingerprint":fingerprint}),
         ),
     ))
 }
@@ -90,13 +98,7 @@ pub async fn enroll(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
     crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
-    let name = name(&b.name)?;
-    let bytes = hex::decode(&b.bundle).map_err(|_| ApiError::bad("invalid_bundle"))?;
-    let bundle = atenea_identity::DeviceBundle::parse(&bytes)
-        .map_err(|_| ApiError::bad("invalid_bundle"))?;
-    bundle
-        .verify()
-        .map_err(|_| ApiError::bad("invalid_bundle"))?;
+    let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
     let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
@@ -106,7 +108,17 @@ pub async fn enroll(
         .bind(net)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if b.name_auto { "device" } else { "admin" }).bind(b.name_auto.then_some(name)).execute(&mut *tx).await?;
+    insert(
+        &mut tx,
+        net,
+        dev,
+        name,
+        b.name_auto,
+        bytes,
+        &bundle,
+        "token",
+    )
+    .await?;
     if auto {
         networks::allocate(&mut tx, net, dev).await?;
         sqlx::query("UPDATE devices SET status='approved',approved_at=now() WHERE id=$1")
@@ -137,6 +149,105 @@ pub async fn enroll(
         Json(json!({"device_id":dev,"network_id":net,"status":if auto{"approved"}else{"pending"}})),
     ))
 }
+/// Valida nombre y bundle (compartido por `enroll` y `request_join`).
+fn validated<'a>(
+    name_in: &'a str,
+    bundle_hex: &str,
+) -> Result<(&'a str, Vec<u8>, atenea_identity::DeviceBundle), ApiError> {
+    let name = name(name_in)?;
+    let bytes = hex::decode(bundle_hex).map_err(|_| ApiError::bad("invalid_bundle"))?;
+    let bundle = atenea_identity::DeviceBundle::parse(&bytes)
+        .map_err(|_| ApiError::bad("invalid_bundle"))?;
+    bundle
+        .verify()
+        .map_err(|_| ApiError::bad("invalid_bundle"))?;
+    Ok((name, bytes, bundle))
+}
+#[allow(clippy::too_many_arguments)]
+async fn insert(
+    tx: &mut sqlx::PgConnection,
+    net: Uuid,
+    dev: Uuid,
+    name: &str,
+    name_auto: bool,
+    bytes: Vec<u8>,
+    bundle: &atenea_identity::DeviceBundle,
+    origin: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname,join_origin) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if name_auto { "device" } else { "admin" }).bind(name_auto.then_some(name)).bind(origin).execute(tx).await?;
+    Ok(())
+}
+#[derive(Deserialize)]
+pub struct JoinRequest {
+    bundle: String,
+    name: String,
+    #[serde(default)]
+    name_auto: bool,
+}
+/// Solicitud de unión sin token (red `con_solicitud`): crea un dispositivo `pending` que un
+/// administrador aprueba comparando huellas. Red inexistente y red cerrada responden igual.
+pub async fn request_join(
+    State(s): State<AppState>,
+    source: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+    Path(net): Path<Uuid>,
+    h: HeaderMap,
+    Json(b): Json<JoinRequest>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
+    crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
+    let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
+    let dev = Uuid::from_bytes(bundle.device_id);
+    let mut tx = s.pool.begin().await?;
+    // La fila de la red serializa el conteo y la inserción entre solicitudes concurrentes.
+    let org: Uuid = sqlx::query_scalar(
+        "SELECT org_id FROM networks WHERE id=$1 AND join_policy='con_solicitud' FOR UPDATE",
+    )
+    .bind(net)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(ApiError::not_found)?;
+    sqlx::query("DELETE FROM devices WHERE network_id=$1 AND status='pending' AND join_origin='request' AND enrolled_at < now() - $2 * interval '1 second'")
+        .bind(net)
+        .bind(s.config.join_request_ttl_secs as i64)
+        .execute(&mut *tx)
+        .await?;
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM devices WHERE network_id=$1 AND status='pending' AND join_origin='request'")
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    if pending >= i64::from(s.config.max_pending_join_requests) {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too_many_pending"));
+    }
+    insert(
+        &mut tx,
+        net,
+        dev,
+        name,
+        b.name_auto,
+        bytes,
+        &bundle,
+        "request",
+    )
+    .await?;
+    audit::record(
+        &mut tx,
+        "device",
+        dev,
+        Some(org),
+        Some(net),
+        "device.join_requested",
+        dev,
+        json!({"fingerprint":bundle.fingerprint(),"name_auto":b.name_auto}),
+    )
+    .await?;
+    tx.commit().await?;
+    s.panel.changed(net, "devices");
+    s.panel.changed(net, "audit");
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"device_id":dev,"network_id":net,"status":"pending"})),
+    ))
+}
 pub async fn list(
     State(s): State<AppState>,
     Path(net): Path<Uuid>,
@@ -144,7 +255,7 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
     let rows = sqlx::query(
-        "SELECT d.id,d.name,d.name_source,d.hostname,d.status,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
+        "SELECT d.id,d.name,d.name_source,d.hostname,d.status,d.join_origin,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
     )
     .bind(net)
     .fetch_all(&s.pool)
@@ -167,7 +278,7 @@ pub async fn list(
             "offline"
         };
         let report = reported_at.map(|at|json!({"reported_at":at,"age_secs":age,"nat_mapping":r.get::<Option<String>,_>("nat_mapping"),"paths":r.get::<Value,_>("paths"),"forwarding_ok":r.get::<Option<bool>,_>("forwarding_ok"),"dns":r.get::<Option<String>,_>("dns"),"routes":r.get::<Option<Value>,_>("routes")}));
-        out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"name_source":name_source,"hostname":hostname,"status":r.get::<String,_>("status"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
+        out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"name_source":name_source,"hostname":hostname,"status":r.get::<String,_>("status"),"join_origin":r.get::<String,_>("join_origin"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
     }
     Ok(Json(json!(out)))
 }

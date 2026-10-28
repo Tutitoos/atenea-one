@@ -107,7 +107,29 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
             .fetch_all(&t.pool)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    // Reconstruye el estado 0006: redes y dispositivos previos quedan `cerrada` y `token`.
+    t.pool
+        .execute(
+            "ALTER TABLE devices DROP COLUMN join_origin; ALTER TABLE networks DROP COLUMN join_policy;
+        DELETE FROM _sqlx_migrations WHERE version=7;",
+        )
+        .await
+        .unwrap();
+    atenea_control_plane::db::migrate(&t.pool, None)
+        .await
+        .unwrap();
+    let (networks, devices): (i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM networks WHERE join_policy='cerrada'")
+            .fetch_one(&t.pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM devices WHERE join_origin='token'")
+            .fetch_one(&t.pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!((networks, devices), (79, 10000));
     let allocations: i64 = sqlx::query_scalar("SELECT count(*) FROM ip_allocations")
         .fetch_one(&t.pool)
         .await

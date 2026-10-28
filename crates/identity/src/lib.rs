@@ -4,6 +4,7 @@
 pub mod api_auth;
 mod codec;
 mod config;
+pub mod join_code;
 mod verify;
 use blake2::{Blake2s256, Digest};
 use codec::Reader;
@@ -271,12 +272,31 @@ impl DeviceBundle {
         )
     }
     pub fn fingerprint(&self) -> String {
-        let h = hash(&self.encode());
-        h[..16]
-            .chunks(2)
-            .map(|c| format!("{:02x}{:02x}", c[0], c[1]))
-            .collect::<Vec<_>>()
-            .join("-")
+        fingerprint_text(&hash(&self.encode()))
+    }
+}
+fn fingerprint_text(h: &[u8; 32]) -> String {
+    h[..16]
+        .chunks(2)
+        .map(|c| format!("{:02x}{:02x}", c[0], c[1]))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+/// Huella de una raíz de confianza (mismo formato que la de dispositivo, dominio propio).
+pub fn anchor_fingerprint(anchor: &PublicKey) -> String {
+    let mut m = b"atenea-one/anchor-fingerprint/v1".to_vec();
+    m.extend_from_slice(anchor);
+    fingerprint_text(&hash(&m))
+}
+#[cfg(test)]
+mod anchor_tests {
+    #[test]
+    fn huella_de_raiz_vector_fijo() {
+        let anchor = core::array::from_fn(|i| i as u8 + 0x20);
+        assert_eq!(
+            super::anchor_fingerprint(&anchor),
+            "6c4b-fd0b-2585-9aae-61ad-9159-3650-be21"
+        );
     }
 }
 pub fn issue_config(

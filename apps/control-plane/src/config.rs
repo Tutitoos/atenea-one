@@ -19,6 +19,10 @@ pub struct Config {
     pub config_validity_secs: u64,
     pub dev_insecure_cookies: bool,
     pub enroll_per_minute: u32,
+    /// Solicitudes de unión (`pending` de origen `request`) admitidas a la vez por red.
+    pub max_pending_join_requests: u32,
+    /// Segundos tras los que una solicitud de unión pendiente se elimina de forma perezosa.
+    pub join_request_ttl_secs: u64,
     /// Intentos de `GET /auth/login` por minuto y IP cliente.
     pub login_per_minute: u32,
     /// Peticiones firmadas por minuto y dispositivo (config, estado, rutas).
@@ -43,6 +47,8 @@ impl Default for Config {
             config_validity_secs: 300,
             dev_insecure_cookies: false,
             enroll_per_minute: 10,
+            max_pending_join_requests: 20,
+            join_request_ttl_secs: 7 * 86400,
             login_per_minute: 20,
             device_per_minute: 30,
             trusted_proxies: Vec::new(),

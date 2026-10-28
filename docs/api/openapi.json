@@ -1508,6 +1508,7 @@
           "devices"
         ],
         "summary": "Crea un token de 256 bits, visible una sola vez; requiere admin u owner",
+        "description": "code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código.",
         "operationId": "createEnrollmentToken",
         "parameters": [
           {
@@ -1816,6 +1817,336 @@
             "session": []
           }
         ]
+      }
+    },
+    "/api/v1/networks/{net}/join-code": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Código de red sin token y huella de la raíz; requiere admin u owner",
+        "description": "code no lleva token. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles) o 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final). Cache-Control: no-store.",
+        "operationId": "getJoinCode",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinCode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/join-policy": {
+      "put": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Fija la política de unión de la red; requiere admin u owner",
+        "description": "policy: cerrada | con_solicitud; cualquier otro valor: 400 invalid_request. Queda auditado (network.join_policy).",
+        "operationId": "setJoinPolicy",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinPolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinPolicyBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/join-requests": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Solicitud de unión sin token; crea un dispositivo pendiente si la red es con_solicitud",
+        "description": "Sin autenticación. Red inexistente y red con política cerrada responden igual (404 not_found). Mismas validaciones de name y bundle que enrollDevice y mismo límite por IP (enroll_per_minute, 429 rate_limited). Al superar max_pending_join_requests pendientes de esa red: 429 too_many_pending. Las solicitudes pendientes más antiguas que join_request_ttl_secs se eliminan de forma perezosa. El dispositivo queda pending con join_origin=request y requiere aprobación de un administrador comparando huellas.",
+        "operationId": "requestJoin",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrolledDevice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/networks/{net}/metrics": {
@@ -3848,6 +4179,7 @@
           "name_source",
           "hostname",
           "status",
+          "join_origin",
           "endpoints",
           "fingerprint",
           "ipv4",
@@ -3909,6 +4241,13 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "join_origin": {
+            "type": "string",
+            "enum": [
+              "token",
+              "request"
             ]
           },
           "last_config_at": {
@@ -4243,15 +4582,26 @@
         "required": [
           "token",
           "expires_at",
-          "join"
+          "join",
+          "code",
+          "root_anchor_fingerprint"
         ],
         "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "expires_at": {
             "type": "string",
             "format": "date-time"
           },
           "join": {
             "$ref": "#/components/schemas/Join"
+          },
+          "root_anchor_fingerprint": {
+            "type": "string"
           },
           "token": {
             "type": "string"
@@ -4325,6 +4675,74 @@
           }
         }
       },
+      "JoinCode": {
+        "type": "object",
+        "required": [
+          "code",
+          "root_anchor_fingerprint",
+          "join_policy",
+          "name",
+          "url"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
+          },
+          "name": {
+            "type": "string"
+          },
+          "root_anchor_fingerprint": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "JoinPolicy": {
+        "type": "string",
+        "enum": [
+          "cerrada",
+          "con_solicitud"
+        ]
+      },
+      "JoinPolicyBody": {
+        "type": "object",
+        "required": [
+          "policy"
+        ],
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
+          }
+        }
+      },
+      "JoinRequest": {
+        "type": "object",
+        "required": [
+          "bundle",
+          "name"
+        ],
+        "properties": {
+          "bundle": {
+            "type": "string",
+            "maxLength": 292,
+            "minLength": 292,
+            "pattern": "^[0-9a-fA-F]+$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DeviceName"
+          },
+          "name_auto": {
+            "type": "boolean",
+            "description": "true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.",
+            "default": false
+          }
+        }
+      },
       "Member": {
         "type": "object",
         "required": [
@@ -4392,7 +4810,8 @@
           "ipv4_cidr",
           "ipv6_cidr",
           "root_anchor",
-          "has_issuer_cert"
+          "has_issuer_cert",
+          "join_policy"
         ],
         "properties": {
           "has_issuer_cert": {
@@ -4407,6 +4826,9 @@
           },
           "ipv6_cidr": {
             "type": "string"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
           },
           "name": {
             "type": "string"

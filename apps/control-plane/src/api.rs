@@ -83,6 +83,14 @@ pub fn router(s: AppState) -> Router {
         )
         .route("/api/v1/networks/{net}/devices", get(devices::list))
         .route(
+            "/api/v1/networks/{net}/join-policy",
+            put(networks::set_join_policy),
+        )
+        .route(
+            "/api/v1/networks/{net}/join-code",
+            get(networks::join_code_get),
+        )
+        .route(
             "/api/v1/networks/{net}/devices/{dev}/approve",
             post(devices::approve),
         )
@@ -104,6 +112,10 @@ pub fn router(s: AppState) -> Router {
         )
         .route("/api/v1/networks/{net}/audit", get(crate::audit::list))
         .route("/api/v1/enroll", post(devices::enroll))
+        .route(
+            "/api/v1/networks/{net}/join-requests",
+            post(devices::request_join),
+        )
         .route("/api/v1/device/config", get(issue::get))
         .route("/api/v1/device/peers", get(issue::peers))
         .route("/api/v1/device/routes", post(crate::routes::declare))

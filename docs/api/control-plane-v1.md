@@ -80,7 +80,7 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/orgs/{org}/networks`; `GET /api/v1/networks/{net}` | member | Lista y detalle (incluye si hay certificado de emisor) |
 | `PUT /api/v1/networks/{net}/issuer-cert` (cuerpo binario 178 bytes) | admin | Valida que el certificado parsea, que su `network_id` coincide, que está firmado por `root_anchor` y que sigue vigente |
 | `DELETE /api/v1/networks/{net}` | admin | Elimina la red y sus dispositivos (cascada) |
-| `POST /api/v1/networks/{net}/enrollment-tokens` `{ttl_secs, auto_approve}` | admin | Devuelve `{token, expires_at, join}`; `join` agrupa `url`, `token`, `network_id` y `root_anchor`. `ttl_secs` entre 60 y 86400. El token (256 bits aleatorios, base64url) se devuelve solo una vez |
+| `POST /api/v1/networks/{net}/enrollment-tokens` `{ttl_secs, auto_approve}` | admin | Devuelve `{token, expires_at, join, code, root_anchor_fingerprint}`; `join` agrupa `url`, `token`, `network_id` y `root_anchor`; `code` es el código de red **con** el token (§13; `null` si el nombre de la red o `PUBLIC_URL` no caben en el formato). `ttl_secs` entre 60 y 86400. El token (256 bits aleatorios, base64url) se devuelve solo una vez |
 | `GET /api/v1/networks/{net}/devices` | member | Inventario |
 | `POST /api/v1/networks/{net}/devices/{dev}/approve` | admin | Asigna IPv4+IPv6 en transacción; `409` si ya está aprobado o si la red está llena |
 | `POST /api/v1/networks/{net}/devices/{dev}/revoke` | admin | Marca `revoked`, libera direcciones; el dispositivo deja de recibir configuración y desaparece de la de sus peers en la siguiente emisión |
@@ -88,6 +88,9 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET/POST /api/v1/networks/{net}/policies`; `DELETE …/policies/{id}` | member / admin / admin | Cada política se valida: selectores existentes en la red, prefijos dentro de los CIDR de la red, puertos coherentes (solo TCP/UDP, `port_min ≤ port_max`), como máximo 256 políticas |
 | `GET /api/v1/networks/{net}/audit?limit=&before=` | member | Eventos de auditoría de la red, paginados |
 | `POST /api/v1/enroll` `{token, bundle (hex, 146 bytes), name, name_auto?}` | token | Ver §5 y §12; `name_auto` por defecto `false` |
+| `PUT /api/v1/networks/{net}/join-policy` `{policy}` | admin | `cerrada` \| `con_solicitud` (§13) |
+| `GET /api/v1/networks/{net}/join-code` | admin | Código de red sin token y huella de la raíz (§13) |
+| `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?}` | público | Solicitud de unión sin token (§13) |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
 | `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12) |
 
@@ -261,3 +264,13 @@ Los nombres son **metadatos de visualización no firmados**: ni identidad, ni au
 Desplegar primero el control plane y aplicar sus migraciones; después, clientes compatibles. Los clientes anteriores omiten los campos nuevos. Un cliente nuevo frente a un servidor anterior recibe `404` en `peers` y continúa sin nombres. Este cambio de servidor no instala ni modifica agentes, CLI o escritorio, ni autoriza un despliegue.
 
 El contrato se exporta desde la raíz con `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json`; a continuación se regenera el cliente con `pnpm --filter @atenea/api-client generate`. No editar los tipos generados a mano.
+
+## 13. Unión por código de red (ADR-013, fase 1)
+
+La migración `0007` añade `networks.join_policy` (`cerrada` por defecto, `con_solicitud`) y `devices.join_origin` (`token` por defecto, `request`); lo existente queda `cerrada` y `token`. `GET /api/v1/networks/{net}` y el listado de redes devuelven `join_policy`; el inventario devuelve `join_origin`.
+
+- **Política:** `PUT /api/v1/networks/{net}/join-policy` `{"policy":"cerrada"|"con_solicitud"}`, solo admin u owner, con sesión y CSRF; audita `network.join_policy`. Otro valor: `400 invalid_request`.
+- **Código:** `GET /api/v1/networks/{net}/join-code` (admin; `Cache-Control: no-store`) devuelve `{"code","root_anchor_fingerprint","join_policy","name","url"}`. El `code` (formato en [join-code-v1](../protocol/join-code-v1.md)) no lleva token; `name` es el nombre de la red y no se recorta: si no cumple el formato, `409 invalid_network_name_for_code`; si `PUBLIC_URL` no lo cumple (https, ≤ 100 bytes, sin barra final), `409 invalid_public_url_for_code`. `root_anchor_fingerprint` se muestra junto al código para comparación humana. Ejemplo sintético de URL: `https://control.example.test`.
+- **Solicitud sin token:** `POST /api/v1/networks/{net}/join-requests` `{"bundle":hex 146 bytes,"name":…,"name_auto"?:bool}`, sin autenticación. Red inexistente y red `cerrada` devuelven la misma `404 not_found`. Mismas validaciones de `name` y `bundle` que `enroll`, mismo límite por IP (`enroll_per_minute`, `429 rate_limited`) y misma obtención de la IP cliente. Crea un dispositivo `pending` con `join_origin=request` (`201 {"device_id","network_id","status":"pending"}`); un administrador lo aprueba comparando la huella como siempre. Una clave ya registrada devuelve `409 conflict`.
+- **Tope y caducidad:** como máximo `max_pending_join_requests` (20) pendientes de origen `request` por red; la siguiente recibe `429 too_many_pending` y no se crea nada. Las pendientes `request` más antiguas que `join_request_ttl_secs` (7 días) se eliminan de forma perezosa, en la misma transacción y antes de contar; nunca se tocan dispositivos aprobados, revocados ni pendientes de origen `token`. La fila de la red se bloquea (`FOR UPDATE`) para que dos solicitudes simultáneas no superen el tope.
+- **Auditoría:** `device.join_requested` con la huella del dispositivo y `name_auto`; nunca el bundle completo.

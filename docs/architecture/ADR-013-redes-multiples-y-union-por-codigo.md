@@ -1,6 +1,6 @@
 # ADR-013: Varias redes por dispositivo y unión por código (estilo ZeroTier)
 
-- **Estado:** **Propuesto** (2026-10-28). Sin código. Espera las decisiones de «Decisiones que necesita el responsable».
+- **Estado:** **Aceptado** por el responsable el 2026-10-28 con las decisiones de §6 (código todo en uno, privilegios opción A, una instancia por red, claves por red). En implementación: fase 1 (servidor).
 - **Relacionados:** ADR-005 (raíz y emisores), ADR-007 (rutas y DNS), ADR-008 (clientes), ADR-010 (L2), ADR-011 (aplicación de escritorio, solo lectura), ADR-012 (nombres).
 
 ## 1. Objetivo
@@ -89,11 +89,13 @@ Cada fase deja `check.sh` y CI en verde y documentación con los límites reales
 - **Privilegios:** la opción B añade superficie local; la opción A no la añade pero es menos cómoda.
 - **Sin comprobar hoy:** coordinator y relay con dos redes reales en el mismo servidor (el código las separa, no se ha ejecutado), y el solapamiento de dos interfaces de Atenea en macOS.
 
-## 6. Decisiones que necesita el responsable
+## 6. Decisiones del responsable (2026-10-28)
 
-1. **Formato del código:** todo en uno con la huella de la raíz (recomendado) o identificador de red + servidor tecleados a mano comparando la huella.
-2. **Política de unión por defecto:** `cerrada` (recomendado) y si se ofrece `con_solicitud` en v1.
-3. **Privilegios:** opción A primero (recomendado) u opción B desde el principio.
-4. **Una instancia por red** (recomendado) o multiplexado desde el principio.
-5. **Claves por red** (recomendado) o una identidad de dispositivo común.
-6. **L2:** si lo que se quiere es el comportamiento exacto de ZeroTier (difusión, descubrimiento local), hay que esperar a la auditoría y a la fase 10.
+1. **Formato del código:** **todo en uno**, con la huella de la raíz de confianza dentro.
+2. **Política de unión:** `cerrada` por defecto y `con_solicitud` disponible en v1. *Esta decisión no la dio el responsable de forma explícita: se deduce de que la fase 1 incluye `con_solicitud`; se mantiene la recomendación de `cerrada` por defecto y `abierta` no se ofrece.*
+3. **Privilegios:** **opción A** (elevación por operación). La opción B queda para un ADR posterior.
+4. **Una instancia de agente por red**; el multiplexado queda aplazado.
+5. **Claves por red.**
+6. **L2:** fuera de alcance; espera a la auditoría y a la fase 10 (ADR-010).
+
+**Desviación de la fase 1 respecto a §4:** el QR del panel se aplaza porque exige una dependencia nueva de generación de QR (inventario y revisión de suministro); el panel muestra el código, la huella y un botón de copiar.

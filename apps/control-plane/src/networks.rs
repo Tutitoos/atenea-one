@@ -18,13 +18,22 @@ pub async fn access(
     net: Uuid,
     write: bool,
 ) -> Result<(Uuid, Uuid), ApiError> {
+    access_as(s, h, net, write, if write { "admin" } else { "member" }).await
+}
+async fn access_as(
+    s: &AppState,
+    h: &HeaderMap,
+    net: Uuid,
+    write: bool,
+    role: &str,
+) -> Result<(Uuid, Uuid), ApiError> {
     let u = auth::session(s, h, write).await?;
     let org: Option<Uuid> = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
         .bind(net)
         .fetch_optional(&s.pool)
         .await?;
     let org = org.ok_or_else(ApiError::not_found)?;
-    orgs::role(s, u, org, if write { "admin" } else { "member" }).await?;
+    orgs::role(s, u, org, role).await?;
     Ok((u, org))
 }
 #[derive(Deserialize)]
@@ -35,9 +44,88 @@ pub struct NewNetwork {
     pub root_anchor: String,
 }
 fn value(r: &PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<Vec<u8>,_>("root_anchor")),"has_issuer_cert":r.get::<bool,_>("has_cert")})
+    json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<Vec<u8>,_>("root_anchor")),"has_issuer_cert":r.get::<bool,_>("has_cert"),"join_policy":r.get::<String,_>("join_policy")})
 }
-const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,(issuer_cert IS NOT NULL) has_cert FROM networks";
+const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,(issuer_cert IS NOT NULL) has_cert,join_policy FROM networks";
+/// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
+pub fn join_code(
+    s: &AppState,
+    net: Uuid,
+    name: &str,
+    root: &[u8],
+    token: Option<&str>,
+) -> Result<String, ApiError> {
+    use atenea_identity::join_code::{JoinCode, JoinCodeError};
+    JoinCode {
+        url: s.config.public_url.clone(),
+        network_id: net.into_bytes(),
+        root_anchor: root.try_into().map_err(|_| ApiError::internal())?,
+        name: name.to_owned(),
+        token: token.map(str::to_owned),
+    }
+    .encode()
+    .map_err(|e| match e {
+        JoinCodeError::InvalidName => ApiError::conflict("invalid_network_name_for_code"),
+        JoinCodeError::InvalidUrl => ApiError::conflict("invalid_public_url_for_code"),
+        _ => ApiError::internal(),
+    })
+}
+pub async fn set_join_policy(
+    State(s): State<AppState>,
+    Path(net): Path<Uuid>,
+    h: HeaderMap,
+    Json(b): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let (u, org) = access(&s, &h, net, true).await?;
+    let policy = match b.get("policy").and_then(Value::as_str) {
+        Some(p @ ("cerrada" | "con_solicitud")) => p,
+        _ => return Err(ApiError::bad("invalid_request")),
+    };
+    let mut tx = s.pool.begin().await?;
+    sqlx::query("UPDATE networks SET join_policy=$2 WHERE id=$1")
+        .bind(net)
+        .bind(policy)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "network.join_policy",
+        net,
+        json!({"policy":policy}),
+    )
+    .await?;
+    tx.commit().await?;
+    s.panel.changed(net, "network");
+    s.panel.changed(net, "audit");
+    Ok(Json(json!({"policy":policy})))
+}
+pub async fn join_code_get(
+    State(s): State<AppState>,
+    Path(net): Path<Uuid>,
+    h: HeaderMap,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    access_as(&s, &h, net, false, "admin").await?;
+    let r = sqlx::query("SELECT name,root_anchor,join_policy FROM networks WHERE id=$1")
+        .bind(net)
+        .fetch_one(&s.pool)
+        .await?;
+    let (name, root) = (
+        r.get::<String, _>("name"),
+        r.get::<Vec<u8>, _>("root_anchor"),
+    );
+    let code = join_code(&s, net, &name, &root, None)?;
+    let anchor: [u8; 32] = root.try_into().map_err(|_| ApiError::internal())?;
+    Ok((
+        [("cache-control", "no-store")],
+        Json(
+            json!({"code":code,"root_anchor_fingerprint":atenea_identity::anchor_fingerprint(&anchor),"join_policy":r.get::<String,_>("join_policy"),"name":name,"url":s.config.public_url}),
+        ),
+    ))
+}
 pub async fn create(
     State(s): State<AppState>,
     Path(org): Path<Uuid>,
@@ -105,7 +193,7 @@ pub async fn create(
     Ok((
         StatusCode::CREATED,
         Json(
-            json!({"id":id,"org_id":org,"name":b.name,"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":b.root_anchor,"has_issuer_cert":false}),
+            json!({"id":id,"org_id":org,"name":b.name,"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":b.root_anchor,"has_issuer_cert":false,"join_policy":"cerrada"}),
         ),
     ))
 }
