@@ -19,9 +19,10 @@ const peer = (key: string, addr: string, path: string, name?: string) => ({
   public_key: key, addrs: [addr], name, endpoint: '192.0.2.7:51820', session: 'activa 5s', last_handshake_secs_ago: 5,
   tx_bytes: 2048, rx_bytes: 4096, path, candidates: 2, paths: [{ kind: path, ready: true, healthy: true, rtt_ms: null }],
 });
-const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')]) => JSON.stringify({
+const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún par por relay o sin camino'] };
+const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded) => JSON.stringify({
   status: { public_key: 'c'.repeat(64), addrs: ['10.77.0.2'], hostname: 'MacBook de prueba', config: { version: 7, lease_active: true, valid_until_unix: Date.now() / 1000 + 240 }, nat: { mapping: 'unknown', reflexive: '203.0.113.9:51820' }, counters: { tx_init: 3 }, relay: { allocations: 0, entries: [], drops: {} }, peers },
-  health: { level: 'degraded', text: 'Degradado', reasons: ['algún par por relay o sin camino'] },
+  health,
 });
 
 function app(entry = '/devices') {
@@ -45,6 +46,18 @@ function app(entry = '/devices') {
 
 beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); });
 
+it('la banda de avisos solo aparece si hay motivos que contar', async () => {
+  // Caso real de Rust: un par por relay degrada el estado pero no aporta ningún motivo textual.
+  vi.mocked(invoke).mockResolvedValue(agent(undefined, { level: 'degraded', text: 'Degradado: algún par por relay o sin camino', reasons: [] }));
+  const { unmount } = app();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));
+  expect(screen.queryByRole('list', { name: 'Avisos' })).not.toBeInTheDocument();
+  unmount();
+  vi.mocked(invoke).mockResolvedValue(agent(undefined, { level: 'down', text: 'Sin conexión: sin lease activo', reasons: ['sin lease activo'] }));
+  app();
+  expect(await screen.findByRole('list', { name: 'Avisos' })).toHaveTextContent('sin lease activo');
+});
+
 it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y tráfico', async () => {
   vi.mocked(invoke).mockResolvedValue(agent());
   app();
@@ -55,7 +68,8 @@ it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y
   const detail = within(screen.getByRole('main'));
   expect(await detail.findByText('Por relay UDP', { selector: 'span' })).toBeInTheDocument();
   expect(detail.getByText('IPv4')).toBeInTheDocument();
-  expect(detail.getByText('4.0 KiB')).toBeInTheDocument();
+  // Puede ir seguido de la tasa si hubo una lectura anterior (el muestreador vive a nivel de módulo).
+  expect(detail.getByText(/^4\.0 KiB/)).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Degradado');
 });
 

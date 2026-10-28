@@ -28,8 +28,9 @@ export default function Shell() {
         </div>
         <Pill tone={health ? levelTone(health.level) : 'off'}>{health ? health.text : 'Sin datos'}</Pill>
       </header>
-      {health && health.level !== 'ok' && (
-        <ul className="border-b border-line bg-bad/10 px-4 py-2 text-bad">
+      {health && health.reasons.length > 0 && (
+        // Rojo solo si no hay conexión; un aviso (degradado) no es un error.
+        <ul aria-label="Avisos" className={`border-b border-line px-4 py-2 ${health.level === 'down' ? 'bg-bad/10 text-bad' : 'bg-warn/15 text-fg'}`}>
           {health.reasons.map((r) => <li key={r}>{r}</li>)}
         </ul>
       )}
