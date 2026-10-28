@@ -24,6 +24,7 @@ for f in docs/a.md apps/web/app/x.tsx apps/control-plane/src/x.rs apps/agent/src
 done
 git add -A && git commit -q -m base
 fails=0
+n=0
 
 # run EVENT BEFORE BASE_SHA -> "native desktop"
 run() {
@@ -34,7 +35,7 @@ run() {
 # touch FICHERO...: modifica y confirma; deja la confirmación anterior en $prev
 touch_commit() {
     prev=$(git rev-parse HEAD)
-    for f in "$@"; do echo "$RANDOM$f" >> "$f"; done
+    for f in "$@"; do n=$((n + 1)); echo "$n" >> "$f"; done
     git add -A && git commit -q -m c
 }
 expect() { # descripción esperado obtenido
