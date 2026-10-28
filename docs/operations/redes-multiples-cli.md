@@ -1,6 +1,6 @@
 # Varias redes con la CLI (ADR-013 fases 2 y 3)
 
-- **Estado:** fases 2 y 3 Linux probadas en laboratorios Docker; política y generación macOS probadas sin privilegios. Toda aceptación privilegiada macOS está pendiente de CI desechable, nunca ejecutada en el equipo del piloto. Todos los valores de los ejemplos son sintéticos.
+- **Estado:** fases 2 y 3 probadas en laboratorios Docker (Linux) y en la CI de macOS (runner desechable: instancia heredada + dos redes por `launchd`, commit `b81af18`); **nunca ejecutadas en el equipo del piloto**. Todos los valores de los ejemplos son sintéticos.
 - **Referencias:** [ADR-013](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md), [código de red v1](../protocol/join-code-v1.md), instalación en [Linux](instalacion-linux.md) y [macOS](instalacion-macos.md).
 - **Alcance:** CLI Unix (Linux y macOS), sin interfaz gráfica. **Windows está aplazado**: `atenea network …` sigue devolviendo «no está soportado todavía en Windows»; servicio por red y adaptador Wintun por red requieren una fase propia con pruebas elevadas. El flujo de [instalación Windows](instalacion-windows.md) continúa con una sola red.
 
@@ -68,7 +68,7 @@ El CLI genera `/Library/LaunchDaemons/one.atenea.network.<id8>.plist` como root:
 
 Las redes llevan `resolver_owner = "<id8>"` en su TOML; los resolutores tienen la marca `# Atenea One: resolver administrado (<id8>)`. Solo la instancia heredada usa la marca antigua sin id. Cada parada/cleanup retira exclusivamente sus propios ficheros: nunca sobrescribe ni borra los de otra instancia ni los ajenos. Un dominio ya reclamado provoca `dns_domain_conflict` en `config.last_error` **antes de aplicar direcciones, rutas o DNS**, también al actualizar solo DNS.
 
-El desinstalador retira servicios/plists y limpia cada red sin borrar sus claves ni directorios; `postinstall` conserva el comportamiento heredado y reinicia solo las redes cargadas, no las deshabilitadas. **Todo lo privilegiado de macOS queda pendiente de CI desechable**: no ejecutar `tests/macos/run.sh`, `postinstall`, desinstaladores ni `launchctl` en el equipo del piloto. Los tests sin privilegios cubren generación XML/plist, UUID, rutas y ownership DNS sobre ficheros temporales.
+El desinstalador retira servicios/plists y limpia cada red sin borrar sus claves ni directorios; `postinstall` conserva el comportamiento heredado y reinicia solo las redes cargadas, no las deshabilitadas, esperando a que cada servicio quede descargado antes de volver a cargarlo (`bootout` es asíncrono). Esto se comprobó en la CI de macOS; **no ejecutar `tests/macos/run.sh`, `postinstall`, desinstaladores ni `launchctl` en el equipo del piloto**. La CI no ejercita en macOS `network_overlap` ni `dns_domain_conflict` (solo pruebas unitarias y, el solape, el laboratorio de Linux).
 
 ## Privilegios
 
