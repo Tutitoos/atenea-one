@@ -237,3 +237,11 @@ Resultado: 33 ficheros y tres imágenes públicas en GHCR por digest. Verificado
 
 **Sin comprobar:** el comportamiento de ambos arreglos con los paquetes publicados instalados en un host real. El del `.deb` se probó antes con un `systemctl` simulado y **después, con este mismo paquete publicado, con `dpkg` y systemd reales** (ver el apartado de la actualización a `v0.1.2` en la guía de infraestructura); el del lanzador se observó en un Mac real bajo `launchd` pero con los binarios de `v0.1.1` y el lanzador instalado con `install-launchd.sh`, no desde este `.pkg`. `0.1.2` sigue siendo una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
 
+### Publicación real de `v0.1.3` y `v0.1.4` (2026-10-28)
+
+**`v0.1.3`** (commit `d0a7ce2`) incluye ADR-013 fases 1–4 (migración `0007`, código de red, `atenea network …`, servicios por red y sección Redes de la aplicación; la aplicación sigue fuera del release). Se publicó al primer intento y `verify.sh` pasó. Se desplegó en el VPS con copia completa verificada (`ok=27 failed=0`, migraciones 1–7). **Contiene dos defectos de macOS** que solo apareció al unir una red real desde la aplicación: `network join` asignaba la interfaz `atenea0` (el agente de macOS solo acepta `utun`/`utunN`) y `postinstall` dejaba `/Library/Application Support/Atenea` en `0700` (`network list` sin root fallaba). La CI no los vio.
+
+**`v0.1.4`** (commit `e82f570`) es `v0.1.3` más esos dos arreglos (solo cambian el CLI y el `postinstall`). Publicada con aprobación del responsable, `verify.sh` pasó. Se instaló en los tres agentes (Mac con `update.sh` y vuelta atrás preparada, `.deb` en el VPS y en el CT, comprobado su hash contra el manifiesto firmado) y se desplegaron las tres imágenes en el VPS (copia verificada antes, `ok=27 failed=0`).
+
+**Sin comprobar con los binarios publicados:** unirse a una red desde la aplicación (la prueba real usó el CLI compilado del commit `cc5c860` con el agente firmado 0.1.3); el `.pkg` de macOS (el Mac se actualizó con `update.sh`, no con el `.pkg`, por lo que `postinstall` 0711 solo se aplicó a mano en ese equipo). `0.1.4` sigue siendo una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
+
