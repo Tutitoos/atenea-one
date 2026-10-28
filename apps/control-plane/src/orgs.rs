@@ -82,15 +82,67 @@ pub async fn members(
 ) -> Result<Json<Value>, ApiError> {
     let u = auth::session(&s, &h, false).await?;
     role(&s, u, org, "member").await?;
-    let rows = sqlx::query("SELECT user_id,role FROM memberships WHERE org_id=$1 ORDER BY user_id")
+    let can_see_email: bool = sqlx::query_scalar(
+        "SELECT role IN ('owner','admin') FROM memberships WHERE org_id=$1 AND user_id=$2",
+    )
+    .bind(org)
+    .bind(u)
+    .fetch_one(&s.pool)
+    .await?;
+    let rows = sqlx::query("SELECT m.user_id,m.role,u.display_name,u.email FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 ORDER BY m.user_id")
         .bind(org)
         .fetch_all(&s.pool)
         .await?;
     Ok(Json(json!(
         rows.iter()
-            .map(|r| json!({"user_id":r.get::<Uuid,_>("user_id"),"role":r.get::<String,_>("role")}))
+            .map(|r| member_value(r, can_see_email))
             .collect::<Vec<_>>()
     )))
+}
+
+fn member_value(r: &sqlx::postgres::PgRow, can_see_email: bool) -> Value {
+    json!({
+        "user_id":r.get::<Uuid,_>("user_id"),
+        "role":r.get::<String,_>("role"),
+        "display_name":r.get::<Option<String>,_>("display_name"),
+        "email":if can_see_email {r.get::<Option<String>,_>("email")} else {None},
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AddMember {
+    email: String,
+    role: String,
+}
+
+pub async fn add_member(
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    h: HeaderMap,
+    Json(body): Json<AddMember>,
+) -> Result<Json<Value>, ApiError> {
+    let u = auth::session(&s, &h, true).await?;
+    role(&s, u, org, "owner").await?;
+    auth::limit_session(&s, &h, "add_member", 10)?;
+    validate_role(&body.role)?;
+    let users: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(email)=lower($1) LIMIT 2")
+            .bind(&body.email)
+            .fetch_all(&s.pool)
+            .await?;
+    let user = match users.as_slice() {
+        [user] => *user,
+        [] => return Err(ApiError::not_found()),
+        _ => return Err(ApiError::conflict("conflict")),
+    };
+    write_member(&s, u, org, user, &body.role).await
+}
+
+fn validate_role(role: &str) -> Result<(), ApiError> {
+    if !["owner", "admin", "member"].contains(&role) {
+        return Err(ApiError::bad("invalid_role"));
+    }
+    Ok(())
 }
 #[derive(Deserialize)]
 pub struct Role {
@@ -125,11 +177,19 @@ pub async fn set_member(
 ) -> Result<Json<Value>, ApiError> {
     let u = auth::session(&s, &h, true).await?;
     role(&s, u, org, "owner").await?;
-    if !["owner", "admin", "member"].contains(&body.role.as_str()) {
-        return Err(ApiError::bad("invalid_role"));
-    }
+    validate_role(&body.role)?;
+    write_member(&s, u, org, user, &body.role).await
+}
+
+async fn write_member(
+    s: &AppState,
+    actor: Uuid,
+    org: Uuid,
+    user: Uuid,
+    role: &str,
+) -> Result<Json<Value>, ApiError> {
     let mut tx = s.pool.begin().await?;
-    if body.role != "owner" {
+    if role != "owner" {
         protect_owner(&mut tx, org, user).await?;
     } else {
         sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
@@ -144,20 +204,28 @@ pub async fn set_member(
     if !exists {
         return Err(ApiError::not_found());
     }
-    sqlx::query("INSERT INTO memberships VALUES($1,$2,$3) ON CONFLICT(org_id,user_id) DO UPDATE SET role=excluded.role").bind(org).bind(user).bind(&body.role).execute(&mut *tx).await?;
+    let previous_role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM memberships WHERE org_id=$1 AND user_id=$2")
+            .bind(org)
+            .bind(user)
+            .fetch_optional(&mut *tx)
+            .await?;
+    sqlx::query("INSERT INTO memberships VALUES($1,$2,$3) ON CONFLICT(org_id,user_id) DO UPDATE SET role=excluded.role").bind(org).bind(user).bind(role).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
         "user",
-        u,
+        actor,
         Some(org),
         None,
         "member.set",
         user,
-        json!({"role":body.role}),
+        json!({"previous_role":previous_role,"role":role}),
     )
     .await?;
+    let row = sqlx::query("SELECT m.user_id,m.role,u.display_name,u.email FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2")
+        .bind(org).bind(user).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Json(json!({"user_id":user,"role":body.role})))
+    Ok(Json(member_value(&row, true)))
 }
 pub async fn remove_member(
     State(s): State<AppState>,
@@ -226,4 +294,39 @@ pub async fn remove(
         .await?;
     tx.commit().await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+pub async fn rename(
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    h: HeaderMap,
+    Json(body): Json<Name>,
+) -> Result<Json<Value>, ApiError> {
+    let u = auth::session(&s, &h, true).await?;
+    role(&s, u, org, "owner").await?;
+    name(&body.name)?;
+    let mut tx = s.pool.begin().await?;
+    let previous_name: String =
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1 FOR UPDATE")
+            .bind(org)
+            .fetch_one(&mut *tx)
+            .await?;
+    sqlx::query("UPDATE organizations SET name=$2 WHERE id=$1")
+        .bind(org)
+        .bind(&body.name)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        None,
+        "org.rename",
+        org,
+        json!({"previous_name":previous_name,"name":body.name}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"id":org,"name":body.name})))
 }

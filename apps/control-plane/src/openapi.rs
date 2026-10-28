@@ -124,13 +124,15 @@ fn schemas() -> ComponentsBuilder {
         ("DeviceRole", choices(&["device", "server"])),
         ("ServiceVersion", complete(&[("version", text()), ("commit", text())])),
         ("ServerInfo", complete(&[("control_plane", named("ServiceVersion")), ("server_time_unix", integer()), ("issuer_cert_not_after_unix", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer, Type::Null])).into())])),
+        ("Server", complete(&[("control_plane", named("ServiceVersion")), ("server_time", timestamp())])),
         ("DeviceName", device_name),
         ("DeviceNameSource", choices(&["admin", "device"])),
         ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName")), ("role", named("DeviceRole"))])),
         ("Name", complete(&[("name", name.clone())])),
         ("OrganizationCreated", complete(&[("id", uuid()), ("name", text())])),
         ("Organization", complete(&[("id", uuid()), ("name", text()), ("role", named("Role"))])),
-        ("Member", complete(&[("user_id", uuid()), ("role", named("Role"))])),
+        ("Member", complete(&[("user_id", uuid()), ("role", named("Role")), ("display_name", nullable_text()), ("email", nullable_text())])),
+        ("AddMember", complete(&[("email", text()), ("role", named("Role"))])),
         ("SetMember", complete(&[("role", named("Role"))])),
         ("Empty", complete(&[])),
         ("User", complete(&[("id", uuid()), ("email", nullable_text()), ("display_name", nullable_text())])),
@@ -140,7 +142,7 @@ fn schemas() -> ComponentsBuilder {
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
         ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text())])),
-        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("join_policy", named("JoinPolicy"))])),
+        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
@@ -276,6 +278,36 @@ pub fn document() -> OpenApi {
             "OrganizationCreated",
         ),
         (
+            Patch,
+            "/api/v1/orgs/{org}",
+            "renameOrganization",
+            "Renombra una organización; requiere owner",
+            "write",
+            "200",
+            "Name",
+            "OrganizationCreated",
+        ),
+        (
+            Post,
+            "/api/v1/orgs/{org}/members",
+            "addMemberByEmail",
+            "Añade un usuario registrado por correo; requiere owner",
+            "write",
+            "200",
+            "AddMember",
+            "Member",
+        ),
+        (
+            Get,
+            "/api/v1/server",
+            "getServer",
+            "Información del control plane; sesión con al menos una membresía",
+            "read",
+            "200",
+            "",
+            "Server",
+        ),
+        (
             Delete,
             "/api/v1/orgs/{org}",
             "deleteOrganization",
@@ -343,6 +375,16 @@ pub fn document() -> OpenApi {
             "read",
             "200",
             "",
+            "Network",
+        ),
+        (
+            Patch,
+            "/api/v1/networks/{net}",
+            "renameNetwork",
+            "Renombra una red; requiere admin u owner",
+            "write",
+            "200",
+            "Name",
             "Network",
         ),
         (
@@ -785,6 +827,7 @@ pub fn document() -> OpenApi {
                 | "getDeviceConfiguration"
                 | "getDevicePeers"
                 | "getJoinCode"
+                | "getServer"
         ) {
             response = response.header(
                 "Cache-Control",
@@ -838,6 +881,8 @@ pub fn document() -> OpenApi {
                 | "declareRoutes"
                 | "getDevicePeers"
                 | "leaveDeviceNetwork"
+                | "addMemberByEmail"
+                | "getServer"
         ) {
             operation = operation.response(
                 "429",
@@ -894,6 +939,27 @@ pub fn document() -> OpenApi {
         if id == "getServerInfo" {
             operation = operation.description(Some("Solo dispositivos aprobados; misma firma AtDevice, ventana de 60 s, anti-replay, límite device_per_minute y límite global de cuerpo que /device/peers. No permite elegir red: devuelve solo la del firmante. Certificado ausente: issuer_cert_not_after_unix=null. Version y commit proceden de la compilación del control plane (--version/ATENEA_BUILD_COMMIT). Coordinator y relay se omiten: no existe canal real de consulta de sus versiones."));
         }
+        if id == "listMembers" {
+            operation = operation.description(Some("display_name: string|null visible a todos los miembros. email: string|null visible a owner/admin; para member siempre null. 404 not_found si no pertenece a la organización."));
+        }
+        if id == "setMember" || id == "addMemberByEmail" {
+            operation = operation.description(Some("Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email."));
+        }
+        if id == "addMemberByEmail" {
+            operation = operation.description(Some("Solo owner y CSRF. Correo completo exacto sin distinguir mayúsculas; no recorta ni busca por fragmentos. El usuario debe haber iniciado sesión. 400 invalid_role; 404 not_found uniforme para usuario inexistente u organización ajena; 409 conflict si varias identidades tienen ese correo, 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}. Ráfaga 10, reposición 10/minuto por sesión (incluidos intentos fallidos), 429 rate_limited. Riesgo residual: un owner puede averiguar qué correos han iniciado sesión; múltiples sesiones y reinicios renuevan el cupo."));
+        }
+        if id == "renameOrganization" {
+            operation = operation.description(Some("Solo owner y CSRF. name no vacío ni solo espacios; máximo 255 bytes UTF-8 (mismo validador que crear). 400 invalid_name; 403 forbidden o csrf; 404 not_found para organización ajena. No hay unicidad de nombres de organización. Auditoría org.rename con {previous_name, name}."));
+        }
+        if id == "renameNetwork" {
+            operation = operation.description(Some("Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan."));
+        }
+        if matches!(id, "getNetwork" | "listNetworks" | "createNetwork") {
+            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado."));
+        }
+        if id == "getServer" {
+            operation = operation.description(Some("Sesión válida y al menos una membresía, de cualquier rol. 401 invalid_session; 403 forbidden sin membresías. Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited. Cache-Control: no-store. control_plane.version=CARGO_PKG_VERSION y commit=ATENEA_BUILD_COMMIT o unknown; server_time es string(date-time). No incluye coordinator ni relay: no hay canal real para conocer sus versiones."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -908,7 +974,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 37);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 38);
         let leave = &document["paths"]["/api/v1/device/leave"]["post"];
         assert!(leave["security"][0].get("device").is_some());
         assert!(leave.get("requestBody").is_none());
@@ -973,5 +1039,16 @@ mod tests {
             "no-store"
         );
         assert!(peers["responses"].get("429").is_some());
+        for (path, method, csrf) in [
+            ("/api/v1/orgs/{org}", "patch", true),
+            ("/api/v1/networks/{net}", "patch", true),
+            ("/api/v1/orgs/{org}/members", "post", true),
+            ("/api/v1/server", "get", false),
+        ] {
+            let operation = &document["paths"][path][method];
+            assert!(operation["security"][0].get("session").is_some());
+            assert_eq!(operation["security"][0].get("csrf").is_some(), csrf);
+            assert!(operation["responses"]["200"].is_object());
+        }
     }
 }

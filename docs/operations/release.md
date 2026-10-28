@@ -245,3 +245,4 @@ Resultado: 33 ficheros y tres imágenes públicas en GHCR por digest. Verificado
 
 **Sin comprobar con los binarios publicados:** unirse a una red desde la aplicación (la prueba real usó el CLI compilado del commit `cc5c860` con el agente firmado 0.1.3); el `.pkg` de macOS (el Mac se actualizó con `update.sh`, no con el `.pkg`, por lo que `postinstall` 0711 solo se aplicó a mano en ese equipo). `0.1.4` sigue siendo una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
 
+Preparación aún sin publicar: [v0.1.6 — notas de versión y procedimiento de despliegue](v0.1.6.md).

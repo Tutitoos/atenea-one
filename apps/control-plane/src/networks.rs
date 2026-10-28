@@ -43,10 +43,23 @@ pub struct NewNetwork {
     pub ipv6_cidr: String,
     pub root_anchor: String,
 }
-fn value(r: &PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<Vec<u8>,_>("root_anchor")),"has_issuer_cert":r.get::<bool,_>("has_cert"),"join_policy":r.get::<String,_>("join_policy")})
+fn value(r: &PgRow) -> Result<Value, ApiError> {
+    let certificate = r.get::<Option<&[u8]>, _>("issuer_cert");
+    let expires = certificate
+        .map(|bytes| {
+            let cert =
+                atenea_identity::IssuerCert::parse(bytes).map_err(|_| ApiError::internal())?;
+            let timestamp = i64::try_from(cert.not_after).map_err(|_| ApiError::internal())?;
+            chrono::DateTime::from_timestamp(timestamp, 0)
+                .map(|date| date.to_rfc3339())
+                .ok_or_else(ApiError::internal)
+        })
+        .transpose()?;
+    Ok(
+        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
+    )
 }
-const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,(issuer_cert IS NOT NULL) has_cert,join_policy FROM networks";
+const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,issuer_cert,join_policy FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
 pub fn join_code(
     s: &AppState,
@@ -193,7 +206,7 @@ pub async fn create(
     Ok((
         StatusCode::CREATED,
         Json(
-            json!({"id":id,"org_id":org,"name":b.name,"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":b.root_anchor,"has_issuer_cert":false,"join_policy":"cerrada"}),
+            json!({"id":id,"org_id":org,"name":b.name,"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":b.root_anchor,"has_issuer_cert":false,"issuer_cert_not_after":null,"join_policy":"cerrada"}),
         ),
     ))
 }
@@ -208,7 +221,9 @@ pub async fn list(
         .bind(org)
         .fetch_all(&s.pool)
         .await?;
-    Ok(Json(json!(rows.iter().map(value).collect::<Vec<_>>())))
+    Ok(Json(json!(
+        rows.iter().map(value).collect::<Result<Vec<_>, _>>()?
+    )))
 }
 pub async fn get(
     State(s): State<AppState>,
@@ -220,7 +235,54 @@ pub async fn get(
         .bind(net)
         .fetch_one(&s.pool)
         .await?;
-    Ok(Json(value(&r)))
+    Ok(Json(value(&r)?))
+}
+
+pub async fn rename(
+    State(s): State<AppState>,
+    Path(net): Path<Uuid>,
+    h: HeaderMap,
+    Json(body): Json<orgs::Name>,
+) -> Result<Json<Value>, ApiError> {
+    let (u, org) = access(&s, &h, net, true).await?;
+    orgs::name(&body.name)?;
+    let mut tx = s.pool.begin().await?;
+    let old = sqlx::query("SELECT name,root_anchor FROM networks WHERE id=$1 FOR UPDATE")
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    join_code(
+        &s,
+        net,
+        &body.name,
+        &old.get::<Vec<u8>, _>("root_anchor"),
+        None,
+    )?;
+    sqlx::query("UPDATE networks SET name=$2 WHERE id=$1")
+        .bind(net)
+        .bind(&body.name)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "network.rename",
+        net,
+        json!({"previous_name":old.get::<String,_>("name"),"name":body.name}),
+    )
+    .await?;
+    let row = sqlx::query(&format!("{SELECT} WHERE id=$1"))
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    let response = value(&row)?;
+    tx.commit().await?;
+    s.panel.changed(net, "network");
+    s.panel.changed(net, "audit");
+    Ok(Json(response))
 }
 pub async fn remove(
     State(s): State<AppState>,

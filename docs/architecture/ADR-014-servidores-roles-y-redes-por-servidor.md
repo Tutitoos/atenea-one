@@ -1,6 +1,6 @@
 # ADR-014: Servidores con varias redes, rol de servidor y pulido de la aplicación
 
-- **Estado:** **Aceptado** por el responsable el 2026-10-28 con las decisiones de §5. Fases 1 y 5 (solo aplicación) en curso; las fases 2–4 y 6 no están implementadas y las que tocan el servidor esperan a que termine el soak.
+- **Estado:** **Aceptado** por el responsable el 2026-10-28 con las decisiones de §5. **Fases 1 a 5 implementadas y probadas** (aplicación, control plane, agente, panel y laboratorio real de dos redes); **ninguna desplegada**: llegan al piloto con la v0.1.6, después del soak (`docs/operations/v0.1.6.md`). La fase 6 (segunda red real con pares reales) sigue pendiente.
 - **Relacionados:** ADR-011 (aplicación de escritorio), ADR-012 (nombres de dispositivo, metadatos sin firmar), ADR-013 (varias redes por dispositivo).
 
 ## 1. Qué se ha pedido

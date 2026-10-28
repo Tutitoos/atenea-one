@@ -26,7 +26,7 @@ it('muestra código y huella, copia con confirmación y es accesible',async()=>{
  expect((await axe(container,{rules:{region:{enabled:false},'color-contrast':{enabled:false}}})).violations).toEqual([]);
 });
 it.each([
- ['invalid_network_name_for_code',/Renombrar aún no está disponible/],
+ ['invalid_network_name_for_code',/Renombra la red en DNS y certificado/],
  ['invalid_public_url_for_code',/Corrige la URL pública del servidor/],
 ])('explica el conflicto %s',async(code,message)=>{
  vi.spyOn(api,'GET').mockRejectedValue(new ApiError(409,{error:{code,message:code}}));

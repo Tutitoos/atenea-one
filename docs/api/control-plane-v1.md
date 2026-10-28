@@ -78,6 +78,9 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `POST /api/v1/orgs` `{name}` | sesión | Crea la organización; el creador es `owner` |
 | `GET /api/v1/orgs` | sesión | Organizaciones del usuario |
 | `GET /api/v1/orgs/{org}/members`; `PUT …/members/{user}` `{role}`; `DELETE …/members/{user}` | member / owner / owner | Ver `PUT` también añade un usuario ya registrado (por `user` id) |
+| `POST /api/v1/orgs/{org}/members` `{email, role}` | owner | Añade o cambia el rol por correo exacto sin distinguir mayúsculas; usuario ya registrado (§16) |
+| `PATCH /api/v1/orgs/{org}` `{name}` | owner | Renombra organización; `200 {id, name}` (§16) |
+| `PATCH /api/v1/networks/{net}` `{name}` | admin | Renombra red; `200 Network` (§16) |
 | `POST /api/v1/orgs/{org}/networks` `{name, ipv4_cidr, ipv6_cidr, root_anchor}` | admin | `root_anchor` en hex (32 bytes). Genera `network_id` |
 | `GET /api/v1/orgs/{org}/networks`; `GET /api/v1/networks/{net}` | member | Lista y detalle (incluye si hay certificado de emisor) |
 | `PUT /api/v1/networks/{net}/issuer-cert` (cuerpo binario 178 bytes) | admin | Valida que el certificado parsea, que su `network_id` coincide, que está firmado por `root_anchor` y que sigue vigente |
@@ -97,8 +100,9 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres y roles no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12, §15) |
 | `POST /api/v1/device/leave` (cuerpo vacío) | dispositivo (§3.3) | Revoca únicamente la identidad firmante, también pendiente; idempotente (§14) |
 | `GET /api/v1/server/info` | dispositivo aprobado (§3.3) | Versión y commit del control plane, hora y caducidad del certificado de emisor de su propia red; `Cache-Control: no-store` (§15) |
+| `GET /api/v1/server` | sesión con alguna membresía | Versión y commit del control plane y hora UTC; no requiere firma de dispositivo (§16) |
 
-Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.leave`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
+Las mutaciones generan `audit_events`: `org.create`, `org.rename`, `member.set`, `network.create`, `network.rename`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.leave`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
 
 ## 5. Enrolamiento
 
@@ -323,3 +327,48 @@ El inventario de administración y cada elemento de `/device/peers` incluyen `ro
 Ejemplo sintético. Versión y commit se obtienen de la misma compilación que `--version` (`CARGO_PKG_VERSION` y `ATENEA_BUILD_COMMIT`; `unknown` si una compilación de desarrollo no lo incorpora). `issuer_cert_not_after_unix` es `not_after` del certificado de **la red del firmante** y `null` si aún no existe. No emite configuraciones ni exige que exista certificado para responder. No entrega información de otras redes u organizaciones. `server_time_unix` se toma al construir la respuesta; el agente estima el desfase como hora del servidor menos hora local de recepción, sin compensar RTT.
 
 **Límite real:** se omiten `coordinator` y `relay`: el control plane no tiene configuración ni cliente para consultar sus versiones. Los informes de caminos de dispositivos y `/healthz` (comprobación de PostgreSQL) no acreditan sus versiones; no se infieren de la versión del control plane.
+
+## 16. Bloque B del panel: miembros, renombrado e información por sesión
+
+Decisiones y alternativas: [ADR-015](../architecture/ADR-015-bloque-b-miembros-y-renombrado.md) (Propuesto). No requiere migraciones. Todos los campos enumerados son obligatorios en la respuesta, aunque admitan null. El esquema servido y el cliente se generan de `apps/control-plane/src/openapi.rs`.
+
+### Miembros y privacidad
+
+`GET /api/v1/orgs/{org}/members` devuelve `Member[]`, y PUT/POST devuelven `200 Member`:
+
+```json
+{"user_id":"00000000-0000-4000-8000-000000000001","role":"member","display_name":"Alicia","email":"alice@example.test"}
+```
+
+`user_id: string(uuid)`, `role: "owner"|"admin"|"member"`, `display_name: string|null` y `email: string|null`. El nombre se devuelve a todos los miembros; el correo solo a owner/admin. Para un member el campo email siempre es null, también para su propia fila. Un perfil OIDC puede carecer de ambos datos.
+
+`POST /api/v1/orgs/{org}/members` exige owner, cookie y CSRF; cuerpo obligatorio `{"email": string, "role": "member"|"admin"|"owner"}`. Busca el correo completo sin distinguir mayúsculas, sin recortar espacios ni aceptar fragmentos. No envía invitaciones, no crea usuarios: la persona debe haber iniciado sesión antes. Si varias identidades OIDC comparten ese correo, no se elige una arbitrariamente: `409 conflict`; el PUT por UUID permite desambiguar.
+
+POST y PUT comparten las validaciones, protección del último owner, actualización del rol y auditoría `member.set`. El detalle es `{"previous_role": string|null, "role": string}`: null si antes no era miembro. Es una ampliación aditiva; se conserva el nombre histórico de la acción. DELETE y sus detalles no cambian.
+
+Errores: `400 invalid_role`, `401 invalid_session`, `403 csrf` o `forbidden` (admin/member), `404 not_found` tanto para usuario inexistente como para organización ajena, `409 last_owner` y `409 conflict` (correo ambiguo). JSON inválido: error uniforme del extractor `invalid_request`.
+
+POST limita antes de consultar usuarios: cubo de tokens por sesión, ráfaga 10 y reposición 10/minuto, incluidos fallos; exceso `429 rate_limited`. Riesgo residual: un owner puede averiguar qué correos han iniciado sesión; otras sesiones y reinicios permiten nuevas consultas. No hay búsqueda pública ni listado global de usuarios.
+
+### Renombrado
+
+- `PATCH /api/v1/orgs/{org}`: solo owner, cuerpo `{"name": string}`, respuesta `200 {"id": string(uuid), "name": string}` (`OrganizationCreated`). Nombre no vacío ni solo espacios; máximo 255 bytes UTF-8, sin normalización ni recorte, como al crear. No existe unicidad entre nombres de organizaciones. Auditoría `org.rename`, detalle `{"previous_name": string, "name": string}`.
+- `PATCH /api/v1/networks/{net}`: owner/admin, mismo cuerpo, respuesta `200 Network`. Mismo validador base que crear; además nombre y URL pública deben caber en el código de unión: nombre de 1 a 48 bytes UTF-8, sin recortes, controles ni marcas bidireccionales, y URL HTTPS compatible de hasta 100 bytes y sin barra final. Unicidad exacta dentro de la organización (no entre organizaciones). Auditoría `network.rename`, mismo detalle anterior/nuevo.
+
+Ambos requieren cookie + CSRF. Errores comunes: `400 invalid_name`, `401 invalid_session`, `403 csrf` o `forbidden`, `404 not_found` para recurso ajeno. Red duplicada: `409 conflict`; incompatibilidad con el código: `409 invalid_network_name_for_code` o `409 invalid_public_url_for_code`, los mismos códigos que `GET …/join-code`. Una escritura fallida revierte tanto nombre como auditoría.
+
+El nombre viaja en el código: uno ya emitido conserva el nombre anterior **solo informativo**. Renombrar no invalida códigos, tokens, certificados ni dispositivos; los nuevos códigos contienen el nombre nuevo.
+
+### Caducidad e información del control plane
+
+`Network` (creación, GET, listados y PATCH) contiene `issuer_cert_not_after: string(date-time)|null`, calculado del `not_after` del certificado de emisor almacenado. Null si no existe; no se devuelve el certificado ni se oculta la fecha si ya caducó. Conserva los campos `id: string(uuid)`, `org_id: string(uuid)`, `name: string`, `ipv4_cidr: string`, `ipv6_cidr: string`, `root_anchor: string(hex de 32 bytes)`, `has_issuer_cert: boolean` y `join_policy: "cerrada"|"con_solicitud"`.
+
+`GET /api/v1/server` exige sesión y al menos una membresía (cualquier rol), sin CSRF por ser lectura. Respuesta `200 Server`, `Cache-Control: no-store`:
+
+```json
+{"control_plane":{"version":"0.1.5","commit":"unknown"},"server_time":"2026-10-28T12:00:00+00:00"}
+```
+
+`control_plane.version: string` es `CARGO_PKG_VERSION`; `control_plane.commit: string` es `ATENEA_BUILD_COMMIT` incrustado al compilar o `unknown`; `server_time: string(date-time)` es la hora UTC del control plane. `401 invalid_session` sin sesión válida; `403 forbidden` sin membresías; cubo por sesión independiente del alta por correo, ráfaga 60 y reposición 60/minuto (`429 rate_limited`).
+
+**Límite real:** no devuelve versiones de coordinator ni relay: el control plane no tiene canal para conocerlas. No se inventan a partir de la versión propia. `/api/v1/server/info` conserva su contrato y autenticación firmada de dispositivo (§15).

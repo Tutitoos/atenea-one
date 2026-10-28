@@ -24,6 +24,8 @@ const auditActions: Record<string, string> = {
   'network.issuer_cert': 'Certificado de emisor instalado',
   'org.create': 'Organización creada',
   'org.delete': 'Organización eliminada',
+  'org.rename': 'Organización renombrada',
+  'network.rename': 'Red renombrada',
   'member.set': 'Membresía actualizada',
   'policy.create': 'Política creada',
   'policy.delete': 'Política eliminada',
@@ -33,6 +35,15 @@ const auditActions: Record<string, string> = {
 };
 export function auditAction(action: string) {
   return auditActions[action] ?? action;
+}
+export function AuditChange({ action, detail }: { action: string; detail: unknown }) {
+  if (!detail || typeof detail !== 'object') return null;
+  const data = detail as Record<string, unknown>;
+  const previous = action === 'member.set' ? data.previous_role : data.previous_name;
+  const next = action === 'member.set' ? data.role : data.name;
+  return ['member.set', 'org.rename', 'network.rename'].includes(action) &&
+    (typeof previous === 'string' || previous === null) && typeof next === 'string' ?
+    <p>{previous ?? 'Sin rol'} → {next}</p> : null;
 }
 export function DeviceIdentity({ id, devices = [] }: { id: string; devices?: Model<'Device'>[] }) {
   return devices.find(device => device.id === id)?.name ?? <ShortId value={id}/>;
@@ -145,7 +156,7 @@ export function Audit({ net, devices = [] }: { net: string; devices?: Model<'Dev
         <td><time dateTime={event.at}>{new Date(event.at).toLocaleString('es')}</time></td>
         <td>{event.actor_kind === 'user' ? 'Usuario' : event.actor_kind === 'device' ? 'Dispositivo' : event.actor_kind}: <DeviceIdentity id={event.actor_id} devices={devices}/></td>
         <td>{auditAction(event.action)}</td><td><DeviceIdentity id={event.target} devices={devices}/></td>
-        <td><details><summary>Ver detalle JSON</summary><pre>{JSON.stringify(event.detail, null, 2)}</pre></details></td>
+        <td><AuditChange action={event.action} detail={event.detail}/><details><summary>Ver detalle JSON</summary><pre>{JSON.stringify(event.detail, null, 2)}</pre></details></td>
       </tr>)}</tbody>
     </table></div> : !query.isPending && !query.isError && <Empty>
       {query.data?.length ? 'No hay eventos que coincidan con el filtro.' : 'No hay eventos en esta página.'}

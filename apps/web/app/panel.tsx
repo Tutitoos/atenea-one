@@ -10,6 +10,7 @@ import { Breadcrumbs } from './breadcrumbs';
 import { sections } from './sections';
 import { useClock, useNetworkEvents } from './live';
 import { secondsSince } from './domain';
+import { useServerInfo } from './server-status';
 
 function Theme() {
   const [theme, setTheme] = useState('sistema');
@@ -36,6 +37,7 @@ export default function Panel() {
   const [params, setParams] = useSearchParams();
   const cache = useQueryClient();
   const session = useQuery({ queryKey: ['session'], queryFn: () => result(api.GET('/api/v1/session')), refetchInterval: 30_000 });
+  const server = useServerInfo();
   const orgs = useQuery({ queryKey: ['organizations'], queryFn: () => result(api.GET('/api/v1/orgs')), enabled: !!session.data });
   const selected = orgs.data?.find(org => org.id === params.get('org'));
   const net = params.get('net') ?? '';
@@ -85,6 +87,8 @@ export default function Panel() {
           </Link>)}
         </div>)}</nav>}
       <footer><Theme/><p className="muted">{session.data.user.display_name ?? session.data.user.email ?? 'Usuario autenticado'}</p>
+        <p className="muted">{server.data?.control_plane ? `Control plane ${server.data.control_plane.version}` :
+          'Este servidor aún no informa de su versión'}</p>
         <RunButton run={async () => { await api.POST('/auth/logout'); cache.clear(); window.location.assign('/'); }}>Cerrar sesión</RunButton>
       </footer>
     </aside>

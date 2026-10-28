@@ -672,6 +672,7 @@
           "networks"
         ],
         "summary": "Obtiene una red; requiere pertenencia",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
         "operationId": "getNetwork",
         "parameters": [
           {
@@ -782,6 +783,113 @@
         "responses": {
           "204": {
             "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Renombra una red; requiere admin u owner",
+        "description": "Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan.",
+        "operationId": "renameNetwork",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Name"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Network"
+                }
+              }
+            }
           },
           "400": {
             "description": "Petición inválida",
@@ -3256,6 +3364,113 @@
             "session": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Renombra una organización; requiere owner",
+        "description": "Solo owner y CSRF. name no vacío ni solo espacios; máximo 255 bytes UTF-8 (mismo validador que crear). 400 invalid_name; 403 forbidden o csrf; 404 not_found para organización ajena. No hay unicidad de nombres de organización. Auditoría org.rename con {previous_name, name}.",
+        "operationId": "renameOrganization",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Name"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
       }
     },
     "/api/v1/orgs/{org}/members": {
@@ -3264,6 +3479,7 @@
           "orgs"
         ],
         "summary": "Lista miembros; requiere pertenencia",
+        "description": "display_name: string|null visible a todos los miembros. email: string|null visible a owner/admin; para member siempre null. 404 not_found si no pertenece a la organización.",
         "operationId": "listMembers",
         "parameters": [
           {
@@ -3356,6 +3572,123 @@
             "session": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Añade un usuario registrado por correo; requiere owner",
+        "description": "Solo owner y CSRF. Correo completo exacto sin distinguir mayúsculas; no recorta ni busca por fragmentos. El usuario debe haber iniciado sesión. 400 invalid_role; 404 not_found uniforme para usuario inexistente u organización ajena; 409 conflict si varias identidades tienen ese correo, 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}. Ráfaga 10, reposición 10/minuto por sesión (incluidos intentos fallidos), 429 rate_limited. Riesgo residual: un owner puede averiguar qué correos han iniciado sesión; múltiples sesiones y reinicios renuevan el cupo.",
+        "operationId": "addMemberByEmail",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMember"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Member"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
       }
     },
     "/api/v1/orgs/{org}/members/{user}": {
@@ -3364,6 +3697,7 @@
           "orgs"
         ],
         "summary": "Añade un usuario registrado o cambia su rol; requiere owner",
+        "description": "Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email.",
         "operationId": "setMember",
         "parameters": [
           {
@@ -3586,6 +3920,7 @@
           "networks"
         ],
         "summary": "Lista redes; requiere pertenencia",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
         "operationId": "listNetworks",
         "parameters": [
           {
@@ -3684,6 +4019,7 @@
           "networks"
         ],
         "summary": "Crea una red sin CIDR solapados; requiere admin u owner",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
         "operationId": "createNetwork",
         "parameters": [
           {
@@ -3781,6 +4117,113 @@
         "security": [
           {
             "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/server": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Información del control plane; sesión con al menos una membresía",
+        "description": "Sesión válida y al menos una membresía, de cualquier rol. 401 invalid_session; 403 forbidden sin membresías. Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited. Cache-Control: no-store. control_plane.version=CARGO_PKG_VERSION y commit=ATENEA_BUILD_COMMIT o unknown; server_time es string(date-time). No incluye coordinator ni relay: no hay canal real para conocer sus versiones.",
+        "operationId": "getServer",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Server"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
             "session": []
           }
         ]
@@ -4304,6 +4747,21 @@
   },
   "components": {
     "schemas": {
+      "AddMember": {
+        "type": "object",
+        "required": [
+          "email",
+          "role"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
       "AuditEvent": {
         "type": "object",
         "required": [
@@ -4949,9 +5407,23 @@
         "type": "object",
         "required": [
           "user_id",
-          "role"
+          "role",
+          "display_name",
+          "email"
         ],
         "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "role": {
             "$ref": "#/components/schemas/Role"
           },
@@ -5013,6 +5485,7 @@
           "ipv6_cidr",
           "root_anchor",
           "has_issuer_cert",
+          "issuer_cert_not_after",
           "join_policy"
         ],
         "properties": {
@@ -5028,6 +5501,13 @@
           },
           "ipv6_cidr": {
             "type": "string"
+          },
+          "issuer_cert_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "join_policy": {
             "$ref": "#/components/schemas/JoinPolicy"
@@ -5448,6 +5928,22 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "Server": {
+        "type": "object",
+        "required": [
+          "control_plane",
+          "server_time"
+        ],
+        "properties": {
+          "control_plane": {
+            "$ref": "#/components/schemas/ServiceVersion"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

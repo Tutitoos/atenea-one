@@ -59,8 +59,14 @@ pub fn router(s: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/api/v1/session", get(auth::get_session))
         .route("/api/v1/orgs", get(orgs::list).post(orgs::create))
-        .route("/api/v1/orgs/{org}", delete(orgs::remove))
-        .route("/api/v1/orgs/{org}/members", get(orgs::members))
+        .route(
+            "/api/v1/orgs/{org}",
+            delete(orgs::remove).patch(orgs::rename),
+        )
+        .route(
+            "/api/v1/orgs/{org}/members",
+            get(orgs::members).post(orgs::add_member),
+        )
         .route(
             "/api/v1/orgs/{org}/members/{user}",
             put(orgs::set_member).delete(orgs::remove_member),
@@ -71,7 +77,9 @@ pub fn router(s: AppState) -> Router {
         )
         .route(
             "/api/v1/networks/{net}",
-            get(networks::get).delete(networks::remove),
+            get(networks::get)
+                .delete(networks::remove)
+                .patch(networks::rename),
         )
         .route(
             "/api/v1/networks/{net}/issuer-cert",
@@ -119,6 +127,7 @@ pub fn router(s: AppState) -> Router {
         .route("/api/v1/device/config", get(issue::get))
         .route("/api/v1/device/peers", get(issue::peers))
         .route("/api/v1/server/info", get(issue::server_info))
+        .route("/api/v1/server", get(server))
         .route(
             "/api/v1/device/leave",
             post(devices::leave).layer(axum::extract::DefaultBodyLimit::max(1024)),
@@ -161,6 +170,32 @@ async fn health(
 ) -> Result<StatusCode, ApiError> {
     sqlx::query("SELECT 1").execute(&s.pool).await?;
     Ok(StatusCode::OK)
+}
+
+async fn server(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    h: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let user = auth::session(&s, &h, false).await?;
+    let member: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memberships WHERE user_id=$1)")
+            .bind(user)
+            .fetch_one(&s.pool)
+            .await?;
+    if !member {
+        return Err(ApiError::forbidden("forbidden"));
+    }
+    auth::limit_session(&s, &h, "server", 60)?;
+    Ok((
+        [("cache-control", "no-store")],
+        Json(serde_json::json!({
+            "control_plane": {
+                "version": env!("CARGO_PKG_VERSION"),
+                "commit": option_env!("ATENEA_BUILD_COMMIT").unwrap_or("unknown"),
+            },
+            "server_time": chrono::Utc::now().to_rfc3339(),
+        })),
+    ))
 }
 pub fn openapi() -> utoipa::openapi::OpenApi {
     crate::openapi::document()

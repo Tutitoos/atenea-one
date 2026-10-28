@@ -360,6 +360,17 @@ pub async fn session(state: &AppState, headers: &HeaderMap, write: bool) -> Resu
     Ok(authenticated(state, headers, write).await?.0)
 }
 
+/// Se llama después de autenticar y autorizar; la clave no conserva la cookie en claro.
+pub fn limit_session(
+    state: &AppState,
+    headers: &HeaderMap,
+    operation: &'static str,
+    per_minute: u32,
+) -> Result<(), ApiError> {
+    let token = cookie(headers, "atenea_session").ok_or_else(|| unauthorized("invalid_session"))?;
+    crate::take(&state.session_rate, (hash(token), operation), per_minute)
+}
+
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,

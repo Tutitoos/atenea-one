@@ -1,13 +1,16 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, result } from '@atenea/api-client';
 import type { SectionProps } from './sections';
 import { Dns } from './dns';
-import { Button, Card, ConfirmDialog, CopyButton, Dialog, Field, Status, StatusBadge } from './ui';
+import { Button, Card, ConfirmDialog, CopyButton, Dialog, Field, Status } from './ui';
+import { CertificateStatus } from './server-status';
+import { RenameDialog } from './rename';
 
 export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps) {
+  const cache = useQueryClient();
   const [certificate, setCertificate] = useState<File | null>(null);
   const [certificateError, setCertificateError] = useState('');
   const [message, setMessage] = useState('');
@@ -27,16 +30,18 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
         {join.data && <><dt>Huella de la raíz</dt><dd><code>{join.data.root_anchor_fingerprint}</code>
           <CopyButton value={join.data.root_anchor_fingerprint} label="Copiar huella de la raíz"/></dd></>}
       </dl>}
+      {data && canEdit && <RenameDialog kind="red" name={data.name} rename={async name => {
+        await api.PATCH('/api/v1/networks/{net}', { params: { path: { net } }, body: { name } });
+        await Promise.all([refresh(), cache.invalidateQueries({ queryKey: ['org', data.org_id, 'networks'] })]);
+      }}/>}
+      <p className="muted">Los códigos de unión ya emitidos conservan el nombre antiguo (solo informativo) y siguen siendo válidos.</p>
       {!canEdit && <p>Pide la huella de la raíz a un administrador y compárala por otro canal de confianza.</p>}
       {canEdit && join.isError && <p role="alert">No se pudo consultar la huella: {join.error.message}</p>}
     </Card>
     <Dns net={net} canEdit={canEdit}/>
     <Card title="Certificado de emisor">
-      {data && <p><StatusBadge tone={data.has_issuer_cert ? 'ok' : 'warn'}>
-        {data.has_issuer_cert ? 'Certificado instalado' : 'Falta certificado de emisor'}
-      </StatusBadge></p>}
+      {data && <CertificateStatus installed={data.has_issuer_cert} expires={data.issuer_cert_not_after}/>}
       <p>Se firma fuera de línea con la raíz. Solo se sube el certificado público issuer.cert; nunca subas claves privadas.</p>
-      {/* La caducidad del emisor pertenece al bloque B: el servidor actual no la entrega. */}
       {canEdit ? <Dialog trigger={data?.has_issuer_cert ? 'Reemplazar certificado' : 'Subir certificado'}
         title="Instalar certificado offline"
         description="Solo se sube issuer.cert público (178 bytes). Nunca subas claves privadas. Raíz y emisor se preparan offline (ADR-005).">

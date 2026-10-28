@@ -39,8 +39,7 @@ export function JoinNetwork({ net, canEdit, policy }: { net: string; canEdit: bo
   let error = query.error?.message;
   if (query.error instanceof ApiError && query.error.status === 409) {
     if (query.error.detail.error.code === 'invalid_network_name_for_code') {
-      error = 'El nombre de la red no es compatible con el código. Renombrar aún no está disponible en el panel; ' +
-        'se resolverá con el servidor nuevo. Mientras tanto, utiliza un token con el documento join.';
+      error = 'El nombre de la red no es compatible con el código. Renombra la red en DNS y certificado con un nombre más corto.';
     }
     if (query.error.detail.error.code === 'invalid_public_url_for_code') {
       error = 'Corrige la URL pública del servidor: debe usar HTTPS, tener como máximo 100 bytes y no incluir barra final, credenciales, consulta ni fragmento.';

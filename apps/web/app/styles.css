@@ -693,6 +693,11 @@ svg.copy-icon {
   grid-column: 1 / -1;
 }
 
+.certificate-notice.badge-warn { border-inline-start: 4px solid var(--warn); }
+.certificate-notice.badge-bad { border-inline-start: 4px solid var(--bad); }
+.cards > .card { overflow-wrap: anywhere; }
+.cards > .card > .button { margin: 4px 8px 4px 0; }
+
 .counts {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

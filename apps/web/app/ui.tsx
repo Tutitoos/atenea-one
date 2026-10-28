@@ -147,7 +147,7 @@ export function QueryAnnouncements() {
   useEffect(() => {
     const previous = new Map(cache.getQueryCache().getAll().map(query => [query.queryHash, query.state.data]));
     return cache.getQueryCache().subscribe(event => {
-      if (event.type !== 'updated') return;
+      if (event.type !== 'updated' || event.query.queryKey[0] === 'server') return;
       if (event.action.type === 'error') {
         setMessage('Error al actualizar los datos.');
       } else if (event.action.type === 'success') {

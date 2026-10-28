@@ -36,6 +36,7 @@ pub struct AppState {
     pub rate: Rates<IpAddr>,
     pub login_rate: Rates<IpAddr>,
     pub device_rate: Rates<Uuid>,
+    pub session_rate: Rates<([u8; 32], &'static str)>,
     pub panel: Arc<panel::Live>,
     pub metrics: atenea_observability::Metrics,
 }
@@ -53,6 +54,7 @@ impl AppState {
             rate: Default::default(),
             login_rate: Default::default(),
             device_rate: Default::default(),
+            session_rate: Default::default(),
             panel: Arc::new(panel::Live::default()),
             metrics: Default::default(),
         }
