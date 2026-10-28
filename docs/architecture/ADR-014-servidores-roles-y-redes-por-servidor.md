@@ -72,7 +72,7 @@ Dos partes, de menor a mayor coste:
 
 ## 5. Decisiones del responsable (2026-10-28)
 
-1. **Quién fija el rol:** el **administrador**, al crear el token de inscripción y con un cambio explícito sobre un dispositivo existente. El propio dispositivo no puede declararse servidor.
+1. **Quién fija el rol:** el **administrador**, al crear el token de inscripción y con un cambio explícito sobre un dispositivo existente. El propio dispositivo no puede declararse servidor. **Confirmado el 2026-10-28 para el VPS del piloto:** un administrador lo fija **una sola vez desde el panel** (detalle del dispositivo, «Cambiar tipo»); a partir de ahí la aplicación lo detecta sola y ningún usuario tiene que marcar nada.
 2. **Roles:** solo `server` ahora; la restricción `CHECK` se amplía cuando haya un uso real (por ejemplo `relay` o `subnet-router`).
 3. **Versiones del servidor:** las ve **cualquier dispositivo aprobado de la red**, solo las del servidor y las de su propia red (versiones de despliegue, hora del servidor y caducidad del certificado de emisor de esa red). Nada de otras organizaciones.
 4. **Agrupación:** por **host exacto** de la URL de la red. `panel.ejemplo.com` y `otro.ejemplo.com` son dos servidores aunque pertenezcan a la misma persona.
