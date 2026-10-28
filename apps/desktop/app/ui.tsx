@@ -35,14 +35,22 @@ export function Stack({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function CopyButton({ value, label }: { value: string; label: string }) {
+const icons = {
+  copy: <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /></>,
+  terminal: <><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></>,
+  pulse: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
+};
+
+/** Botón de copiar con icono propio por tipo (`copy`, `terminal`, `pulse`) y, si se da, una etiqueta corta visible. */
+export function CopyButton({ value, label, icon = 'copy', text }: { value: string; label: string; icon?: keyof typeof icons; text?: string }) {
   const [done, setDone] = useState(false);
   const name = `Copiar ${label}`;
   return (
-    <button type="button" aria-label={name} title={done ? 'Copiado' : name} className="ml-2 inline-flex size-6 cursor-default items-center justify-center rounded text-sel align-middle" onClick={() => { void navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>
+    <button type="button" aria-label={name} title={done ? 'Copiado' : name} className={`ml-2 inline-flex h-6 cursor-default items-center justify-center gap-1 rounded text-sel align-middle ${text ? 'px-1.5 text-xs' : 'size-6'}`} onClick={() => { void navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>
       <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        {done ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /></>}
+        {done ? <path d="m5 12 4 4L19 6" /> : icons[icon]}
       </svg>
+      {text && <span aria-hidden="true">{text}</span>}
     </button>
   );
 }

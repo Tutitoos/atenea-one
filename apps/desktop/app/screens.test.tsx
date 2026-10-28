@@ -331,6 +331,19 @@ it('el device_id real del agente (lista de 16 bytes) no rompe el estado y llega 
   expect(await screen.findByRole('link', { name: /10\.77\.0\.4/ })).toBeInTheDocument();
 });
 
+it('las tres acciones de copiar de una dirección se distinguen: icono propio y etiqueta visible', async () => {
+  serve(agent());
+  app(`/devices/${'a'.repeat(64)}`);
+  const ssh = await screen.findAllByRole('button', { name: 'Copiar comando SSH' });
+  const ping = screen.getAllByRole('button', { name: 'Copiar comando ping' });
+  const addr = screen.getAllByRole('button', { name: /^Copiar IPv4 / });
+  expect(within(ssh[0]).getByText('ssh')).toBeInTheDocument();
+  expect(within(ping[0]).getByText('ping')).toBeInTheDocument();
+  expect(addr[0].textContent).toBe('');
+  const shape = (b: HTMLElement) => b.querySelector('svg')!.innerHTML;
+  expect(new Set([shape(addr[0]), shape(ssh[0]), shape(ping[0])]).size).toBe(3);
+});
+
 it('las pantallas no tienen violaciones de accesibilidad detectables', async () => {
   serve(agent());
   for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/networks', '/diagnostics', '/servers', '/servers/control.example.test']) {

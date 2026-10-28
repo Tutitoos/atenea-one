@@ -45,7 +45,7 @@ const State = ({ tone, children }: { tone: Tone; children: string }) => <div cla
 const Addresses = ({ addrs }: { addrs: string[] }) => (
   <>
     <Heading>Direcciones del túnel</Heading>
-    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /><CopyButton value={`ssh ${a}`} label="comando SSH" /><CopyButton value={`ping ${a}`} label="comando ping" /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
+    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /><CopyButton value={`ssh ${a}`} label="comando SSH" icon="terminal" text="ssh" /><CopyButton value={`ping ${a}`} label="comando ping" icon="pulse" text="ping" /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
   </>
 );
 
