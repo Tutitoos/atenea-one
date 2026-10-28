@@ -6,6 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 python3 scripts/check-headers.py
+# Las reglas que deciden qué jobs de plataforma corre la CI: si fallan, se saltan comprobaciones en silencio.
+sh tests/ci/changes.sh
 
 # Cargo falla en un workspace virtual sin miembros (fase 1); se omite hasta que exista el primero.
 if cargo metadata --no-deps --format-version 1 --locked | grep -q '"packages":\[\]'; then

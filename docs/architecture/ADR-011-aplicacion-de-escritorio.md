@@ -29,7 +29,7 @@ Se ejecuta como usuario normal. Lee el mismo socket que `atenea status`: en macO
 
 ### 4. Workspace de Cargo independiente
 
-`apps/desktop` tiene su `[workspace]` y su `Cargo.lock`: Tauri necesita WebKitGTK en Linux y no debe entrar en `cargo ... --workspace` del laboratorio ni en el grafo del resto del producto. Lo construyen los jobs de macOS y Windows de la CI, que reciben el frontend ya compilado como artefacto del job `panel` (no necesitan Node ni pnpm); `scripts/check.sh` solo comprueba su formato. `cargo-deny` lo recorre con el mismo `deny.toml` (job `supply-chain`).
+`apps/desktop` tiene su `[workspace]` y su `Cargo.lock`: Tauri necesita WebKitGTK en Linux y no debe entrar en `cargo ... --workspace` del laboratorio ni en el grafo del resto del producto. Lo construyen los jobs `desktop-macos` y `desktop-windows` de la CI (solo cuando cambia la aplicación o `crates/windows`, y siempre en la ejecución semanal o manual; véase [CI](../operations/ci.md)), que reciben el frontend ya compilado como artefacto del job `panel` (no necesitan Node ni pnpm); `scripts/check.sh` solo comprueba su formato. `cargo-deny` lo recorre con el mismo `deny.toml` (job `supply-chain`).
 
 ### 5. Licencia MPL-2.0 acotada
 

@@ -4,7 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Las advisories nuevas aparecen sin que cambie el repositorio.
+  # Ejecución manual completa (todos los jobs de plataforma, sin filtrar por rutas).
+  workflow_dispatch:
+  # Las advisories nuevas aparecen sin que cambie el repositorio. Esta ejecución semanal es
+  # también la red de seguridad de los filtros por rutas: corre TODOS los jobs de plataforma.
   schedule:
     - cron: '17 4 * * 1'
 
@@ -12,6 +15,27 @@ permissions:
   contents: read
 
 jobs:
+  # Qué jobs de plataforma necesita este cambio (scripts/ci-changes.sh, probado en tests/ci/changes.sh).
+  # `check` es el único job obligatorio para main y corre siempre; macOS y Windows solo si toca código
+  # nativo, y la aplicación de escritorio solo si toca su código. Ante la duda se ejecuta todo.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.filter.outputs.native }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SHA: ${{ github.sha }}
+        run: sh scripts/ci-changes.sh
   check:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -29,8 +53,8 @@ jobs:
         run: scripts/check.sh
       - name: Integración del control plane (PostgreSQL real)
         run: apps/control-plane/tests/run.sh
+  # También en la ejecución semanal: los jobs de escritorio descargan su interfaz compilada.
   panel:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -54,8 +78,8 @@ jobs:
           path: apps/desktop/build/client
           if-no-files-found: error
   macos:
-    needs: panel
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -73,17 +97,6 @@ jobs:
           cargo check --workspace
       - name: Compilar cliente y par de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: desktop-ui
-          path: apps/desktop/build/client
-      - name: Aplicación de escritorio (Tauri, workspace propio)
-        working-directory: apps/desktop
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-          cargo build --locked
       - name: Construir paquete sin firmar (sin instalar)
         run: |
           ATENEA_BIN_DIR="$PWD/target/debug" packaging/macos/build-pkg.sh
@@ -92,8 +105,8 @@ jobs:
         timeout-minutes: 12
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
   windows:
-    needs: panel
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -114,6 +127,53 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Compilar cliente y par real de pruebas
+        run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+      - name: Construir ZIP sin firmar y sin DLL
+        run: packaging/windows/build-zip.ps1 -BinDir "$PWD/target/debug"
+      - name: Aceptación elevada en VM desechable
+        timeout-minutes: 12
+        run: tests/windows/run.ps1
+  # Aplicación de escritorio (Tauri, workspace propio): solo si cambia ella o crates/windows.
+  desktop-macos:
+    needs: [changes, panel]
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar Rust (versión de rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal && rustc --version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-ui
+          path: apps/desktop/build/client
+      - name: Aplicación de escritorio (Tauri, workspace propio)
+        working-directory: apps/desktop
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked
+  desktop-windows:
+    needs: [changes, panel]
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar Rust (versión de rust-toolchain.toml)
+        run: |
+          rustup toolchain install --profile minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: desktop-ui
@@ -125,13 +185,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --locked
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Compilar cliente y par real de pruebas
-        run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
-      - name: Construir ZIP sin firmar y sin DLL
-        run: packaging/windows/build-zip.ps1 -BinDir "$PWD/target/debug"
-      - name: Aceptación elevada en VM desechable
-        timeout-minutes: 12
-        run: tests/windows/run.ps1
   # Dependencias de producción: licencias, advisories y fuentes (deny.toml) y npm.
   supply-chain:
     runs-on: ubuntu-latest
