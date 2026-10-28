@@ -57,9 +57,9 @@ wait_removed() {
     fail 'interfaz o configuración DNS residual en resolved'
 }
 cd /src
-bash -n packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/systemd/network-agent tests/packaging/run.sh tests/packaging/in-container.sh tests/packaging/multi-network.sh
+bash -n packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/systemd/network-agent tests/packaging/run.sh tests/packaging/in-container.sh tests/packaging/multi-network.sh tests/packaging/migrate-legacy.sh
 if command -v shellcheck >/dev/null; then
-    shellcheck packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/systemd/network-agent tests/packaging/run.sh tests/packaging/in-container.sh tests/packaging/multi-network.sh
+    shellcheck packaging/deb/build.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/systemd/network-agent tests/packaging/run.sh tests/packaging/in-container.sh tests/packaging/multi-network.sh tests/packaging/migrate-legacy.sh
 elif [ "$no_dns" = 1 ]; then
     echo 'NO COMPROBADO: shellcheck no está en la imagen offline.'
 else
@@ -205,6 +205,8 @@ echo 'Configuración posterior sin DNS: dns=none y enlace sin servidores ni domi
 fi
 # shellcheck source=tests/packaging/multi-network.sh
 source tests/packaging/multi-network.sh
+# shellcheck source=tests/packaging/migrate-legacy.sh
+source tests/packaging/migrate-legacy.sh
 dpkg -r atenea
 if ip link show atenea0 2>/dev/null; then fail 'interfaz residual al desinstalar'; fi
 if nft list table inet atenea_atenea0 2>/dev/null; then fail 'tabla residual al desinstalar'; fi
@@ -212,7 +214,8 @@ if nft list table inet atenea_atenea0 2>/dev/null; then fail 'tabla residual al 
 [ ! -S /run/atenea/status.sock ]
 assert_networks_removed
 dpkg -P atenea
-[ -f /var/lib/atenea/device/noise.key ]
-[ -f /etc/atenea/agent.toml ]
+[ ! -e /var/lib/atenea/device/noise.key ] || fail 'copia de clave heredada tras migrar'
+[ -f "/var/lib/atenea/networks/$net_m/device/noise.key" ]
+[ ! -e /etc/atenea/agent.toml ]
 assert_networks_removed
 echo 'Empaquetado, permisos, reinicio y desinstalación: OK'

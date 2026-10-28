@@ -49,14 +49,16 @@ function app(entry = '/devices') {
 }
 
 const NET_ID = '0199ab12-3456-7def-8abc-0123456789ab';
+const OTHER_ID = '0199ab12-3456-7def-8abc-0123456789cd';
 const net = (over: object = {}) => ({ network_id: NET_ID, name: 'casa', server: 'control.example.test', interface: 'atenea0', listen_port: 51821, join_status: 'aprobada', state: 'conectada', ...over });
 const info = { name: 'casa', server: 'control.example.test', network_id: NET_ID, root_fingerprint: '6c4b-fd0b-2585-9aae', has_token: false };
 const CODE = 'ATENEA1-ABCDEF-GH23';
 
 /** Responde como Rust: `status` con el estado (o el fallo), `network_list` con las redes y el resto por orden. */
-function serve(statusReply: string, networks: object[] = [], fail?: string, extra: Record<string, (args: unknown) => unknown> = {}) {
+function serve(statusReply: string, networks: object[] = [net()], fail?: string, extra: Record<string, (args: unknown) => unknown> = {}) {
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'network_list') return JSON.stringify(networks);
+    if (cmd === 'network_legacy' && !(cmd in extra)) return '{"present":false}' as never;
     if (cmd in extra) return extra[cmd](args) as never;
     if (fail) throw fail;
     return statusReply as never;
@@ -147,7 +149,7 @@ it('un alias local gana al nombre de la red y vaciarlo lo devuelve', async () =>
 });
 
 it('si el agente falla no enseña datos y muestra el motivo', async () => {
-  serve('', [], 'Agente parado o sin acceso al estado');
+  serve('', [net()], 'Agente parado o sin acceso al estado');
   app();
   expect(await screen.findAllByText('Agente parado o sin acceso al estado')).not.toHaveLength(0);
   expect(screen.getByRole('status')).toHaveTextContent('Sin datos');
@@ -161,45 +163,44 @@ it('una respuesta con otra forma se rechaza en la frontera', async () => {
   expect(screen.getByRole('status')).toHaveTextContent('Sin datos');
 });
 
-it('sin redes unidas no hay selector; con redes el selector pide el estado de la elegida', async () => {
-  serve(agent());
+it('sin redes unidas no hay selector ni estado: Dispositivos y Diagnóstico enseñan el estado vacío y la cabecera «Sin redes»', async () => {
+  serve(agent(), []);
   const { unmount } = app();
   await screen.findByRole('navigation', { name: 'Secciones' });
+  expect(await screen.findByText(/Sin redes\. Únete a una red desde/)).toBeInTheDocument();
+  expect(within(screen.getByRole('main')).getByRole('link', { name: 'Redes' })).toHaveAttribute('href', '/networks');
+  expect(screen.getByRole('status')).toHaveTextContent('Sin redes');
   expect(screen.queryByRole('combobox', { name: 'Red' })).not.toBeInTheDocument();
-  expect(calls('status')[0][1]).toEqual({ network: null });
+  expect(calls('status')).toHaveLength(0);
   unmount();
+  app('/diagnostics');
+  expect(await screen.findByText(/Sin redes\. Únete a una red desde/)).toBeInTheDocument();
+  expect(calls('status')).toHaveLength(0);
+});
 
+it('el selector solo ofrece redes reales: abre con la primera y pide el estado de la elegida', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })]);
+  app();
+  const select = await screen.findByRole('combobox', { name: 'Red' });
+  expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['casa', 'trabajo']);
+  expect(select).toHaveValue(NET_ID);
+  await waitFor(() => expect(calls('status')[0][1]).toEqual({ network: NET_ID }));
+  await userEvent.selectOptions(select, 'trabajo');
+  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: OTHER_ID }));
+  expect(localStorage.getItem('atenea.network')).toBe(OTHER_ID);
+});
+
+it('la red guardada se respeta y, si desaparece, se pasa a la primera', async () => {
+  localStorage.setItem('atenea.network', OTHER_ID);
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })]);
+  const { unmount } = app();
+  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  unmount();
+  vi.mocked(invoke).mockReset();
   serve(agent(), [net()]);
   app();
-  await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Red' }), 'casa');
-  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: NET_ID }));
-  expect(localStorage.getItem('atenea.network')).toBe(NET_ID);
-});
-
-it('una red elegida que ya no existe vuelve a la predeterminada', async () => {
-  localStorage.setItem('atenea.network', NET_ID);
-  serve(agent(), [net({ network_id: '0199ab12-3456-7def-8abc-0123456789ff', name: 'otra' })]);
-  app();
-  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: null }));
-  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue('');
-});
-
-it('sin elección guardada y con la predeterminada caída enseña la primera red; una elección explícita se respeta', async () => {
-  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
-    if (cmd === 'network_list') return JSON.stringify([net()]) as never;
-    if ((args as { network: string | null }).network === null) throw 'Agente parado o sin acceso al estado';
-    return agent() as never;
-  });
-  const { unmount } = app();
   expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue(NET_ID);
-  await screen.findByRole('heading', { name: 'MacBook de prueba', level: 2 });
-  expect(localStorage.getItem('atenea.network')).toBeNull();
-  unmount();
-
-  localStorage.setItem('atenea.network', '');
-  app();
-  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue('');
-  expect((await screen.findAllByText('Agente parado o sin acceso al estado')).length).toBeGreaterThan(0);
+  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: NET_ID }));
 });
 
 it('redes: enseña el estado de cada una y conectar/desconectar pide la operación con su id', async () => {
@@ -275,6 +276,43 @@ it('un código no válido o un fallo de autorización se muestran y no dejan nad
   expect(await screen.findByRole('alert')).toHaveTextContent('Cancelado: no se ha cambiado nada');
   // Sigue en la confirmación: se puede reintentar o cancelar.
   expect(screen.getByRole('group', { name: 'Confirmar unión' })).toBeInTheDocument();
+});
+
+it('sin instalación heredada no hay banner; con ella, importar confirma antes de llamar y manda el nombre opcional', async () => {
+  serve(agent());
+  const { unmount } = app('/networks');
+  await screen.findByRole('region', { name: 'casa' });
+  expect(screen.queryByRole('region', { name: 'Instalación heredada' })).not.toBeInTheDocument();
+  unmount();
+
+  serve(agent(), [], undefined, { network_legacy: () => '{"present":true}', network_apply: () => '' });
+  app('/networks');
+  const banner = await screen.findByRole('region', { name: 'Instalación heredada' });
+  expect(banner).toHaveTextContent('Hay una instalación heredada pendiente de importar');
+  await userEvent.click(within(banner).getByRole('button', { name: 'Importar red existente' }));
+  const dialog = within(banner).getByRole('alertdialog', { name: 'Importar red existente' });
+  expect(dialog).toHaveTextContent(/se parará la instancia actual/i);
+  expect(dialog).toHaveTextContent('unos segundos');
+  expect(calls('network_apply')).toHaveLength(0);
+  // Cancelar no llama a nada.
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(calls('network_apply')).toHaveLength(0);
+
+  await userEvent.click(screen.getByRole('button', { name: 'Importar red existente' }));
+  await userEvent.type(screen.getByRole('textbox', { name: /Nombre de la red/ }), ' casa piloto ');
+  await userEvent.click(screen.getByRole('button', { name: 'Importar' }));
+  await waitFor(() => expect(calls('network_apply')).toEqual([['network_apply', { op: 'migrate', name: 'casa piloto' }]]));
+});
+
+it('importar sin nombre no manda `name` y un rechazo de Rust se muestra sin cerrar la confirmación', async () => {
+  serve(agent(), [], undefined, { network_legacy: () => '{"present":true}', network_apply: () => { throw 'nombre no válido'; } });
+  app('/networks');
+  await userEvent.click(await screen.findByRole('button', { name: 'Importar red existente' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Importar' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('nombre no válido');
+  expect(calls('network_apply')).toEqual([['network_apply', { op: 'migrate' }]]);
+  expect(screen.getByRole('alertdialog', { name: 'Importar red existente' })).toBeInTheDocument();
 });
 
 it('las pantallas no tienen violaciones de accesibilidad detectables', async () => {

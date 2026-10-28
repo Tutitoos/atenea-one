@@ -1,6 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import type { Tone } from './lib/format';
 
 const bg: Record<Tone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad', off: 'bg-off' };
@@ -44,3 +45,10 @@ export function CopyButton({ value }: { value: string }) {
 }
 
 export const Empty = ({ children }: { children: ReactNode }) => <p className="p-4 text-mut">{children}</p>;
+
+/** Estado vacío de las pantallas que dependen de una red: sin redes unidas no hay nada que enseñar. */
+export const NoNetworks = () => (
+  <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
+    <p className="text-mut">Sin redes. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link>.</p>
+  </main>
+);

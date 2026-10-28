@@ -64,5 +64,15 @@ export async function inspectCode(code: string): Promise<CodeInfo> {
 export const joinNetwork = (code: string) => call('network_apply', { op: 'join', code });
 export const changeNetwork = (op: 'up' | 'down' | 'leave', network: string) => call('network_apply', { op, network });
 
+/** ¿Queda una instalación heredada (un `agent.toml` único) pendiente de importar? Sin privilegios. */
+export async function readLegacy(): Promise<boolean> {
+  const parsed = z.object({ present: z.boolean() }).safeParse(JSON.parse(await call('network_legacy')));
+  if (!parsed.success) throw new Error('El CLI respondió con un formato inesperado.');
+  return parsed.data.present;
+}
+
+/** Importa la instalación heredada como una red más. Rust valida el nombre (hasta 64 de `[A-Za-z0-9._ -]`). */
+export const migrateLegacy = (name: string) => call('network_apply', name.trim() ? { op: 'migrate', name: name.trim() } : { op: 'migrate' });
+
 /** Datos que `join` imprime y que el administrador compara al aprobar el equipo. */
 export const deviceFingerprint = (output: string) => /^huella_dispositivo=(\S+)/m.exec(output)?.[1];

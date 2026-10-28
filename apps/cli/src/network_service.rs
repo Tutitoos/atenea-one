@@ -109,7 +109,7 @@ mod unix {
         Ok(())
     }
 
-    fn root_required() -> Result<(), String> {
+    pub fn root_required() -> Result<(), String> {
         let out = Command::new("/usr/bin/id")
             .arg("-u")
             .output()
@@ -119,7 +119,7 @@ mod unix {
         }
         Ok(())
     }
-    fn command(program: &str, args: &[&str]) -> Result<(), String> {
+    pub fn command(program: &str, args: &[&str]) -> Result<(), String> {
         let out = Command::new(program)
             .args(args)
             .output()
@@ -133,7 +133,7 @@ mod unix {
         }
         Ok(())
     }
-    fn systemctl() -> &'static str {
+    pub fn systemctl() -> &'static str {
         if Path::new("/usr/bin/systemctl").exists() {
             "/usr/bin/systemctl"
         } else {

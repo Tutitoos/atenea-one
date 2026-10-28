@@ -46,6 +46,8 @@ La instalación crea **solo el grupo** de sistema `atenea`, no un usuario: el ag
 
 Eliminar el `join` temporal cuando deje de ser necesario (puede contener el token). La sincronización descarga la configuración firmada; sin configuración vigente el servicio puede estar activo pero el tráfico queda denegado. Consultar el estado y `journalctl -u atenea-agent`; no interpretar `active` como autorización de tráfico.
 
+**Migración al modelo de redes (ADR-013 §10).** La instalación heredada de esta sección se puede importar como una red más con `sudo atenea network migrate-legacy` (detalles, reversión manual y cambios de ruta de sockets en [redes múltiples](redes-multiples-cli.md#migrar-la-instalación-heredada-adr-013-10)). Tras migrar no existe `/etc/atenea/agent.toml`: `atenea-agent.service` queda deshabilitada y su `ConditionPathExists` impide que arranque; el `.deb` no la reactiva al actualizarse (`prerm` solo recuerda las unidades activas). Quien nunca migra no nota ningún cambio.
+
 ## Unidad y permisos locales
 
 La unidad usa `run --config`; `ExecStopPost` ejecuta `cleanup --config` incluso tras una caída. Solo permite `CAP_NET_ADMIN` (no `CAP_NET_RAW`), `/dev/net/tun`, familias Unix/IPv4/IPv6/netlink y escrituras en `/var/lib/atenea` y `/run/atenea`. `ProtectKernelTunables=yes` impide escribir sysctls pero conserva su lectura. `PrivateTmp` da un temporal privado. `/run/atenea` es root:atenea 0750; desaparece al parar.

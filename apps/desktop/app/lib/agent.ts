@@ -26,11 +26,11 @@ export function createSampler() {
 /** Un muestreador por red: al cambiar de red no se calculan tasas contra la lectura de otra. */
 const samplers = new Map<string, ReturnType<typeof createSampler>>();
 
-/** Lectura del estado de la instancia predeterminada (`network` vacío) o de una red unida. Rechaza respuestas con otra forma. */
-export async function readAgent(network = ''): Promise<Sample> {
+/** Lectura del estado de una red unida (su id). Rechaza respuestas con otra forma. */
+export async function readAgent(network: string): Promise<Sample> {
   let raw: string;
   try {
-    raw = await invoke<string>('status', { network: network || null });
+    raw = await invoke<string>('status', { network });
   } catch (e) {
     // Tauri rechaza con el texto devuelto por la orden, no con un Error.
     throw new Error(typeof e === 'string' ? e : 'No se pudo leer el estado del agente.', { cause: e });

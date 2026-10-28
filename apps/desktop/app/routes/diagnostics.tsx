@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { bytes, num, text } from '../lib/format';
 import { useAgent } from '../lib/live';
-import { Card, Empty, Heading, Row } from '../ui';
+import { Card, Empty, Heading, NoNetworks, Row } from '../ui';
 
 export default function Diagnostics() {
-  const { sample, error } = useAgent();
+  const { sample, error, empty } = useAgent();
+  if (empty) return <NoNetworks />;
   if (!sample) return <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>;
   const { config, sync, coordinator, relay, counters } = sample.reply.status;
   const entries = relay?.entries ?? [];

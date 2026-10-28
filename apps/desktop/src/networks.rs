@@ -17,6 +17,7 @@ pub enum Op {
     Up,
     Down,
     Leave,
+    Migrate,
 }
 
 impl Op {
@@ -26,6 +27,7 @@ impl Op {
             "up" => Ok(Self::Up),
             "down" => Ok(Self::Down),
             "leave" => Ok(Self::Leave),
+            "migrate" => Ok(Self::Migrate),
             _ => Err("operación no permitida".into()),
         }
     }
@@ -94,6 +96,26 @@ pub fn primary_gid() -> Result<u32, String> {
         .map_err(|_| "no se pudo obtener el grupo del usuario".to_string())
 }
 
+/// Nombre opcional de la red importada: 1–64 caracteres de `[A-Za-z0-9._ -]` (sin espacios en los
+/// extremos ni guion inicial). Es más estricto que el de los dispositivos a propósito: va dentro de la
+/// orden elevada entre comillas simples, y este alfabeto no puede cerrarlas ni contiene controles ni bidi.
+fn valid_name(name: Option<&str>) -> Result<Option<&str>, String> {
+    let Some(n) = name else { return Ok(None) };
+    if n.is_empty() {
+        return Ok(None);
+    }
+    let ok = n.len() <= 64
+        && n == n.trim()
+        && !n.starts_with('-')
+        && n.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._ -".contains(&b));
+    if ok {
+        Ok(Some(n))
+    } else {
+        Err("nombre no válido: hasta 64 caracteres de letras, números, espacio, punto, guion y guion bajo".into())
+    }
+}
+
 /// Orden de shell que se ejecuta con privilegios. Todos los fragmentos variables ya están validados
 /// (`valid_uuid`, `normalize_code`, un número), así que no contienen comillas ni metacaracteres.
 pub fn script(
@@ -101,6 +123,7 @@ pub fn script(
     op: Op,
     network: Option<&str>,
     code: Option<&str>,
+    name: Option<&str>,
     gid: u32,
 ) -> Result<String, String> {
     if !cli
@@ -126,6 +149,10 @@ pub fn script(
         Op::Up => format!("{cli} network up {}", net(network)?),
         Op::Down => format!("{cli} network down {}", net(network)?),
         Op::Leave => format!("{cli} network leave {} --yes", net(network)?),
+        Op::Migrate => match valid_name(name)? {
+            Some(n) => format!("{cli} network migrate-legacy --yes --name '{n}'"),
+            None => format!("{cli} network migrate-legacy --yes"),
+        },
     })
 }
 
@@ -183,6 +210,20 @@ pub fn list() -> Result<String, String> {
     }
 }
 
+/// `atenea network legacy --json` sin privilegios: `{"present": bool}`. Sin CLI (o en Windows) no hay
+/// instalación heredada que importar.
+pub fn legacy() -> Result<String, String> {
+    let cli = cli_path();
+    if cfg!(windows) || !std::path::Path::new(&cli).exists() {
+        return Ok(r#"{"present":false}"#.into());
+    }
+    let text = run(&cli, &["network", "legacy", "--json"])?;
+    match serde_json::from_str::<Value>(&text) {
+        Ok(v) if v["present"].is_boolean() => Ok(text),
+        _ => Err("`atenea network legacy` devolvió una respuesta inesperada".into()),
+    }
+}
+
 /// Decodifica un código sin privilegios, sin disco y sin red (`atenea network inspect`).
 pub fn inspect(raw: &str) -> Result<String, String> {
     let code = normalize_code(raw)?;
@@ -195,7 +236,12 @@ pub fn inspect(raw: &str) -> Result<String, String> {
 
 /// Ejecuta una operación con el diálogo de autorización del sistema. En `join` el id de la red sale del
 /// propio código (lo decodifica `inspect`), nunca del frontend: el `up` posterior no puede apuntar a otra red.
-pub fn apply(op: &str, network: Option<&str>, code: Option<&str>) -> Result<String, String> {
+pub fn apply(
+    op: &str,
+    network: Option<&str>,
+    code: Option<&str>,
+    name: Option<&str>,
+) -> Result<String, String> {
     let op = Op::parse(op)?;
     let (gid, network) = if op == Op::Join {
         let info: Value = serde_json::from_str(&inspect(code.ok_or("falta el código")?)?)
@@ -208,12 +254,13 @@ pub fn apply(op: &str, network: Option<&str>, code: Option<&str>) -> Result<Stri
     } else {
         (0, network.map(str::to_string))
     };
-    let script = script(&cli_path(), op, network.as_deref(), code, gid)?;
+    let script = script(&cli_path(), op, network.as_deref(), code, name, gid)?;
     let prompt = match op {
         Op::Join => "Atenea One quiere unir este equipo a una red.",
         Op::Up => "Atenea One quiere conectar este equipo a una red.",
         Op::Down => "Atenea One quiere desconectar este equipo de una red.",
         Op::Leave => "Atenea One quiere sacar este equipo de una red y borrar sus claves.",
+        Op::Migrate => "Atenea One quiere importar la instalación heredada como una red.",
     };
     elevate(&script, prompt)
 }
@@ -267,19 +314,19 @@ mod tests {
     fn privileged_scripts_are_exactly_the_allowed_cli_calls() {
         let code = "ATENEA1-ABCDEF-GH23";
         assert_eq!(
-            script(CLI, Op::Join, Some(ID), Some(code), 20).unwrap(),
+            script(CLI, Op::Join, Some(ID), Some(code), None, 20).unwrap(),
             format!("{CLI} network join {code} --yes --status-gid 20 && {CLI} network up {ID}")
         );
         assert_eq!(
-            script(CLI, Op::Up, Some(ID), None, 0).unwrap(),
+            script(CLI, Op::Up, Some(ID), None, None, 0).unwrap(),
             format!("{CLI} network up {ID}")
         );
         assert_eq!(
-            script(CLI, Op::Down, Some(ID), None, 0).unwrap(),
+            script(CLI, Op::Down, Some(ID), None, None, 0).unwrap(),
             format!("{CLI} network down {ID}")
         );
         assert_eq!(
-            script(CLI, Op::Leave, Some(ID), None, 0).unwrap(),
+            script(CLI, Op::Leave, Some(ID), None, None, 0).unwrap(),
             format!("{CLI} network leave {ID} --yes")
         );
     }
@@ -295,21 +342,74 @@ mod tests {
         ] {
             for op in [Op::Up, Op::Down, Op::Leave, Op::Join] {
                 assert!(
-                    script(CLI, op, bad_id, Some("ATENEA1-ABCD"), 20).is_err(),
+                    script(CLI, op, bad_id, Some("ATENEA1-ABCD"), None, 20).is_err(),
                     "{op:?} {bad_id:?}"
                 );
             }
         }
-        assert!(script(CLI, Op::Join, Some(ID), None, 20).is_err());
-        assert!(script(CLI, Op::Join, Some(ID), Some("ATENEA1-AB; id"), 20).is_err());
-        assert!(script("/x; id", Op::Up, Some(ID), None, 0).is_err());
-        assert!(script("/x\"y", Op::Up, Some(ID), None, 0).is_err());
+        assert!(script(CLI, Op::Join, Some(ID), None, None, 20).is_err());
+        assert!(script(CLI, Op::Join, Some(ID), Some("ATENEA1-AB; id"), None, 20).is_err());
+        assert!(script("/x; id", Op::Up, Some(ID), None, None, 0).is_err());
+        assert!(script("/x\"y", Op::Up, Some(ID), None, None, 0).is_err());
+    }
+
+    #[test]
+    fn migrate_script_is_exact_and_name_is_optional() {
+        assert_eq!(
+            script(CLI, Op::Migrate, None, None, None, 0).unwrap(),
+            format!("{CLI} network migrate-legacy --yes")
+        );
+        assert_eq!(
+            script(CLI, Op::Migrate, None, None, Some(""), 0).unwrap(),
+            format!("{CLI} network migrate-legacy --yes")
+        );
+        assert_eq!(
+            script(CLI, Op::Migrate, None, None, Some("Red piloto-1.a_b"), 0).unwrap(),
+            format!("{CLI} network migrate-legacy --yes --name 'Red piloto-1.a_b'")
+        );
+        assert_eq!(Op::parse("migrate"), Ok(Op::Migrate));
+    }
+
+    #[test]
+    fn migrate_name_rejects_injection_controls_bidi_and_length() {
+        for bad in [
+            "a'b",
+            "a\"b",
+            "a;id",
+            "$(id)",
+            "`id`",
+            "a&&b",
+            "a\\b",
+            "a\nb",
+            "a\tb",
+            "a\u{202e}b",
+            "a\u{200f}b",
+            "ñandú",
+            " lead",
+            "trail ",
+            "--yes",
+            &"a".repeat(65),
+        ] {
+            assert!(
+                script(CLI, Op::Migrate, None, None, Some(bad), 0).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(script(CLI, Op::Migrate, None, None, Some(&"a".repeat(64)), 0).is_ok());
     }
 
     #[test]
     fn only_listed_operations_exist() {
         assert_eq!(Op::parse("join"), Ok(Op::Join));
-        for bad in ["", "JOIN", "shell", "list", "up; id", "leave "] {
+        for bad in [
+            "",
+            "JOIN",
+            "shell",
+            "list",
+            "up; id",
+            "leave ",
+            "migrate-legacy",
+        ] {
             assert!(Op::parse(bad).is_err(), "{bad}");
         }
     }

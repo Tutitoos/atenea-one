@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { changeNetwork, deviceFingerprint, inspectCode, joinNetwork, readNetworks, stateText, stateTone, type CodeInfo, type Network } from '../lib/networks';
+import { changeNetwork, deviceFingerprint, inspectCode, joinNetwork, migrateLegacy, readLegacy, readNetworks, stateText, stateTone, type CodeInfo, type Network } from '../lib/networks';
 import { Card, CopyButton, Dot, Empty, Row } from '../ui';
 
 const button = 'cursor-default rounded-md border border-line bg-card px-3 py-1 text-sm disabled:opacity-50';
@@ -36,6 +36,40 @@ function NetworkCard({ net, busy, onChange }: { net: Network; busy: boolean; onC
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function Legacy({ onDone }: { onDone: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [name, setName] = useState('');
+  const migrate = useMutation({ mutationFn: migrateLegacy, onSuccess: () => { setAsking(false); onDone(); } });
+  return (
+    <section aria-label="Instalación heredada" className="mb-4 rounded-[10px] bg-warn/15 px-3.5 py-3 text-sm">
+      <p>Hay una instalación heredada pendiente de importar</p>
+      {!asking && <button type="button" className={`${primary} mt-2`} onClick={() => setAsking(true)}>Importar red existente</button>}
+      {asking && (
+        <div role="alertdialog" aria-label="Importar red existente" className="mt-2">
+          <p>Se parará la instancia actual de este equipo y se importará como una red más. El túnel se cortará unos segundos.</p>
+          <label htmlFor="legacy-name" className="mt-2 block">Nombre de la red (opcional)</label>
+          <input
+            id="legacy-name"
+            maxLength={64}
+            autoComplete="off"
+            spellCheck={false}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 w-64 select-text rounded-lg border border-line bg-bg px-2.5 py-1 text-fg"
+          />
+          <span className="ml-2 text-xs text-mut">Letras, números, espacio, punto, guion y guion bajo.</span>
+          <div className="mt-2 flex items-center gap-2">
+            <button type="button" className={primary} disabled={migrate.isPending} onClick={() => migrate.mutate(name)}>Importar</button>
+            <button type="button" className={button} disabled={migrate.isPending} onClick={() => { setAsking(false); migrate.reset(); }}>Cancelar</button>
+            {migrate.isPending && <span role="status" className="text-mut">Esperando la autorización del sistema…</span>}
+          </div>
+        </div>
+      )}
+      {migrate.error && <p role="alert" className="mt-2 text-bad">{migrate.error.message}</p>}
     </section>
   );
 }
@@ -104,12 +138,15 @@ function Join({ onDone }: { onDone: () => void }) {
 export default function Networks() {
   const client = useQueryClient();
   const list = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000 });
-  const refresh = () => { void client.invalidateQueries({ queryKey: ['networks'] }); void client.invalidateQueries({ queryKey: ['agent'] }); };
+  const refresh = () => { void client.invalidateQueries({ queryKey: ['networks'] }); void client.invalidateQueries({ queryKey: ['agent'] }); void client.invalidateQueries({ queryKey: ['legacy'] }); };
   const change = useMutation({ mutationFn: ({ op, id }: { op: 'up' | 'down' | 'leave'; id: string }) => changeNetwork(op, id), onSuccess: refresh });
+  // Un fallo al consultar la instalación heredada no impide usar las redes: simplemente no hay banner.
+  const legacy = useQuery({ queryKey: ['legacy'], queryFn: readLegacy, refetchInterval: 5000 });
 
   return (
     <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
       <h1 className="mb-3 text-xl font-semibold">Redes</h1>
+      {legacy.data && <Legacy onDone={refresh} />}
       {change.isPending && <p role="status" className="mb-3 text-sm text-mut">Esperando la autorización del sistema…</p>}
       {change.error && <p role="alert" className="mb-3 text-sm text-bad">{change.error.message}</p>}
       {list.error && <p role="alert" className="mb-3 text-sm text-bad">{list.error.message}</p>}

@@ -5,7 +5,7 @@ import { NavLink, Outlet } from 'react-router';
 import { host, levelTone, pathLabel, peerName, selfName, serverTone, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { useNames } from '../lib/names';
-import { Dot, Empty } from '../ui';
+import { Dot, Empty, NoNetworks } from '../ui';
 
 type Entry = { id: string; name: string; addr: string; tone: Tone; haystack: string };
 
@@ -42,6 +42,8 @@ export default function Devices() {
   const q = query.trim().toLowerCase();
   const match = (e: Entry) => !q || e.haystack.toLowerCase().includes(q);
   const visible = [...self.filter(match), ...server.filter(match), ...peers.filter(match)];
+
+  if (agent.empty) return <NoNetworks />;
 
   return (
     <>

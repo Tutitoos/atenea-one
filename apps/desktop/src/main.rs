@@ -28,18 +28,6 @@ enum Health {
     Stopped,
 }
 
-fn socket_path() -> String {
-    std::env::var("ATENEA_STATUS_SOCKET").unwrap_or_else(|_| {
-        if cfg!(windows) {
-            r"\\.\pipe\atenea-status".into()
-        } else if cfg!(target_os = "macos") {
-            "/var/run/atenea/status.sock".into()
-        } else {
-            "/run/atenea/status.sock".into()
-        }
-    })
-}
-
 #[cfg(unix)]
 fn ask(path: &str) -> Result<String, String> {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -95,14 +83,11 @@ fn network_socket(id: &str) -> Result<String, String> {
     Ok(format!("{run}/{}/status.sock", networks::short_id(id)))
 }
 
-/// Estado de la instancia predeterminada (`network` vacío) o de una red unida con `atenea network join`.
+/// Estado de una red unida con `atenea network join`. No hay instancia «predeterminada»: sin red, no hay estado.
 #[tauri::command]
-async fn status(network: Option<String>) -> Result<String, String> {
+async fn status(network: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let path = match network.as_deref() {
-            Some(id) => network_socket(id)?,
-            None => socket_path(),
-        };
+        let path = network_socket(&network)?;
         let status: Value = serde_json::from_str(&ask(&path)?).map_err(|e| e.to_string())?;
         let a = assess(&status);
         Ok(serde_json::json!({
@@ -131,15 +116,25 @@ async fn network_inspect(code: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Unirse, conectar, desconectar o salir de una red. El sistema operativo pide la autorización.
+/// ¿Queda una instalación heredada pendiente de importar? (`atenea network legacy --json`, sin privilegios).
+#[tauri::command]
+async fn network_legacy() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(networks::legacy)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Unirse, conectar, desconectar, salir de una red o importar la instalación heredada (`op = "migrate"`,
+/// con `name` opcional). El sistema operativo pide la autorización.
 #[tauri::command]
 async fn network_apply(
     op: String,
     network: Option<String>,
     code: Option<String>,
+    name: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        networks::apply(&op, network.as_deref(), code.as_deref())
+        networks::apply(&op, network.as_deref(), code.as_deref(), name.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -244,22 +239,29 @@ fn show_window(app: &AppHandle) {
     }
 }
 
-/// Lo que responde cada origen de estado: la instancia predeterminada y cada red unida.
+/// Lo que responde cada red unida.
 struct Source {
     label: String,
     health: Health,
     text: String,
 }
 
-/// Icono, tooltip y líneas del menú a partir de los orígenes que **responden**. Una red detenida a
-/// propósito no responde y no cuenta: no tiene que poner rojo el icono de las que sí están conectadas.
-fn summarize(sources: &[Source]) -> (Health, String, Vec<(String, String)>) {
+/// Icono, tooltip y líneas del menú a partir de las redes que **responden** (`joined` = unidas). Una red
+/// detenida a propósito no responde y no cuenta: no tiene que poner rojo el icono de las que sí están conectadas.
+fn summarize(joined: usize, sources: &[Source]) -> (Health, String, Vec<(String, String)>) {
     match sources {
-        [] => (
-            Health::Stopped,
-            "Agente parado o sin acceso al estado".into(),
-            vec![("*".into(), "Agente parado o sin acceso al estado".into())],
-        ),
+        [] => {
+            let text = if joined == 0 {
+                "Sin redes"
+            } else {
+                "Redes paradas o sin acceso al estado"
+            };
+            (
+                Health::Stopped,
+                text.into(),
+                vec![("*".into(), text.into())],
+            )
+        }
         [one] => (
             one.health,
             one.text.clone(),
@@ -330,6 +332,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             status,
             network_list,
+            network_legacy,
             network_inspect,
             network_apply
         ])
@@ -363,16 +366,14 @@ fn main() {
                         nets = joined_networks();
                     }
                     tick = tick.wrapping_add(1);
-                    let mut sources: Vec<Source> = read_source("Predeterminada", &socket_path())
-                        .into_iter()
-                        .collect();
+                    let mut sources: Vec<Source> = Vec::new();
                     for (id, name) in &nets {
                         if let Some(s) = network_socket(id).ok().and_then(|p| read_source(name, &p))
                         {
                             sources.push(s);
                         }
                     }
-                    let (health, text, lines) = summarize(&sources);
+                    let (health, text, lines) = summarize(nets.len(), &sources);
                     let keys: Vec<String> = lines.iter().map(|(k, _)| k.clone()).collect();
                     if keys != labels {
                         // Cambió el conjunto de redes que responden: se reconstruye el menú (no en cada lectura,
@@ -454,23 +455,35 @@ mod tests {
 
     #[test]
     fn tray_summary_counts_only_sources_that_answer() {
-        let (h, text, lines) = summarize(&[]);
+        // Sin redes unidas: gris y «Sin redes».
+        let (h, text, lines) = summarize(0, &[]);
+        assert_eq!((h, text.as_str()), (Health::Stopped, "Sin redes"));
+        assert_eq!(lines, [("*".to_string(), "Sin redes".to_string())]);
+
+        // Redes unidas pero ninguna responde (paradas a propósito): también gris, sin rojo.
+        let (h, text, _) = summarize(2, &[]);
         assert_eq!(
             (h, text.as_str()),
-            (Health::Stopped, "Agente parado o sin acceso al estado")
+            (Health::Stopped, "Redes paradas o sin acceso al estado")
         );
-        assert_eq!(lines.len(), 1);
+
+        // Una red detenida no pone rojo el icono de la que sí responde.
+        let (h, _, lines) = summarize(2, &[src("casa", Health::Ok, "Conectado")]);
+        assert_eq!((h, lines.len()), (Health::Ok, 1));
 
         // Una sola fuente: el mismo texto de siempre, sin prefijo.
-        let (h, text, lines) = summarize(&[src("casa", Health::Ok, "Conectado")]);
+        let (h, text, lines) = summarize(1, &[src("casa", Health::Ok, "Conectado")]);
         assert_eq!((h, text.as_str()), (Health::Ok, "Conectado"));
         assert_eq!(lines, [("*".to_string(), "Conectado".to_string())]);
 
         // Varias: gana la peor, una línea por red con su nombre.
-        let (h, text, lines) = summarize(&[
-            src("casa", Health::Ok, "Conectado"),
-            src("trabajo", Health::Degraded, "Degradado: por relay"),
-        ]);
+        let (h, text, lines) = summarize(
+            2,
+            &[
+                src("casa", Health::Ok, "Conectado"),
+                src("trabajo", Health::Degraded, "Degradado: por relay"),
+            ],
+        );
         assert_eq!(
             (h, text.as_str()),
             (Health::Degraded, "2 redes · Degradado: por relay")

@@ -250,7 +250,7 @@ assert_networks_removed() {
         [ ! -e "/sys/class/net/$iface" ] || fail "interfaz residual $iface"
         if nft list table inet "atenea_$iface" 2>/dev/null; then fail "tabla residual $iface"; fi
     done
-    for suffix in 00000001 00000002; do
+    for suffix in 00000001 00000002 "${net_m: -8}"; do
         [ ! -S "/run/atenea/$suffix/control.sock" ] || fail 'socket control residual'
         [ ! -S "/run/atenea/$suffix/status.sock" ] || fail 'socket estado residual'
     done
@@ -258,7 +258,7 @@ assert_networks_removed() {
         [ -z "$(ss -ulnH "sport = :$port")" ] || fail "puerto residual $port"
     done
     sha256sum -c "$lab/preserved.sha256"
-    for unit in "$unit_a" "$unit_b" atenea-agent.service; do
+    for unit in "$unit_a" "$unit_b" atenea-agent.service "$unit_m"; do
         if systemctl is-active --quiet "$unit"; then fail "servicio residual $unit"; fi
         if systemctl is-enabled --quiet "$unit"; then fail "habilitación residual $unit"; fi
     done

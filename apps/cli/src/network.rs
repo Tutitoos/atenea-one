@@ -44,6 +44,20 @@ pub enum NetworkCmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Informa, sin root, de si hay una instalación heredada pendiente de importar.
+    Legacy {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Importa la instalación heredada (un único `agent.toml`) como una red más; la para unos segundos.
+    MigrateLegacy {
+        /// Nombre de la red. Sin él se usa el servidor de la configuración heredada.
+        #[arg(long)]
+        name: Option<String>,
+        /// No pregunta: confirma la importación (obligatorio sin terminal interactiva).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[cfg(not(unix))]
@@ -92,6 +106,10 @@ pub fn run(
             interactive,
         ),
         NetworkCmd::List { json } => imp::list(&ctx, json),
+        NetworkCmd::Legacy { json } => imp::legacy(&ctx, json, &mut std::io::stdout().lock()),
+        NetworkCmd::MigrateLegacy { name, yes } => {
+            imp::migrate_legacy(&ctx, name, yes, &mut input, interactive)
+        }
         NetworkCmd::Up { network } => imp::up(&ctx, &network),
         NetworkCmd::Down { network } => imp::down(&ctx, &network),
         NetworkCmd::Leave { network, yes } => {
@@ -112,6 +130,7 @@ mod imp {
     use std::io::{BufRead, Write};
     use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -777,6 +796,11 @@ mod imp {
 
     pub fn up(ctx: &Ctx, query: &str) -> Result<(), String> {
         let _lock = root_lock(ctx)?;
+        up_locked(ctx, query)
+    }
+
+    /// `up` con el bloqueo de la raíz ya tomado por quien llama.
+    fn up_locked(ctx: &Ctx, query: &str) -> Result<(), String> {
         let metas = read_metas(ctx)?;
         let m = resolve(&metas, query)?;
         let service = backend(ctx, m);
@@ -924,6 +948,479 @@ mod imp {
         println!(
             "El dispositivo SIGUE registrado en el servidor: un administrador debe revocarlo. Huella del dispositivo: {} (id {}).",
             m.device_fingerprint, m.device_id
+        );
+        Ok(())
+    }
+
+    // ---- Migración de la instalación heredada (ADR-013 §10) ----
+
+    const LEGACY_UNIT: &str = "atenea-agent.service";
+    const LEGACY_LABEL: &str = "one.atenea.agent";
+    const LEGACY_PLIST: &str = "/Library/LaunchDaemons/one.atenea.agent.plist";
+
+    /// Configuración heredada ya validada; construirla no toca el disco.
+    struct Legacy {
+        text: String,
+        mode: u32,
+        table: toml::Table,
+        id: String,
+        device_id: String,
+        url: String,
+        anchor_fingerprint: String,
+        device_fingerprint: String,
+        interface: String,
+        port: u16,
+        /// (origen, nombre dentro de `device/`).
+        moves: Vec<(PathBuf, &'static str)>,
+    }
+
+    fn path_field(table: &toml::Table, key: &str) -> Result<PathBuf, String> {
+        let p = PathBuf::from(
+            table
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .ok_or(format!("configuración heredada: falta «{key}»"))?,
+        );
+        if p.is_absolute() {
+            Ok(p)
+        } else {
+            Err(format!(
+                "configuración heredada: «{key}» no es una ruta absoluta"
+            ))
+        }
+    }
+
+    fn read_legacy(ctx: &Ctx) -> Result<Option<Legacy>, String> {
+        let text = match std::fs::read_to_string(&ctx.legacy) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io_err(&ctx.legacy, &e)),
+        };
+        let mode = std::fs::metadata(&ctx.legacy)
+            .map_err(|e| io_err(&ctx.legacy, &e))?
+            .permissions()
+            .mode()
+            & 0o777;
+        let table: toml::Table =
+            toml::from_str(&text).map_err(|e| format!("configuración heredada: {e}"))?;
+        let hex_of = |key: &str| {
+            table
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+        };
+        let bad = |key: &str, n: usize| {
+            format!("configuración heredada: «{key}» debe tener {n} dígitos hex")
+        };
+        let id =
+            uuid(&hex::decode::<16>(hex_of("network_id")).ok_or_else(|| bad("network_id", 32))?);
+        let device_id =
+            uuid(&hex::decode::<16>(hex_of("device_id")).ok_or_else(|| bad("device_id", 32))?);
+        let anchor =
+            hex::decode::<32>(hex_of("trust_anchor")).ok_or_else(|| bad("trust_anchor", 64))?;
+        let url = table
+            .get("sync")
+            .and_then(toml::Value::as_table)
+            .and_then(|s| s.get("url"))
+            .and_then(toml::Value::as_str)
+            .ok_or("configuración heredada: falta [sync] url (no hay servidor que importar)")?
+            .trim_end_matches('/')
+            .to_string();
+        let interface = table
+            .get("interface")
+            .and_then(toml::Value::as_str)
+            .ok_or("configuración heredada: falta «interface»")?
+            .to_string();
+        let port = table
+            .get("listen")
+            .and_then(toml::Value::as_str)
+            .and_then(|s| s.parse::<std::net::SocketAddr>().ok())
+            .ok_or("configuración heredada: «listen» no es una dirección válida")?
+            .port();
+        let noise = path_field(&table, "noise_key_file")?;
+        let identity = path_field(&table, "identity_key_file")?;
+        path_field(&table, "ipc_socket")?;
+        let bundle = noise.parent().map(|d| d.join("bundle.bin"));
+        let fingerprint = bundle
+            .as_ref()
+            .and_then(|b| std::fs::read(b).ok())
+            .and_then(|b| atenea_identity::DeviceBundle::parse(&b).ok())
+            .map_or_else(|| "desconocida".to_string(), |b| b.fingerprint());
+        let mut moves = vec![(noise, "noise.key"), (identity, "identity.key")];
+        moves.extend(bundle.filter(|b| b.is_file()).map(|b| (b, "bundle.bin")));
+        for (key, dst) in [("config_file", "config.bin"), ("state_dir", "state")] {
+            let p = path_field(&table, key)?;
+            if p.exists() {
+                moves.push((p, dst));
+            }
+        }
+        Ok(Some(Legacy {
+            text,
+            mode,
+            table,
+            id,
+            device_id,
+            url,
+            anchor_fingerprint: anchor_fingerprint(&anchor),
+            device_fingerprint: fingerprint,
+            interface,
+            port,
+            moves,
+        }))
+    }
+
+    /// Valida todo contra las redes existentes; no escribe nada. Devuelve el nombre elegido.
+    fn plan(ctx: &Ctx, name: Option<&str>) -> Result<(Legacy, String), String> {
+        let l = read_legacy(ctx)?
+            .ok_or("no hay instalación heredada que migrar; no se ha cambiado nada")?;
+        let metas = read_metas(ctx)?;
+        if let Some(m) = metas.iter().find(|m| m.network_id == l.id) {
+            return Err(format!(
+                "la red {} ya está importada como «{}»; no se ha cambiado nada",
+                l.id, m.name
+            ));
+        }
+        if let Some(m) = metas.iter().find(|m| short(&m.network_id) == short(&l.id)) {
+            return Err(format!(
+                "el id corto {} ya lo usa la red «{}»; no se puede importar sin colisión de sockets",
+                short(&l.id),
+                m.name
+            ));
+        }
+        // Tras las colisiones: una red ya importada se informa como tal aunque sus claves ya se hayan movido.
+        for (p, _) in &l.moves[..2] {
+            if !p.is_file() {
+                return Err(format!(
+                    "{}: falta la clave del dispositivo; no se ha cambiado nada",
+                    p.display()
+                ));
+            }
+        }
+        let name = name.map_or_else(|| server_of(&l.url), |n| n.trim().to_string());
+        if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+            return Err("nombre de red no válido (1–64 caracteres, sin control)".into());
+        }
+        if let Some(m) = metas.iter().find(|m| m.name.eq_ignore_ascii_case(&name)) {
+            return Err(format!(
+                "ya hay una red llamada «{}»; elige otra con --name",
+                m.name
+            ));
+        }
+        Ok((l, name))
+    }
+
+    pub fn legacy(ctx: &Ctx, json: bool, output: &mut dyn Write) -> Result<(), String> {
+        // Sin root: solo `exists` (en Linux, /etc/atenea es 0750 root:atenea y un usuario ajeno al grupo no la ve).
+        let present = ctx.legacy.exists()
+            && match read_legacy(ctx) {
+                Ok(Some(l)) => !read_metas(ctx)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|m| m.network_id == l.id),
+                _ => true,
+            };
+        let text = if json {
+            serde_json::json!({ "present": present }).to_string()
+        } else if present {
+            "Hay una instalación heredada pendiente de importar".into()
+        } else {
+            "No hay instalación heredada".to_string()
+        };
+        writeln!(output, "{text}").map_err(|e| e.to_string())
+    }
+
+    /// Estado del servicio heredado antes de pararlo, para restaurarlo si la migración falla.
+    #[derive(Clone, Copy)]
+    struct Prior {
+        service: Service,
+        active: bool,
+        enabled: bool,
+    }
+
+    fn succeeds(program: &str, args: &[&str]) -> bool {
+        Command::new(program)
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    fn legacy_control(l: &Legacy) -> PathBuf {
+        PathBuf::from(l.table["ipc_socket"].as_str().unwrap_or_default())
+    }
+
+    fn legacy_prior(ctx: &Ctx, l: &Legacy) -> Prior {
+        let service = network_service::choose(ctx.backend, None);
+        let launchd = format!("system/{LEGACY_LABEL}");
+        let (active, enabled) = match service {
+            Service::Systemd => (
+                succeeds(
+                    network_service::systemctl(),
+                    &["is-active", "--quiet", LEGACY_UNIT],
+                ),
+                succeeds(
+                    network_service::systemctl(),
+                    &["is-enabled", "--quiet", LEGACY_UNIT],
+                ),
+            ),
+            Service::Launchd => {
+                let loaded = succeeds("/bin/launchctl", &["print", &launchd]);
+                (loaded, loaded)
+            }
+            Service::Process => (crate::ask(&legacy_control(l), "status").is_ok(), false),
+        };
+        Prior {
+            service,
+            active,
+            enabled,
+        }
+    }
+
+    fn stop_legacy(ctx: &Ctx, l: &Legacy, prior: Prior) -> Result<(), String> {
+        match prior.service {
+            Service::Systemd => {
+                network_service::command(
+                    network_service::systemctl(),
+                    &["disable", "--now", LEGACY_UNIT],
+                )?;
+            }
+            Service::Launchd => {
+                let service = format!("system/{LEGACY_LABEL}");
+                network_service::command("/bin/launchctl", &["disable", &service])?;
+                if prior.active {
+                    network_service::command("/bin/launchctl", &["bootout", &service])?;
+                }
+            }
+            Service::Process => {
+                let control = legacy_control(l);
+                if prior.active {
+                    crate::ask(&control, "stop")?;
+                    for _ in 0..50 {
+                        if crate::ask(&control, "status").is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+        }
+        let agent = ctx.agent_bin()?;
+        let status = Command::new(&agent)
+            .args(["cleanup", "--config"])
+            .arg(&ctx.legacy)
+            .status()
+            .map_err(|e| format!("{}: {e}", agent.display()))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("la limpieza del agente heredado falló ({status})"))
+        }
+    }
+
+    fn restart_legacy(ctx: &Ctx, l: &Legacy, prior: Prior) -> Result<(), String> {
+        match prior.service {
+            Service::Systemd => {
+                if prior.enabled {
+                    network_service::command(
+                        network_service::systemctl(),
+                        &["enable", LEGACY_UNIT],
+                    )?;
+                }
+                if prior.active {
+                    network_service::command(
+                        network_service::systemctl(),
+                        &["start", LEGACY_UNIT],
+                    )?;
+                }
+                Ok(())
+            }
+            Service::Launchd if prior.active => {
+                network_service::command(
+                    "/bin/launchctl",
+                    &["enable", &format!("system/{LEGACY_LABEL}")],
+                )?;
+                network_service::command("/bin/launchctl", &["bootstrap", "system", LEGACY_PLIST])
+            }
+            // Modo proceso: no se relanza si el original sigue vivo (la parada pudo fallar a medias).
+            Service::Process
+                if prior.active && crate::ask(&legacy_control(l), "status").is_err() =>
+            {
+                crate::up(
+                    &ctx.legacy,
+                    Some(ctx.agent_bin()?),
+                    &ctx.legacy.with_extension("log"),
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn write_file(path: &Path, mode: u32, bytes: &[u8]) -> Result<(), String> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(path)
+            .map_err(|e| io_err(path, &e))?;
+        f.write_all(bytes).map_err(|e| e.to_string())?;
+        // El umask puede quitar bits; el modo pedido manda.
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .map_err(|e| io_err(path, &e))
+    }
+
+    /// Todo lo que sigue a parar la heredada. Los movimientos hechos se anotan en `moved` para deshacerlos.
+    fn apply(
+        ctx: &Ctx,
+        l: &Legacy,
+        name: &str,
+        prior: Prior,
+        moved: &mut Vec<(PathBuf, PathBuf)>,
+        start: &dyn Fn(&Ctx, &str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        stop_legacy(ctx, l, prior)?;
+        let net = ctx.net_dir(&l.id);
+        let device = ctx.device_dir(&l.id);
+        mkdir(&net, 0o711, false)?;
+        mkdir(&device, 0o700, false)?;
+        for (src, dst) in &l.moves {
+            let to = device.join(dst);
+            std::fs::rename(src, &to).map_err(|e| io_err(src, &e))?;
+            moved.push((src.clone(), to));
+        }
+        let run = ctx.run_dir(&l.id);
+        let mut table = l.table.clone();
+        for (key, path) in [
+            ("noise_key_file", device.join("noise.key")),
+            ("identity_key_file", device.join("identity.key")),
+            ("config_file", device.join("config.bin")),
+            ("state_dir", device.join("state")),
+            ("ipc_socket", run.join("control.sock")),
+            ("status_socket", run.join("status.sock")),
+        ] {
+            table.insert(key.into(), path.to_str().ok_or("ruta no UTF-8")?.into());
+        }
+        table.insert("resolver_owner".into(), short(&l.id).into());
+        issue::write_secret(
+            &device.join("agent.toml"),
+            &toml::to_string(&table).map_err(|e| e.to_string())?,
+        )?;
+        write_file(&net.join("legacy-agent.toml.bak"), 0o600, l.text.as_bytes())?;
+        write_meta(
+            ctx,
+            &Meta {
+                network_id: l.id.clone(),
+                name: name.into(),
+                server: server_of(&l.url),
+                url: l.url.clone(),
+                root_anchor_fingerprint: l.anchor_fingerprint.clone(),
+                device_id: l.device_id.clone(),
+                device_fingerprint: l.device_fingerprint.clone(),
+                interface: l.interface.clone(),
+                listen_port: l.port,
+                created: now(),
+                join_status: "aprobada".into(),
+                service_backend: None,
+            },
+        )?;
+        // Sin agent.toml heredado, la unidad (ConditionPathExists) y launchd (PathState) no la relanzan.
+        std::fs::remove_file(&ctx.legacy).map_err(|e| io_err(&ctx.legacy, &e))?;
+        start(ctx, &l.id)
+    }
+
+    /// Devuelve los errores de la restauración (vacío si quedó todo como antes).
+    fn rollback(ctx: &Ctx, l: &Legacy, prior: Prior, moved: &[(PathBuf, PathBuf)]) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Some(m) = read_metas(ctx)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| m.network_id == l.id)
+        {
+            // Puede haber llegado a arrancar; la limpieza del servicio la hace su ExecStopPost.
+            let _ = stop(ctx, &m);
+            let _ = network_service::remove(backend(ctx, &m), &m.network_id);
+        }
+        for (src, to) in moved.iter().rev() {
+            if let Err(e) = std::fs::rename(to, src) {
+                errors.push(io_err(to, &e));
+            }
+        }
+        if !ctx.legacy.exists()
+            && let Err(e) = write_file(&ctx.legacy, l.mode, l.text.as_bytes())
+        {
+            errors.push(e);
+        }
+        // Con algún fallo se conserva el directorio nuevo: contiene el respaldo y las claves no devueltas.
+        if errors.is_empty() {
+            let _ = std::fs::remove_dir_all(ctx.net_dir(&l.id));
+            let _ = std::fs::remove_dir_all(ctx.run_dir(&l.id));
+            if let Err(e) = restart_legacy(ctx, l, prior) {
+                errors.push(format!("no se pudo reiniciar la instalación heredada: {e}"));
+            }
+        }
+        errors
+    }
+
+    pub fn migrate_legacy(
+        ctx: &Ctx,
+        name: Option<String>,
+        yes: bool,
+        input: &mut dyn BufRead,
+        interactive: bool,
+    ) -> Result<(), String> {
+        network_service::root_required()?;
+        migrate_with(ctx, name.as_deref(), yes, input, interactive, &up_locked)
+    }
+
+    fn migrate_with(
+        ctx: &Ctx,
+        name: Option<&str>,
+        yes: bool,
+        input: &mut dyn BufRead,
+        interactive: bool,
+        start: &dyn Fn(&Ctx, &str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let (l, name) = plan(ctx, name)?;
+        println!(
+            "Red:            {name}\nServidor:       {}\nId de la red:   {}\nHuella de la raíz: {}",
+            server_of(&l.url),
+            l.id,
+            l.anchor_fingerprint
+        );
+        println!(
+            "AVISO: se PARARÁ la instancia heredada y el túnel se cortará unos segundos; las claves se MUEVEN a la red nueva (no se copian). Si algo falla, se restaura la heredada."
+        );
+        confirm(
+            "¿Importar la instalación heredada?",
+            yes,
+            interactive,
+            input,
+        )?;
+        if !ctx.root.exists() {
+            mkdir(&ctx.root, 0o755, true)?;
+        }
+        let _lock = root_lock(ctx)?;
+        // Otro proceso pudo cambiar el estado mientras se confirmaba.
+        let (l, name) = plan(ctx, Some(&name))?;
+        let prior = legacy_prior(ctx, &l);
+        let mut moved = Vec::new();
+        if let Err(e) = apply(ctx, &l, &name, prior, &mut moved, start) {
+            let left = rollback(ctx, &l, prior, &moved);
+            return Err(if left.is_empty() {
+                format!(
+                    "{e}. Se ha restaurado la instalación heredada; no se ha dejado nada de la red nueva"
+                )
+            } else {
+                format!(
+                    "{e}. La restauración NO se completó ({}); se conserva {} con el respaldo legacy-agent.toml.bak",
+                    left.join("; "),
+                    ctx.net_dir(&l.id).display()
+                )
+            });
+        }
+        println!(
+            "Instalación heredada importada como la red «{name}» ({}).\nRespaldo: {}\nSocket de estado nuevo: {}",
+            l.id,
+            ctx.net_dir(&l.id).join("legacy-agent.toml.bak").display(),
+            ctx.run_dir(&l.id).join("status.sock").display()
         );
         Ok(())
     }
@@ -1548,6 +2045,258 @@ mod imp {
             assert!(c.device_dir(C).join("noise.key").exists());
             assert!(c.net_dir(C).join("network.json").exists());
             assert!(c.run_dir(C).exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        const LEGACY_ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
+
+        /// Heredada sintética: claves, estado y `agent.toml` dentro de `d/old`; nada fuera del directorio temporal.
+        fn legacy_fixture(d: &Path) -> String {
+            let old = d.join("old");
+            std::fs::create_dir_all(old.join("state")).unwrap();
+            std::fs::write(old.join("noise.key"), "n").unwrap();
+            std::fs::write(old.join("identity.key"), "i").unwrap();
+            std::fs::write(old.join("config.bin"), "c").unwrap();
+            std::fs::write(old.join("state/x"), "s").unwrap();
+            std::fs::set_permissions(
+                old.join("noise.key"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+            let text = format!(
+                r#"interface = "atenea0"
+listen = "0.0.0.0:51830"
+ipc_socket = "{o}/control.sock"
+status_socket = "{o}/status.sock"
+status_gid = 545
+noise_key_file = "{o}/noise.key"
+identity_key_file = "{o}/identity.key"
+config_file = "{o}/config.bin"
+state_dir = "{o}/state"
+network_id = "0123456789abcdef0123456789abcdef"
+device_id = "{dev}"
+trust_anchor = "{anchor}"
+[sync]
+url = "https://control.example.test"
+"#,
+                o = old.display(),
+                dev = "ab".repeat(16),
+                anchor = "07".repeat(32)
+            );
+            std::fs::write(d.join("legacy.toml"), &text).unwrap();
+            std::fs::set_permissions(
+                d.join("legacy.toml"),
+                std::fs::Permissions::from_mode(0o640),
+            )
+            .unwrap();
+            text
+        }
+
+        fn migrate(
+            c: &Ctx,
+            name: Option<&str>,
+            start: &dyn Fn(&Ctx, &str) -> Result<(), String>,
+        ) -> Result<(), String> {
+            migrate_with(c, name, true, &mut Cursor::new(""), false, start)
+        }
+
+        fn mode(p: &Path) -> u32 {
+            std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+        }
+
+        #[test]
+        fn migrate_legacy_moves_keys_rewrites_config_and_is_idempotent() {
+            let d = temp("migra");
+            let c = ctx(&d);
+            let text = legacy_fixture(&d);
+            migrate(&c, None, &|_, _| Ok(())).unwrap();
+            let net = c.net_dir(LEGACY_ID);
+            let dev = c.device_dir(LEGACY_ID);
+            assert!(!c.legacy.exists());
+            assert_eq!((mode(&net), mode(&dev)), (0o711, 0o700));
+            assert_eq!(mode(&dev.join("noise.key")), 0o600);
+            assert_eq!(std::fs::read_to_string(dev.join("state/x")).unwrap(), "s");
+            assert_eq!(
+                std::fs::read_to_string(dev.join("config.bin")).unwrap(),
+                "c"
+            );
+            assert_eq!(
+                std::fs::read_to_string(net.join("legacy-agent.toml.bak")).unwrap(),
+                text
+            );
+            assert_eq!(mode(&net.join("legacy-agent.toml.bak")), 0o600);
+            let mut all = Vec::new();
+            files(&d, &mut all);
+            let keys: Vec<_> = all
+                .iter()
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n == "noise.key" || n == "identity.key")
+                })
+                .collect();
+            assert_eq!(keys.len(), 2, "claves duplicadas o perdidas: {keys:?}");
+            assert!(keys.iter().all(|p| p.starts_with(&dev)));
+            let cfg: toml::Table =
+                toml::from_str(&std::fs::read_to_string(dev.join("agent.toml")).unwrap()).unwrap();
+            let run = c.run_dir(LEGACY_ID);
+            assert_eq!(
+                cfg["ipc_socket"].as_str().unwrap(),
+                run.join("control.sock").to_str().unwrap()
+            );
+            assert_eq!(
+                cfg["status_socket"].as_str().unwrap(),
+                run.join("status.sock").to_str().unwrap()
+            );
+            assert_eq!(
+                cfg["noise_key_file"].as_str().unwrap(),
+                dev.join("noise.key").to_str().unwrap()
+            );
+            assert_eq!(cfg["resolver_owner"].as_str().unwrap(), "89abcdef");
+            assert_eq!(cfg["status_gid"].as_integer(), Some(545));
+            assert_eq!(cfg["listen"].as_str().unwrap(), "0.0.0.0:51830");
+            assert_eq!(cfg["interface"].as_str().unwrap(), "atenea0");
+            let metas = read_metas(&c).unwrap();
+            assert_eq!(metas.len(), 1);
+            let m = &metas[0];
+            assert_eq!(
+                (m.name.as_str(), m.join_status.as_str()),
+                ("control.example.test", "aprobada")
+            );
+            assert_eq!((m.listen_port, m.interface.as_str()), (51830, "atenea0"));
+            assert_eq!(m.device_id, uuid(&[0xab; 16]));
+            let mut out = Vec::new();
+            legacy(&c, true, &mut out).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), "{\"present\":false}\n");
+            // Idempotente: sin heredada, error claro; con la misma red ya importada, también.
+            let err = migrate(&c, None, &|_, _| Ok(())).unwrap_err();
+            assert!(err.contains("no hay instalación heredada"), "{err}");
+            std::fs::write(&c.legacy, &text).unwrap();
+            let err = migrate(&c, None, &|_, _| Ok(())).unwrap_err();
+            assert!(err.contains("ya está importada"), "{err}");
+            assert_eq!(std::fs::read_to_string(&c.legacy).unwrap(), text);
+            assert_eq!(read_metas(&c).unwrap().len(), 1);
+            let mut out = Vec::new();
+            legacy(&c, false, &mut out).unwrap();
+            assert!(
+                String::from_utf8(out)
+                    .unwrap()
+                    .contains("No hay instalación heredada")
+            );
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn migrate_legacy_failure_restores_everything() {
+            let d = temp("migra-falla");
+            let c = ctx(&d);
+            let text = legacy_fixture(&d);
+            let err =
+                migrate(&c, Some("Casa"), &|_, _| Err("arranque simulado".into())).unwrap_err();
+            assert!(
+                err.contains("arranque simulado") && err.contains("restaurado"),
+                "{err}"
+            );
+            assert_eq!(std::fs::read_to_string(&c.legacy).unwrap(), text);
+            assert_eq!(mode(&c.legacy), 0o640);
+            let old = d.join("old");
+            assert_eq!(std::fs::read_to_string(old.join("noise.key")).unwrap(), "n");
+            assert_eq!(mode(&old.join("noise.key")), 0o600);
+            assert_eq!(std::fs::read_to_string(old.join("state/x")).unwrap(), "s");
+            assert!(std::fs::read_to_string(old.join("identity.key")).is_ok());
+            assert!(std::fs::read_to_string(old.join("config.bin")).is_ok());
+            assert!(!c.net_dir(LEGACY_ID).exists());
+            assert!(read_metas(&c).unwrap().is_empty());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn migrate_legacy_validations_do_not_touch_disk() {
+            let d = temp("migra-valida");
+            let c = ctx(&d);
+            let text = legacy_fixture(&d);
+            let snapshot = |d: &Path| {
+                let mut v = Vec::new();
+                files(d, &mut v);
+                v.sort();
+                v
+            };
+            let before = snapshot(&d);
+            let boom = |_: &Ctx, _: &str| -> Result<(), String> { panic!("no debe arrancar") };
+            for bad in [
+                text.replace("0123456789abcdef0123456789abcdef", "0123456789abcdef"),
+                text.replace(&"07".repeat(32), "zz"),
+                text.replace("[sync]\nurl = \"https://control.example.test\"\n", ""),
+                text.replace("identity.key", "falta.key"),
+                text.replace("listen = \"0.0.0.0:51830\"", "listen = \"x\""),
+            ] {
+                std::fs::write(&c.legacy, &bad).unwrap();
+                assert!(migrate(&c, None, &boom).is_err());
+                assert!(!c.root.exists(), "se creó la raíz");
+                assert_eq!(snapshot(&d), before);
+            }
+            std::fs::write(&c.legacy, &text).unwrap();
+            for name in ["", "   ", "x\ny"] {
+                assert!(
+                    migrate(&c, Some(name), &boom)
+                        .unwrap_err()
+                        .contains("nombre")
+                );
+            }
+            assert!(!c.root.exists());
+            // Un solo `yes` faltante: sin terminal ni --yes se niega sin cambiar nada.
+            let err =
+                migrate_with(&c, None, false, &mut Cursor::new(""), false, &boom).unwrap_err();
+            assert!(err.contains("--yes"), "{err}");
+            assert!(!c.root.exists());
+            assert_eq!(snapshot(&d), before);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn migrate_legacy_refuses_short_id_collision_and_duplicate_name() {
+            let d = temp("migra-colision");
+            let c = ctx(&d);
+            legacy_fixture(&d);
+            let boom = |_: &Ctx, _: &str| -> Result<(), String> { panic!("no debe arrancar") };
+            // Mismo id8 (`89abcdef`) que la heredada, otro UUID.
+            put_meta(
+                &c,
+                &fake_meta(
+                    "22222222-2222-2222-2222-222289abcdef",
+                    "Otra",
+                    "atenea1",
+                    51821,
+                    1,
+                ),
+            );
+            let err = migrate(&c, None, &boom).unwrap_err();
+            assert!(err.contains("id corto"), "{err}");
+            std::fs::remove_dir_all(c.net_dir("22222222-2222-2222-2222-222289abcdef")).unwrap();
+            put_meta(&c, &fake_meta(A, "Casa", "atenea1", 51821, 1));
+            let err = migrate(&c, Some("casa"), &boom).unwrap_err();
+            assert!(err.contains("ya hay una red"), "{err}");
+            assert!(c.legacy.exists() && !c.net_dir(LEGACY_ID).exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn legacy_reports_presence_as_json_and_text() {
+            let d = temp("legacy-json");
+            let c = ctx(&d);
+            let mut out = Vec::new();
+            legacy(&c, true, &mut out).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), "{\"present\":false}\n");
+            legacy_fixture(&d);
+            let mut out = Vec::new();
+            legacy(&c, true, &mut out).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), "{\"present\":true}\n");
+            let mut out = Vec::new();
+            legacy(&c, false, &mut out).unwrap();
+            assert!(
+                String::from_utf8(out)
+                    .unwrap()
+                    .contains("pendiente de importar")
+            );
             std::fs::remove_dir_all(d).unwrap();
         }
     }

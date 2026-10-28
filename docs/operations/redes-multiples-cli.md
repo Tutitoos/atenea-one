@@ -73,6 +73,29 @@ Las redes llevan `resolver_owner = "<id8>"` en su TOML; los resolutores tienen l
 
 El desinstalador retira servicios/plists y limpia cada red sin borrar sus claves ni directorios; `postinstall` conserva el comportamiento heredado y reinicia solo las redes cargadas, no las deshabilitadas, esperando a que cada servicio quede descargado antes de volver a cargarlo (`bootout` es asíncrono). Esto se comprobó en la CI de macOS; **no ejecutar `tests/macos/run.sh`, `postinstall`, desinstaladores ni `launchctl` en el equipo del piloto**. La CI no ejercita en macOS `network_overlap` ni `dns_domain_conflict` (solo pruebas unitarias y, el solape, el laboratorio de Linux).
 
+## Migrar la instalación heredada (ADR-013 §10)
+
+Una red = una instancia. La instalación heredada (un único `agent.toml`) se importa como una red más; sin redes unidas el equipo no está conectado a nada. Todos los valores de los ejemplos son sintéticos.
+
+```sh
+atenea network legacy [--json]                      # sin root: {"present": true|false}
+sudo atenea network migrate-legacy [--name EQUIPO] [--yes]
+```
+
+- **`legacy`** solo comprueba con `Path::exists` si existe el `agent.toml` heredado (`/etc/atenea/agent.toml` o `/Library/Application Support/Atenea/agent.toml`) y que su red no esté ya importada. Texto: «Hay una instalación heredada pendiente de importar» / «No hay instalación heredada».
+- **`migrate-legacy`** (root; Windows: «no soportado») valida todo antes de tocar nada (UUID bien formado, sin colisión de id corto con otras redes, claves presentes, nombre válido y no repetido; sin `--name` se usa el servidor), **muestra red, servidor y huella de la raíz y avisa de que se parará la instancia heredada y el túnel se cortará unos segundos**. Sin terminal y sin `--yes` se niega. Después: para y deshabilita la heredada (systemd `disable --now` / launchd `disable`+`bootout`) y ejecuta `cleanup`; **mueve** (no copia) claves, `bundle.bin`, `config.bin` y `state/` a `<raíz>/<uuid>/device/`; reescribe `agent.toml` con rutas nuevas, sockets en `<run>/<id8>/`, `resolver_owner = <id8>`, mismo puerto UDP, interfaz y `status_gid`; escribe `network.json` (`join_status = aprobada`); deja el respaldo `<raíz>/<uuid>/legacy-agent.toml.bak` (0600); borra el `agent.toml` heredado y arranca la red como cualquier otra (`network up`).
+- **Si algo falla después de parar la heredada**, se devuelven los ficheros, se borra el directorio de red a medias y se reinicia la heredada; el error lo cuenta. Si la restauración misma falla, se conserva el directorio nuevo (con el respaldo) y el error lo dice. Repetirlo con la red ya importada da un error claro sin cambios.
+- **La heredada no vuelve sola:** sin `agent.toml` heredado, `atenea-agent.service` no arranca (`ConditionPathExists=/etc/atenea/agent.toml`) y `one.atenea.agent` tampoco (`KeepAlive/PathState` sobre su `agent.toml`; además queda deshabilitada). El `.deb` solo reinicia en una actualización las unidades que estaban activas (`prerm` registra las activas; `postinst` arranca únicamente esas), y el `.pkg` solo recarga `one.atenea.agent` si `agent.toml` existe (`postinstall`); ninguno la resucita.
+- **Un host que nunca migra** sigue funcionando igual.
+
+### Reversión manual
+
+Con la red ya importada (`<id>` = su UUID): `sudo atenea network down <id>`; `sudo atenea network leave` **no** (borraría las claves). En su lugar: mover `<raíz>/<id>/device/{noise.key,identity.key,bundle.bin,config.bin,state}` a las rutas de `legacy-agent.toml.bak`, copiar ese fichero a la ruta heredada con el modo original (0640 root:atenea en Linux), quitar el drop-in/plist de la red (`/etc/systemd/system/atenea-network@<id>.service.d` o `/Library/LaunchDaemons/one.atenea.network.<id8>.plist`), borrar `<raíz>/<id>` y arrancar la heredada (`systemctl enable --now atenea-agent` / `launchctl enable system/one.atenea.agent` + `bootstrap`). Hazlo con el equipo sin tráfico crítico.
+
+### Herramientas que cambian de ruta
+
+El socket de estado heredado `/var/run/atenea/status.sock` (macOS) o `/run/atenea/status.sock` (Linux) **deja de existir**; el nuevo es `<run>/<id8>/status.sock` (el `<id8>` son los 8 últimos hex del UUID). Hay que actualizar: los scripts de soak del propietario, `atenea status --socket …` y `ATENEA_STATUS_SOCKET` de la aplicación (que lee el estado de las redes por `network list --json`). Los sockets de control pasan igual a `<run>/<id8>/control.sock`; `journalctl -u atenea-agent` pasa a `journalctl -u atenea-network@<UUID>`; en macOS el registro pasa de `/var/log/atenea-agent.log` a `<raíz>/<uuid>/device/agent.log`.
+
 ## Aplicación de escritorio
 
 La sección **Redes** de la aplicación (ADR-013 fase 4, [ADR-011 §2](../architecture/ADR-011-aplicacion-de-escritorio.md)) usa solo estos comandos: `list --json` y `inspect --json` sin privilegios, y `join`, `up`, `down` y `leave` con la autorización del sistema operativo (macOS: diálogo de administrador; Linux: `pkexec`) en cada operación. Unirse ejecuta `join … --yes --status-gid <grupo primario del usuario>` y a continuación `up`, en una sola autorización. El token de un código con token es visible un instante en la línea de órdenes de esa operación. Windows no está soportado. **La elevación real no se ha probado**; consulta los límites de ADR-013 §9.
@@ -99,6 +122,8 @@ tests/network-lab/run-two-networks.sh   # requiere Docker y la imagen atenea-lab
 Control plane real, PostgreSQL 17, Dex y un cliente unido con `atenea network join` a dos redes (A con código de token, B con código de solicitud aprobado comparando la huella) más un peer por red, y una tercera red de CIDR solapado. Comprueba: claves distintas, interfaz/puerto/sockets propios, ping en ambas, aislamiento (ni el cliente ni los pares cruzan A↔B, con captura), `leave` de A sin pérdida en B ni cambios en sus ficheros y recursos, revocación de B sin afectar a A, código manipulado rechazado sin tocar disco y red solapada en `conflicto`. Detalles y límites en `tests/network-lab/README.md`. Usa contenedores privilegiados; no ejecutarlo en una máquina con cargas de producción.
 
 El ensayo de servicios Linux se ejecuta con `ATENEA_PACKAGING_IMAGE=atenea-infra:local ATENEA_PACKAGING_NO_DNS=1 tests/packaging/run.sh`: systemd PID 1, instalación/actualización/retirada del `.deb`, legacy más dos redes, TCP real, habilitación y `daemon-reexec`, conservando claves tras remove/purge. Se reutiliza una imagen existente sin red ni descargas. **No se ejercita DNS dividido con systemd-resolved ni shellcheck en este modo**; el ensayo completo por defecto sigue requiriendo la imagen de `tests/packaging/Dockerfile`, reservada a CI o preaprovisionamiento autorizado.
+
+El mismo ensayo termina migrando la heredada (`tests/packaging/migrate-legacy.sh`, con systemd y dpkg reales): comprueba la negativa sin `--yes`, la validación previa sin parar nada, que la red queda conectada por `atenea-network@<UUID>` (tráfico firmado, mismo puerto e interfaz), que la unidad heredada queda inactiva, deshabilitada y sin `agent.toml`, que no vuelve con `systemctl start`, `daemon-reexec` ni una actualización del `.deb`, la idempotencia y que remove/purge conservan las claves migradas. No ejerce el camino de restauración con systemd (solo las pruebas unitarias, en modo proceso) ni macOS.
 
 ## Fuzzing del código
 

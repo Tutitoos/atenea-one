@@ -131,3 +131,27 @@ Dos piezas nuevas del CLI sostienen la app: `atenea network inspect <código> [-
 Defectos que la prueba sacó y que **`v0.1.3` contiene**: (1) en macOS `network join` asignaba `atenea0` y el agente solo acepta `utun`/`utunN` (el servicio se reiniciaba sin parar); (2) `postinstall` dejaba `/Library/Application Support/Atenea` en `0700` y `network list` sin root fallaba, de modo que la app no veía ninguna red. Corregidos en `cc5c860` (aún sin publicar: requiere una versión nueva); la prueba usó el CLI compilado de ese commit junto al agente firmado de 0.1.3. La CI de macOS no los detectó porque su escenario escribe sus propias configuraciones y no pasa por `join` ni por una lectura sin root.
 
 **Sin comprobar:** el flujo completo con los binarios publicados (hace falta v0.1.4); `pkexec` en Linux; que dos redes conecten **con pares** a la vez (`red-prueba` solo tenía este dispositivo); un conflicto real de CIDR; el efecto en el soak; el menú de la bandeja con dos redes pulsado con el ratón; `leave` no revoca (hubo que revocar a mano el dispositivo de la primera unión).
+
+## 10. Migración de la instancia heredada (decisión del responsable, 2026-10-28)
+
+**Decisión.** La instancia heredada (un único `agent.toml`: `/etc/atenea/agent.toml` en Linux, `/Library/Application Support/Atenea/agent.toml` en macOS; servicio `atenea-agent.service` / `one.atenea.agent`; sockets `<run>/control.sock` y `<run>/status.sock`) deja de ser un caso especial: **una red = una instancia del modelo de redes**. Sin redes unidas el equipo no está conectado a nada, y la red del piloto aparece en «Redes» como cualquier otra (Conectar, Desconectar, Salir). El concepto «Predeterminada» desaparece de la aplicación.
+
+**Mecanismo.** `sudo atenea network migrate-legacy [--name NOMBRE] [--yes]` importa la heredada: valida todo sin tocar nada, pide confirmación (red, servidor, huella de la raíz y aviso de que **se para la instancia heredada y el túnel se corta unos segundos**), la para y limpia con su gestor, **mueve** las claves, `config.bin` y `state` a `<raíz>/<uuid>/device/`, reescribe un `agent.toml` con rutas y sockets por red (`<run>/<id8>/`, `resolver_owner = <id8>` en macOS; mismo puerto UDP, interfaz y `status_gid`), escribe `network.json` (`join_status = aprobada`), deja un respaldo del `agent.toml` heredado en `<raíz>/<uuid>/legacy-agent.toml.bak` (0600) y arranca la red con `network up` (servicio por red). Las claves **no se copian**: se mueven, de modo que no quedan duplicadas fuera del directorio nuevo. `atenea network legacy [--json]` (sin root) solo informa de si hay una heredada pendiente (`{"present": bool}`); la aplicación lo usa para ofrecer la importación.
+
+**Alternativas.**
+
+- **A. Mostrar la heredada en «Redes» sin migrarla** — *descartada* por el responsable: mantiene dos modelos (sockets, servicios, rutas de configuración y «Predeterminada») en la CLI, la aplicación, el empaquetado y los scripts externos, y la acción «Salir» no tendría un significado único.
+- **B. Copiar en lugar de mover** — descartada: duplicaría claves privadas y dejaría una identidad activa en dos sitios.
+- **C. Migrar sin parar la heredada** — imposible: comparten interfaz, puerto UDP, resolutor y rutas.
+
+**Riesgos y mitigaciones.**
+
+- *Corte del túnel* durante la parada y el arranque (segundos): se avisa en la confirmación; es la única operación disruptiva y exige `--yes` o confirmación interactiva.
+- *Fallo a mitad*: si algo falla **después** de parar la heredada, se restauran los ficheros movidos, se borra el directorio de red a medias y se reinicia la heredada; el error se informa. Si el fallo es del arranque de la red nueva, se deshace igual (el servicio por red deja de arrancar, la heredada vuelve).
+- *Id corto repetido* (últimos 8 hex del UUID) con una red existente: se rechaza antes de tocar nada, porque los sockets y las etiquetas se derivan de él.
+- *Idempotencia*: si ya hay una red migrada con ese id, error claro sin cambios; sin `agent.toml` heredado no hay nada que migrar.
+- *Rearranque espontáneo de la heredada*: sin `agent.toml` heredado la unidad systemd (`ConditionPathExists`) y el `PathState` de launchd impiden arrancarla; además se la deshabilita (`disable`).
+
+**Reversibilidad.** Parcial y manual: el respaldo `legacy-agent.toml.bak` conserva la configuración; revertir es `network down`, mover `device/` a la ruta heredada, restaurar el `agent.toml` y habilitar el servicio heredado (procedimiento en [redes-multiples-cli.md](../operations/redes-multiples-cli.md)). No hay reversión automática tras terminar con éxito.
+
+**Límites.** Solo Linux y macOS (Windows: «no soportado»). Herramientas externas que leían `/var/run/atenea/status.sock` (scripts de soak, `atenea status --socket`, `ATENEA_STATUS_SOCKET` de la aplicación) deben apuntar a `<run>/<id8>/status.sock`. Un host que nunca migra sigue funcionando exactamente igual. **Sin comprobar** en un Mac real (solo pruebas unitarias y el ensayo Linux con systemd real).
