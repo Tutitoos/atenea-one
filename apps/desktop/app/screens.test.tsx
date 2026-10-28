@@ -120,6 +120,24 @@ it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y
   expect(screen.getByRole('status')).toHaveTextContent('Degradado');
 });
 
+it('un dispositivo marcado como servidor lleva la etiqueta, se puede buscar por ella y se desmarca', async () => {
+  serve(agent());
+  app(`/devices/${'a'.repeat(64)}`);
+  const mark = await screen.findByRole('checkbox', { name: /Marcar como servidor/ });
+  expect(mark).not.toBeChecked();
+  expect(screen.queryByText('Servidor', { selector: 'span span' })).not.toBeInTheDocument();
+  await userEvent.click(mark);
+  expect(mark).toBeChecked();
+  const list = screen.getByRole('link', { name: /servidor-vps/ });
+  expect(within(list).getByText('Servidor')).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem('atenea-servers') ?? '[]')).toEqual(['a'.repeat(64)]);
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar dispositivos' }), 'servidor');
+  expect(screen.getByRole('link', { name: /servidor-vps/ })).toBeInTheDocument();
+  await userEvent.click(mark);
+  expect(within(screen.getByRole('link', { name: /servidor-vps/ })).queryByText('Servidor')).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem('atenea-servers') ?? '[]')).toEqual([]);
+});
+
 it('la búsqueda filtra por IP y avisa si no hay resultados', async () => {
   serve(agent());
   app();

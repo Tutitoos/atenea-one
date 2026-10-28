@@ -6,6 +6,7 @@ import type { Rate } from '../lib/agent';
 import { ago, bytes, host, ipKind, levelTone, num, pathLabel, peerName, selfName, serverTone, text, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
+import { setServer, useServers } from '../lib/roles';
 import type { Peer, Reply } from '../lib/status';
 import { Card, CopyButton, Dot, Empty, Heading, Row, Stack } from '../ui';
 
@@ -103,6 +104,7 @@ function ServerDetail({ status }: { status: Reply['status'] }) {
 
 function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
   const names = useNames();
+  const isServer = useServers().includes(peer.public_key);
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
   const ready = peer.paths.filter((p) => p.ready).map((p) => p.kind).join(', ');
@@ -112,6 +114,10 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
       <Title id={peer.public_key} name={peerName(peer, names)} editable />
       <State tone={tone}>{label}</State>
       <Addresses addrs={peer.addrs} />
+      <label className="mb-1 flex cursor-default items-center gap-2 text-sm">
+        <input type="checkbox" checked={isServer} onChange={(e) => setServer(peer.public_key, e.target.checked)} />
+        Marcar como servidor (solo en este equipo)
+      </label>
       <Heading>Detalles</Heading>
       <Card>
         <Row label="Nombre en la red">{peer.name}</Row>

@@ -5,9 +5,10 @@ import { NavLink, Outlet } from 'react-router';
 import { host, levelTone, pathLabel, peerName, selfName, serverTone, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { useNames } from '../lib/names';
+import { useServers } from '../lib/roles';
 import { Dot, Empty, NoNetworks } from '../ui';
 
-type Entry = { id: string; name: string; addr: string; tone: Tone; haystack: string };
+type Entry = { id: string; name: string; addr: string; tone: Tone; haystack: string; badge?: string };
 
 function Group({ title, entries }: { title: string; entries: Entry[] }) {
   if (!entries.length) return null;
@@ -18,7 +19,7 @@ function Group({ title, entries }: { title: string; entries: Entry[] }) {
         <NavLink key={e.id} to={`/devices/${encodeURIComponent(e.id)}`} className={({ isActive }) => `flex cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}>
           <Dot tone={e.tone} />
           <span>
-            <span className="block text-sm">{e.name}</span>
+            <span className="block text-sm">{e.name}{e.badge && <span className="ml-1.5 rounded bg-fg/15 px-1.5 py-px align-middle text-[10px] font-medium uppercase tracking-wide">{e.badge}</span>}</span>
             {e.addr && <span className="block text-xs opacity-70">{e.addr}</span>}
           </span>
         </NavLink>
@@ -30,12 +31,13 @@ function Group({ title, entries }: { title: string; entries: Entry[] }) {
 export default function Devices() {
   const agent = useAgent();
   const names = useNames();
+  const servers = useServers();
   const [query, setQuery] = useState('');
   const sample = agent.sample;
   const status = sample?.reply.status;
 
   const self: Entry[] = status && sample ? [{ id: 'self', name: selfName(status, names), addr: status.addrs[0] ?? '', tone: levelTone(sample.reply.health.level), haystack: `${selfName(status, names)} ${status.hostname ?? ''} este dispositivo ${status.addrs.join(' ')} ${status.public_key}` }] : [];
-  const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}` }));
+  const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, badge: servers.includes(p.public_key) ? 'Servidor' : undefined, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}${servers.includes(p.public_key) ? ' servidor' : ''}` }));
   // El servidor al que está conectado el agente (control plane + coordinator), separado de los pares de la malla.
   const serverHost = host(status?.sync?.url);
   const server: Entry[] = status && serverHost ? [{ id: 'server', name: serverHost, addr: 'Control plane, coordinator y relay', tone: serverTone(status), haystack: serverHost }] : [];
