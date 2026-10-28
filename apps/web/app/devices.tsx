@@ -1,38 +1,126 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useTable, tableFeatures, flexRender, type ColumnDef } from '@tanstack/react-table';
+import { Fragment, useState } from 'react';
 import { api, type Model } from '@atenea/api-client';
-import { ActionForm, Dialog, Empty, RunButton } from './ui';
-import { connection, endpointsSchema, nameSchema } from './domain';
-const features = tableFeatures({});
-export function Devices({ devices, accessRole: role, net, elapsed, refresh, routes = [] }: { devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number; refresh: () => Promise<unknown>; routes?: Model<'Route'>[] }) {
-  const columns: ColumnDef<typeof features, Model<'Device'>>[] = [
-    { accessorKey: 'name', header: 'Dispositivo' },
-    { accessorKey: 'role', header: 'Tipo', cell: ({ row }) => row.original.role === 'server' ? 'Servidor' : 'Dispositivo' },
-    { accessorKey: 'status', header: 'Estado', cell: ({ row }) => <>{row.original.status}{row.original.status === 'pending' && row.original.join_origin === 'request' && <p><strong>Solicitud de unión</strong></p>}</> },
-    { id: 'connection', header: 'Conexión declarada', cell: ({ row }) => connection(row.original.report, elapsed) },
-    { id: 'paths', header: 'Caminos declarados / antigüedad', cell: ({ row }) => row.original.report ? <>{row.original.report.paths.map(p => <div key={p.peer}>{p.peer}: {p.path} · último RX {p.last_rx_secs === null || p.last_rx_secs === undefined ? 'desconocido' : `${p.last_rx_secs + (row.original.report?.age_secs ?? 0) + elapsed} s`} {p.rtt_ms != null && `· RTT ${p.rtt_ms} ms`}</div>)}<small>Informe hace {row.original.report.age_secs + elapsed} s</small></> : 'Sin informe' },
-    { id: 'routing', header: 'Rutas / DNS / forwarding declarados', cell: ({ row }) => {
-      const device = row.original;
-      const report = device.report;
-      if (!report) return 'Sin informe del agente';
-      return <><p>Forwarding: {report.forwarding_ok == null ? 'desconocido' : report.forwarding_ok ? 'correcto' : 'desactivado'}</p><p>DNS: {report.dns ?? 'desconocido'}</p>{report.forwarding_ok === false && routes.some(route => route.device_id === device.id && route.status === 'approved') && <p className="warning" role="status">Este router tiene rutas aprobadas pero declara forwarding desactivado; no puede reenviar tráfico de la LAN.</p>}{report.routes?.map(route => <div key={route.prefix}><code>{route.prefix}</code>: {route.state === 'installed' ? 'instalada' : route.state === 'conflict' ? 'conflicto' : 'pendiente'}{route.reason && ` · ${route.reason}`}</div>)}{!report.routes?.length && <p>Sin rutas informadas</p>}<small>Declarado por el agente hace {report.age_secs + elapsed} s; no verificado independientemente.</small></>;
-    } },
-    { id: 'ips', header: 'IPs', cell: ({ row }) => <>{row.original.ipv4 ?? '—'}<br/>{row.original.ipv6 ?? '—'}</> },
-    { accessorKey: 'fingerprint', header: 'Huella', cell: ({ row }) => <code>{row.original.fingerprint}</code> },
-    { id: 'actions', header: 'Acciones', cell: ({ row }) => { const d = row.original; const params = { path: { net, dev: d.id } }; return role === 'member' ? 'Solo lectura' : <div className="actions">{d.status !== 'revoked' && <Dialog trigger={d.status === 'pending' ? 'Aprobar' : 'Revocar'} title={`${d.status === 'pending' ? 'Aprobar' : 'Revocar'} ${d.name}`} description="Compara esta huella por otro canal antes de confirmar."><code>{d.fingerprint}</code><RunButton run={async () => { if (d.status === 'pending') await api.POST('/api/v1/networks/{net}/devices/{dev}/approve', { params }); else await api.POST('/api/v1/networks/{net}/devices/{dev}/revoke', { params }); await refresh(); }}>Confirmar {d.status === 'pending' ? 'aprobación' : 'revocación'}</RunButton></Dialog>}<Dialog trigger="Editar" title={`Editar ${d.name}`} description="Los endpoints son direcciones públicas declaradas por el administrador; máximo cuatro."><ActionForm label="Guardar dispositivo" fields={[{ name: 'name', label: 'Nombre', value: d.name }, { name: 'endpoints', label: 'Endpoints separados por coma', value: d.endpoints.join(', '), required: false }]} submit={async v => { const endpoints = endpointsSchema.parse(v.endpoints.trim() ? v.endpoints.split(',').map(s => s.trim()) : []); await api.PATCH('/api/v1/networks/{net}/devices/{dev}', { params, body: { name: nameSchema.parse(v.name), endpoints } }); await refresh(); }}/></Dialog>{(role === 'admin' || role === 'owner') && <Dialog trigger="Cambiar tipo" title={`Cambiar tipo de ${d.name}`} description="El tipo solo afecta a la presentación, no concede permisos ni forma parte de la configuración firmada."><p>{d.role === 'server' ? 'Servidor → Dispositivo' : 'Dispositivo → Servidor'}</p><RunButton run={async () => { await api.PATCH('/api/v1/networks/{net}/devices/{dev}', { params, body: { role: d.role === 'server' ? 'device' : 'server' } }); await refresh(); }}>Confirmar cambio de tipo</RunButton></Dialog>}</div>; } },
-  ];
-  const table = useTable({ features, data: devices, columns, getRowId: device => device.id });
-  if (!devices.length) return <Empty>No hay dispositivos. Crea un token en Incorporar.</Empty>;
-  // Las plantillas son callbacks puros, no tipos de componente: el reloj no debe desmontar los diálogos.
-  return <div className="table-scroll">
-    <table>
-      <caption>Inventario · los caminos son declaraciones de los agentes</caption>
-      <thead>{table.getHeaderGroups().map(group => <tr key={group.id}>{group.headers.map(header => <th scope="col" key={header.id}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</th>)}</tr>)}</thead>
-      <tbody>{table.getRowModel().rows.map(row => <tr key={row.id}>{row.getAllCells().map(cell => {
-        const template = cell.column.columnDef.cell;
-        return <td key={cell.id}>{typeof template === 'function' ? template(cell.getContext()) : template}</td>;
-      })}</tr>)}</tbody>
-    </table>
+import {
+  Button, Card, ConfirmDialog, CopyButton, Dialog, EmptyState, Field, RunButton, StatusBadge,
+} from './ui';
+import { connection } from './domain';
+import { DeviceDetail } from './device-detail';
+
+const states = { pending: 'Pendiente', approved: 'Aprobado', revoked: 'Revocado' };
+const connectionLabels = { online: 'En línea', stale: 'Informe antiguo', offline: 'Sin conexión', unknown: 'Desconocida' };
+const tones = { online: 'ok', stale: 'warn', offline: 'bad', unknown: 'neutral' } as const;
+const columns = [
+  ['name', 'Nombre'], ['status', 'Estado'], ['connection', 'Conexión'], ['ip', 'IP'], ['activity', 'Última actividad'],
+] as const;
+type SortColumn = typeof columns[number][0];
+
+export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all' }: {
+  devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number;
+  refresh: () => Promise<unknown>; routes?: Model<'Route'>[]; status?: string;
+}) {
+  const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState(status);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [sort, setSort] = useState<{ column: SortColumn; descending: boolean }>({ column: 'name', descending: false });
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const canEdit = accessRole !== 'member';
+  const pending = devices.filter(device => device.status === 'pending');
+  const query = search.trim().toLocaleLowerCase('es');
+  const rows = devices.filter(device =>
+    (stateFilter === 'all' || device.status === stateFilter) &&
+    (typeFilter === 'all' || device.role === typeFilter) &&
+    [device.name, device.ipv4, device.ipv6, device.fingerprint].some(value => value?.toLocaleLowerCase('es').includes(query)),
+  );
+  const sortValue = (device: Model<'Device'>) => {
+    switch (sort.column) {
+      case 'name': return device.name;
+      case 'status': return states[device.status];
+      case 'connection': return connectionLabels[connection(device.report, elapsed)];
+      case 'ip': return device.ipv4 ?? device.ipv6 ?? '';
+      case 'activity': return device.report?.reported_at ?? '';
+    }
+  };
+  rows.sort((a, b) => sortValue(a).localeCompare(sortValue(b), 'es', { numeric: true }) * (sort.descending ? -1 : 1));
+  return <div className="devices-page">
+    {pending.length > 0 && <Card title={`Solicitudes pendientes (${pending.length})`} className="devices-pending">
+      <ul>{pending.map(device => {
+        const params = { path: { net, dev: device.id } };
+        return <li key={device.id}>
+          <div><h3>{device.name}</h3><p><span>{device.join_origin === 'request' ? 'Solicitud de unión' : 'Token de incorporación'}</span>
+            {' · '}<time dateTime={device.enrolled_at}>{new Date(device.enrolled_at).toLocaleString('es')}</time></p>
+            <p className="devices-fingerprint"><code>{device.fingerprint}</code>
+              <CopyButton value={device.fingerprint} label={`Copiar huella de ${device.name}`}/></p></div>
+          {canEdit ? <div className="actions">
+            <Dialog trigger="Aprobar" title={`Aprobar ${device.name}`}
+              description="Compara esta huella por otro canal antes de confirmar.">
+              <code className="devices-fingerprint">{device.fingerprint}</code>
+              <RunButton variant="primary" run={async () => {
+                await api.POST('/api/v1/networks/{net}/devices/{dev}/approve', { params });
+                await refresh();
+              }}>Confirmar aprobación</RunButton>
+            </Dialog>
+            <ConfirmDialog trigger="Rechazar" title={`Rechazar ${device.name}`}
+              description="No se podrá volver a aprobar esta solicitud. El dispositivo deberá iniciar una nueva incorporación."
+              label="Confirmar rechazo" confirm={async () => {
+                await api.POST('/api/v1/networks/{net}/devices/{dev}/revoke', { params });
+                await refresh();
+              }}/>
+          </div> : <p>Solo lectura</p>}
+        </li>;
+      })}</ul>
+    </Card>}
+    <Card title="Inventario">
+      <div className="devices-filters">
+        <Field label="Buscar dispositivos" help="Por nombre, IP o huella completa.">{props =>
+          <input {...props} type="search" value={search} onChange={event => setSearch(event.target.value)}/>}</Field>
+        <Field label="Estado">{props => <select {...props} value={stateFilter} onChange={event => setStateFilter(event.target.value)}>
+          <option value="all">Todos los estados</option>
+          {Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>}</Field>
+        <Field label="Tipo">{props => <select {...props} value={typeFilter} onChange={event => setTypeFilter(event.target.value)}>
+          <option value="all">Todos los tipos</option><option value="device">Dispositivo</option><option value="server">Servidor</option>
+        </select>}</Field>
+      </div>
+      {!devices.length ? <EmptyState message="No hay dispositivos."
+        action={canEdit ? 'Crea un token en Incorporar para añadir el primero.' : 'Pide a un administrador que incorpore un dispositivo.'}/>
+        : !rows.length ? <EmptyState message="Ningún resultado para el filtro." action={
+          <Button onClick={() => { setSearch(''); setStateFilter('all'); setTypeFilter('all'); }}>Limpiar filtros</Button>
+        }/> : <>
+          {devices.every(device => device.status === 'pending') &&
+            <p>Hay solicitudes pendientes de revisión.</p>}
+          <div className="table-scroll"><table className="devices-table">
+            <caption>Inventario · los caminos son declaraciones de los agentes</caption>
+            <thead><tr>{columns.map(([column, label]) =>
+              <th scope="col" key={column} aria-sort={sort.column === column ? sort.descending ? 'descending' : 'ascending' : 'none'}>
+                <Button variant="link" aria-label={`Ordenar por ${label}`} onClick={() => setSort({
+                  column, descending: sort.column === column && !sort.descending,
+                })}>{label}{sort.column === column ? sort.descending ? ' ↓' : ' ↑' : ''}</Button>
+              </th>)}</tr></thead>
+            <tbody>{rows.map(device => {
+              const isExpanded = expanded.includes(device.id);
+              const state = connection(device.report, elapsed);
+              return <Fragment key={device.id}><tr>
+                <td><Button variant="link" aria-label={`Ver detalle de ${device.name}`}
+                  aria-expanded={isExpanded} aria-controls={`device-${device.id}`} onClick={() =>
+                    setExpanded(current => isExpanded ? current.filter(id => id !== device.id) : [...current, device.id])}>
+                  {device.name}</Button><br/><StatusBadge>{device.role === 'server' ? 'Servidor' : 'Dispositivo'}</StatusBadge></td>
+                <td><StatusBadge tone={device.status === 'approved' ? 'ok' : device.status === 'pending' ? 'warn' : 'bad'}>
+                  {states[device.status]}</StatusBadge></td>
+                <td><StatusBadge tone={tones[state]}>{connectionLabels[state]}</StatusBadge></td>
+                <td>{device.ipv4 && <div>{device.ipv4}</div>}{device.ipv6 && <div>{device.ipv6}</div>}
+                  {!device.ipv4 && !device.ipv6 && '—'}</td>
+                <td>{device.report ? `Hace ${device.report.age_secs + elapsed} s` : 'Sin informe'}</td>
+              </tr>
+              {isExpanded && <tr id={`device-${device.id}`}><td colSpan={5}>
+                <DeviceDetail device={device} devices={devices} net={net} elapsed={elapsed} routes={routes}
+                  canEdit={canEdit} refresh={refresh}/>
+              </td></tr>}
+              </Fragment>;
+            })}</tbody>
+          </table></div>
+        </>}
+    </Card>
   </div>;
 }
