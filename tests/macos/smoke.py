@@ -407,7 +407,8 @@ domains = ["{domain}"]
         assert run(["/bin/launchctl", "print", f"system/{a['label']}"],
                    capture_output=True).returncode != 0
         disabled = call("/bin/launchctl", "print-disabled", "system")
-        assert f'"{a["label"]}" => true' in disabled, disabled
+        # Según la versión de macOS, launchctl imprime `=> true` o `=> disabled`.
+        assert re.search(rf'"{re.escape(a["label"])}" => (true|disabled)', disabled), disabled
         call(CLI, "network", "--root", a["root"], "up", a["network"])
         until(lambda: a["resolver"].exists(), description="red A tras actualización")
         # El reinicio puede renumerar utun: recordar la identidad real antes de uninstall.
