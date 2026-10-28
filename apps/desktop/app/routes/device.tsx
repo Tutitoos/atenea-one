@@ -96,6 +96,7 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
         <Row label="Última sesión">{peer.session ? `hace ${ago(peer.last_handshake_secs_ago ?? 0)}` : 'sin sesión'}</Row>
         <Row label="Dirección remota">{peer.endpoint}</Row>
         <Row label="Candidatos">{String(peer.candidates)}</Row>
+        {peer.probe && (peer.probe.failures > 0 || peer.probe.hold_secs != null) && <Row label="Reintentos de conexión">{`${peer.probe.failures} fallos · ${peer.probe.hold_secs == null ? 'sin espera de sondeo' : `${peer.probe.hold_secs} s hasta el próximo intento`}`}</Row>}
         <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
       </Card>
     </>

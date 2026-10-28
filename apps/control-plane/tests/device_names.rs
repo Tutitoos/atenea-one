@@ -428,7 +428,7 @@ async fn peers_publica_solo_pares_config_y_nombres_actuales_sin_cache() {
     assert_eq!(reply.headers["cache-control"], "no-store");
     assert_eq!(
         reply.json,
-        json!([{"device_id":visible.id,"name":"Par visible 🦊"}])
+        json!([{"device_id":visible.id,"name":"Par visible 🦊","role":"device"}])
     );
     let cfg = t.config(caller, now(), *Uuid::new_v4().as_bytes()).await;
     assert_eq!(cfg.status, StatusCode::OK, "{}", cfg.json);
@@ -640,7 +640,7 @@ fn openapi_describe_nombres_y_peers_firmados() {
     );
     assert_eq!(
         schemas["DevicePeer"]["required"],
-        json!(["device_id", "name"])
+        json!(["device_id", "name", "role"])
     );
     let peers = &doc["paths"]["/api/v1/device/peers"]["get"];
     assert_eq!(

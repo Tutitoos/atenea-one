@@ -10,6 +10,8 @@ const peer = z.object({
   addrs: z.array(z.string()).default([]),
   // Nombre de visualización que reparte el control plane (ADR-012); los agentes anteriores no lo informan.
   name: z.string().nullish(),
+  role: z.enum(['device', 'server']).optional(),
+  probe: z.object({ failures: z.number().int().nonnegative(), hold_secs: z.number().int().nonnegative().nullable(), relay_wanted: z.boolean() }).optional(),
   endpoint: z.string().nullish(),
   session: z.string().nullish(),
   last_handshake_secs_ago: z.number().nullish(),
@@ -20,6 +22,14 @@ const peer = z.object({
   paths: z.array(path).default([]),
 });
 const status = z.object({
+  server: z.object({
+    control_plane: z.object({ version: z.string(), commit: z.string() }),
+    coordinator: z.object({ version: z.string(), commit: z.string() }).optional(),
+    relay: z.object({ version: z.string(), commit: z.string() }).optional(),
+    server_time_unix: z.number().int(), clock_skew_secs: z.number().int(),
+    issuer_cert_not_after_unix: z.number().int().nullable(),
+    fetched_unix: z.number().int(), last_error: z.string().nullable(),
+  }).nullish(),
   public_key: z.string(),
   addrs: z.array(z.string()).default([]),
   hostname: z.string().nullish(),

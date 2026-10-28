@@ -230,19 +230,37 @@ pub fn send_report(
     )
 }
 
-/// Nombres de visualización de los pares (ADR-012). Tope de respuesta propio: son solo texto.
-const NAMES_LIMIT: usize = 256 * 1024;
+/// Metadatos de presentación (ADR-012/014): nunca autorizan ni enrutan.
+#[derive(Clone, Default)]
+pub struct PeerMetadata {
+    pub names: HashMap<DeviceId, String>,
+    pub roles: HashMap<DeviceId, &'static str>,
+}
 
-/// `Ok(vacío)` si el control plane es anterior y no tiene el endpoint. Un fallo aquí no afecta al
-/// estado de la sincronización: los nombres son solo para mostrar.
-pub fn fetch_peer_names(
+pub(crate) const METADATA_LIMIT: usize = 256 * 1024;
+
+pub fn fetch_peer_metadata(
     cfg: &SyncConfig,
     key: &SigningKey,
     device: DeviceId,
     ts: u64,
-) -> Result<HashMap<DeviceId, String>, &'static str> {
+) -> Result<PeerMetadata, &'static str> {
+    match get_metadata(cfg, key, device, ts, "/api/v1/device/peers")? {
+        Some(body) => parse_peer_metadata(&body),
+        None => Ok(PeerMetadata::default()),
+    }
+}
+
+/// GET firmado y acotado compartido por los metadatos; 404 significa servidor anterior.
+pub(crate) fn get_metadata(
+    cfg: &SyncConfig,
+    key: &SigningKey,
+    device: DeviceId,
+    ts: u64,
+    endpoint: &str,
+) -> Result<Option<Vec<u8>>, &'static str> {
     cfg.endpoint().map_err(|_| "URL inválida")?;
-    let url = format!("{}/api/v1/device/peers", cfg.url.trim_end_matches('/'));
+    let url = format!("{}{endpoint}", cfg.url.trim_end_matches('/'));
     let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
     let path = uri.path_and_query().ok_or("URL inválida")?.as_str();
     let mut nonce = [0; 16];
@@ -262,7 +280,7 @@ pub fn fetch_peer_names(
         .map_err(|_| "error de red")?;
     match response.status().as_u16() {
         200 => (),
-        404 => return Ok(HashMap::new()),
+        404 => return Ok(None),
         401 | 403 => return Err("acceso denegado"),
         _ => return Err("error HTTP del control plane"),
     }
@@ -270,30 +288,44 @@ pub fn fetch_peer_names(
     response
         .body_mut()
         .as_reader()
-        .take((NAMES_LIMIT + 1) as u64)
+        .take((METADATA_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| "respuesta ilegible")?;
-    parse_peer_names(&bytes)
+    if bytes.len() > METADATA_LIMIT {
+        return Err("respuesta demasiado grande");
+    }
+    Ok(Some(bytes))
 }
 
-/// Cada entrada se valida por separado: un nombre inválido se descarta sin perder los demás.
-fn parse_peer_names(body: &[u8]) -> Result<HashMap<DeviceId, String>, &'static str> {
+/// Nombre y rol se validan independientemente: una entrada mala no elimina las demás.
+fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
     #[derive(serde::Deserialize)]
     struct Entry {
         device_id: String,
         name: String,
+        #[serde(default)]
+        role: serde_json::Value,
     }
-    if body.len() > NAMES_LIMIT {
+    if body.len() > METADATA_LIMIT {
         return Err("respuesta demasiado grande");
     }
     let entries: Vec<Entry> = serde_json::from_slice(body).map_err(|_| "nombres inválidos")?;
-    Ok(entries
-        .into_iter()
-        .filter_map(|e| {
-            let id = atenea_crypto::hex::decode::<16>(&e.device_id.replace('-', ""))?;
-            Some((id, crate::names::accept(&e.name)?))
-        })
-        .collect())
+    let mut metadata = PeerMetadata::default();
+    for e in entries {
+        let Some(id) = atenea_crypto::hex::decode::<16>(&e.device_id.replace('-', "")) else {
+            continue;
+        };
+        if let Some(name) = crate::names::accept(&e.name) {
+            metadata.names.insert(id, name);
+        }
+        let role = match e.role.as_str() {
+            Some("device") => "device",
+            Some("server") => "server",
+            _ => continue,
+        };
+        metadata.roles.insert(id, role);
+    }
+    Ok(metadata)
 }
 
 pub fn declare_routes(
@@ -379,6 +411,8 @@ mod tests {
                     addrs: vec!["10.0.0.8".into()],
                     // El informe es una lista blanca: el nombre del par no debe aparecer en él.
                     name: Some("nombre del par".into()),
+                    role: Some("server"),
+                    probe: crate::engine::ProbeStatus::default(),
                     endpoint: Some("203.0.113.1:1234".into()),
                     session: Some("sesión".into()),
                     last_handshake_secs_ago: Some(1),
@@ -453,6 +487,24 @@ mod tests {
     }
 
     #[test]
+    fn peer_metadata_accepts_only_known_roles_independently_of_names() {
+        let body = serde_json::json!([
+            {"device_id": "01".repeat(16), "name": "uno", "role": "server"},
+            {"device_id": "02".repeat(16), "name": "dos", "role": "device"},
+            {"device_id": "03".repeat(16), "name": "tres", "role": "owner"},
+            {"device_id": "04".repeat(16), "name": "cuatro"},
+            {"device_id": "05".repeat(16), "name": "", "role": "server"},
+            {"device_id": "06".repeat(16), "name": "seis", "role": 7}
+        ]);
+        let metadata = parse_peer_metadata(&serde_json::to_vec(&body).unwrap()).unwrap();
+        assert_eq!(metadata.roles.len(), 3);
+        assert_eq!(metadata.roles[&[1; 16]], "server");
+        assert_eq!(metadata.roles[&[2; 16]], "device");
+        assert_eq!(metadata.roles[&[5; 16]], "server");
+        assert_eq!(metadata.names.len(), 5);
+    }
+
+    #[test]
     fn peer_names_keep_valid_entries_and_drop_hostile_or_malformed_ones() {
         let ok = "ab".repeat(16);
         let dashed = "12345678-1234-1234-1234-123456789abc";
@@ -465,13 +517,13 @@ mod tests {
             {"device_id": "01".repeat(16), "name": "x".repeat(65)},
         ])
         .to_string();
-        let names = parse_peer_names(body.as_bytes()).unwrap();
+        let names = parse_peer_metadata(body.as_bytes()).unwrap().names;
         assert_eq!(names.len(), 2);
         assert_eq!(names[&[0xab; 16]], "portátil de Ana");
         let id = atenea_crypto::hex::decode::<16>("12345678123412341234123456789abc").unwrap();
         assert_eq!(names[&id], "servidor");
-        assert!(parse_peer_names(br#"{"device_id":"x"}"#).is_err());
-        assert!(parse_peer_names(&vec![b' '; NAMES_LIMIT + 1]).is_err());
+        assert!(parse_peer_metadata(br#"{"device_id":"x"}"#).is_err());
+        assert!(parse_peer_metadata(&vec![b' '; METADATA_LIMIT + 1]).is_err());
     }
     fn cfg(url: &str) -> SyncConfig {
         SyncConfig {
@@ -594,5 +646,58 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"AOCFtest");
         server.join().unwrap();
         fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    #[cfg(unix)]
+    fn peer_metadata_http_keeps_roles_and_accepts_old_servers() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let key = atenea_identity::signing_key([1; 32]);
+        let public = key.verifying_key().to_bytes();
+        let body = serde_json::json!([
+            {"device_id": "02".repeat(16), "name": "equipo", "role": "server"},
+            {"device_id": "03".repeat(16), "name": "anterior"}
+        ])
+        .to_string();
+        let server = std::thread::spawn(move || {
+            for (code, body) in [(200, body), (404, String::new())] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                }
+                let request = String::from_utf8(bytes).unwrap();
+                assert!(request.starts_with("GET /api/v1/device/peers HTTP/1.1\r\n"));
+                let auth = request
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("authorization")
+                            .then_some(value.trim())
+                    })
+                    .unwrap();
+                let signed = atenea_identity::api_auth::parse_authorization(auth).unwrap();
+                atenea_identity::api_auth::verify_request(
+                    &signed,
+                    &public,
+                    "GET",
+                    "/api/v1/device/peers",
+                    &[],
+                )
+                .unwrap();
+                write!(stream, "HTTP/1.1 {code} Response\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let peers = fetch_peer_metadata(&cfg(&url), &key, [1; 16], 123).unwrap();
+        assert_eq!(peers.names[&[2; 16]], "equipo");
+        assert_eq!(peers.roles, HashMap::from([([2; 16], "server")]));
+        let old = fetch_peer_metadata(&cfg(&url), &key, [1; 16], 123).unwrap();
+        assert!(old.names.is_empty() && old.roles.is_empty());
+        server.join().unwrap();
     }
 }

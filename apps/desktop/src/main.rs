@@ -158,6 +158,13 @@ impl Assessment {
 
 /// Estado global y su resumen: lo comparten la bandeja y la ventana (el frontend no lo recalcula).
 fn assess(s: &Value) -> Assessment {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs() as i64);
+    assess_at(s, now)
+}
+
+fn assess_at(s: &Value, now: i64) -> Assessment {
     let mut health = Health::Ok;
     let mut why: Vec<String> = Vec::new();
     let mut worsen = |h: Health, text: Option<String>| {
@@ -176,6 +183,23 @@ fn assess(s: &Value) -> Assessment {
     }
     if let Some(e) = s["coordinator"]["last_error"].as_str() {
         worsen(Health::Degraded, Some(format!("coordinator: {e}")));
+    }
+    if let Some(expiry) = s["server"]["issuer_cert_not_after_unix"].as_i64() {
+        let left = expiry.saturating_sub(now);
+        if left <= 0 {
+            worsen(
+                Health::Down,
+                Some("El certificado de la red ha caducado".into()),
+            );
+        } else if left <= 14 * 86400 {
+            worsen(
+                Health::Degraded,
+                Some(format!(
+                    "El certificado de la red caduca en {} días",
+                    (left + 86399) / 86400
+                )),
+            );
+        }
     }
     let peers = s["peers"].as_array().map_or(&[][..], Vec::as_slice);
     if peers
@@ -442,6 +466,47 @@ mod tests {
                 "Degradado: control plane: acceso denegado"
             )
         );
+    }
+
+    #[test]
+    fn certificate_warning_boundaries() {
+        let now = 1_800_000_000;
+        for (seconds, expected) in [
+            (14 * 86400 + 1, Health::Ok),
+            (14 * 86400, Health::Degraded),
+            (3 * 86400, Health::Degraded),
+            (1, Health::Degraded),
+            (0, Health::Down),
+            (-1, Health::Down),
+        ] {
+            let mut s = status(true, "direct");
+            s["server"] = json!({"issuer_cert_not_after_unix": now + seconds});
+            let assessment = assess_at(&s, now);
+            assert_eq!(assessment.health, expected);
+            if seconds <= 0 {
+                assert_eq!(assessment.reasons, ["El certificado de la red ha caducado"]);
+            } else if seconds <= 14 * 86400 {
+                assert_eq!(
+                    assessment.reasons,
+                    [format!(
+                        "El certificado de la red caduca en {} días",
+                        (seconds + 86399) / 86400
+                    )]
+                );
+            } else {
+                assert!(assessment.reasons.is_empty());
+            }
+        }
+        for server in [
+            Value::Null,
+            json!({}),
+            json!({"issuer_cert_not_after_unix": null}),
+        ] {
+            let mut s = status(true, "direct");
+            s["server"] = server;
+            assert_eq!(assess_at(&s, now).health, Health::Ok);
+        }
+        assert_eq!(assess_at(&status(true, "direct"), now).health, Health::Ok);
     }
 
     #[test]

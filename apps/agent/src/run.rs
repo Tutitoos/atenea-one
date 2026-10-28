@@ -404,12 +404,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             }
         })
     });
-    // Nombres de visualización (ADR-012): el del sistema y los de los pares. Un fallo aquí no toca el
-    // estado de la sincronización (ni la salud que ve el usuario): solo deja a los pares sin nombre.
-    type Names = (
-        Option<String>,
-        std::collections::HashMap<atenea_identity::DeviceId, String>,
-    );
+    // Metadatos de presentación (ADR-012/014): sus fallos no alteran la sincronización ni las rutas.
+    type Names = (Option<String>, crate::sync::PeerMetadata);
     let (names_tx, mut names_rx) = tokio::sync::watch::channel::<Names>((None, Default::default()));
     let names_task = cfg.sync.clone().map(|sync| {
         let (identity, device) = (identity.clone(), cfg.device_id);
@@ -424,13 +420,13 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     .flatten();
                 let (sync, identity) = (sync.clone(), identity.clone());
                 let peers = tokio::task::spawn_blocking(move || {
-                    crate::sync::fetch_peer_names(&sync, &identity, device, unix_now())
+                    crate::sync::fetch_peer_metadata(&sync, &identity, device, unix_now())
                 })
                 .await;
                 let peers = match peers {
                     Ok(Ok(peers)) => Some(peers),
                     Ok(Err(error)) => {
-                        tracing::debug!(error, "nombres de pares no disponibles");
+                        tracing::debug!(error, "metadatos de pares no disponibles");
                         None
                     }
                     Err(_) => None,
@@ -441,6 +437,27 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         names.1 = peers;
                     }
                 });
+            }
+        })
+    });
+    let (server_tx, server_rx) = tokio::sync::watch::channel::<Option<crate::server::Status>>(None);
+    let server_task = cfg.sync.clone().map(|sync| {
+        let (identity, device) = (identity.clone(), cfg.device_id);
+        tokio::spawn(async move {
+            // El primer tick es inmediato; una única lectura en vuelo, fuera del bucle de datos.
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let (sync, identity) = (sync.clone(), identity.clone());
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::server::fetch(&sync, &identity, device, unix_now())
+                })
+                .await
+                .unwrap_or(Err("lectura del servidor interrumpida"));
+                let received_unix = unix_now();
+                server_tx
+                    .send_modify(|status| crate::server::record(status, result, received_unix));
             }
         })
     });
@@ -609,6 +626,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 sync_rx.borrow().clone(),
                 coord_rx.borrow().clone(),
                 relay.status(),
+                server_rx.borrow().clone(),
             )
             .to_string(),
         )
@@ -653,9 +671,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 if ticks.is_multiple_of(4) {
                     if names_rx.has_changed().unwrap_or(false) {
                         let (own, peers) = names_rx.borrow_and_update().clone();
-                        rt.engine.set_names(own, peers);
+                        rt.engine.set_metadata(own, peers);
                     }
-                    let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status());
+                    let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status(), server_rx.borrow().clone());
                     relay_requests.renewals.write_to(&mut snapshot);
                     status_tx.send_replace(std::sync::Arc::<str>::from(snapshot.to_string()));
                     if endpoint_task.as_ref().is_some_and(|task| task.is_finished())
@@ -927,6 +945,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     if let Some(task) = names_task {
         task.abort();
     }
+    if let Some(task) = server_task {
+        task.abort();
+    }
     if let Some(task) = report_task {
         task.abort();
     }
@@ -1190,12 +1211,14 @@ fn ipc_status(
     sync: Option<crate::sync::Status>,
     coord: Option<CoordStatus>,
     relay: crate::relay::RelayStatus,
+    server: Option<crate::server::Status>,
 ) -> serde_json::Value {
     let mut status =
         serde_json::to_value(rt.engine.status(Instant::now(), unix_now())).unwrap_or_default();
     status["sync"] = serde_json::to_value(sync).unwrap_or_default();
     status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
     status["relay"] = serde_json::to_value(relay).unwrap_or_default();
+    status["server"] = serde_json::to_value(server).unwrap_or_default();
     let network = rt.netconf.status();
     status["routes"] = serde_json::to_value(&network.routes).unwrap_or_default();
     status["dns"] = serde_json::json!(network.dns);

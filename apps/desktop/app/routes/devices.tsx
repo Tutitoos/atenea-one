@@ -35,7 +35,7 @@ export default function Devices() {
   const status = sample?.reply.status;
 
   const self: Entry[] = status && sample ? [{ id: 'self', name: selfName(status, names), addr: status.addrs[0] ?? '', tone: levelTone(sample.reply.health.level), haystack: `${selfName(status, names)} ${status.hostname ?? ''} este dispositivo ${status.addrs.join(' ')} ${status.public_key}` }] : [];
-  const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}` }));
+  const peers: Entry[] = (status?.peers ?? []).filter((p) => p.role !== 'server').map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}` }));
   const q = query.trim().toLowerCase();
   const match = (e: Entry) => !q || e.haystack.toLowerCase().includes(q);
   const visible = [...self.filter(match), ...peers.filter(match)];

@@ -26,11 +26,22 @@ pub fn name(value: &str) -> Result<&str, ApiError> {
     }
     Ok(value)
 }
+fn role(value: &Value) -> Result<&str, ApiError> {
+    match value.as_str() {
+        Some(role @ ("device" | "server")) => Ok(role),
+        _ => Err(ApiError::bad("invalid_request")),
+    }
+}
+fn present_role<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
 #[derive(Deserialize)]
 pub struct Token {
     ttl_secs: u64,
     #[serde(default)]
     auto_approve: bool,
+    #[serde(default, deserialize_with = "present_role")]
+    role: Option<Value>,
 }
 pub async fn token(
     State(s): State<AppState>,
@@ -39,6 +50,7 @@ pub async fn token(
     Json(b): Json<Token>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
+    let role = b.role.as_ref().map(role).transpose()?.unwrap_or("device");
     if !(60..=86400).contains(&b.ttl_secs) {
         return Err(ApiError::bad("invalid_ttl"));
     }
@@ -58,7 +70,7 @@ pub async fn token(
         .try_into()
         .map_err(|_| ApiError::internal())?;
     let fingerprint = atenea_identity::anchor_fingerprint(&anchor);
-    sqlx::query("INSERT INTO enrollment_tokens(id,network_id,token_hash,created_by,expires_at,auto_approve) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(net).bind(Sha256::digest(raw.as_bytes()).as_slice()).bind(u).bind(expires).bind(b.auto_approve).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO enrollment_tokens(id,network_id,token_hash,created_by,expires_at,auto_approve,role) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(net).bind(Sha256::digest(raw.as_bytes()).as_slice()).bind(u).bind(expires).bind(b.auto_approve).bind(role).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
         "user",
@@ -67,7 +79,7 @@ pub async fn token(
         Some(net),
         "token.create",
         id,
-        json!({"auto_approve":b.auto_approve}),
+        json!({"auto_approve":b.auto_approve,"role":role}),
     )
     .await?;
     tx.commit().await?;
@@ -101,7 +113,7 @@ pub async fn enroll(
     let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
-    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
+    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve,role").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
     let net: Uuid = row.get("network_id");
     let auto: bool = row.get("auto_approve");
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
@@ -117,6 +129,7 @@ pub async fn enroll(
         bytes,
         &bundle,
         "token",
+        &row.get::<String, _>("role"),
     )
     .await?;
     if auto {
@@ -173,8 +186,9 @@ async fn insert(
     bytes: Vec<u8>,
     bundle: &atenea_identity::DeviceBundle,
     origin: &str,
+    role: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname,join_origin) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if name_auto { "device" } else { "admin" }).bind(name_auto.then_some(name)).bind(origin).execute(tx).await?;
+    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname,join_origin,role) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9,$10)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if name_auto { "device" } else { "admin" }).bind(name_auto.then_some(name)).bind(origin).bind(role).execute(tx).await?;
     Ok(())
 }
 #[derive(Deserialize)]
@@ -227,6 +241,7 @@ pub async fn request_join(
         bytes,
         &bundle,
         "request",
+        "device",
     )
     .await?;
     audit::record(
@@ -255,7 +270,7 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
     let rows = sqlx::query(
-        "SELECT d.id,d.name,d.name_source,d.hostname,d.status,d.join_origin,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
+        "SELECT d.id,d.name,d.role,d.name_source,d.hostname,d.status,d.join_origin,d.bundle,d.endpoints,d.enrolled_at,d.approved_at,d.revoked_at,d.last_config_at,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=4) ipv4,(SELECT host(addr) FROM ip_allocations WHERE device_id=d.id AND family=6) ipv6,r.reported_at,r.nat_mapping,r.paths,r.forwarding_ok,r.dns,r.routes,GREATEST(0,floor(extract(epoch FROM now()-r.reported_at))::bigint) age_secs FROM devices d LEFT JOIN device_reports r ON r.device_id=d.id WHERE d.network_id=$1 ORDER BY d.id",
     )
     .bind(net)
     .fetch_all(&s.pool)
@@ -278,7 +293,7 @@ pub async fn list(
             "offline"
         };
         let report = reported_at.map(|at|json!({"reported_at":at,"age_secs":age,"nat_mapping":r.get::<Option<String>,_>("nat_mapping"),"paths":r.get::<Value,_>("paths"),"forwarding_ok":r.get::<Option<bool>,_>("forwarding_ok"),"dns":r.get::<Option<String>,_>("dns"),"routes":r.get::<Option<Value>,_>("routes")}));
-        out.push(json!({"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"name_source":name_source,"hostname":hostname,"status":r.get::<String,_>("status"),"join_origin":r.get::<String,_>("join_origin"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
+        out.push(json!({"role":r.get::<String,_>("role"),"id":r.get::<Uuid,_>("id"),"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"name_source":name_source,"hostname":hostname,"status":r.get::<String,_>("status"),"join_origin":r.get::<String,_>("join_origin"),"endpoints":r.get::<Value,_>("endpoints"),"fingerprint":b.fingerprint(),"ipv4":r.get::<Option<String>,_>("ipv4"),"ipv6":r.get::<Option<String>,_>("ipv6"),"enrolled_at":r.get::<chrono::DateTime<chrono::Utc>,_>("enrolled_at"),"approved_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("approved_at"),"revoked_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("revoked_at"),"last_config_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_config_at"),"report":report,"connection":connection}));
     }
     Ok(Json(json!(out)))
 }
@@ -448,6 +463,8 @@ pub struct Update {
     #[serde(default)]
     use_system_name: bool,
     endpoints: Option<Vec<SocketAddr>>,
+    #[serde(default, deserialize_with = "present_role")]
+    role: Option<Value>,
 }
 pub async fn update(
     State(s): State<AppState>,
@@ -456,6 +473,7 @@ pub async fn update(
     Json(b): Json<Update>,
 ) -> Result<Json<Value>, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
+    let role = b.role.as_ref().map(role).transpose()?;
     if b.name.is_some() && b.use_system_name {
         return Err(ApiError::bad("invalid_request"));
     }
@@ -477,6 +495,13 @@ pub async fn update(
         .bind(net)
         .execute(&mut *tx)
         .await?;
+    let previous: String =
+        sqlx::query_scalar("SELECT role FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE")
+            .bind(dev)
+            .bind(net)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(ApiError::not_found)?;
     if b.use_system_name {
         let hostname: Option<Option<String>> = sqlx::query_scalar(
             "SELECT hostname FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE",
@@ -489,9 +514,22 @@ pub async fn update(
             return Err(ApiError::conflict("no_system_name"));
         }
     }
-    let result=sqlx::query("UPDATE devices SET name=CASE WHEN $5 THEN hostname ELSE COALESCE($3,name) END,name_source=CASE WHEN $5 THEN 'device' WHEN $3 IS NOT NULL THEN 'admin' ELSE name_source END,endpoints=COALESCE($4,endpoints) WHERE id=$1 AND network_id=$2").bind(dev).bind(net).bind(name).bind(endpoints).bind(b.use_system_name).execute(&mut *tx).await?;
+    let result=sqlx::query("UPDATE devices SET name=CASE WHEN $5 THEN hostname ELSE COALESCE($3,name) END,name_source=CASE WHEN $5 THEN 'device' WHEN $3 IS NOT NULL THEN 'admin' ELSE name_source END,endpoints=COALESCE($4,endpoints),role=COALESCE($6,role) WHERE id=$1 AND network_id=$2").bind(dev).bind(net).bind(name).bind(endpoints).bind(b.use_system_name).bind(role).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found());
+    }
+    if let Some(role) = role.filter(|role| *role != previous) {
+        audit::record(
+            &mut tx,
+            "user",
+            u,
+            Some(org),
+            Some(net),
+            "device.role",
+            dev,
+            json!({"previous":previous,"new":role}),
+        )
+        .await?;
     }
     audit::record(
         &mut tx,

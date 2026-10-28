@@ -15,6 +15,7 @@ import Networks from './routes/networks';
 import Shell from './routes/shell';
 import Servers from './routes/servers';
 import Server from './routes/server';
+import type { Peer } from './lib/status';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -25,7 +26,7 @@ const peer = (key: string, addr: string, path: string, name?: string) => ({
 const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún dispositivo por relay'] };
 const server = { sync: { url: 'https://control.example.test', last_ok_unix: Math.floor(Date.now() / 1000) - 5, last_error: null, sync_ok: 40, sync_denied: 1, sync_errors: 2 }, coordinator: { url: 'https://control.example.test', last_announce_ok_unix: Math.floor(Date.now() / 1000) - 3, last_error: null, announces: 120, events: 9 } };
 const relay = { allocations: 1, drops: {}, entries: [{ peer: 'aa', transport: 'Udp', relay: 'relay-uno', state: 'ready', rtt_ms: 42, tx_bytes: 2048, rx_bytes: 1024 }] };
-const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded, extra: object = { ...server, relay }) => JSON.stringify({
+const agent = (peers: Peer[] = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded, extra: object = { ...server, relay }) => JSON.stringify({
   status: { public_key: 'c'.repeat(64), addrs: ['10.77.0.2'], hostname: 'MacBook de prueba', config: { version: 7, lease_active: true, valid_until_unix: Date.now() / 1000 + 240 }, nat: { mapping: 'unknown', reflexive: '203.0.113.9:51820' }, counters: { tx_init: 3 }, relay: { allocations: 0, entries: [], drops: {} }, peers, ...extra },
   health,
 });
@@ -398,4 +399,101 @@ it('copiar usa iconos etiquetados para IPv4, IPv6 y clave, con check temporal', 
   expect(await navigator.clipboard.readText()).toBe('fd77::2');
   await user.click(screen.getByRole('button', { name: 'Copiar clave pública' }));
   expect(await navigator.clipboard.readText()).toBe('c'.repeat(64));
+});
+
+const serverInfo = (days = 10, skew = 45) => ({
+  control_plane: { version: '0.1.6', commit: 'abcdef1234567890' },
+  server_time_unix: Math.floor(Date.now() / 1000), clock_skew_secs: skew,
+  issuer_cert_not_after_unix: Math.floor(Date.now() / 1000) + days * 86400,
+  fetched_unix: Math.floor(Date.now() / 1000), last_error: null,
+});
+
+it('el rol recibido separa servidores de dispositivos y de sus búsquedas sin adivinar nombres', async () => {
+  serve(agent([{ ...peer('a'.repeat(64), '10.77.0.3', 'none', 'servidor-vps'), role: 'server' }, peer('b'.repeat(64), '10.77.0.4', 'direct', 'servidor-antiguo')]));
+  app();
+  await screen.findByTitle('Cambiar nombre local');
+  expect(screen.queryByRole('link', { name: /servidor-vps/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /servidor-antiguo/ })).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('searchbox'), '10.77.0.3');
+  expect(screen.getByText('Sin resultados.')).toBeInTheDocument();
+});
+
+it('muestra dispositivos del servidor de todas sus redes legibles y selecciona su red', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })], undefined, { status: (args) => {
+    const second = args && typeof args === 'object' && 'network' in args && args.network === OTHER_ID;
+    return agent([{ ...peer(second ? 'b'.repeat(64) : 'a'.repeat(64), second ? '10.78.0.3' : '10.77.0.3', 'none', second ? 'servidor-trabajo' : 'servidor-casa'), role: 'server' }]);
+  } });
+  app('/servers/control.example.test');
+  await screen.findByRole('heading', { name: 'Dispositivos del servidor' });
+  const link = await screen.findByRole('link', { name: /servidor-trabajo.*10.78.0.3.*Inactivo.*trabajo/ });
+  expect(screen.getByRole('link', { name: /servidor-casa.*10.77.0.3.*Inactivo.*casa/ })).toBeInTheDocument();
+  await userEvent.click(link);
+  expect(screen.getByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  expect(await screen.findByTitle('Cambiar nombre local')).toHaveTextContent('servidor-trabajo');
+});
+
+it.each([undefined, null])('el servidor antiguo (%s) no inventa información', async (info) => {
+  serve(agent(undefined, degraded, { ...server, server: info }));
+  app('/servers/control.example.test');
+  expect(await screen.findByText('Este servidor aún no informa de su versión ni de la caducidad del certificado')).toBeInTheDocument();
+});
+
+it.each([[15, 'text-mut'], [14, 'text-warn'], [3, 'text-bad'], [0, 'text-bad'], [-1, 'text-bad']])('certificado a %s días: tono e información del servidor', async (days, tone) => {
+  serve(agent(undefined, degraded, { ...server, server: serverInfo(Number(days)) }));
+  const { container } = app('/servers/control.example.test');
+  expect(await screen.findByText('0.1.6 · abcdef12')).toBeInTheDocument();
+  expect(screen.getByText(/45 s.*leases dependen del reloj/)).toHaveClass('text-warn');
+  expect(screen.getByText(Number(days) <= 0 ? /ha caducado/ : new RegExp(`Quedan ${days} días`))).toHaveClass(String(tone));
+  expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
+});
+
+it('los servicios opcionales se muestran solo cuando llegan y el desfase pequeño es neutro', async () => {
+  serve(agent(undefined, degraded, { ...server, server: { ...serverInfo(20, -30), coordinator: { version: '0.1.5', commit: '1234567890' }, relay: { version: '0.1.4', commit: '9876543210' } } }));
+  app('/servers/control.example.test');
+  expect(await screen.findByText('0.1.5 · 12345678')).toBeInTheDocument();
+  expect(screen.getByText('0.1.4 · 98765432')).toBeInTheDocument();
+  expect(screen.getByText('-30 s')).toHaveClass('text-mut');
+});
+
+it('el certificado próximo a caducar pone una insignia en su servidor y no en otro', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, url: 'https://otro.example.test' })], undefined, { status: (args) => agent(undefined, degraded, { ...server, server: args && typeof args === 'object' && 'network' in args && args.network === NET_ID ? serverInfo(14) : null }) });
+  const { container } = app('/servers');
+  const badge = await screen.findByText('Certificado próximo a caducar');
+  expect(badge.closest('a')).toHaveAttribute('href', '/servers/control.example.test');
+  expect(screen.getAllByText('Certificado próximo a caducar')).toHaveLength(1);
+  expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
+});
+
+it.each([undefined, { failures: 0, hold_secs: null, relay_wanted: false }, { failures: 2, hold_secs: 8, relay_wanted: true }, { failures: 0, hold_secs: 0, relay_wanted: false }])('diagnóstico de reintentos opcional: %s', async (probe) => {
+  serve(agent([{ ...peer('a'.repeat(64), '10.77.0.3', 'none'), probe }]));
+  const { container } = app(`/devices/${'a'.repeat(64)}`);
+  await screen.findByTitle('Cambiar nombre local');
+  if (probe && (probe.failures > 0 || probe.hold_secs != null)) {
+    expect(screen.getByText('Reintentos de conexión')).toBeInTheDocument();
+    expect(screen.getByText(`${probe.failures} fallos · ${probe.hold_secs} s hasta el próximo intento`)).toBeInTheDocument();
+  } else expect(screen.queryByText('Reintentos de conexión')).not.toBeInTheDocument();
+  expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
+});
+
+it('la caducidad pertenece a cada red del servidor, no a la primera red que responda', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })], undefined, { status: (args) => {
+    const second = args && typeof args === 'object' && 'network' in args && args.network === OTHER_ID;
+    return agent([], degraded, { ...server, server: serverInfo(second ? 3 : 20, second ? -31 : 0) });
+  } });
+  app('/servers/control.example.test');
+  const casa = await screen.findByRole('region', { name: 'Información de casa' });
+  const trabajo = await screen.findByRole('region', { name: 'Información de trabajo' });
+  expect(within(casa).getByText(/Quedan 20 días/)).toHaveClass('text-mut');
+  expect(within(trabajo).getByText(/Quedan 3 días/)).toHaveClass('text-bad');
+  expect(within(trabajo).getByText(/-31 s.*leases dependen del reloj/)).toHaveClass('text-warn');
+});
+
+it('una información sin certificado no inventa una caducidad ni una insignia', async () => {
+  serve(agent([], degraded, { ...server, server: { ...serverInfo(), issuer_cert_not_after_unix: null } }));
+  const { unmount } = app('/servers/control.example.test');
+  expect(await screen.findByText('no informada')).toBeInTheDocument();
+  unmount();
+  app('/servers');
+  await screen.findByRole('link', { name: /control.example.test 1 red/ });
+  expect(screen.queryByText('Certificado próximo a caducar')).not.toBeInTheDocument();
 });

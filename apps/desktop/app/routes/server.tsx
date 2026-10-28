@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { readReply } from '../lib/agent';
-import { ago, bytes, num, serverTone, text } from '../lib/format';
+import { ago, bytes, num, pathLabel, peerName, serverTone, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { changeNetwork, readNetworks, stateText, stateTone } from '../lib/networks';
-import { groupServers } from '../lib/servers';
+import { useNames } from '../lib/names';
+import { certificateLeft, groupServers, readServerNetworks } from '../lib/servers';
 import type { Reply } from '../lib/status';
 import { Card, Dot, Empty, Row } from '../ui';
 
@@ -34,22 +34,34 @@ function Services({ status }: { status: Reply['status'] }) {
   </>;
 }
 
+function Information({ info }: { info: Reply['status']['server'] }) {
+  const left = certificateLeft(info?.issuer_cert_not_after_unix);
+  return <>
+    <h2 className={heading}>Información del servidor</h2>
+    {!info ? <Empty>Este servidor aún no informa de su versión ni de la caducidad del certificado</Empty> : <Card>
+      <Row label="Control plane">{`${info.control_plane.version} · ${info.control_plane.commit.slice(0, 8)}`}</Row>
+      {info.coordinator && <Row label="Coordinator">{`${info.coordinator.version} · ${info.coordinator.commit.slice(0, 8)}`}</Row>}
+      {info.relay && <Row label="Relay">{`${info.relay.version} · ${info.relay.commit.slice(0, 8)}`}</Row>}
+      <Row label="Hora del servidor">{new Date(info.server_time_unix * 1000).toLocaleString('es')}</Row>
+      <Row label="Desfase de reloj"><span className={Math.abs(info.clock_skew_secs) > 30 ? 'text-warn' : 'text-mut'}>{`${info.clock_skew_secs} s${Math.abs(info.clock_skew_secs) > 30 ? ' · Los leases dependen del reloj' : ''}`}</span></Row>
+      <Row label="Caducidad del certificado de la red">{left == null ? 'no informada' : <span className={left <= 3 * 86400 ? 'text-bad' : left <= 14 * 86400 ? 'text-warn' : 'text-mut'}>{`${left <= 0 ? 'El certificado ha caducado' : `Quedan ${Math.ceil(left / 86400)} días`} · ${new Date(info.issuer_cert_not_after_unix! * 1000).toLocaleString('es')}`}</span>}</Row>
+      <Row label="Última lectura">{new Date(info.fetched_unix * 1000).toLocaleString('es')}</Row>
+      {info.last_error && <Row label="Error de lectura">{info.last_error}</Row>}
+    </Card>}
+  </>;
+}
+
 export default function Server() {
   const { host = '' } = useParams();
   const { selectNetwork } = useAgent();
+  const names = useNames();
   const client = useQueryClient();
   const networks = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000 });
   const server = groupServers(networks.error ? [] : networks.data ?? []).find((s) => s.host === host);
   const connected = server?.networks.filter((n) => n.state === 'conectada').map((n) => n.network_id) ?? [];
   const read = useQuery({
     queryKey: ['server-status', host, connected], enabled: connected.length > 0,
-    queryFn: async () => {
-      // Una red conectada puede no tener un socket legible; se prueba la siguiente de este servidor.
-      for (const id of connected) {
-        try { return (await readReply(id)).status; } catch { /* La siguiente red puede responder. */ }
-      }
-      return null;
-    },
+    queryFn: () => readServerNetworks(connected),
     refetchInterval: 2000,
   });
   const change = useMutation({
@@ -60,7 +72,17 @@ export default function Server() {
     <Link to="/servers" className="text-sel underline">Servidores</Link>
     <h1 className="mt-2 text-xl font-semibold">{host}</h1>
     {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Empty>Comprobando…</Empty> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
-      {connected.length && read.isPending ? <Empty>Comprobando…</Empty> : connected.length && !read.error && read.data ? <Services status={read.data} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
+      {connected.length > 0 && read.isPending ? <Empty>Comprobando…</Empty> : read.data?.length ? <Services status={read.data[0].status} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
+      {read.data?.length ? read.data.map(({ id, status }) => <section key={id} aria-label={`Información de ${server.networks.find((net) => net.network_id === id)?.name}`}>
+        <h2 className={heading}>{server.networks.find((net) => net.network_id === id)?.name}</h2>
+        <Information info={status.server} />
+      </section>) : <Information info={null} />}
+      <h2 className={heading}>Dispositivos del servidor</h2>
+      <ul>{read.data?.flatMap(({ id, status }) => status.peers.filter((peer) => peer.role === 'server').map((peer) => <li key={`${id}-${peer.public_key}`}>
+        <Link to={`/devices/${encodeURIComponent(peer.public_key)}`} className="flex items-center gap-2 rounded-lg bg-card p-3" onClick={() => selectNetwork(id)}>
+          <Dot tone={pathLabel(peer.path).tone} />{peerName(peer, names)} · {peer.addrs.join(', ')} · {pathLabel(peer.path).label} · {server.networks.find((net) => net.network_id === id)?.name}
+        </Link>
+      </li>))}</ul>
       <h2 className={heading}>Redes unidas</h2>
       {change.error && <p role="alert" className="text-bad">{change.error.message}</p>}
       {change.isPending && <p role="status">Esperando la autorización del sistema…</p>}

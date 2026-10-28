@@ -15,6 +15,7 @@ mod packet;
 mod platform;
 mod relay;
 mod run;
+mod server;
 mod state;
 mod sync;
 #[cfg(all(test, unix))]

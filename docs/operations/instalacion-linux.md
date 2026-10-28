@@ -21,7 +21,8 @@ La instalación crea **solo el grupo** de sistema `atenea`, no un usuario: el ag
 
 ## Primer arranque y enrolamiento
 
-1. Crear una red y un token en el panel existente. Recibir su `join` y verificar el ancla raíz por otro canal. Nunca generar ni guardar la raíz o el emisor en el router.
+1. Crear una red y un token en el panel existente con una cuenta `admin` u `owner`. En **Tipo**, **Dispositivo** es el valor por defecto (`role: "device"`); el administrador puede elegir **Servidor** (`role: "server"`) para que el dispositivo que consuma el token herede ese rol. En la API `POST /api/v1/networks/{net}/enrollment-tokens`, omitir `role` equivale a `device`. Ni la app ni el dispositivo eligen el rol durante el enrolamiento. Recibir su `join` y verificar el ancla raíz por otro canal. Nunca generar ni guardar la raíz o el emisor en el router.
+   El rol solo sirve para presentación: no concede permisos, no cambia la conectividad y no forma parte de la configuración firmada. Después, solo `admin` u `owner` pueden cambiarlo desde **Dispositivos → Cambiar tipo**, previa confirmación; el cambio queda auditado como `device.role`, con el valor anterior y el nuevo.
 2. Como root, generar las claves del dispositivo:
 
    ```sh

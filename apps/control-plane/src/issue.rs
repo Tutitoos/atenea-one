@@ -140,13 +140,18 @@ pub fn compile(
     }
     Ok((peers, rules))
 }
+enum Output {
+    Config,
+    Peers,
+    ServerInfo,
+}
 pub async fn get(
     State(s): State<AppState>,
     h: HeaderMap,
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
-    respond(s, h, uri, body, false).await
+    respond(s, h, uri, body, Output::Config).await
 }
 pub async fn peers(
     State(s): State<AppState>,
@@ -154,14 +159,22 @@ pub async fn peers(
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
-    respond(s, h, uri, body, true).await
+    respond(s, h, uri, body, Output::Peers).await
+}
+pub async fn server_info(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    uri: Uri,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    respond(s, h, uri, body, Output::ServerInfo).await
 }
 async fn respond(
     s: AppState,
     h: HeaderMap,
     uri: Uri,
     body: axum::body::Bytes,
-    names_only: bool,
+    output: Output,
 ) -> Result<Response, ApiError> {
     let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = api_auth::parse_authorization(
@@ -207,6 +220,23 @@ async fn respond(
     if status != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
+    if matches!(output, Output::ServerInfo) {
+        let expires = n
+            .get::<Option<Vec<u8>>, _>("issuer_cert")
+            .map(|bytes| IssuerCert::parse(&bytes).map(|cert| cert.not_after))
+            .transpose()
+            .map_err(|_| ApiError::internal())?;
+        let info = serde_json::json!({
+            "control_plane": {
+                "version": env!("CARGO_PKG_VERSION"),
+                "commit": option_env!("ATENEA_BUILD_COMMIT").unwrap_or("unknown"),
+            },
+            "server_time_unix": crate::api::now(),
+            "issuer_cert_not_after_unix": expires,
+        });
+        tx.commit().await?;
+        return Ok(([("cache-control", "no-store")], axum::Json(info)).into_response());
+    }
     let devices = load_devices(&mut tx, net).await?;
     let own = devices
         .iter()
@@ -231,18 +261,18 @@ async fn respond(
         return Err(ApiError::conflict("invalid_network_prefix"));
     }
     let (peers, rules) = compile(own, &devices, &policies, &network_prefixes)?;
-    if names_only {
+    if matches!(output, Output::Peers) {
         let ids: Vec<Uuid> = peers
             .iter()
             .map(|p| Uuid::from_bytes(p.device_id))
             .collect();
-        let rows = sqlx::query("SELECT id,name FROM devices WHERE id=ANY($1) ORDER BY id")
+        let rows = sqlx::query("SELECT id,name,role FROM devices WHERE id=ANY($1) ORDER BY id")
             .bind(ids)
             .fetch_all(&mut *tx)
             .await?;
         let names: Vec<_> = rows
             .iter()
-            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name")}))
+            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"role":r.get::<String,_>("role")}))
             .collect();
         tx.commit().await?;
         return Ok(([("cache-control", "no-store")], axum::Json(names)).into_response());

@@ -36,6 +36,45 @@ it('solo muestra join en memoria tras crear y lo elimina al ocultar o desmontar'
  const post=vi.spyOn(api,'POST').mockResolvedValue({data:{token:'token-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:'https://example.invalid',token:'token-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)}},response:new Response()});
  const user=userEvent.setup();const {unmount}=wrap(<Enrollment net="red"/>);expect(screen.queryByText(/token-sintetico/)).not.toBeInTheDocument();await user.click(screen.getByRole('button',{name:'Crear token'}));await screen.findByRole('button',{name:'Copiar join'});expect(screen.getByText(/"token": "token-sintetico"/)).toBeVisible();await user.click(screen.getByRole('button',{name:/Ya lo guardé/}));expect(screen.queryByText(/"token": "token-sintetico"/)).not.toBeInTheDocument();unmount();wrap(<Enrollment net="red"/>);expect(screen.queryByRole('button',{name:'Copiar join'})).not.toBeInTheDocument();post.mockRestore();
 });
+it.each(['Dispositivo','Servidor'])('envía el tipo de token elegido: %s',async type=>{
+ const post=vi.spyOn(api,'POST').mockResolvedValue({data:{token:'token-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:'https://example.invalid',token:'token-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)}},response:new Response()});
+ const user=userEvent.setup();wrap(<Enrollment net="red"/>);
+ expect(screen.getByRole('combobox',{name:'Tipo'})).toHaveValue('Dispositivo');
+ await user.selectOptions(screen.getByRole('combobox',{name:'Tipo'}),type);
+ await user.click(screen.getByRole('button',{name:'Crear token'}));
+ await screen.findByRole('button',{name:'Copiar join'});
+ expect(post).toHaveBeenCalledWith('/api/v1/networks/{net}/enrollment-tokens',{params:{path:{net:'red'}},body:{ttl_secs:3600,auto_approve:false,role:type==='Servidor'?'server':'device'}});
+ post.mockRestore();
+});
+it.each(['admin','owner'] as const)('permite a %s cambiar el tipo solo tras confirmar',async accessRole=>{
+ const patch=vi.spyOn(api,'PATCH').mockResolvedValue({data:{device_id:device.id},response:new Response()});
+ const refresh=vi.fn(async()=>{});const user=userEvent.setup();
+ wrap(<Devices devices={[device]} accessRole={accessRole} net="red" elapsed={0} refresh={refresh}/>);
+ expect(screen.getByRole('cell',{name:'Dispositivo'})).toBeVisible();
+ await user.click(screen.getByRole('button',{name:'Cambiar tipo'}));
+ expect(screen.getByRole('dialog')).toHaveTextContent('Dispositivo → Servidor');
+ expect(patch).not.toHaveBeenCalled();
+ await user.click(screen.getByRole('button',{name:'Confirmar cambio de tipo'}));
+ await waitFor(()=>expect(refresh).toHaveBeenCalledOnce());
+ expect(patch).toHaveBeenCalledWith('/api/v1/networks/{net}/devices/{dev}',{params:{path:{net:'red',dev:device.id}},body:{role:'server'}});
+ patch.mockRestore();
+});
+it('muestra servidores a member sin permitir cambiar su tipo',()=>{
+ wrap(<Devices devices={[{...device,role:'server'}]} accessRole="member" net="red" elapsed={0} refresh={async()=>{}}/>);
+ expect(screen.getByRole('cell',{name:'Servidor'})).toBeVisible();
+ expect(screen.queryByRole('button',{name:'Cambiar tipo'})).not.toBeInTheDocument();
+});
+it('permite devolver un servidor a dispositivo',async()=>{
+ const patch=vi.spyOn(api,'PATCH').mockResolvedValue({data:{device_id:device.id},response:new Response()});
+ const refresh=vi.fn(async()=>{});const user=userEvent.setup();
+ wrap(<Devices devices={[{...device,role:'server'}]} accessRole="admin" net="red" elapsed={0} refresh={refresh}/>);
+ await user.click(screen.getByRole('button',{name:'Cambiar tipo'}));
+ expect(screen.getByRole('dialog')).toHaveTextContent('Servidor → Dispositivo');
+ await user.click(screen.getByRole('button',{name:'Confirmar cambio de tipo'}));
+ await waitFor(()=>expect(refresh).toHaveBeenCalledOnce());
+ expect(patch).toHaveBeenCalledWith('/api/v1/networks/{net}/devices/{dev}',{params:{path:{net:'red',dev:device.id}},body:{role:'device'}});
+ patch.mockRestore();
+});
 it.each([false,true])('explica la bidireccionalidad antes de crear y en la lista (edición: %s)',async canEdit=>{
  const get=vi.spyOn(api,'GET').mockResolvedValue({data:[{id:device.id,src:{kind:'any'},dst:{kind:'any'},proto:6,port_min:22,port_max:22}],response:new Response()});
  const user=userEvent.setup();wrap(<Policies net="red" canEdit={canEdit}/>);

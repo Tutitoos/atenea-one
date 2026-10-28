@@ -121,9 +121,12 @@ fn schemas() -> ComponentsBuilder {
         ("Error", complete(&[("error", complete(&[("code", text()), ("message", text())]))])),
         ("Role", choices(&["owner", "admin", "member"])),
         ("DeviceStatus", choices(&["pending", "approved", "revoked"])),
+        ("DeviceRole", choices(&["device", "server"])),
+        ("ServiceVersion", complete(&[("version", text()), ("commit", text())])),
+        ("ServerInfo", complete(&[("control_plane", named("ServiceVersion")), ("server_time_unix", integer()), ("issuer_cert_not_after_unix", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Integer, Type::Null])).into())])),
         ("DeviceName", device_name),
         ("DeviceNameSource", choices(&["admin", "device"])),
-        ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName"))])),
+        ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName")), ("role", named("DeviceRole"))])),
         ("Name", complete(&[("name", name.clone())])),
         ("OrganizationCreated", complete(&[("id", uuid()), ("name", text())])),
         ("Organization", complete(&[("id", uuid()), ("name", text()), ("role", named("Role"))])),
@@ -141,16 +144,17 @@ fn schemas() -> ComponentsBuilder {
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
+            ("role", named("DeviceRole")),
         ], &["ttl_secs"])),
         ("Join", complete(&[("url", text()), ("token", text()), ("network_id", uuid()), ("root_anchor", hex(32))])),
         ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join")), ("code", nullable_text()), ("root_anchor_fingerprint", text())])),
         ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
         ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceId", complete(&[("device_id", uuid())])),
-        ("DeviceUpdate", object(&[("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
+        ("DeviceUpdate", object(&[("role", named("DeviceRole")), ("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
         ("Id", complete(&[("id", uuid())])),
         ("Selector", object(&[("kind", choices(&["any", "device", "prefix"])), ("device_id", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).into()), ("prefix", nullable_text())], &["kind"])),
         ("NewPolicy", object(&[
@@ -505,11 +509,21 @@ pub fn document() -> OpenApi {
             Get,
             "/api/v1/device/peers",
             "getDevicePeers",
-            "Nombres de los pares autorizados para un dispositivo aprobado",
+            "Nombres y roles de los pares autorizados para un dispositivo aprobado",
             "device",
             "200",
             "",
             "[]DevicePeer",
+        ),
+        (
+            Get,
+            "/api/v1/server/info",
+            "getServerInfo",
+            "Versión del control plane, hora y caducidad del emisor de la propia red",
+            "device",
+            "200",
+            "",
+            "ServerInfo",
         ),
         (
             Post,
@@ -877,6 +891,9 @@ pub fn document() -> OpenApi {
         if id == "leaveDeviceNetwork" {
             operation = operation.description(Some("Cuerpo vacío (límite 1024 bytes; exceso o contenido no vacío: 400 invalid_request). Reutiliza la firma AtDevice, ventana de 60 s, anti-replay y device_per_minute. Admite pending y approved; revoked responde 200 sin cambios. Actor device, acción device.leave; libera direcciones y rechaza rutas solo del firmante."));
         }
+        if id == "getServerInfo" {
+            operation = operation.description(Some("Solo dispositivos aprobados; misma firma AtDevice, ventana de 60 s, anti-replay, límite device_per_minute y límite global de cuerpo que /device/peers. No permite elegir red: devuelve solo la del firmante. Certificado ausente: issuer_cert_not_after_unix=null. Version y commit proceden de la compilación del control plane (--version/ATENEA_BUILD_COMMIT). Coordinator y relay se omiten: no existe canal real de consulta de sus versiones."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -891,7 +908,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 36);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 37);
         let leave = &document["paths"]["/api/v1/device/leave"]["post"];
         assert!(leave["security"][0].get("device").is_some());
         assert!(leave.get("requestBody").is_none());

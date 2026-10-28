@@ -251,7 +251,7 @@ struct Peer {
     /// Sondeo del directo con la sesión ya establecida (keepalives cifrados a los candidatos).
     kprobe: Option<Probe>,
     probe_failures: u32,
-    /// Sin sondear ni pedir rendezvous hasta este instante (retardo tras un sondeo fallido).
+    /// Sin sondeo ciego hasta este instante; el tráfico pendiente permite pedir pistas y relay.
     hold_until: Option<Instant>,
     next_rendezvous: Option<Instant>,
     rendezvous_wanted: bool,
@@ -508,6 +508,13 @@ pub struct PathStatus {
     pub rtt_ms: Option<u32>,
 }
 
+#[derive(Default, Serialize)]
+pub struct ProbeStatus {
+    pub failures: u32,
+    pub hold_secs: Option<u64>,
+    pub relay_wanted: bool,
+}
+
 #[derive(Serialize)]
 pub struct PeerStatus {
     pub device_id: DeviceId,
@@ -516,6 +523,8 @@ pub struct PeerStatus {
     pub addrs: Vec<String>,
     /// Nombre de visualización que reparte el control plane (ADR-012); no firmado, solo para mostrar.
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<&'static str>,
     pub endpoint: Option<String>,
     pub session: Option<String>,
     pub last_handshake_secs_ago: Option<u64>,
@@ -526,6 +535,7 @@ pub struct PeerStatus {
     pub candidates: usize,
     pub last_rx_secs: Option<u64>,
     pub paths: Vec<PathStatus>,
+    pub probe: ProbeStatus,
 }
 
 #[derive(Serialize)]
@@ -584,6 +594,7 @@ pub struct Engine {
     nat: Option<NatStatus>,
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
+    roles: HashMap<DeviceId, &'static str>,
     hostname: Option<String>,
     probe_random: fn() -> u32,
 }
@@ -620,6 +631,7 @@ impl Engine {
             last_config_error_detail: None,
             nat: None,
             names: HashMap::new(),
+            roles: HashMap::new(),
             hostname: None,
             probe_random: crypto::random_u32,
         }
@@ -918,6 +930,9 @@ impl Engine {
     fn maybe_initiate(&mut self, pi: usize, now: Instant, unix: u64, out: &mut Vec<Out>) {
         let index = self.fresh_index();
         let peer = &mut self.peers[pi];
+        if peer.queued.is_some() && peer.hold_until.is_some_and(|h| now < h) {
+            peer.relay_wanted = Self::ready_relay(peer).is_none();
+        }
         if peer.pending.is_some()
             || peer
                 .last_attempt
@@ -1686,14 +1701,14 @@ impl Engine {
     }
 
     /// Pares que necesitan un rendezvous con el coordinator ahora (sin ruta confirmada, con tráfico
-    /// pendiente o ruta perdida), respetando el intervalo mínimo y el retardo tras un sondeo fallido.
+    /// pendiente o ruta perdida), respetando el intervalo mínimo; con cola no espera al sondeo.
     pub fn take_rendezvous(&mut self, now: Instant) -> Vec<DeviceId> {
         let mut v = Vec::new();
         for p in &mut self.peers {
             if p.rendezvous_wanted
                 && p.endpoint.is_none()
                 && p.next_rendezvous.is_none_or(|t| now >= t)
-                && p.hold_until.is_none_or(|t| now >= t)
+                && (p.queued.is_some() || p.hold_until.is_none_or(|t| now >= t))
             {
                 v.push(p.device_id);
                 p.next_rendezvous = Some(now + RENDEZVOUS_MIN_INTERVAL);
@@ -1837,10 +1852,15 @@ impl Engine {
         let peer = &mut self.peers[pi];
         // Un candidato dentro de la red del túnel o de una subred servida solo es alcanzable POR el túnel:
         // sondearlo sería un bucle (y el coordinator no es de confianza para decidirlo).
-        peer.candidates = sanitize_candidates(cands, MAX_CANDIDATES)
+        let candidates: Vec<_> = sanitize_candidates(cands, MAX_CANDIDATES)
             .into_iter()
             .filter(|c| !tunnel_only.iter().any(|p| prefix_contains(p, &c.ip())))
             .collect();
+        // Una respuesta vacía no invalida pistas anteriores ni levanta el retroceso de sondeo.
+        if candidates.is_empty() {
+            return out;
+        }
+        peer.candidates = candidates;
         let targets = Self::targets(peer);
         let direct_sources: Vec<_> = targets
             .iter()
@@ -1880,9 +1900,10 @@ impl Engine {
         self.nat = Some(nat);
     }
 
-    pub fn set_names(&mut self, hostname: Option<String>, peers: HashMap<DeviceId, String>) {
+    pub fn set_metadata(&mut self, hostname: Option<String>, peers: crate::sync::PeerMetadata) {
         self.hostname = hostname;
-        self.names = peers;
+        self.names = peers.names;
+        self.roles = peers.roles;
     }
 
     pub fn status(&self, now: Instant, unix: u64) -> Status {
@@ -1907,6 +1928,7 @@ impl Engine {
                     public_key: crypto::hex::encode(&p.public),
                     addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
                     name: self.names.get(&p.device_id).cloned(),
+                    role: self.roles.get(&p.device_id).copied(),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
                         .current
@@ -1920,6 +1942,14 @@ impl Engine {
                     path: p.path_name(now),
                     candidates: p.candidates.len() + p.cfg_endpoints.len(),
                     last_rx_secs: p.last_rx_any().map(|t| now.duration_since(t).as_secs()),
+                    probe: ProbeStatus {
+                        failures: p.probe_failures,
+                        hold_secs: p
+                            .hold_until
+                            .filter(|until| *until > now)
+                            .map(|until| until.duration_since(now).as_secs()),
+                        relay_wanted: p.relay_wanted,
+                    },
                     paths: PATHS
                         .into_iter()
                         .map(|k| PathStatus {
@@ -2936,6 +2966,36 @@ mod tests {
     }
 
     #[test]
+    fn recovery_empty_candidates_preserve_previous_hints() {
+        let mut l = without_static_endpoints();
+        l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
+        l.a.on_peer_candidates(&[2; 16], vec![ep("10.77.0.2:51820")], l.now, l.unix);
+        assert_eq!(l.a.peers[0].candidates, vec![ep(B_EP)]);
+    }
+
+    #[test]
+    fn recovery_queued_traffic_discovers_during_probe_hold() {
+        let mut l = without_static_endpoints();
+        l.a.peers[0].hold_until = Some(l.now + Duration::from_secs(30));
+        assert!(l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix).is_empty());
+        assert_eq!(l.a.take_rendezvous(l.now), vec![[2; 16]]);
+        assert!(l.a.take_rendezvous(l.now).is_empty());
+        assert!(
+            l.a.peers[0].pending.is_none(),
+            "el sondeo ciego sigue frenado"
+        );
+    }
+
+    #[test]
+    fn recovery_queued_traffic_requests_relay_during_probe_hold() {
+        let mut l = without_static_endpoints();
+        l.a.peers[0].hold_until = Some(l.now + Duration::from_secs(30));
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.take_relay_requests(l.now), vec![[2; 16]]);
+    }
+
+    #[test]
     fn probing_resends_the_same_message_then_fails_and_backs_off() {
         let mut l = without_static_endpoints();
         l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
@@ -2966,9 +3026,10 @@ mod tests {
         );
         assert_eq!(l.a.counters.0["probe_failed"], 1);
         assert_eq!(l.a.peers[0].path_name(l.now), "none");
-        // tras fallar, retardo antes de pedir otro rendezvous o sondear de nuevo
-        l.a.on_tun(&v4(1, 2, b"y"), l.now, l.unix);
-        assert!(l.a.take_rendezvous(l.now).is_empty());
+        // El sondeo sigue frenado, pero el tráfico nuevo puede pedir pistas sin esperar 30 s.
+        assert!(l.a.on_tun(&v4(1, 2, b"y"), l.now, l.unix).is_empty());
+        assert_eq!(l.a.take_rendezvous(l.now), vec![[2u8; 16]]);
+        l.a.peers[0].rendezvous_wanted = true;
         l.now += Duration::from_secs(31);
         l.unix += 31;
         assert_eq!(l.a.take_rendezvous(l.now), vec![[2u8; 16]]);
@@ -3854,6 +3915,32 @@ mod tests {
     }
 
     #[test]
+    fn peer_status_exposes_probe_and_optional_role() {
+        let mut l = without_static_endpoints();
+        let before = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert!(before["peers"][0].get("role").is_none());
+        assert_eq!(
+            before["peers"][0]["probe"],
+            serde_json::json!({
+                "failures": 0, "hold_secs": null, "relay_wanted": false
+            })
+        );
+        l.a.peers[0].probe_failures = 2;
+        l.a.peers[0].hold_until = Some(l.now + Duration::from_secs(20));
+        l.a.peers[0].relay_wanted = true;
+        let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
+        assert_eq!(
+            after["peers"][0]["probe"],
+            serde_json::json!({
+                "failures": 2, "hold_secs": 20, "relay_wanted": true
+            })
+        );
+        let expired =
+            serde_json::to_value(l.a.status(l.now + Duration::from_secs(21), l.unix)).unwrap();
+        assert!(expired["peers"][0]["probe"]["hold_secs"].is_null());
+    }
+
+    #[test]
     fn display_names_reach_the_status_without_touching_identity() {
         let mut l = lab();
         let before = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
@@ -3862,10 +3949,17 @@ mod tests {
             ([2; 16], "el otro".to_string()),
             ([9; 16], "sin par".to_string()),
         ]);
-        l.a.set_names(Some("este equipo".into()), names);
+        l.a.set_metadata(
+            Some("este equipo".into()),
+            crate::sync::PeerMetadata {
+                names,
+                roles: HashMap::from([([2; 16], "server")]),
+            },
+        );
         let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
         assert_eq!(after["hostname"], "este equipo");
         assert_eq!(after["peers"][0]["name"], "el otro");
+        assert_eq!(after["peers"][0]["role"], "server");
         // Un nombre sin par en la configuración no crea pares ni cambia claves.
         assert_eq!(after["peers"].as_array().unwrap().len(), 1);
         assert_eq!(

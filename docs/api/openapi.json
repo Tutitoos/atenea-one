@@ -260,7 +260,7 @@
         "tags": [
           "system"
         ],
-        "summary": "Nombres de los pares autorizados para un dispositivo aprobado",
+        "summary": "Nombres y roles de los pares autorizados para un dispositivo aprobado",
         "description": "Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos.",
         "operationId": "getDevicePeers",
         "responses": {
@@ -3786,6 +3786,93 @@
         ]
       }
     },
+    "/api/v1/server/info": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Versión del control plane, hora y caducidad del emisor de la propia red",
+        "description": "Solo dispositivos aprobados; misma firma AtDevice, ventana de 60 s, anti-replay, límite device_per_minute y límite global de cuerpo que /device/peers. No permite elegir red: devuelve solo la del firmante. Certificado ausente: issuer_cert_not_after_unix=null. Version y commit proceden de la compilación del control plane (--version/ATENEA_BUILD_COMMIT). Coordinator y relay se omiten: no existe canal real de consulta de sus versiones.",
+        "operationId": "getServerInfo",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/session": {
       "get": {
         "tags": [
@@ -4272,6 +4359,7 @@
         "required": [
           "id",
           "device_id",
+          "role",
           "name",
           "name_source",
           "hostname",
@@ -4377,6 +4465,9 @@
             ],
             "format": "date-time"
           },
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole"
+          },
           "status": {
             "$ref": "#/components/schemas/DeviceStatus"
           }
@@ -4447,7 +4538,8 @@
         "type": "object",
         "required": [
           "device_id",
-          "name"
+          "name",
+          "role"
         ],
         "properties": {
           "device_id": {
@@ -4456,6 +4548,9 @@
           },
           "name": {
             "$ref": "#/components/schemas/DeviceName"
+          },
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole"
           }
         }
       },
@@ -4540,6 +4635,13 @@
           }
         }
       },
+      "DeviceRole": {
+        "type": "string",
+        "enum": [
+          "device",
+          "server"
+        ]
+      },
       "DeviceState": {
         "type": "object",
         "required": [
@@ -4577,6 +4679,9 @@
           },
           "name": {
             "$ref": "#/components/schemas/DeviceName"
+          },
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole"
           },
           "use_system_name": {
             "type": "boolean",
@@ -5019,6 +5124,9 @@
             "type": "boolean",
             "default": false
           },
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole"
+          },
           "ttl_secs": {
             "type": "integer",
             "maximum": 86400,
@@ -5340,6 +5448,43 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ServerInfo": {
+        "type": "object",
+        "required": [
+          "control_plane",
+          "server_time_unix",
+          "issuer_cert_not_after_unix"
+        ],
+        "properties": {
+          "control_plane": {
+            "$ref": "#/components/schemas/ServiceVersion"
+          },
+          "issuer_cert_not_after_unix": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "server_time_unix": {
+            "type": "integer"
+          }
+        }
+      },
+      "ServiceVersion": {
+        "type": "object",
+        "required": [
+          "version",
+          "commit"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
         }
       },

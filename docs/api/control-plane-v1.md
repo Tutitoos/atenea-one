@@ -82,11 +82,11 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/orgs/{org}/networks`; `GET /api/v1/networks/{net}` | member | Lista y detalle (incluye si hay certificado de emisor) |
 | `PUT /api/v1/networks/{net}/issuer-cert` (cuerpo binario 178 bytes) | admin | Valida que el certificado parsea, que su `network_id` coincide, que está firmado por `root_anchor` y que sigue vigente |
 | `DELETE /api/v1/networks/{net}` | admin | Elimina la red y sus dispositivos (cascada) |
-| `POST /api/v1/networks/{net}/enrollment-tokens` `{ttl_secs, auto_approve}` | admin | Devuelve `{token, expires_at, join, code, root_anchor_fingerprint}`; `join` agrupa `url`, `token`, `network_id` y `root_anchor`; `code` es el código de red **con** el token (§13; `null` si el nombre de la red o `PUBLIC_URL` no caben en el formato). `ttl_secs` entre 60 y 86400. El token (256 bits aleatorios, base64url) se devuelve solo una vez |
+| `POST /api/v1/networks/{net}/enrollment-tokens` `{ttl_secs, auto_approve?, role?}` | admin | Devuelve `{token, expires_at, join, code, root_anchor_fingerprint}`; `join` agrupa `url`, `token`, `network_id` y `root_anchor`; `code` es el código de red **con** el token (§13; `null` si el nombre de la red o `PUBLIC_URL` no caben en el formato). `ttl_secs` entre 60 y 86400. `role`: `device` (por defecto) o `server`, heredado al inscribirse (§15). El token (256 bits aleatorios, base64url) se devuelve solo una vez |
 | `GET /api/v1/networks/{net}/devices` | member | Inventario |
 | `POST /api/v1/networks/{net}/devices/{dev}/approve` | admin | Asigna IPv4+IPv6 en transacción; `409` si ya está aprobado o si la red está llena |
 | `POST /api/v1/networks/{net}/devices/{dev}/revoke` | admin | Marca `revoked`, libera direcciones; el dispositivo deja de recibir configuración y desaparece de la de sus peers en la siguiente emisión |
-| `PATCH /api/v1/networks/{net}/devices/{dev}` `{name?, use_system_name?, endpoints?}` | admin | Nombre administrativo o vuelta al nombre del sistema (§12); `endpoints`: lista de `ip:puerto` |
+| `PATCH /api/v1/networks/{net}/devices/{dev}` `{name?, use_system_name?, endpoints?, role?}` | admin | Nombre administrativo o vuelta al nombre del sistema (§12); `endpoints`: lista de `ip:puerto`; cambio de rol con auditoría (§15) |
 | `GET/POST /api/v1/networks/{net}/policies`; `DELETE …/policies/{id}` | member / admin / admin | Cada política se valida: selectores existentes en la red, prefijos dentro de los CIDR de la red, puertos coherentes (solo TCP/UDP, `port_min ≤ port_max`), como máximo 256 políticas |
 | `GET /api/v1/networks/{net}/audit?limit=&before=` | member | Eventos de auditoría de la red, paginados |
 | `POST /api/v1/enroll` `{token, bundle (hex, 146 bytes), name, name_auto?}` | token | Ver §5 y §12; `name_auto` por defecto `false` |
@@ -94,8 +94,9 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/networks/{net}/join-code` | admin | Código de red sin token y huella de la raíz (§13) |
 | `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?}` | público | Solicitud de unión sin token (§13) |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
-| `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12) |
+| `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres y roles no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12, §15) |
 | `POST /api/v1/device/leave` (cuerpo vacío) | dispositivo (§3.3) | Revoca únicamente la identidad firmante, también pendiente; idempotente (§14) |
+| `GET /api/v1/server/info` | dispositivo aprobado (§3.3) | Versión y commit del control plane, hora y caducidad del certificado de emisor de su propia red; `Cache-Control: no-store` (§15) |
 
 Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.leave`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
 
@@ -300,3 +301,25 @@ nuevas operaciones de CLI, agente o escritorio.
 `POST /api/v1/device/leave` autentica una petición AtDevice con cuerpo vacío, firmada por la clave de identidad del dispositivo. No acepta un destino: usa exclusivamente el id autenticado y su red almacenada. Límite de cuerpo: 1024 bytes; cuerpo no vacío → `400 invalid_request`. Se aplica el límite compartido `device_per_minute`, la ventana de 60 segundos y la caché anti-replay existentes; desconocidos, firma/clave ajena o timestamp inválido → `401 invalid_signature`, sin distinguir existencia.
 
 En una transacción compartida con la revocación administrativa pasa `pending` o `approved` a `revoked`, libera direcciones y rechaza rutas, con `decided_by = NULL` (no es una decisión de usuario). Auditoría: `actor_kind = device`, `actor_id` y `target` iguales al dispositivo, `action = device.leave`. Tras el commit notifica al panel. Responde `200 {"device_id":"00000000-0000-0000-0000-000000000002","status":"revoked"}` (ejemplo sintético). Repetir con firma y nonce nuevos también responde 200 sin alterar fecha ni duplicar auditoría. Una firma capturada no permite repetir la operación ni cambiar su destino. No afecta otras redes; la configuración ya emitida conserva su caducidad existente.
+
+## 15. Rol de servidor e información del servidor (ADR-014)
+
+La migración `0008_device_role.sql` añade a `devices` y `enrollment_tokens` un `role text NOT NULL DEFAULT 'device' CHECK (role IN ('device','server'))`. Los registros existentes conservan su identidad y pasan a `device`; el rol no cambia claves, autorización, políticas ni rutas. Es un metadato **de presentación, sin firmar**, como el nombre (ADR-012).
+
+Solo un `owner` o `admin` crea tokens con `role: "server"` o cambia el rol mediante `PATCH …/devices/{dev}`. Al consumir un token, el dispositivo hereda el rol guardado en él, nunca uno indicado por el dispositivo. Una solicitud pública `POST …/join-requests` es siempre `device`. Un rol distinto de `device` o `server` en creación de token o PATCH devuelve `400 invalid_request`. Un cambio efectivo registra `device.role`, con `detail: {"previous":"device","new":"server"}`; repetir el mismo rol no duplica ese evento. El panel ofrece selección de tipo en el token y confirmación para cambiar un dispositivo existente; la aplicación de escritorio solo lo detecta y muestra, nunca lo elige.
+
+El inventario de administración y cada elemento de `/device/peers` incluyen `role`; este último mantiene exactamente el filtrado por red, aprobación y política de la configuración firmada. Los clientes nuevos deben tolerar que un servidor anterior no lo incluya.
+
+`GET /api/v1/server/info` reutiliza la autenticación de `/device/peers`: firma AtDevice ligada al método y ruta/query/cuerpo, ventana de 60 s, anti-replay, límite compartido `device_per_minute` y límite de cuerpo por defecto de Axum (2 MiB). Solo `approved`; pendiente o revocado recibe `403 device_not_approved`, firma incorrecta/ajena o repetición `401 invalid_signature`. La red sale únicamente de la identidad firmante, no de parámetros del cliente:
+
+```json
+{
+  "control_plane": {"version": "0.1.6", "commit": "0123456789abcdef0123456789abcdef01234567"},
+  "server_time_unix": 1793145600,
+  "issuer_cert_not_after_unix": 1795737600
+}
+```
+
+Ejemplo sintético. Versión y commit se obtienen de la misma compilación que `--version` (`CARGO_PKG_VERSION` y `ATENEA_BUILD_COMMIT`; `unknown` si una compilación de desarrollo no lo incorpora). `issuer_cert_not_after_unix` es `not_after` del certificado de **la red del firmante** y `null` si aún no existe. No emite configuraciones ni exige que exista certificado para responder. No entrega información de otras redes u organizaciones. `server_time_unix` se toma al construir la respuesta; el agente estima el desfase como hora del servidor menos hora local de recepción, sin compensar RTT.
+
+**Límite real:** se omiten `coordinator` y `relay`: el control plane no tiene configuración ni cliente para consultar sus versiones. Los informes de caminos de dispositivos y `/healthz` (comprobación de PostgreSQL) no acreditan sus versiones; no se infieren de la versión del control plane.
