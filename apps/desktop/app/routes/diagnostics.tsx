@@ -1,11 +1,8 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { bytes } from '../lib/format';
+import { bytes, num, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { Card, Empty, Heading, Row } from '../ui';
-
-const text = (v: unknown) => (typeof v === 'string' ? v : undefined);
-const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 
 export default function Diagnostics() {
   const { sample, error } = useAgent();

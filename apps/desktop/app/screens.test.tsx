@@ -20,8 +20,10 @@ const peer = (key: string, addr: string, path: string, name?: string) => ({
   tx_bytes: 2048, rx_bytes: 4096, path, candidates: 2, paths: [{ kind: path, ready: true, healthy: true, rtt_ms: null }],
 });
 const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún par por relay o sin camino'] };
-const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded) => JSON.stringify({
-  status: { public_key: 'c'.repeat(64), addrs: ['10.77.0.2'], hostname: 'MacBook de prueba', config: { version: 7, lease_active: true, valid_until_unix: Date.now() / 1000 + 240 }, nat: { mapping: 'unknown', reflexive: '203.0.113.9:51820' }, counters: { tx_init: 3 }, relay: { allocations: 0, entries: [], drops: {} }, peers },
+const server = { sync: { url: 'https://control.example.test', last_ok_unix: Math.floor(Date.now() / 1000) - 5, last_error: null, sync_ok: 40, sync_denied: 1, sync_errors: 2 }, coordinator: { url: 'https://control.example.test', last_announce_ok_unix: Math.floor(Date.now() / 1000) - 3, last_error: null, announces: 120, events: 9 } };
+const relay = { allocations: 1, drops: {}, entries: [{ peer: 'aa', transport: 'Udp', relay: 'relay-uno', state: 'ready', rtt_ms: 42, tx_bytes: 2048, rx_bytes: 1024 }] };
+const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded, extra: object = { ...server, relay }) => JSON.stringify({
+  status: { public_key: 'c'.repeat(64), addrs: ['10.77.0.2'], hostname: 'MacBook de prueba', config: { version: 7, lease_active: true, valid_until_unix: Date.now() / 1000 + 240 }, nat: { mapping: 'unknown', reflexive: '203.0.113.9:51820' }, counters: { tx_init: 3 }, relay: { allocations: 0, entries: [], drops: {} }, peers, ...extra },
   health,
 });
 
@@ -58,6 +60,31 @@ it('la banda de avisos solo aparece si hay motivos que contar', async () => {
   expect(await screen.findByRole('list', { name: 'Avisos' })).toHaveTextContent('sin lease activo');
 });
 
+
+it('el servidor sale en su propio grupo, aparte de los pares, y su detalle muestra servicios y relays', async () => {
+  vi.mocked(invoke).mockResolvedValue(agent());
+  app();
+  const groups = await screen.findAllByRole('heading', { level: 2, name: /^(Local|Servidor|Pares)$/ });
+  expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Servidor', 'Pares']);
+  await userEvent.click(await screen.findByRole('link', { name: /control\.example\.test/ }));
+  const detail = within(screen.getByRole('main'));
+  expect(await detail.findByRole('heading', { level: 2, name: 'control.example.test' })).toBeInTheDocument();
+  expect(detail.getByText('Conectado')).toBeInTheDocument();
+  expect(detail.getByText('40 correctas · 1 denegadas · 2 con error')).toBeInTheDocument();
+  expect(detail.getByText('relay-uno · UDP')).toBeInTheDocument();
+  expect(detail.getByText(/ready · 42 ms/)).toBeInTheDocument();
+});
+
+it('un error del control plane pone el servidor en rojo y sin control plane configurado no hay grupo Servidor', async () => {
+  vi.mocked(invoke).mockResolvedValue(agent(undefined, degraded, { sync: { ...server.sync, last_error: 'acceso denegado' }, coordinator: server.coordinator }));
+  const { unmount } = app('/devices/server');
+  expect(await screen.findByText('Control plane: acceso denegado')).toBeInTheDocument();
+  unmount();
+  vi.mocked(invoke).mockResolvedValue(agent(undefined, degraded, {}));
+  app();
+  await screen.findByRole('link', { name: /10\.77\.0\.4/ });
+  expect(screen.queryByRole('heading', { level: 2, name: 'Servidor' })).not.toBeInTheDocument();
+});
 it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y tráfico', async () => {
   vi.mocked(invoke).mockResolvedValue(agent());
   app();

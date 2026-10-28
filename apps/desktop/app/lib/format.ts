@@ -36,3 +36,20 @@ export const peerName = (peer: Peer, names: Record<string, string>) => names[pee
 
 /** Este dispositivo: alias local > nombre del sistema > texto genérico. */
 export const selfName = (status: { public_key: string; hostname?: string | null }, names: Record<string, string>) => names[status.public_key] || status.hostname || 'Este dispositivo';
+
+/** Lectura segura de campos de objetos sin esquema fijo (entradas de relay). */
+export const text = (v: unknown) => (typeof v === 'string' ? v : undefined);
+export const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+
+/** Solo el host de una URL: es lo que identifica al servidor en pantalla. */
+export function host(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  try { return new URL(url).host; } catch { return url; }
+}
+
+/** El servidor es el control plane (sincronización) más el coordinator; sin sincronización configurada no hay servidor. */
+export function serverTone(status: { sync?: { last_error?: string | null } | null; coordinator?: { last_error?: string | null } | null }): Tone {
+  if (status.sync?.last_error) return 'bad';
+  return status.coordinator?.last_error ? 'warn' : 'ok';
+}
+
