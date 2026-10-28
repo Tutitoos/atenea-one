@@ -1,42 +1,37 @@
-# Integración continua: qué corre y cuándo
+# Integración continua: solo a demanda
 
-- **Estado:** vigente desde 2026-10-28. `check`, `panel` y `supply-chain` se midieron el 2026-10-28 con el commit `b447e68` (CI anterior); los jobs de plataforma, en la primera ejecución de esta configuración (commit `fef99f5`, con todos activos). Una sola ejecución de cada uno: es una medida, no una media.
+- **Estado:** desde 2026-10-28 la CI **no se lanza sola**: ni al hacer push, ni en pull requests, ni semanalmente. Solo se ejecuta cuando el responsable la pide (decisión suya: la CI tardaba demasiado en cada cambio).
+- **Cómo lanzarla:** *Actions → CI → Run workflow* en GitHub, o `gh workflow run CI` (con `--ref` para otra rama). Como el disparo es manual, corre **todos** los jobs.
 
 ## Jobs
 
-| Job | Cuándo corre | Obligatorio para `main` | Duración medida |
-| --- | --- | --- | --- |
-| `changes` | siempre | no | segundos |
-| `check` | siempre (salvo la ejecución semanal) | **sí** | ~4,5 min |
-| `panel` | siempre | no | ~1 min |
-| `supply-chain` | siempre | no | ~1 min |
-| `macos` | si cambia código nativo, o en la ejecución semanal/manual | no | 3,9 min |
-| `windows` | igual que `macos` | no | 4,2 min |
-| `desktop-macos` | si cambia `apps/desktop/`, `crates/windows/` o la toolchain, o en la ejecución semanal/manual | no | 3,4 min |
-| `desktop-windows` | igual que `desktop-macos` | no | 4,7 min |
+| Job | Obligatorio para `main` | Duración medida (2026-10-28, una ejecución) |
+| --- | --- | --- |
+| `changes` | no | segundos |
+| `check` | **sí**, pero nunca se ejecuta solo (ver riesgos) | ~4,5 min |
+| `panel` | no | ~1 min |
+| `supply-chain` | no | ~1 min |
+| `macos` | no | 3,9 min |
+| `windows` | no | 4,2 min |
+| `desktop-macos` | no | 3,4 min |
+| `desktop-windows` | no | 4,7 min |
 
-Antes, `macos` (~6 min) y `windows` (~8,5 min) corrían siempre y llevaban dentro la aplicación de escritorio. Ahora los cuatro jobs de plataforma corren en paralelo (el más lento, 4,7 min) y solo cuando el cambio los toca: un cambio de documentación o del servidor no lanza ninguno.
+Los jobs de plataforma corren en paralelo: la ejecución completa tarda lo del más lento (~5 min).
 
-## Qué cuenta como «código nativo» y como «escritorio»
+## Riesgos de no lanzarla sola (aceptados por el responsable)
 
-Lo decide `scripts/ci-changes.sh` comparando los ficheros cambiados entre el commit anterior del push (o la base de la PR) y el nuevo:
+- **Nada avisa de una rotura.** Un push que rompa formato, clippy, pruebas, macOS o Windows no se ve hasta que se lance la CI. Hay que ejecutarla **antes de publicar un release** y siempre que se toque código nativo.
+- **Advisories nuevas.** La ejecución semanal que las detectaba sin que cambiara el repositorio ya no existe: `cargo deny` y `pnpm audit` solo corren a demanda. Lanzar la CI de vez en cuando por este motivo.
+- **Protección de `main`.** El check requerido `check` no se publica solo; los pushes del propietario ya pasaban por la excepción de administrador, pero un pull request quedaría esperando un check que nadie lanza hasta ejecutarla a mano sobre su rama.
+- **`release.yml` no cambia:** se dispara por tag `v*` y construye por su cuenta; no depende de esta CI, así que un release no prueba lo que la CI no hubiese comprobado antes.
+- Comprobación local equivalente a `check`: `scripts/check.sh`.
 
-- **Nativo:** `apps/agent/`, `apps/cli/`, `crates/`, `packaging/`, `tests/macos/`, `tests/windows/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, este workflow y el propio script.
-- **Escritorio:** `apps/desktop/`, `crates/windows/` (única dependencia del workspace en Windows), `rust-toolchain.toml`, este workflow y el script.
+## Filtro por rutas (sin efecto con el disparo manual)
 
-No disparan plataforma: documentación, `apps/web`, `apps/control-plane`, `apps/coordinator`, `apps/relay`, `tests/network-lab`, `infra/`, `deploy/` y otros workflows. **Ante la duda ejecuta todo**: primer push, base inexistente o historia reescrita, ejecución semanal, manual y cualquier evento desconocido.
-
-`tests/ci/changes.sh` prueba esas reglas con un repositorio temporal (cambios por ruta, varias confirmaciones en un push, borrados, renombrados, PR y todos los casos «ante la duda»); `scripts/check.sh` lo ejecuta. Se comprobó con una mutación (quitar `crates/` de las rutas vigiladas) que la prueba falla cuando debe.
-
-## Red de seguridad
-
-- **Ejecución semanal** (lunes, además de las advisories): corre todos los jobs de plataforma y de escritorio sin filtrar.
-- **Ejecución manual completa:** *Actions → CI → Run workflow* (`workflow_dispatch`).
-- **Releases:** `release.yml` compila todo en nativo para Linux, macOS y Windows; una rotura de plataforma que se hubiera saltado un filtro aparece, como tarde, al publicar.
-- **Lo que los filtros NO ven:** un cambio fuera de las rutas vigiladas que rompa una plataforma (p. ej. un `cfg` en código compartido de otro componente). Por eso `Cargo.toml`, `Cargo.lock` y `crates/` sí están vigilados.
+`scripts/ci-changes.sh` decide qué jobs de plataforma necesita un cambio, y `tests/ci/changes.sh` (parte de `check.sh`) prueba sus reglas. Con `workflow_dispatch` devuelve siempre «todo»; se conserva para volver a activar `push`/`pull_request` sin reescribirlo: bastaría añadir esos eventos a `on:` en `ci.yml`. Reglas: *nativo* = `apps/agent/`, `apps/cli/`, `crates/`, `packaging/`, `tests/macos/`, `tests/windows/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, este workflow y el propio script; *escritorio* = `apps/desktop/`, `crates/windows/`, `rust-toolchain.toml`, este workflow y el script. Ante la duda (sin base, evento desconocido) ejecuta todo.
 
 ## Límites
 
-- `macos`, `windows` y los de escritorio **no bloquean** `main`: un fallo no impide el push. Revisarlos antes de publicar.
-- Sin caché de compilación (evaluada, no adoptada: añade una dependencia a la CI y no se ha medido su efecto).
+- `macos`, `windows` y los de escritorio no bloquean `main` aunque se lancen.
+- Sin caché de compilación (no se ha medido su efecto).
 - La aceptación privilegiada de macOS y Windows se ejecuta solo en runners desechables, nunca en un equipo real.
