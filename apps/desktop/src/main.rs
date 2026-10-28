@@ -9,6 +9,10 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 mod networks;
+mod notify;
+mod panel;
+mod ping;
+mod tray_actions;
 
 use serde_json::Value;
 use std::time::Duration;
@@ -138,6 +142,68 @@ async fn network_apply(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn joined_network(network: &str) -> Result<Value, String> {
+    if !networks::valid_uuid(network) {
+        return Err("identificador de red no válido".into());
+    }
+    let list: Value = serde_json::from_str(&networks::list()?).map_err(|e| e.to_string())?;
+    list.as_array()
+        .and_then(|nets| {
+            nets.iter()
+                .find(|n| n["network_id"].as_str() == Some(network))
+        })
+        .cloned()
+        .ok_or_else(|| "la red no está unida".into())
+}
+
+#[tauri::command]
+async fn device_ping(network: String, address: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        joined_network(&network)?;
+        let status: Value =
+            serde_json::from_str(&ask(&network_socket(&network)?)?).map_err(|e| e.to_string())?;
+        ping::run(ping::validate(&address, &status)?)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn open_panel(network: String, device_id: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let net = joined_network(&network)?;
+        let url = panel::url(
+            net["url"].as_str().ok_or("falta la URL del servidor")?,
+            &network,
+            device_id.as_deref(),
+        )?;
+        panel::open(&url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn notifications_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|p| p.join("notifications.json"))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn notifications_get(app: AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || notify::get(&notifications_path(&app)?))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn notifications_set(app: AppHandle, on: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || notify::set(&notifications_path(&app)?, on))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 struct Assessment {
@@ -307,38 +373,23 @@ fn summarize(joined: usize, sources: &[Source]) -> (Health, String, Vec<(String,
     }
 }
 
-fn read_source(label: &str, path: &str) -> Option<Source> {
-    let v: Value = serde_json::from_str(&ask(path).ok()?).ok()?;
-    let a = assess(&v);
-    Some(Source {
-        label: label.into(),
-        health: a.health,
-        text: a.text,
-    })
-}
-
-/// Redes unidas (id, nombre) para la bandeja.
-fn joined_networks() -> Vec<(String, String)> {
+/// Redes unidas y su estado persistido, actualizado por el CLI.
+fn joined_networks() -> Vec<Value> {
     let Ok(Value::Array(list)) =
         networks::list().and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
     else {
         return Vec::new();
     };
-    list.iter()
-        .filter_map(|n| {
-            Some((
-                n["network_id"].as_str()?.to_string(),
-                n["name"].as_str()?.to_string(),
-            ))
-        })
-        .filter(|(id, _)| networks::valid_uuid(id))
+    list.into_iter()
+        .filter(|n| n["network_id"].as_str().is_some_and(networks::valid_uuid))
         .collect()
 }
 
 fn tray_menu(
     app: &AppHandle,
     lines: &[(String, String)],
-) -> tauri::Result<(Menu<Wry>, Vec<MenuItem<Wry>>)> {
+    actions: &[(String, String)],
+) -> tauri::Result<Menu<Wry>> {
     let items: Vec<MenuItem<Wry>> = lines
         .iter()
         .enumerate()
@@ -346,12 +397,17 @@ fn tray_menu(
             MenuItem::with_id(app, format!("state{i}"), text, false, None::<&str>)
         })
         .collect::<tauri::Result<_>>()?;
+    let actions: Vec<MenuItem<Wry>> = actions
+        .iter()
+        .map(|(id, text)| MenuItem::with_id(app, id, text, true, None::<&str>))
+        .collect::<tauri::Result<_>>()?;
     let open = MenuItem::with_id(app, "open", "Abrir Atenea One", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
     let mut all: Vec<&dyn IsMenuItem<Wry>> =
         items.iter().map(|i| i as &dyn IsMenuItem<Wry>).collect();
+    all.extend(actions.iter().map(|i| i as &dyn IsMenuItem<Wry>));
     all.extend([&open as &dyn IsMenuItem<Wry>, &quit]);
-    Ok((Menu::with_items(app, &all)?, items))
+    Menu::with_items(app, &all)
 }
 
 fn main() {
@@ -361,14 +417,17 @@ fn main() {
             network_list,
             network_legacy,
             network_inspect,
-            network_apply
+            network_apply,
+            device_ping,
+            open_panel,
+            notifications_get,
+            notifications_set
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let base = Image::from_bytes(TRAY_PNG)?;
-            let (menu, mut items) =
-                tray_menu(app.handle(), &[("*".into(), "Comprobando…".into())])?;
+            let menu = tray_menu(app.handle(), &[("*".into(), "Comprobando…".into())], &[])?;
             let tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon(&base, Health::Stopped))
                 .tooltip("Atenea One")
@@ -376,7 +435,23 @@ fn main() {
                 .on_menu_event(|app, ev| match ev.id.as_ref() {
                     "open" => show_window(app),
                     "quit" => app.exit(0),
-                    _ => {}
+                    id => {
+                        let id = id.to_string();
+                        std::thread::spawn(move || {
+                            if let Some((op, network)) = id.split_once(':') {
+                                let result = match op {
+                                    "up" | "down" => {
+                                        networks::apply(op, Some(network), None, None).map(|_| ())
+                                    }
+                                    "copy" => tray_actions::copy(network),
+                                    _ => return,
+                                };
+                                if let Err(error) = result {
+                                    eprintln!("acción de bandeja: {error}");
+                                }
+                            }
+                        });
+                    }
                 })
                 .build(app)?;
             if std::env::args().any(|a| a == "--open") {
@@ -384,8 +459,9 @@ fn main() {
             }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let mut nets: Vec<(String, String)> = Vec::new();
-                let mut labels: Vec<String> = vec!["*".into()];
+                let mut nets: Vec<Value> = Vec::new();
+                let mut previous_menu = Vec::new();
+                let mut notifications = std::collections::HashMap::<String, notify::State>::new();
                 let mut tick = 0u32;
                 loop {
                     // La lista de redes se consulta con el CLI: cada 5 lecturas (~10 s), no en cada una.
@@ -394,25 +470,50 @@ fn main() {
                     }
                     tick = tick.wrapping_add(1);
                     let mut sources: Vec<Source> = Vec::new();
-                    for (id, name) in &nets {
-                        if let Some(s) = network_socket(id).ok().and_then(|p| read_source(name, &p))
-                        {
-                            sources.push(s);
+                    let mut actions = Vec::new();
+                    let clipboard = tray_actions::clipboard_program().is_some();
+                    let enabled = notifications_path(&handle)
+                        .and_then(|p| notify::get(&p))
+                        .unwrap_or(false);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |t| t.as_secs() as i64);
+                    notifications
+                        .retain(|id, _| nets.iter().any(|n| n["network_id"].as_str() == Some(id)));
+                    for net in &nets {
+                        let id = net["network_id"].as_str().unwrap_or("");
+                        let name = net["name"].as_str().unwrap_or("Red");
+                        let value: Option<Value> = network_socket(id)
+                            .ok()
+                            .and_then(|p| ask(&p).ok())
+                            .and_then(|s| serde_json::from_str(&s).ok());
+                        if let Some(value) = &value {
+                            let assessment = assess(value);
+                            sources.push(Source {
+                                label: name.into(),
+                                health: assessment.health,
+                                text: assessment.text,
+                            });
+                        }
+                        actions.extend(tray_actions::entries(net, value.as_ref(), clipboard));
+                        for message in notifications.entry(id.into()).or_default().sample(
+                            net["state"].as_str().unwrap_or("desconocida"),
+                            value.as_ref(),
+                            now,
+                        ) {
+                            if enabled {
+                                notify::deliver(&format!("{name}: {message}"));
+                            }
                         }
                     }
                     let (health, text, lines) = summarize(nets.len(), &sources);
-                    let keys: Vec<String> = lines.iter().map(|(k, _)| k.clone()).collect();
-                    if keys != labels {
-                        // Cambió el conjunto de redes que responden: se reconstruye el menú (no en cada lectura,
-                        // para no cerrar un menú que el usuario tenga abierto).
-                        if let Ok((menu, new_items)) = tray_menu(&handle, &lines) {
+                    let key: Vec<_> = lines.iter().chain(&actions).cloned().collect();
+                    if key != previous_menu {
+                        // No cerrar un menú abierto si no han cambiado sus entradas o etiquetas.
+                        if let Ok(menu) = tray_menu(&handle, &lines, &actions) {
                             let _ = tray.set_menu(Some(menu));
-                            items = new_items;
-                            labels = keys;
+                            previous_menu = key;
                         }
-                    }
-                    for (item, (_, line)) in items.iter().zip(&lines) {
-                        let _ = item.set_text(line);
                     }
                     let _ = tray.set_icon(Some(tray_icon(&base, health)));
                     let _ = tray.set_tooltip(Some(&text));

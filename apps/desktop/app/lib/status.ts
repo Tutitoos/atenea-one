@@ -5,8 +5,20 @@ import { z } from 'zod';
 // Frontera con el agente: se valida lo que se usa y se toleran campos ausentes (agentes anteriores
 // no informan `addrs`) o añadidos. Cualquier otra forma se rechaza con un error visible.
 const path = z.object({ kind: z.string(), ready: z.boolean(), healthy: z.boolean(), rtt_ms: z.number().nullish() });
+// El agente informa `device_id` como lista de 16 bytes (así sale en el JSON real, visto contra un agente 0.1.5); se
+// normaliza a UUID canónico. Es un dato opcional: lo irreconocible se ignora y NO debe invalidar el estado entero.
+const deviceId = z
+  .union([z.string(), z.array(z.number().int().min(0).max(255)).length(16)])
+  .transform((v) => {
+    if (typeof v === 'string') return v;
+    const h = v.map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  })
+  .optional()
+  .catch(undefined);
 const peer = z.object({
   public_key: z.string(),
+  device_id: deviceId,
   addrs: z.array(z.string()).default([]),
   // Nombre de visualización que reparte el control plane (ADR-012); los agentes anteriores no lo informan.
   name: z.string().nullish(),

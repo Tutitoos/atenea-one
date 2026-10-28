@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router';
+import { PanelButton, PingButton } from '../device-actions';
+import { TrafficHistory } from '../device-history';
+import type { DeviceHistory } from '../lib/history';
 import type { Rate } from '../lib/agent';
 import { ago, bytes, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
@@ -42,7 +45,7 @@ const State = ({ tone, children }: { tone: Tone; children: string }) => <div cla
 const Addresses = ({ addrs }: { addrs: string[] }) => (
   <>
     <Heading>Direcciones del túnel</Heading>
-    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
+    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /><CopyButton value={`ssh ${a}`} label="comando SSH" /><CopyButton value={`ping ${a}`} label="comando ping" /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
   </>
 );
 
@@ -73,7 +76,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
 }
 
 
-function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
+function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory }) {
   const names = useNames();
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
@@ -84,6 +87,7 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
       <Title id={peer.public_key} name={peerName(peer, names)} editable />
       <State tone={tone}>{label}</State>
       {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
+      <div className="mb-4 flex flex-wrap gap-3"><PingButton network={network} addrs={peer.addrs} /><PanelButton network={network} deviceId={peer.device_id} /></div>
       <Addresses addrs={peer.addrs} />
       <Heading>Detalles</Heading>
       <Card>
@@ -99,15 +103,16 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
         {peer.probe && (peer.probe.failures > 0 || peer.probe.hold_secs != null) && <Row label="Reintentos de conexión">{`${peer.probe.failures} fallos · ${peer.probe.hold_secs == null ? 'sin espera de sondeo' : `${peer.probe.hold_secs} s hasta el próximo intento`}`}</Row>}
         <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
       </Card>
+      <TrafficHistory history={history} />
     </>
   );
 }
 
 export default function Device() {
   const { id = '' } = useParams();
-  const { sample, error } = useAgent();
+  const { sample, error, network } = useAgent();
   if (!sample) return <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>;
   if (id === 'self') return <SelfDetail reply={sample.reply} />;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
-  return peer ? <PeerDetail peer={peer} rate={sample.rates[id]} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
+  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }

@@ -24,6 +24,9 @@ export default function Panel() {
  const orgs=useQuery({queryKey:['organizations'],queryFn:()=>result(api.GET('/api/v1/orgs')),enabled:!!session.data});
  const selected=orgs.data?.find(o=>o.id===params.get('org')); const net=params.get('net')??''; const view=params.get('view')??views[0];
  const navigate=(org:string,network='',page=views[0])=>setParams({org,...(network?{net:network,view:page}:{})});
+ // Enlace directo desde la aplicación de escritorio (`/?net=<red>`): sin `org`, se deduce de la red.
+ const owner=useQuery({queryKey:['network-org',net],queryFn:()=>result(api.GET('/api/v1/networks/{net}',{params:{path:{net}}})),enabled:!!session.data&&!!net&&!params.get('org')});
+ useEffect(()=>{if(owner.data)setParams({org:owner.data.org_id,net,view},{replace:true});},[owner.data]);
  const expired=session.error instanceof ApiError&&session.error.status===401;
  if(expired)return <Login expired/>;
  if(!session.data)return <main><h1>Atenea One</h1><Status query={session}/>{session.isError&&<RunButton run={()=>session.refetch()}>Reintentar</RunButton>}</main>;

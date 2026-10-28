@@ -15,13 +15,15 @@ function Group({ title, entries }: { title: string; entries: Entry[] }) {
     <section aria-label={title}>
       <h2 className="mx-2 mb-1 mt-3.5 text-[13px] font-semibold text-mut">{title}</h2>
       {entries.map((e) => (
-        <NavLink key={e.id} to={`/devices/${encodeURIComponent(e.id)}`} className={({ isActive }) => `flex cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}>
+        <div key={e.id} className="mb-1">
+        <NavLink to={`/devices/${encodeURIComponent(e.id)}`} className={({ isActive }) => `flex cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}>
           <Dot tone={e.tone} list />
           <span>
             <span className="block text-sm">{e.name}</span>
             {e.addr && <span className="block text-xs opacity-70">{e.addr}</span>}
           </span>
         </NavLink>
+        </div>
       ))}
     </section>
   );

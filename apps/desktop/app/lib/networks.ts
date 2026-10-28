@@ -41,9 +41,9 @@ export const stateText: Record<NetState, string> = {
 export const stateTone: Record<NetState, Tone> = { detenida: 'off', iniciada_sin_configuracion: 'warn', conectada: 'ok', conflicto: 'bad', desconocida: 'off' };
 
 /** Tauri rechaza con el texto devuelto por la orden, no con un Error. */
-async function call(cmd: string, args?: Record<string, unknown>): Promise<string> {
+async function call<T = string>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    return await invoke<string>(cmd, args);
+    return await invoke<T>(cmd, args);
   } catch (e) {
     throw new Error(typeof e === 'string' ? e : 'La operación falló.', { cause: e });
   }
@@ -77,3 +77,24 @@ export const migrateLegacy = (name: string) => call('network_apply', name.trim()
 
 /** Datos que `join` imprime y que el administrador compara al aprobar el equipo. */
 export const deviceFingerprint = (output: string) => /^huella_dispositivo=(\S+)/m.exec(output)?.[1];
+
+export const pingResult = z.object({
+  sent: z.number().int().nonnegative(), received: z.number().int().nonnegative(), loss_pct: z.number(),
+  min_ms: z.number().nullish(), avg_ms: z.number().nullish(), max_ms: z.number().nullish(),
+});
+export type PingResult = z.infer<typeof pingResult>;
+
+export async function pingDevice(network: string, address: string): Promise<PingResult> {
+  const parsed = pingResult.safeParse(JSON.parse(await call('device_ping', { network, address })));
+  if (!parsed.success) throw new Error('La prueba respondió con un formato inesperado.');
+  return parsed.data;
+}
+
+export const openPanel = (network: string, deviceId?: string | null) => call<void>('open_panel', { network, deviceId: deviceId ?? null });
+
+export async function readNotifications(): Promise<boolean> {
+  return z.boolean().parse(await call<boolean>('notifications_get'));
+}
+export async function setNotifications(on: boolean): Promise<void> {
+  await call<void>('notifications_set', { on });
+}

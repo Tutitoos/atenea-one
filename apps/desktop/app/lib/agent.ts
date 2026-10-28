@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { invoke } from '@tauri-apps/api/core';
 import { reply, type Reply } from './status';
+import { recordHistory, type History } from './history';
 
 export type Rate = { down: number; up: number };
-export type Sample = { reply: Reply; rates: Record<string, Rate> };
+export type Sample = { reply: Reply; rates: Record<string, Rate>; history?: History };
 
 /** Calcula bytes/s por par entre dos lecturas consecutivas (la primera no tiene tasa). */
 export function createSampler() {
@@ -25,6 +26,7 @@ export function createSampler() {
 
 /** Un muestreador por red: al cambiar de red no se calculan tasas contra la lectura de otra. */
 const samplers = new Map<string, ReturnType<typeof createSampler>>();
+let history: History | undefined;
 
 /** Lee el estado sin modificar los contadores del muestreador de tráfico. */
 export async function readReply(network: string): Promise<Reply> {
@@ -44,5 +46,7 @@ export async function readReply(network: string): Promise<Reply> {
 export async function readAgent(network: string): Promise<Sample> {
   const current = await readReply(network);
   if (!samplers.has(network)) samplers.set(network, createSampler());
-  return samplers.get(network)!(current, Date.now());
+  const sample = samplers.get(network)!(current, Date.now());
+  history = recordHistory(history, network, current.status.peers, sample.rates, Date.now());
+  return { ...sample, history };
 }

@@ -16,6 +16,7 @@ import Shell from './routes/shell';
 import Servers from './routes/servers';
 import Server from './routes/server';
 import type { Peer } from './lib/status';
+import { TrafficHistory } from './device-history';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -318,6 +319,18 @@ it('importar sin nombre no manda `name` y un rechazo de Rust se muestra sin cerr
   expect(screen.getByRole('alertdialog', { name: 'Importar red existente' })).toBeInTheDocument();
 });
 
+it('el device_id real del agente (lista de 16 bytes) no rompe el estado y llega al panel como UUID', async () => {
+  const bytes = [0x01, 0x99, 0xab, 0x12, 0x34, 0x56, 0x7d, 0xef, 0x8a, 0xbc, 0x01, 0x23, 0x45, 0x67, 0x89, 0xcd];
+  serve(agent([{ ...peer('aa', '10.77.0.3', 'direct'), device_id: bytes } as never]), [net()], undefined, { open_panel: () => undefined });
+  app(`/devices/aa`);
+  await userEvent.click(await screen.findByRole('button', { name: /panel/i }));
+  await waitFor(() => expect(calls('open_panel')[0][1]).toEqual({ network: NET_ID, deviceId: OTHER_ID }));
+  // Un valor irreconocible se ignora sin invalidar el estado: la pantalla sigue mostrando al dispositivo.
+  serve(agent([{ ...peer('bb', '10.77.0.4', 'direct'), device_id: { raro: true } } as never]), [net()]);
+  app(`/devices/bb`);
+  expect(await screen.findByRole('link', { name: /10\.77\.0\.4/ })).toBeInTheDocument();
+});
+
 it('las pantallas no tienen violaciones de accesibilidad detectables', async () => {
   serve(agent());
   for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/networks', '/diagnostics', '/servers', '/servers/control.example.test']) {
@@ -496,4 +509,136 @@ it('una información sin certificado no inventa una caducidad ni una insignia', 
   app('/servers');
   await screen.findByRole('link', { name: /control.example.test 1 red/ });
   expect(screen.queryByText('Certificado próximo a caducar')).not.toBeInTheDocument();
+});
+
+it.each([0, 40])('prueba conexión con pérdida del %s %% y refresca', async (loss) => {
+  serve(agent(), [net()], undefined, { device_ping: () => JSON.stringify({ sent: 5, received: loss ? 3 : 5, loss_pct: loss, min_ms: 1, avg_ms: 2, max_ms: 3, extra: true }) });
+  const { container } = app(`/devices/${'a'.repeat(64)}`);
+  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  expect(await screen.findByText(`Pérdida: ${loss} %`)).toBeInTheDocument();
+  expect(screen.getByText(/Mín\/med\/máx: 1 \/ 2 \/ 3 ms/)).toBeInTheDocument();
+  expect(calls('device_ping')[0][1]).toEqual({ network: NET_ID, address: '10.77.0.3' });
+  await waitFor(() => expect(calls('status').length).toBeGreaterThan(1));
+  expect((await axe(container)).violations).toEqual([]);
+});
+
+it('muestra espera y error exacto de ping, también con IPv6', async () => {
+  // El compilador usa ES2022, sin Promise.withResolvers.
+  let reject!: (reason: string) => void;
+  const promise = new Promise<never>((_, fail) => { reject = fail; });
+  serve(agent([peer('aa', 'fd00::3', 'none')]), [net()], undefined, { device_ping: () => promise });
+  app('/devices/aa');
+  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  expect(screen.getByRole('button', { name: 'Probando…' })).toBeDisabled();
+  reject('ping: destino no accesible');
+  expect(await screen.findByRole('alert')).toHaveTextContent('ping: destino no accesible');
+  expect(calls('device_ping')[0][1]).toEqual({ network: NET_ID, address: 'fd00::3' });
+});
+
+it('copia comandos sin corchetes y no ofrece probar el dispositivo local', async () => {
+  const user = userEvent.setup();
+  serve(agent([peer('aa', 'fd00::3', 'direct')]));
+  const { unmount } = app('/devices/aa');
+  await user.click(await screen.findByRole('button', { name: 'Copiar comando SSH' }));
+  expect(await navigator.clipboard.readText()).toBe('ssh fd00::3');
+  await user.click(screen.getByRole('button', { name: 'Copiar comando ping' }));
+  expect(await navigator.clipboard.readText()).toBe('ping fd00::3');
+  unmount();
+  app('/devices/self');
+  await screen.findByRole('heading', { name: 'MacBook de prueba' });
+  expect(screen.queryByRole('button', { name: 'Probar conexión' })).not.toBeInTheDocument();
+});
+
+it('abre el panel con el identificador del par y muestra errores sin alterarlos', async () => {
+  serve(agent([{ ...peer('aa', '10.77.0.3', 'direct'), device_id: OTHER_ID }]), [net()], undefined, { open_panel: () => { throw 'No se pudo abrir el navegador'; } });
+  app('/devices/aa');
+  await userEvent.click(await screen.findByRole('button', { name: 'Abrir en el panel' }));
+  expect(calls('open_panel')[0][1]).toEqual({ network: NET_ID, deviceId: OTHER_ID });
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo abrir el navegador');
+});
+
+it('abre el panel de la red del servidor sin dispositivo', async () => {
+  serve(agent(), [net()], undefined, { open_panel: () => undefined });
+  app('/servers/control.example.test');
+  await userEvent.click(await screen.findByRole('button', { name: 'Abrir en el panel' }));
+  expect(calls('open_panel')[0][1]).toEqual({ network: NET_ID, deviceId: null });
+});
+
+it('lee y cambia la preferencia de notificaciones', async () => {
+  serve(agent(), [net()], undefined, { notifications_get: () => true, notifications_set: () => undefined });
+  const { container } = app('/diagnostics');
+  const toggle = await screen.findByRole('switch', { name: 'Notificaciones del sistema' });
+  await waitFor(() => expect(toggle).toBeChecked());
+  await userEvent.click(toggle);
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(calls('notifications_set')[0][1]).toEqual({ on: false });
+  expect((await axe(container)).violations).toEqual([]);
+});
+
+it('dibuja tráfico con escala automática, leyenda e historial relativo accesibles', async () => {
+  const { container, rerender } = render(<main><h2>Dispositivo de prueba</h2><TrafficHistory /></main>);
+  expect(screen.getByText('Sin muestras de tráfico todavía.')).toBeInTheDocument();
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(screen.getByText('Sin eventos desde que se abrió esta red.')).toBeInTheDocument();
+  rerender(<main><h2>Dispositivo de prueba</h2><TrafficHistory history={{ path: 'relay', points: [{ at: Date.now() - 2000, down: 2048, up: 1024 }, { at: Date.now(), down: 4096, up: 0 }], events: [{ at: Date.now() - 5000, text: 'Pasó a relay' }] }} /></main>);
+  expect(screen.getByRole('img', { name: /Velocidad de bajada/ })).toBeInTheDocument();
+  expect(screen.getByText(/escala 0–4.0 KiB\/s/)).toBeInTheDocument();
+  expect(screen.getByRole('list', { name: 'Historial de eventos' })).toHaveTextContent('Pasó a relay · hace 5 s');
+  expect(screen.getByText(/El historial se pierde al cerrar la app/)).toBeInTheDocument();
+  expect((await axe(container)).violations).toEqual([]);
+});
+
+it('el ping refresca el camino y registra la transición en el historial', async () => {
+  let path = 'none';
+  serve(agent([peer('prueba-historial', '10.77.0.8', path)]), [net({ network_id: OTHER_ID })], undefined, {
+    status: () => agent([peer('prueba-historial', '10.77.0.8', path)]),
+    device_ping: () => { path = 'direct'; return JSON.stringify({ sent: 5, received: 5, loss_pct: 0, min_ms: null, avg_ms: null, max_ms: null }); },
+  });
+  app('/devices/prueba-historial');
+  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  expect(await screen.findByRole('list', { name: 'Historial de eventos' })).toHaveTextContent('Se conectó directamente');
+  expect(await screen.findByRole('img', { name: /Velocidad de bajada/ })).toBeInTheDocument();
+});
+
+it('mantiene la preferencia anterior si guardar notificaciones falla', async () => {
+  serve(agent(), [net()], undefined, { notifications_get: () => true, notifications_set: () => { throw 'No se pudo guardar la preferencia'; } });
+  app('/diagnostics');
+  const toggle = await screen.findByRole('switch', { name: 'Notificaciones del sistema' });
+  await waitFor(() => expect(toggle).toBeChecked());
+  await userEvent.click(toggle);
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar la preferencia');
+  expect(toggle).toBeChecked();
+});
+
+it('la lista no lleva acciones: probar la conexión está en el detalle, prefiere IPv4 y tolera latencias ausentes', async () => {
+  serve(agent([{ ...peer('aa', 'fd00::3', 'none'), addrs: ['fd00::3', '10.77.0.3'] }]), [net()], undefined, { device_ping: () => '{"sent":5,"received":0,"loss_pct":100}' });
+  const { container } = app('/devices');
+  await screen.findByRole('link', { name: /10\.77\.0\.3|fd00::3/ });
+  expect(screen.queryByRole('button', { name: /Probar conexión/ })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: /10\.77\.0\.3|fd00::3/ }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  expect(await screen.findByText('Pérdida: 100 %')).toBeInTheDocument();
+  expect(screen.getByText('Mín/med/máx: — / — / — ms')).toBeInTheDocument();
+  expect(calls('device_ping')[0][1]).toEqual({ network: NET_ID, address: '10.77.0.3' });
+  expect((await axe(container)).violations).toEqual([]);
+});
+
+it('rechaza una respuesta ping mal formada sin inventar resultados', async () => {
+  serve(agent([peer('aa', '10.77.0.3', 'none')]), [net()], undefined, { device_ping: () => '{"sent":"cinco"}' });
+  app('/devices/aa');
+  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('La prueba respondió con un formato inesperado.');
+  expect(screen.queryByText(/Pérdida:/)).not.toBeInTheDocument();
+});
+
+it('muestra el error de lectura de notificaciones y el de abrir el servidor', async () => {
+  serve(agent(), [net()], undefined, { notifications_get: () => { throw 'Preferencia no legible'; }, open_panel: () => { throw 'Navegador no disponible'; } });
+  const { unmount } = app('/diagnostics');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Preferencia no legible');
+  expect(screen.getByRole('switch', { name: 'Notificaciones del sistema' })).toBeDisabled();
+  unmount();
+  const { container } = app('/servers/control.example.test');
+  await userEvent.click(await screen.findByRole('button', { name: 'Abrir en el panel' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Navegador no disponible');
+  expect((await axe(container)).violations).toEqual([]);
 });

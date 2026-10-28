@@ -1,8 +1,25 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { readNotifications, setNotifications } from '../lib/networks';
 import { bytes, num, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { Card, Empty, Heading, NoNetworks, Row } from '../ui';
+
+function Notifications() {
+  const client = useQueryClient();
+  const preference = useQuery({ queryKey: ['notifications'], queryFn: readNotifications });
+  const change = useMutation({
+    mutationFn: setNotifications,
+    onSuccess: (_, on) => client.setQueryData(['notifications'], on),
+  });
+  return <section aria-label="Preferencias">
+    <Heading>Notificaciones</Heading>
+    <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={preference.data ?? false} disabled={preference.isPending || !!preference.error || change.isPending} onChange={(event) => change.mutate(event.target.checked)} />Notificaciones del sistema</label>
+    <p className="mt-1 text-sm text-mut">Avisa de conexión a relay prolongada, red caída o recuperada y certificado por caducar.</p>
+    {(change.error ?? preference.error) && <p role="alert" className="text-bad">{(change.error ?? preference.error)?.message}</p>}
+  </section>;
+}
 
 export default function Diagnostics() {
   const { sample, error, empty } = useAgent();
@@ -14,6 +31,7 @@ export default function Diagnostics() {
   return (
     <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
       <h2 className="text-xl font-semibold">Diagnóstico</h2>
+      <Notifications />
       <Heading>Errores</Heading>
       <Card>
         <Row label="Configuración">{config.last_error ?? 'ninguno'}</Row>

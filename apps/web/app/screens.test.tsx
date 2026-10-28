@@ -11,7 +11,7 @@ import { device } from './device.fixture';
 import { Devices } from './devices';
 import { Enrollment } from './enrollment';
 import { Organizations } from './organizations';
-import { Login } from './panel';
+import Panel, { Login } from './panel';
 import { Relays, Topology } from './observability';
 import { Policies } from './policies';
 import { Audit, Metrics } from './observability';
@@ -100,4 +100,16 @@ it('pantallas principales sin infracciones básicas de accesibilidad',async()=>{
  // jsdom no implementa canvas/layout; el contraste necesita comprobación en navegador real.
  for(const component of cases){const {container,unmount}=wrap(component);expect((await axe(container,{rules:{region:{enabled:false},'color-contrast':{enabled:false}}})).violations).toEqual([]);unmount();}
  get.mockRestore();
+});
+it('un enlace con solo la red (desde la aplicación de escritorio) selecciona su organización',async()=>{
+  const org='0199ab12-3456-7def-8abc-0123456789aa',net='0199ab12-3456-7def-8abc-0123456789bb';
+  vi.spyOn(api,'GET').mockImplementation((async(path:string)=>{
+    if(path==='/api/v1/session')return {data:{user:{display_name:'Prueba'},memberships:[{org_id:org,role:'admin'}],csrf_token:'x'}};
+    if(path==='/api/v1/orgs')return {data:[{id:org,name:'org-de-prueba',role:'admin'}]};
+    if(path==='/api/v1/networks/{net}')return {data:{id:net,org_id:org,name:'red',ipv4_cidr:'10.0.0.0/24',ipv6_cidr:'fd00::/64',root_anchor:'00',has_issuer_cert:true,join_policy:'cerrada'}};
+    return {data:[]};
+  }) as never);
+  render(<MemoryRouter initialEntries={[`/?net=${net}&view=Dispositivos`]}><QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Panel/></QueryClientProvider></MemoryRouter>);
+  await waitFor(()=>expect(screen.getByRole('combobox',{name:/Organización/})).toHaveValue(org));
+  expect(screen.getByRole('navigation',{name:'Secciones de red'})).toBeInTheDocument();
 });

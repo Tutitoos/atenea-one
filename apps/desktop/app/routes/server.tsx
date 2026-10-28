@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
+import { PanelButton } from '../device-actions';
 import { ago, bytes, num, pathLabel, peerName, serverTone, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { changeNetwork, readNetworks, stateText, stateTone } from '../lib/networks';
@@ -92,6 +93,7 @@ export default function Server() {
         <div className="mt-2 flex items-center gap-3">
           <button type="button" disabled={change.isPending} className="rounded-md border border-line px-3 py-1 disabled:opacity-50" onClick={() => change.mutate({ op: net.state === 'detenida' ? 'up' : 'down', id: net.network_id })}>{net.state === 'detenida' ? 'Conectar' : 'Desconectar'}</button>
           <Link to="/devices" className="text-sel underline" onClick={() => selectNetwork(net.network_id)}>Ver dispositivos</Link>
+          <PanelButton network={net.network_id} />
         </div>
       </section>)}
     </>}

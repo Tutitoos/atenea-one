@@ -23,7 +23,7 @@ export default function Shell() {
   const read = useQuery({ queryKey: ['agent', network], queryFn: () => readAgent(network), enabled: network !== '', refetchInterval: 2000 });
   // Con error, los datos anteriores ya no son de fiar: no se enseñan.
   const error = networks.error ?? read.error;
-  const agent: Agent = { sample: error ? undefined : read.data, error, empty: !!empty, selectNetwork };
+  const agent: Agent = { sample: error ? undefined : read.data, network, error, empty: !!empty, selectNetwork };
   const health = agent.sample?.reply.health;
   const lease = agent.sample?.reply.status.config.valid_until_unix;
   const left = lease ? Math.round(lease - Date.now() / 1000) : null;
