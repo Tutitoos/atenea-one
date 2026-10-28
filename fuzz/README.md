@@ -31,6 +31,7 @@ en `fuzz/regressions/<objetivo>/` (procedimiento en `fuzz/regressions/README.md`
 | `stun_parse` | STUN: sin pánico; lo aceptado se recodifica de forma equivalente y los candidatos saneados cumplen las reglas |
 | `relay_parse` | Relay (`parse`, `RelayToken::parse`, `FrameDecoder`): sin pánico; un token aceptado se recodifica idéntico y el decodificador no acumula de más |
 | `agent_engine` | Máquina de estados wire-v2 (ADR-003): dos motores reales de `apps/agent/src/engine.rs` sobre red simulada, pérdida/duplicado/reordenación/corrupción, relojes, INIT con MAC1 válido/inválido, desafío bajo carga, COOKIE_REPLY válido/corrupto e identidad de ruta relay UDP/TLS. La TUN solo recibe una vez lo enviado por el par; sin lease no entrega ni emite datos; todo lo emitido es un datagrama válido y MAC1 inválido no genera respuesta |
+| `join_code_parse` | `JoinCode::decode` (join-code-v1) con texto UTF-8 arbitrario: sin pánico; lo aceptado respeta el máximo de 512 caracteres, se re-codifica y vuelve a decodificar al mismo valor |
 
 ## Notas de los objetivos estructurados
 
@@ -48,6 +49,12 @@ en `fuzz/regressions/<objetivo>/` (procedimiento en `fuzz/regressions/README.md`
   son envoltorios con MAC1 válido, no handshakes Noise autenticados; los intentos reales proceden de TUN.
   Los COOKIE_REPLY se cifran en ejecución con el índice/MAC1 del INIT pendiente, sin fijar claves secretas
   de producción ni depender de un índice aleatorio concreto.
+- `join_code_parse`: las semillas (`fuzz/seeds/join_code_parse/`) son sintéticas: los dos vectores fijos de
+  `docs/protocol/join-code-v1.md` §5 (con y sin token), variantes válidas normalizadas (minúsculas, sin guiones)
+  y entradas inválidas (truncadas, un carácter alterado, prefijo incorrecto, más de 512 caracteres, solo
+  prefijo, vacía, no ASCII). Ejecución corta del objetivo nuevo, sin tocar los demás:
+  `fuzz/run.sh 30 join_code_parse` (Docker, sin red; el script copia las semillas y exige la caché de
+  dependencias ya presente). Pasada real de 60 s (2026-10-28, 11,6 M ejecuciones, sin fallos) hecha sin `run.sh`, con `docker run --rm` sobre una copia del repositorio para no tocar la imagen ni los volúmenes `atenea-fuzz*`.
 
 ## Última ejecución completa
 

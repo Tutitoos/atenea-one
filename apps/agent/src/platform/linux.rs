@@ -73,6 +73,23 @@ impl Network {
         .map(|_| ())
     }
 }
+/// Rutas no predeterminadas de `ip -j route show table all` fuera de la interfaz propia.
+pub(crate) fn parse_routes(bytes: &[u8], interface: &str) -> Result<Vec<Prefix>, String> {
+    let entries: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| "respuesta ip inválida")?;
+    let mut routes = Vec::new();
+    for entry in entries.as_array().ok_or("respuesta ip inválida")? {
+        let dst = entry["dst"].as_str().ok_or("ruta sin destino")?;
+        if dst == "default" || entry["dev"].as_str() == Some(interface) {
+            continue;
+        }
+        let prefix = parse_prefix(dst).ok_or("prefijo del host inválido")?;
+        if prefix.len != 0 {
+            routes.push(prefix);
+        }
+    }
+    Ok(routes)
+}
 fn parse_prefix(text: &str) -> Option<Prefix> {
     let (addr, len) = text
         .split_once('/')
@@ -163,18 +180,7 @@ impl HostNetwork for Network {
                 &self.bins.ip,
                 &["-j", family, "route", "show", "table", "all"],
             )?;
-            let entries: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|_| "respuesta ip inválida")?;
-            for entry in entries.as_array().ok_or("respuesta ip inválida")? {
-                let dst = entry["dst"].as_str().ok_or("ruta sin destino")?;
-                if dst == "default" || entry["dev"].as_str() == Some(&self.interface) {
-                    continue;
-                }
-                let prefix = parse_prefix(dst).ok_or("prefijo del host inválido")?;
-                if prefix.len != 0 {
-                    routes.push(prefix);
-                }
-            }
+            routes.extend(parse_routes(&bytes, &self.interface)?);
         }
         Ok(routes)
     }

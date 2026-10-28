@@ -81,7 +81,7 @@ fn prefix(text: &str, host: bool) -> Result<Prefix, String> {
     }
     Ok(Prefix { addr, len })
 }
-fn parse_routes(text: &str, skip: &str) -> Result<Vec<Prefix>, String> {
+pub(crate) fn parse_routes(text: &str, skip: &str) -> Result<Vec<Prefix>, String> {
     let mut out = Vec::new();
     let mut iface_column = None;
     for line in text.lines() {

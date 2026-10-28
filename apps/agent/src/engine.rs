@@ -534,6 +534,9 @@ pub struct ConfigStatus {
     pub valid_until_unix: Option<u64>,
     pub lease_active: bool,
     pub last_error: Option<&'static str>,
+    /// Mensaje legible del último rechazo cuando el código no basta (p. ej. `network_overlap`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_detail: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -577,6 +580,7 @@ pub struct Engine {
     lease: Option<(u64, u64)>,
     config_version: u64,
     last_config_error: Option<&'static str>,
+    last_config_error_detail: Option<String>,
     nat: Option<NatStatus>,
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
@@ -613,6 +617,7 @@ impl Engine {
             lease: None,
             config_version: 0,
             last_config_error: None,
+            last_config_error_detail: None,
             nat: None,
             names: HashMap::new(),
             hostname: None,
@@ -739,14 +744,16 @@ impl Engine {
         self.lease = Some((cfg.not_before, cfg.not_after));
         self.config_version = cfg.config_version;
         self.last_config_error = None;
+        self.last_config_error_detail = None;
         self.reindex();
         self.counters.inc("config_applied");
     }
 
     /// Una configuración rechazada no revoca la vigente (sigue hasta su lease).
-    pub fn note_config_error(&mut self, code: &'static str) {
+    pub fn note_config_error(&mut self, code: &'static str, detail: Option<String>) {
         self.counters.inc("config_rejected");
         self.last_config_error = Some(code);
+        self.last_config_error_detail = detail;
     }
 
     pub fn knows_peer(&self, id: &DeviceId) -> bool {
@@ -1889,6 +1896,7 @@ impl Engine {
                 valid_until_unix: self.lease.map(|(_, na)| na),
                 lease_active: self.lease_active(unix),
                 last_error: self.last_config_error,
+                last_error_detail: self.last_config_error_detail.clone(),
             },
             nat: self.nat.clone(),
             peers: self
@@ -2735,6 +2743,24 @@ mod tests {
         let (_, tun_b) = pump(&mut l, out, vec![]);
         assert!(tun_b.is_empty());
         assert_eq!(l.b.counters.0["rx_acl_denied"], 1);
+    }
+
+    #[test]
+    fn network_overlap_error_is_exposed_in_status_until_next_config() {
+        let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
+        e.note_config_error(
+            "network_overlap",
+            Some("10.77.0.0/24 solapa 10.77.0.0/16".into()),
+        );
+        let s = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(s["config"]["last_error"], "network_overlap");
+        assert_eq!(
+            s["config"]["last_error_detail"],
+            "10.77.0.0/24 solapa 10.77.0.0/16"
+        );
+        e.note_config_error("too_large", None);
+        let s = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert!(s["config"].get("last_error_detail").is_none());
     }
 
     #[test]

@@ -44,6 +44,8 @@ fn http_error(status: u16, body: &str) -> String {
         .and_then(|v| v.get("error")?.get("code")?.as_str().map(str::to_owned));
     match (status, code.as_deref()) {
         (401, Some("invalid_token")) => "token inválido, caducado o ya utilizado".into(),
+        (404, _) => "no encontrado: si es una solicitud de unión, la red no admite solicitudes; pide un código con token al administrador".into(),
+        (429, Some("too_many_pending")) => "la red tiene demasiadas solicitudes pendientes; avisa a su administrador".into(),
         (401, _) => "enrolamiento no autorizado".into(),
         (403, _) => "enrolamiento denegado".into(),
         (409, _) => "conflicto: dispositivo o claves ya registrados, o red sin capacidad".into(),
@@ -61,27 +63,51 @@ struct Enrolled {
     status: String,
 }
 
-pub fn enroll(
+/// Resultado de registrar el dispositivo en el servidor.
+pub struct Registered {
+    pub device_id: String,
+    pub network_id: String,
+    pub status: String,
+}
+
+/// Error de `register`; `accepted` indica que el servidor ya respondió 201 (hay estado remoto).
+pub struct RegisterError {
+    pub message: String,
+    pub accepted: bool,
+}
+
+fn rejected(message: impl Into<String>) -> RegisterError {
+    RegisterError {
+        message: message.into(),
+        accepted: false,
+    }
+}
+
+/// `POST {url}{path}` con el bundle público de `dir`. `token` solo viaja en el cuerpo de la petición.
+pub fn register(
     url: &str,
-    token: &str,
+    path: &str,
+    token: Option<&str>,
     dir: &Path,
     name: Option<&str>,
     insecure_http: bool,
-) -> Result<(), String> {
-    let url = format!("{}/api/v1/enroll", base_url(url, insecure_http)?);
-    let bundle = bundle(dir)?;
+) -> Result<Registered, RegisterError> {
+    let url = format!("{}{path}", base_url(url, insecure_http).map_err(rejected)?);
+    let bundle = bundle(dir).map_err(rejected)?;
     // Sin --name: el nombre del sistema, que el control plane mantiene al día mientras nadie lo
     // fije a mano (ADR-012).
     let (name, auto) = match name {
         Some(name) => (name.to_string(), false),
         None => (
             crate::names::system_name()
-                .ok_or("no se pudo leer el nombre del sistema: indica --name")?,
+                .ok_or_else(|| rejected("no se pudo leer el nombre del sistema: indica --name"))?,
             true,
         ),
     };
-    let mut body =
-        serde_json::json!({"token": token, "bundle": hex::encode(&bundle.encode()), "name": name});
+    let mut body = serde_json::json!({"bundle": hex::encode(&bundle.encode()), "name": name});
+    if let Some(token) = token {
+        body["token"] = token.into();
+    }
     if auto {
         body["name_auto"] = true.into();
     }
@@ -97,24 +123,81 @@ pub fn enroll(
         .post(&url)
         .header("Content-Type", "application/json")
         .send(&body)
-        .map_err(|_| "no se pudo contactar con el control plane".to_string())?;
+        .map_err(|_| rejected("no se pudo contactar con el control plane"))?;
     let status = response.status().as_u16();
     let text = response
         .body_mut()
         .with_config()
         .limit(16384)
         .read_to_string()
-        .map_err(|_| "respuesta ilegible o demasiado grande")?;
+        .map_err(|_| rejected("respuesta ilegible o demasiado grande"))?;
     if status != 201 {
-        return Err(http_error(status, &text));
+        return Err(rejected(http_error(status, &text)));
     }
-    let enrolled: Enrolled =
-        serde_json::from_str(&text).map_err(|_| "respuesta de enrolamiento inválida")?;
+    serde_json::from_str::<Enrolled>(&text)
+        .map(|e| Registered {
+            device_id: e.device_id,
+            network_id: e.network_id,
+            status: e.status,
+        })
+        .map_err(|_| RegisterError {
+            message: "respuesta de enrolamiento inválida".into(),
+            accepted: true,
+        })
+}
+
+pub fn enroll(
+    url: &str,
+    token: &str,
+    dir: &Path,
+    name: Option<&str>,
+    insecure_http: bool,
+) -> Result<(), String> {
+    let enrolled = register(url, "/api/v1/enroll", Some(token), dir, name, insecure_http)
+        .map_err(|e| e.message)?;
     println!(
         "device_id={}\nnetwork_id={}\nstatus={}",
         enrolled.device_id, enrolled.network_id, enrolled.status
     );
     Ok(())
+}
+
+/// Genera el `agent.toml` de una red con la raíz fijada por quien llama (nunca por el servidor).
+#[allow(clippy::too_many_arguments)]
+pub fn pinned_config(
+    url: &str,
+    network_id: &str,
+    root_anchor: &str,
+    dir: &Path,
+    out: &Path,
+    interface: &str,
+    port: u16,
+    ipc_socket: &Path,
+    status_socket: &Path,
+    insecure_http: bool,
+) -> Result<(), String> {
+    let join = Join {
+        url: url.into(),
+        network_id: network_id.into(),
+        root_anchor: root_anchor.into(),
+    };
+    let args = AgentConfigArgs {
+        join: String::new(),
+        dir: dir.into(),
+        out: out.into(),
+        interface: interface.into(),
+        listen: std::net::SocketAddr::from(([0, 0, 0, 0], port)),
+        handshake_cookie_threshold_per_second: std::num::NonZeroU32::new(100).expect("no cero"),
+        state_dir: None,
+        config_file: None,
+        ipc_socket: Some(ipc_socket.into()),
+        advertise_routes: Vec::new(),
+        status_socket: Some(status_socket.into()),
+        status_gid: None,
+        insecure_http,
+    };
+    let text = render(&join, &args, &bundle(dir)?.device_id)?;
+    crate::issue::write_secret(out, &text)
 }
 
 #[derive(Deserialize)]

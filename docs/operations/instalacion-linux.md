@@ -2,6 +2,8 @@
 
 **Instalar primero en una VM Linux de Proxmox, nunca en el host Proxmox.** Esta fase requiere aceptación en laboratorio; no se ha validado en un Proxmox real. Usar Debian 13 con systemd, cgroup v2 y `/dev/net/tun`; paquetes para amd64 y arm64. No ejecutar el arnés privilegiado en una máquina con cargas de producción.
 
+Para estar en varias redes a la vez y unirse con un código (`atenea network join`), véase [Varias redes con la CLI](redes-multiples-cli.md).
+
 ## Construcción e instalación
 
 La compilación se hace fuera del empaquetador. `packaging/deb/build.sh` recibe un directorio con los ejecutables Linux `atenea` y `atenea-agent`, la versión Debian, la arquitectura y el fichero de salida:

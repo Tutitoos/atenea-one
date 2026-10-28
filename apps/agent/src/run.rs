@@ -227,6 +227,22 @@ impl Runtime {
             .collect();
         let wanted = (usize::from(v.config.mtu), addrs);
         if self.iface.as_ref() != Some(&wanted) {
+            // Antes de tocar la interfaz o las rutas; una falsa seguridad aquí sería peor que no aplicar.
+            match self.netconf.overlap_with_host(&v.config) {
+                Ok(None) => {}
+                Ok(Some(detail)) => {
+                    tracing::warn!(%detail, "configuración rechazada: network_overlap");
+                    self.engine
+                        .note_config_error("network_overlap", Some(detail));
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!("no se pudo comprobar solapes de red: {e}");
+                    self.reject("network_failed");
+                    self.seen = None;
+                    return;
+                }
+            }
             if let Err(e) = self.netconf.configure_link(wanted.0, &wanted.1) {
                 tracing::error!("configurando la interfaz: {e}");
                 self.reject("interface_failed");
@@ -268,7 +284,7 @@ impl Runtime {
 
     fn reject(&mut self, code: &'static str) {
         tracing::warn!(code, "configuración rechazada");
-        self.engine.note_config_error(code);
+        self.engine.note_config_error(code, None);
     }
 
     /// Mantiene la hora máxima observada (anti-rollback de reloj), acotada por el lease validado.

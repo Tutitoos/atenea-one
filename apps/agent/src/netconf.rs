@@ -117,6 +117,32 @@ impl<H: HostNetwork> NetConf<H> {
     pub fn configure_link(&self, mtu: usize, addrs: &[(IpAddr, u8)]) -> Result<(), String> {
         self.host.configure_link(mtu, addrs)
     }
+    /// `Ok(Some(mensaje))` si otra interfaz reclama parte de la red del túnel: una ruta ajena igual o
+    /// más específica que un prefijo de `network_prefixes`. Una ruta más ancha (VPN, Docker, LAN) no
+    /// es conflicto: gana la más específica y el tráfico ya va por el túnel. Se ignoran siempre las
+    /// rutas host de nuestras propias `tunnel_addrs`, sea cual sea la interfaz que las liste (macOS las
+    /// anota en `lo0`); otra red Atenea con el mismo CIDR se detecta por su ruta de red. Solo lee;
+    /// `Err` si no se puede comprobar (el llamador no aplica).
+    pub fn overlap_with_host(&self, cfg: &DeviceConfig) -> Result<Option<String>, String> {
+        for r in self.host.existing_routes()? {
+            let host_len = if r.addr.is_ipv4() { 32 } else { 128 };
+            if r.len == host_len && cfg.tunnel_addrs.contains(&r.addr) {
+                continue;
+            }
+            if let Some(p) = cfg
+                .network_prefixes
+                .iter()
+                .find(|p| r.len >= p.len && prefix_contains(p, &r.addr))
+            {
+                return Ok(Some(format!(
+                    "network_prefixes {} solapa la ruta {} de otra interfaz",
+                    cidr(p),
+                    cidr(&r)
+                )));
+            }
+        }
+        Ok(None)
+    }
     pub fn cleanup(&mut self) -> Result<(), String> {
         self.host.cleanup()?;
         self.snat = None;

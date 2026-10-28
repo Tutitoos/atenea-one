@@ -2,6 +2,8 @@
 
 macOS es **solo cliente**: consume rutas aprobadas y DNS dividido; rechaza `advertise_routes` y no instala pf, SNAT ni forwarding. La política y el protocolo son los mismos que Linux. Requiere macOS, herramientas nativas (`ifconfig`, `route`, `netstat`) y root para abrir utun/configurar red. No usa NetworkExtension ni extensiones de kernel externas.
 
+Para estar en varias redes a la vez y unirse con un código (`atenea network join`), véase [Varias redes con la CLI](redes-multiples-cli.md).
+
 ## Construcción sin instalar
 
 ```sh

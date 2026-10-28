@@ -7,6 +7,7 @@ mod build_info;
 mod enroll;
 mod ipc;
 mod issue;
+mod network;
 // Mismo código que el agente: el nombre del sistema se lee igual al enrolar y al informar.
 #[path = "../../agent/src/names.rs"]
 mod names;
@@ -118,6 +119,14 @@ enum Cmd {
         #[arg(long, default_value = "atenea-agent.log")]
         log: PathBuf,
     },
+    /// Varias redes por dispositivo: unirse con un código, listar, arrancar, parar y salir (ADR-013).
+    Network {
+        /// Directorio raíz de las redes (por defecto `ATENEA_NETWORKS_DIR` o el del sistema).
+        #[arg(long, global = true)]
+        root: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: network::NetworkCmd,
+    },
     /// Estado del agente (JSON); admite el socket de control o el de solo lectura.
     Status {
         #[arg(long)]
@@ -182,6 +191,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
             spec,
             out,
         } => issue::issue(&issuer_key, &issuer_cert, &spec, &out),
+        Cmd::Network { root, cmd } => network::run(root, cmd),
         Cmd::Up { config, agent, log } => up(&config, agent, &log),
         Cmd::Status { socket } => {
             println!("{}", ask(&socket, "status")?);

@@ -113,3 +113,10 @@ path = "fuzz_targets/agent_engine.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "join_code_parse"
+path = "fuzz_targets/join_code_parse.rs"
+test = false
+doc = false
+bench = false

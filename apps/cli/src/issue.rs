@@ -195,6 +195,15 @@ pub fn issuer_cert(args: IssuerCertArgs) -> Result<(), String> {
 }
 
 pub fn device_init(dir: &Path) -> Result<(), String> {
+    let (device_id, noise_public, fingerprint) = device_create(dir)?;
+    println!("device_id={}", hex::encode(&device_id));
+    println!("noise_public={}", hex::encode(&noise_public));
+    println!("fingerprint={fingerprint}");
+    Ok(())
+}
+
+/// Claves nuevas del dispositivo en `dir`; devuelve (device_id, clave pública Noise, huella).
+pub fn device_create(dir: &Path) -> Result<([u8; 16], [u8; 32], String), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let noise = StaticKeypair::generate();
     let seed = zeroize::Zeroizing::new(generate_seed());
@@ -211,10 +220,7 @@ pub fn device_init(dir: &Path) -> Result<(), String> {
         &zeroize::Zeroizing::new(hex::encode(&*seed)),
     )?;
     write_new(&dir.join("bundle.bin"), &bundle.encode())?;
-    println!("device_id={}", hex::encode(&device_id));
-    println!("noise_public={}", hex::encode(&noise.public));
-    println!("fingerprint={}", bundle.fingerprint());
-    Ok(())
+    Ok((device_id, noise.public, bundle.fingerprint()))
 }
 
 #[derive(Deserialize)]

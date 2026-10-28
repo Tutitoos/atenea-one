@@ -369,6 +369,7 @@ mod tests {
                 valid_until_unix: Some(300),
                 lease_active: false,
                 last_error: None,
+                last_error_detail: None,
             },
             peers: ["direct", "relay-udp", "relay-tls", "probing", "none"]
                 .into_iter()

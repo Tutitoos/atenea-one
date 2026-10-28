@@ -1,6 +1,6 @@
 # ADR-013: Varias redes por dispositivo y unión por código (estilo ZeroTier)
 
-- **Estado:** **Aceptado** por el responsable el 2026-10-28 con las decisiones de §6 (código todo en uno, privilegios opción A, una instancia por red, claves por red). En implementación: fase 1 (servidor).
+- **Estado:** **Aceptado** por el responsable el 2026-10-28 con las decisiones de §6 (código todo en uno, privilegios opción A, una instancia por red, claves por red). Implementadas: fase 1 (servidor) y fase 2 (CLI, §7).
 - **Relacionados:** ADR-005 (raíz y emisores), ADR-007 (rutas y DNS), ADR-008 (clientes), ADR-010 (L2), ADR-011 (aplicación de escritorio, solo lectura), ADR-012 (nombres).
 
 ## 1. Objetivo
@@ -99,3 +99,9 @@ Cada fase deja `check.sh` y CI en verde y documentación con los límites reales
 6. **L2:** fuera de alcance; espera a la auditoría y a la fase 10 (ADR-010).
 
 **Desviación de la fase 1 respecto a §4:** el QR del panel se aplaza porque exige una dependencia nueva de generación de QR (inventario y revisión de suministro); el panel muestra el código, la huella y un botón de copiar.
+
+## 7. Estado de la fase 2 (CLI)
+
+**Implementada** (CLI Linux/macOS; Windows devuelve «no soportado»). Hecho: `atenea network join|list|up|down|leave` con `--root`, confirmación explícita antes de actuar, claves nuevas y `agent.toml` con la raíz fijada desde el código, una instancia de agente por red (interfaz `atenea<N>`, puerto UDP ≥ 51820 y sockets propios), guarda de solapamiento en el agente (`network_overlap`), objetivo de fuzz `join_code_parse` y el laboratorio `tests/network-lab/two-networks.sh`, que demostró en Docker claves distintas, ambas redes a la vez, aislamiento, `leave` de A sin cortar B, revocación de B sin afectar a A, código manipulado y red solapada. **Regla de la guarda:** como el CIDR no viaja en el código, se evalúa al llegar la primera configuración verificada y solo hay conflicto si otra interfaz tiene una ruta igual o más específica que un prefijo de `network_prefixes`; una ruta más ancha (VPN, Docker, LAN) no lo es, y las rutas de host de las propias `tunnel_addrs` se ignoran siempre (en macOS `netstat` las lista en `lo0`). Probada con fixtures de salida real de `netstat` e `ip -j route`; **sin probar en un Mac con dos redes reales**. **No hecho** (fases 3 y 4): servicios `systemd`/`launchd` por red, limpieza multiinstancia de DNS en macOS, empaquetado, Windows y la aplicación; `leave` no revoca en el servidor. Detalle: la guía enlazada abajo.
+
+Detalle operativo: [redes-multiples-cli.md](../operations/redes-multiples-cli.md). Instalación base: [Linux](../operations/instalacion-linux.md) y [macOS](../operations/instalacion-macos.md). Protocolo: [join-code-v1](../protocol/join-code-v1.md).
