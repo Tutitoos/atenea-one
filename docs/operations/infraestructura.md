@@ -414,3 +414,13 @@ Resultado de la ejecución real: `ok=27 changed=5 failed=0 rescued=0` (sin rollb
 
 **Sin comprobar:** el rollback automático de `upgrade.yml` (no se activó), la restauración de la copia previa a la migración y el despliegue desde cero en un host nuevo con esta versión.
 
+### Segunda vía de administración: SSH por el túnel de Atenea (2026-10-28)
+
+Hasta ahora el SSH del nodo solo aceptaba el rango de Tailscale (`atenea_ssh_sources`), de modo que la administración dependía de un servicio ajeno: el nodo salió de la red de Tailscale durante unas horas y solo se recuperó entrando por la consola web del proveedor. Se añadió una segunda fuente **que no depende de terceros**: la dirección del túnel de Atenea del equipo del operador (`/32` IPv4 y `/128` IPv6, no toda la red del túnel). No cambia código del repositorio: el rol `base` ya aceptaba la lista; solo cambia el inventario privado, p. ej. `atenea_ssh_sources: ["100.64.0.0/10", "fd7a:115c:a1e0::/48", "10.77.0.2/32", "fd77::2/128"]`.
+
+Se aplicó con un playbook mínimo que ejecuta solo el rol `base` (no hay etiquetas en `site.yml`; converger todo el stack para tocar una regla de firewall añadiría riesgo sin necesidad). El ensayo con `--check --diff` mostró únicamente las dos reglas nuevas y la ejecución real dejó `ok=12 changed=2`. La plantilla recrea solo su tabla `atenea_host` en una transacción atómica: no hay una ventana sin reglas y no toca tablas ajenas (la del soak, `atenea_soak`, sobrevivió).
+
+**Comprobado:** SSH del Mac al nodo por `10.77.0.1` y por su dirección IPv6 del túnel, con el origen que ve `sshd` igual a la dirección del túnel (no la de Tailscale) y la clave de host ya conocida (`HostKeyAlias`, sin aceptar una nueva a ciegas). **Negativos:** desde el contenedor de pruebas del mismo túnel, el puerto 22 del nodo queda filtrado mientras el 443 sí responde por el mismo camino; y el 22 por la IP pública sigue cerrado.
+
+**Límites:** (1) es una *segunda* vía, no una alternativa total: depende de que el agente del nodo y el túnel funcionen; si el agente cae, o el equipo del operador pierde el túnel, solo queda Tailscale o la consola del proveedor. (2) Quien controle esa dirección del túnel (el equipo del operador) tiene SSH al nodo: hay que tratar su clave y su agente como credenciales de administración. (3) No se ha probado el acceso con el nodo recién reiniciado ni con el agente parado.
+
