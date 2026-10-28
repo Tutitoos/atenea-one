@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import type { Rate } from '../lib/agent';
-import { ago, bytes, host, ipKind, levelTone, num, pathLabel, peerName, selfName, serverTone, text, type Tone } from '../lib/format';
+import { ago, bytes, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import { setServer, useServers } from '../lib/roles';
@@ -43,7 +43,7 @@ const State = ({ tone, children }: { tone: Tone; children: string }) => <div cla
 const Addresses = ({ addrs }: { addrs: string[] }) => (
   <>
     <Heading>Direcciones del túnel</Heading>
-    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}</Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
+    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
   </>
 );
 
@@ -67,40 +67,12 @@ function SelfDetail({ reply }: { reply: Reply }) {
         <Row label="Control plane">{seen(status.sync?.last_ok_unix)}</Row>
         <Row label="Coordinator">{seen(status.coordinator?.last_announce_ok_unix)}</Row>
         <Row label="Relays asignados">{String(status.relay?.allocations ?? 0)}</Row>
-        <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} /></Row>
+        <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} label="clave pública" /></Row>
       </Card>
     </>
   );
 }
 
-function ServerDetail({ status }: { status: Reply['status'] }) {
-  const { sync, coordinator, relay } = status;
-  const seen = (unix?: number | null) => (unix ? `ok hace ${ago(Date.now() / 1000 - unix)}` : null);
-  const tone = serverTone(status);
-  const summary = sync?.last_error ? `Control plane: ${sync.last_error}` : coordinator?.last_error ? `Coordinator: ${coordinator.last_error}` : 'Conectado';
-  const entries = relay?.entries ?? [];
-  return (
-    <>
-      <Title id="server" name={host(sync?.url) ?? 'Servidor'} editable={false} />
-      <State tone={tone}>{summary}</State>
-      <Heading>Servicios</Heading>
-      <Card>
-        <Row label="Control plane">{sync?.last_error ?? seen(sync?.last_ok_unix)}</Row>
-        <Row label="Sincronizaciones">{sync?.sync_ok == null ? null : `${sync.sync_ok} correctas · ${sync.sync_denied ?? 0} denegadas · ${sync.sync_errors ?? 0} con error`}</Row>
-        <Row label="Coordinator">{coordinator?.last_error ?? seen(coordinator?.last_announce_ok_unix)}</Row>
-        <Row label="Anuncios y avisos">{coordinator?.announces == null ? null : `${coordinator.announces} anuncios · ${coordinator.events ?? 0} avisos`}</Row>
-      </Card>
-      <Heading>{`Relays (${entries.length})`}</Heading>
-      <Card>
-        {entries.length ? entries.map((e, i) => (
-          <Row key={`${text(e.relay)}-${text(e.transport)}-${i}`} label={`${text(e.relay) ?? 'relay'} · ${text(e.transport)?.toUpperCase() ?? ''}`}>
-            {[text(e.state), e.rtt_ms == null ? null : `${num(e.rtt_ms)} ms`, `↑ ${bytes(num(e.tx_bytes))}`, `↓ ${bytes(num(e.rx_bytes))}`].filter(Boolean).join(' · ')}
-          </Row>
-        )) : <Row label="Asignaciones">ninguna</Row>}
-      </Card>
-    </>
-  );
-}
 
 function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
   const names = useNames();
@@ -113,6 +85,7 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
     <>
       <Title id={peer.public_key} name={peerName(peer, names)} editable />
       <State tone={tone}>{label}</State>
+      {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
       <Addresses addrs={peer.addrs} />
       <label className="mb-1 flex cursor-default items-center gap-2 text-sm">
         <input type="checkbox" checked={isServer} onChange={(e) => setServer(peer.public_key, e.target.checked)} />
@@ -129,7 +102,7 @@ function PeerDetail({ peer, rate }: { peer: Peer; rate?: Rate }) {
         <Row label="Última sesión">{peer.session ? `hace ${ago(peer.last_handshake_secs_ago ?? 0)}` : 'sin sesión'}</Row>
         <Row label="Dirección remota">{peer.endpoint}</Row>
         <Row label="Candidatos">{String(peer.candidates)}</Row>
-        <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} /></Row>
+        <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
       </Card>
     </>
   );
@@ -140,7 +113,6 @@ export default function Device() {
   const { sample, error } = useAgent();
   if (!sample) return <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>;
   if (id === 'self') return <SelfDetail reply={sample.reply} />;
-  if (id === 'server') return sample.reply.status.sync?.url ? <ServerDetail status={sample.reply.status} /> : <Empty>Este agente no tiene un servidor configurado.</Empty>;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
   return peer ? <PeerDetail peer={peer} rate={sample.rates[id]} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }

@@ -21,8 +21,8 @@ const PATHS: Record<string, [string, Tone]> = {
   direct: ['Directo', 'ok'],
   'relay-udp': ['Por relay UDP', 'warn'],
   'relay-tls': ['Por relay TLS', 'warn'],
-  probing: ['Sondeando', 'warn'],
-  none: ['Sin camino', 'bad'],
+  probing: ['Conectando…', 'off'],
+  none: ['Inactivo', 'off'],
 };
 export const pathLabel = (path: string): { label: string; tone: Tone } => {
   const [label, tone] = PATHS[path] ?? [path, 'off' as Tone];
@@ -41,11 +41,6 @@ export const selfName = (status: { public_key: string; hostname?: string | null 
 export const text = (v: unknown) => (typeof v === 'string' ? v : undefined);
 export const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 
-/** Solo el host de una URL: es lo que identifica al servidor en pantalla. */
-export function host(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  try { return new URL(url).host; } catch { return url; }
-}
 
 /** El servidor es el control plane (sincronización) más el coordinator; sin sincronización configurada no hay servidor. */
 export function serverTone(status: { sync?: { last_error?: string | null } | null; coordinator?: { last_error?: string | null } | null }): Tone {

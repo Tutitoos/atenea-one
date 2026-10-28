@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { readAgent } from '../lib/agent';
 import { ago, levelTone } from '../lib/format';
 import { readNetworks } from '../lib/networks';
+import { groupServers } from '../lib/servers';
 import type { Agent } from '../lib/live';
 import { Pill } from '../ui';
 
@@ -15,13 +16,14 @@ const link = ({ isActive }: { isActive: boolean }) => `cursor-default rounded-md
 export default function Shell() {
   // Red cuyo estado se enseña: la guardada si sigue unida, si no la primera. Sin redes unidas no hay estado.
   const [chosen, choose] = useState(() => localStorage.getItem(NETWORK_KEY) ?? '');
+  const selectNetwork = (id: string) => { localStorage.setItem(NETWORK_KEY, id); choose(id); };
   const networks = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000 });
   const network = networks.data?.find((n) => n.network_id === chosen)?.network_id ?? networks.data?.[0]?.network_id ?? '';
   const empty = networks.data?.length === 0;
   const read = useQuery({ queryKey: ['agent', network], queryFn: () => readAgent(network), enabled: network !== '', refetchInterval: 2000 });
   // Con error, los datos anteriores ya no son de fiar: no se enseñan.
   const error = networks.error ?? read.error;
-  const agent: Agent = { sample: error ? undefined : read.data, error, empty: !!empty };
+  const agent: Agent = { sample: error ? undefined : read.data, error, empty: !!empty, selectNetwork };
   const health = agent.sample?.reply.health;
   const lease = agent.sample?.reply.status.config.valid_until_unix;
   const left = lease ? Math.round(lease - Date.now() / 1000) : null;
@@ -40,10 +42,10 @@ export default function Shell() {
           <select
             aria-label="Red"
             value={network}
-            onChange={(e) => { localStorage.setItem(NETWORK_KEY, e.target.value); choose(e.target.value); }}
+            onChange={(e) => selectNetwork(e.target.value)}
             className="rounded-md border border-line bg-card px-2 py-1 text-sm"
           >
-            {networks.data.map((n) => <option key={n.network_id} value={n.network_id}>{n.name}</option>)}
+            {groupServers(networks.data).map((server) => <optgroup key={server.host} label={server.host}>{server.networks.map((n) => <option key={n.network_id} value={n.network_id}>{n.name}</option>)}</optgroup>)}
           </select>
         )}
         <Pill tone={empty ? 'off' : health ? levelTone(health.level) : 'off'}>{empty ? 'Sin redes' : health ? health.text : 'Sin datos'}</Pill>
@@ -58,6 +60,7 @@ export default function Shell() {
       <div className="flex min-h-0 flex-1">
         <nav aria-label="Secciones" className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-line bg-side p-2">
           <NavLink to="/devices" className={link}>Dispositivos</NavLink>
+          <NavLink to="/servers" className={link}>Servidores</NavLink>
           <NavLink to="/networks" className={link}>Redes</NavLink>
           <NavLink to="/diagnostics" className={link}>Diagnóstico</NavLink>
         </nav>

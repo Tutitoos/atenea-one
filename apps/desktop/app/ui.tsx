@@ -6,7 +6,7 @@ import type { Tone } from './lib/format';
 
 const bg: Record<Tone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad', off: 'bg-off' };
 
-export const Dot = ({ tone }: { tone: Tone }) => <span aria-hidden="true" className={`mt-1.5 inline-block size-2.5 shrink-0 rounded-full ${bg[tone]}`} />;
+export const Dot = ({ tone, list = false }: { tone: Tone; list?: boolean }) => <span aria-hidden="true" className={`${list ? 'mt-1.5 ' : ''}inline-block size-2.5 shrink-0 rounded-full ${bg[tone]}`} />;
 
 export const Pill = ({ tone, children }: { tone: Tone; children: ReactNode }) => (
   <span role="status" className={`ml-auto rounded-full px-3 py-0.5 text-xs font-medium text-white ${bg[tone]}`}>{children}</span>
@@ -35,11 +35,14 @@ export function Stack({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function CopyButton({ value }: { value: string }) {
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false);
+  const name = `Copiar ${label}`;
   return (
-    <button type="button" className="ml-2 cursor-default text-xs text-sel" onClick={() => { void navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>
-      {done ? 'Copiado' : 'Copiar'}
+    <button type="button" aria-label={name} title={done ? 'Copiado' : name} className="ml-2 inline-flex size-6 cursor-default items-center justify-center rounded text-sel align-middle" onClick={() => { void navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {done ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /></>}
+      </svg>
     </button>
   );
 }

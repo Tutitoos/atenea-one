@@ -13,6 +13,8 @@ import DevicesIndex from './routes/devices-index';
 import Diagnostics from './routes/diagnostics';
 import Networks from './routes/networks';
 import Shell from './routes/shell';
+import Servers from './routes/servers';
+import Server from './routes/server';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -20,7 +22,7 @@ const peer = (key: string, addr: string, path: string, name?: string) => ({
   public_key: key, addrs: [addr], name, endpoint: '192.0.2.7:51820', session: 'activa 5s', last_handshake_secs_ago: 5,
   tx_bytes: 2048, rx_bytes: 4096, path, candidates: 2, paths: [{ kind: path, ready: true, healthy: true, rtt_ms: null }],
 });
-const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún dispositivo por relay o sin camino'] };
+const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún dispositivo por relay'] };
 const server = { sync: { url: 'https://control.example.test', last_ok_unix: Math.floor(Date.now() / 1000) - 5, last_error: null, sync_ok: 40, sync_denied: 1, sync_errors: 2 }, coordinator: { url: 'https://control.example.test', last_announce_ok_unix: Math.floor(Date.now() / 1000) - 3, last_error: null, announces: 120, events: 9 } };
 const relay = { allocations: 1, drops: {}, entries: [{ peer: 'aa', transport: 'Udp', relay: 'relay-uno', state: 'ready', rtt_ms: 42, tx_bytes: 2048, rx_bytes: 1024 }] };
 const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded, extra: object = { ...server, relay }) => JSON.stringify({
@@ -40,6 +42,8 @@ function app(entry = '/devices') {
               <Route path=":id" element={<Device />} />
             </Route>
             <Route path="networks" element={<Networks />} />
+            <Route path="servers" element={<Servers />} />
+            <Route path="servers/:host" element={<Server />} />
             <Route path="diagnostics" element={<Diagnostics />} />
           </Route>
         </Routes>
@@ -50,7 +54,7 @@ function app(entry = '/devices') {
 
 const NET_ID = '0199ab12-3456-7def-8abc-0123456789ab';
 const OTHER_ID = '0199ab12-3456-7def-8abc-0123456789cd';
-const net = (over: object = {}) => ({ network_id: NET_ID, name: 'casa', server: 'control.example.test', interface: 'atenea0', listen_port: 51821, join_status: 'aprobada', state: 'conectada', ...over });
+const net = (over: object = {}) => ({ network_id: NET_ID, name: 'casa', server: 'control.example.test', url: 'https://control.example.test', interface: 'atenea0', listen_port: 51821, join_status: 'aprobada', state: 'conectada', ...over });
 const info = { name: 'casa', server: 'control.example.test', network_id: NET_ID, root_fingerprint: '6c4b-fd0b-2585-9aae', has_token: false };
 const CODE = 'ATENEA1-ABCDEF-GH23';
 
@@ -70,7 +74,7 @@ beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); });
 
 it('la banda de avisos solo aparece si hay motivos que contar', async () => {
   // Caso real de Rust: un par por relay degrada el estado pero no aporta ningún motivo textual.
-  serve(agent(undefined, { level: 'degraded', text: 'Degradado: algún dispositivo por relay o sin camino', reasons: [] }));
+  serve(agent(undefined, { level: 'degraded', text: 'Degradado: algún dispositivo por relay', reasons: [] }));
   const { unmount } = app();
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));
   expect(screen.queryByRole('list', { name: 'Avisos' })).not.toBeInTheDocument();
@@ -81,29 +85,27 @@ it('la banda de avisos solo aparece si hay motivos que contar', async () => {
 });
 
 
-it('el servidor sale en su propio grupo, aparte de los demás dispositivos, y su detalle muestra servicios y relays', async () => {
+it('el panel sale de Dispositivos y su detalle vive en Servidores con servicios, NAT y relays', async () => {
   serve(agent());
   app();
   const groups = await screen.findAllByRole('heading', { level: 2, name: /^(Local|Servidor|Dispositivos)$/ });
-  expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Servidor', 'Dispositivos']);
+  expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Dispositivos']);
+  expect(screen.queryByRole('link', { name: /control\.example\.test/ })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: 'Servidores' }));
   await userEvent.click(await screen.findByRole('link', { name: /control\.example\.test/ }));
   const detail = within(screen.getByRole('main'));
-  expect(await detail.findByRole('heading', { level: 2, name: 'control.example.test' })).toBeInTheDocument();
-  expect(detail.getByText('Conectado')).toBeInTheDocument();
+  expect(await detail.findByRole('heading', { level: 1, name: 'control.example.test' })).toBeInTheDocument();
+  expect(await detail.findByText('Conectado')).toBeInTheDocument();
   expect(detail.getByText('40 correctas · 1 denegadas · 2 con error')).toBeInTheDocument();
   expect(detail.getByText('relay-uno · UDP')).toBeInTheDocument();
   expect(detail.getByText(/ready · 42 ms/)).toBeInTheDocument();
+  expect(detail.getByText('203.0.113.9:51820')).toBeInTheDocument();
 });
 
-it('un error del control plane pone el servidor en rojo y sin control plane configurado no hay grupo Servidor', async () => {
+it('un error del control plane se muestra en el detalle del servidor', async () => {
   serve(agent(undefined, degraded, { sync: { ...server.sync, last_error: 'acceso denegado' }, coordinator: server.coordinator }));
-  const { unmount } = app('/devices/server');
+  app('/servers/control.example.test');
   expect(await screen.findByText('Control plane: acceso denegado')).toBeInTheDocument();
-  unmount();
-  serve(agent(undefined, degraded, {}));
-  app();
-  await screen.findByRole('link', { name: /10\.77\.0\.4/ });
-  expect(screen.queryByRole('heading', { level: 2, name: 'Servidor' })).not.toBeInTheDocument();
 });
 it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y tráfico', async () => {
   serve(agent());
@@ -335,7 +337,7 @@ it('importar sin nombre no manda `name` y un rechazo de Rust se muestra sin cerr
 
 it('las pantallas no tienen violaciones de accesibilidad detectables', async () => {
   serve(agent());
-  for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/networks', '/diagnostics']) {
+  for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/networks', '/diagnostics', '/servers', '/servers/control.example.test']) {
     const { container, unmount } = app(entry);
     await screen.findByRole('navigation', { name: 'Secciones' });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));
@@ -343,4 +345,75 @@ it('las pantallas no tienen violaciones de accesibilidad detectables', async () 
     expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
     unmount();
   }
+});
+
+it('agrupa las redes por host exacto también en el selector', async () => {
+  serve(agent(), [net({ url: 'HTTPS://CONTROL.EXAMPLE.TEST:443/api' }), net({ network_id: OTHER_ID, name: 'trabajo' }), net({ network_id: '0199ab12-3456-7def-8abc-0123456789ef', name: 'otra', url: 'https://otro.example.test' })]);
+  app('/servers');
+  const main = within(screen.getByRole('main'));
+  expect(await main.findByRole('link', { name: /control.example.test 2 redes/ })).toBeInTheDocument();
+  expect(main.getByRole('link', { name: /otro.example.test 1 red/ })).toBeInTheDocument();
+  expect(main.getAllByRole('link')).toHaveLength(2);
+  const select = screen.getByRole('combobox', { name: 'Red' });
+  const groups = within(select).getAllByRole('group');
+  expect(groups.map((g) => g.getAttribute('label'))).toEqual(['control.example.test', 'otro.example.test']);
+  expect(within(groups[0]).getAllByRole('option')).toHaveLength(2);
+});
+
+it('el servidor prueba otra red conectada si la primera no responde y no usa redes ajenas', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' }), net({ network_id: '0199ab12-3456-7def-8abc-0123456789ef', url: 'https://otro.example.test', name: 'otra' })], undefined, { status: (args) => {
+    if (args && typeof args === 'object' && 'network' in args && args.network === NET_ID) throw 'sin acceso';
+    return agent();
+  } });
+  app('/servers/control.example.test');
+  expect(await within(screen.getByRole('main')).findByText('40 correctas · 1 denegadas · 2 con error')).toBeInTheDocument();
+  expect(calls('status').every(([, args]) => args && typeof args === 'object' && 'network' in args && [NET_ID, OTHER_ID].includes(String(args.network)))).toBe(true);
+});
+
+it('sin una red que responda no inventa servicios; permite conectar y ver dispositivos de su red', async () => {
+  serve(agent(), [net({ state: 'detenida' }), net({ network_id: OTHER_ID, name: 'trabajo', state: 'detenida' })], undefined, { network_apply: () => '' });
+  app('/servers/control.example.test');
+  expect(await screen.findByText('Sin redes conectadas a este servidor')).toBeInTheDocument();
+  expect(screen.queryByText('Sincronizaciones')).not.toBeInTheDocument();
+  const trabajo = within(screen.getByRole('region', { name: 'trabajo' }));
+  await userEvent.click(trabajo.getByRole('button', { name: 'Conectar' }));
+  await waitFor(() => expect(calls('network_apply').at(-1)).toEqual(['network_apply', { op: 'up', network: OTHER_ID }]));
+  await userEvent.click(trabajo.getByRole('link', { name: 'Ver dispositivos' }));
+  expect(await screen.findByRole('heading', { level: 1, name: 'Dispositivos' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  expect(localStorage.getItem('atenea.network')).toBe(OTHER_ID);
+});
+
+it('si ningún socket de las redes conectadas responde muestra el estado vacío del servidor', async () => {
+  serve('', [net()], 'sin acceso');
+  app('/servers/control.example.test');
+  expect(await screen.findByText('Sin redes conectadas a este servidor')).toBeInTheDocument();
+  expect(screen.queryByText('Sincronizaciones')).not.toBeInTheDocument();
+});
+
+it('un par sin camino es Inactivo y explica la conexión bajo demanda sin degradar la cabecera', async () => {
+  serve(agent([peer('a'.repeat(64), '10.77.0.3', 'none')], { level: 'ok', text: 'Conectado', reasons: [] }));
+  app(`/devices/${'a'.repeat(64)}`);
+  expect(await screen.findByText('Inactivo', { selector: 'span' })).toBeInTheDocument();
+  expect(screen.getByText('Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Conectado');
+});
+
+it('copiar usa iconos etiquetados para IPv4, IPv6 y clave, con check temporal', async () => {
+  const user = userEvent.setup();
+  serve(agent([], { level: 'ok', text: 'Conectado', reasons: [] }, { addrs: ['10.77.0.2', 'fd77::2'] }));
+  app();
+  const button = await screen.findByRole('button', { name: 'Copiar IPv4 10.77.0.2' });
+  expect(button).toHaveAttribute('title', 'Copiar IPv4 10.77.0.2');
+  expect(button.querySelector('svg rect')).not.toBeNull();
+  expect(button).not.toHaveTextContent('Copiar');
+  await user.click(button);
+  expect(await navigator.clipboard.readText()).toBe('10.77.0.2');
+  expect(button).toHaveAttribute('title', 'Copiado');
+  expect(button.querySelector('svg rect')).toBeNull();
+  await waitFor(() => expect(button).toHaveAttribute('title', 'Copiar IPv4 10.77.0.2'), { timeout: 2500 });
+  await user.click(screen.getByRole('button', { name: 'Copiar IPv6 fd77::2' }));
+  expect(await navigator.clipboard.readText()).toBe('fd77::2');
+  await user.click(screen.getByRole('button', { name: 'Copiar clave pública' }));
+  expect(await navigator.clipboard.readText()).toBe('c'.repeat(64));
 });

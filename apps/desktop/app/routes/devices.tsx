@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { host, levelTone, pathLabel, peerName, selfName, serverTone, type Tone } from '../lib/format';
+import { levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { useNames } from '../lib/names';
 import { useServers } from '../lib/roles';
@@ -17,7 +17,7 @@ function Group({ title, entries }: { title: string; entries: Entry[] }) {
       <h2 className="mx-2 mb-1 mt-3.5 text-[13px] font-semibold text-mut">{title}</h2>
       {entries.map((e) => (
         <NavLink key={e.id} to={`/devices/${encodeURIComponent(e.id)}`} className={({ isActive }) => `flex cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}>
-          <Dot tone={e.tone} />
+          <Dot tone={e.tone} list />
           <span>
             <span className="block text-sm">{e.name}{e.badge && <span className="ml-1.5 rounded bg-fg/15 px-1.5 py-px align-middle text-[10px] font-medium uppercase tracking-wide">{e.badge}</span>}</span>
             {e.addr && <span className="block text-xs opacity-70">{e.addr}</span>}
@@ -38,12 +38,9 @@ export default function Devices() {
 
   const self: Entry[] = status && sample ? [{ id: 'self', name: selfName(status, names), addr: status.addrs[0] ?? '', tone: levelTone(sample.reply.health.level), haystack: `${selfName(status, names)} ${status.hostname ?? ''} este dispositivo ${status.addrs.join(' ')} ${status.public_key}` }] : [];
   const peers: Entry[] = (status?.peers ?? []).map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', tone: pathLabel(p.path).tone, badge: servers.includes(p.public_key) ? 'Servidor' : undefined, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}${servers.includes(p.public_key) ? ' servidor' : ''}` }));
-  // El servidor al que está conectado el agente (control plane + coordinator), separado de los pares de la malla.
-  const serverHost = host(status?.sync?.url);
-  const server: Entry[] = status && serverHost ? [{ id: 'server', name: serverHost, addr: 'Control plane, coordinator y relay', tone: serverTone(status), haystack: serverHost }] : [];
   const q = query.trim().toLowerCase();
   const match = (e: Entry) => !q || e.haystack.toLowerCase().includes(q);
-  const visible = [...self.filter(match), ...server.filter(match), ...peers.filter(match)];
+  const visible = [...self.filter(match), ...peers.filter(match)];
 
   if (agent.empty) return <NoNetworks />;
 
@@ -62,7 +59,7 @@ export default function Devices() {
           className="w-full select-text rounded-lg border border-line bg-card px-2.5 py-1.5 text-fg"
         />
         <div className="mt-2 flex-1 overflow-y-auto">
-          {sample ? <><Group title="Local" entries={self.filter(match)} /><Group title="Servidor" entries={server.filter(match)} /><Group title="Dispositivos" entries={peers.filter(match)} />{!visible.length && <Empty>Sin resultados.</Empty>}</> : <Empty>Sin datos del agente.</Empty>}
+          {sample ? <><Group title="Local" entries={self.filter(match)} /><Group title="Dispositivos" entries={peers.filter(match)} />{!visible.length && <Empty>Sin resultados.</Empty>}</> : <Empty>Sin datos del agente.</Empty>}
         </div>
       </div>
       <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5"><Outlet context={agent} /></main>

@@ -12,6 +12,7 @@ export const network = z.object({
   network_id: z.string(),
   name: z.string(),
   server: z.string(),
+  url: z.string(),
   interface: z.string(),
   listen_port: z.number(),
   join_status: z.string(),

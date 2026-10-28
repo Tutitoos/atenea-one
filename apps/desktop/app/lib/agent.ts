@@ -26,8 +26,8 @@ export function createSampler() {
 /** Un muestreador por red: al cambiar de red no se calculan tasas contra la lectura de otra. */
 const samplers = new Map<string, ReturnType<typeof createSampler>>();
 
-/** Lectura del estado de una red unida (su id). Rechaza respuestas con otra forma. */
-export async function readAgent(network: string): Promise<Sample> {
+/** Lee el estado sin modificar los contadores del muestreador de tráfico. */
+export async function readReply(network: string): Promise<Reply> {
   let raw: string;
   try {
     raw = await invoke<string>('status', { network });
@@ -37,6 +37,12 @@ export async function readAgent(network: string): Promise<Sample> {
   }
   const parsed = reply.safeParse(JSON.parse(raw));
   if (!parsed.success) throw new Error('El agente respondió con un formato inesperado.');
+  return parsed.data;
+}
+
+/** Lectura y muestreo por red: solo la vista de dispositivos actualiza sus tasas. */
+export async function readAgent(network: string): Promise<Sample> {
+  const current = await readReply(network);
   if (!samplers.has(network)) samplers.set(network, createSampler());
-  return samplers.get(network)!(parsed.data, Date.now());
+  return samplers.get(network)!(current, Date.now());
 }

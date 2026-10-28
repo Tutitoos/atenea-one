@@ -178,7 +178,10 @@ fn assess(s: &Value) -> Assessment {
         worsen(Health::Degraded, Some(format!("coordinator: {e}")));
     }
     let peers = s["peers"].as_array().map_or(&[][..], Vec::as_slice);
-    if peers.iter().any(|p| p["path"].as_str() != Some("direct")) {
+    if peers
+        .iter()
+        .any(|p| matches!(p["path"].as_str(), Some("relay-udp" | "relay-tls")))
+    {
         worsen(Health::Degraded, None);
     }
     let text = match health {
@@ -187,7 +190,7 @@ fn assess(s: &Value) -> Assessment {
         Health::Degraded => format!(
             "Degradado: {}",
             why.first()
-                .map_or("algún dispositivo por relay o sin camino", String::as_str)
+                .map_or("algún dispositivo por relay", String::as_str)
         ),
         _ => format!(
             "Sin conexión: {}",
@@ -419,7 +422,10 @@ mod tests {
     fn health_follows_lease_errors_and_paths() {
         assert_eq!(assess(&status(true, "direct")).health, Health::Ok);
         assert_eq!(assess(&status(true, "relay-udp")).health, Health::Degraded);
-        assert_eq!(assess(&status(true, "none")).health, Health::Degraded);
+        assert_eq!(assess(&status(true, "none")).health, Health::Ok);
+        assert_eq!(assess(&status(true, "probing")).health, Health::Ok);
+        assert_eq!(assess(&status(true, "relay-tls")).health, Health::Degraded);
+        assert_eq!(assess(&status(false, "none")).health, Health::Down);
         let a = assess(&status(false, "direct"));
         assert_eq!(
             (a.health, a.text.as_str(), a.level()),

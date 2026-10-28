@@ -14,7 +14,7 @@ function NetworkCard({ net, busy, onChange }: { net: Network; busy: boolean; onC
   return (
     <section aria-label={net.name} className="mb-4 rounded-[10px] bg-card px-3.5 py-3">
       <div className="flex items-start gap-2">
-        <Dot tone={stateTone[net.state]} />
+        <Dot tone={stateTone[net.state]} list />
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">{net.name}</h2>
           <div className="text-xs text-mut">{stateText[net.state]} · {net.server}</div>
@@ -86,7 +86,7 @@ function Join({ onDone }: { onDone: () => void }) {
     return (
       <div role="status" className="rounded-[10px] bg-card p-3.5 text-sm">
         <p>{info.has_token ? `Equipo unido a «${info.name}».` : `Solicitud enviada a «${info.name}»: un administrador debe aprobar este equipo.`}</p>
-        {fp && <p className="mt-1">Huella del dispositivo (la compara el administrador): <span className="select-text font-mono">{fp}</span><CopyButton value={fp} /></p>}
+        {fp && <p className="mt-1">Huella del dispositivo (la compara el administrador): <span className="select-text font-mono">{fp}</span><CopyButton value={fp} label="huella del dispositivo" /></p>}
         <button type="button" className={`${button} mt-2`} onClick={() => { reset(); setCode(''); }}>Unirme a otra red</button>
       </div>
     );
@@ -99,7 +99,7 @@ function Join({ onDone }: { onDone: () => void }) {
           <Row label="Red">{info.name}</Row>
           <Row label="Servidor">{info.server}</Row>
           <Row label="Id de la red">{info.network_id}</Row>
-          <Row label="Huella de la raíz">{info.root_fingerprint}<CopyButton value={info.root_fingerprint} /></Row>
+          <Row label="Huella de la raíz">{info.root_fingerprint}<CopyButton value={info.root_fingerprint} label="huella de la raíz" /></Row>
           <Row label="Tipo de código">{info.has_token ? 'Con token de un solo uso' : 'De solicitud: un administrador debe aprobar este equipo'}</Row>
         </Card>
         <p className="mt-3 text-sm">Compara el nombre, el servidor y la huella con los que te dio quien te pasó el código, <strong>por otro canal</strong>. Una red puede instalar rutas privadas y DNS para dominios concretos en este equipo.</p>
