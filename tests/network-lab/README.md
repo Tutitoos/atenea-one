@@ -31,6 +31,17 @@ tests/network-lab/run-two-networks.sh   # requiere Docker; compila y ejecuta dos
 
 Control plane real + PostgreSQL 17 + Dex (como `run-e2e.sh`), un cliente (`cli`) con `atenea network join` en dos redes de CIDR distintos (A `10.78.1.0/24`, B `10.78.2.0/24`) y un peer clásico por red (`pa`, `pb`). A se une con un código **con token** (política `cerrada`) y B con el código **sin token** del panel (política `con_solicitud`); en ambos casos el administrador aprueba localizando al dispositivo por la huella que imprime el CLI. Se comprueba: claves, interfaces, puertos (51820/51821) y sockets propios; ping en las dos redes; aislamiento (con el reenvío del kernel activo, sin tráfico pa↔pb en las interfaces del cliente); salir de A sin una pérdida de ping en B y sin cambiar sus ficheros ni recursos; volver a unir A con claves nuevas y revocar B sin afectar a A; código manipulado sin nada en disco ni en el servidor; y una tercera red (otra organización, CIDR solapado con A) que acaba en estado `conflicto` sin interfaz y sin tocar A ni B.
 
+El caso también inscribe `pa` con un token `role=server` y contrasta los roles
+en la API de administración y en los sockets de estado de los agentes reales.
+Espera con plazo la sincronización de roles y la lectura inicial de `/server/info`:
+versión y commit deben coincidir con `atenea-control-plane --version`, el certificado
+del emisor debe tener caducidad numérica vigente y `last_error` debe ser null.
+Después comprueba que una firma válida del propio dispositivo (con control positivo
+en `/device/peers`, sin cookies de administrador) no permite cambiar su rol por
+PATCH admin, y que el cambio autorizado a `device` aparece tras sincronizar.
+No incluye un servidor antiguo sin estos endpoints: no añade una simulación.
+La compilación usa cachés existentes y `--locked --offline`, sin descargar dependencias.
+
 Limitaciones honestas:
 
 - El código exige `https://`; el control plane del laboratorio es `http`. Se inicia sesión con `PUBLIC_URL` http, se reinicia con `https://192.0.2.254:8080` (para que el servidor emita códigos válidos) y el CLI usa `--insecure-http`, que sustituye el esquema. No se prueba TLS real.
@@ -39,7 +50,7 @@ Limitaciones honestas:
 - El script asume las salidas del CLI (`red=`, `huella_dispositivo=`, `estado=`, `network list --json`, `network.json`, `ATENEA_RUN_DIR`); si el CLI cambia de formato hay que ajustarlo.
 - «Ficheros intactos» compara `network.json`, `agent.toml`, claves y bundle; el estado y la configuración firmada que el agente reescribe se excluyen a propósito. El script añade `interval_secs = 10` a `[sync]` del `agent.toml` del cliente (como `e2e-cp.sh`) entre `join` y `up`.
 - Coordinator y relay no intervienen; los caminos son directos por el puente `br0`. Un solo servidor y una sola máquina: no mide carga ni macOS.
-- Ejecutado el 2026-10-28 en Docker (Apple silicon, arm64): `DOS REDES: TODO OK`, 117 comprobaciones sin fallos. No cubre TLS real (el CP del laboratorio es `http` y el CLI sustituye el esquema con `--insecure-http`), ni macOS, ni carga.
+- Ejecutado el 2026-10-28 en Docker (Apple silicon, arm64): `COMPROBACIONES: 127; pasan: 127; fallan: 0`, `DOS REDES: TODO OK`. Incluye diez comprobaciones nuevas de roles e información del servidor. El PATCH firmado por dispositivo devuelve `401 invalid_session`; el mismo firmante accede a `/device/peers` con HTTP 200. La primera ejecución tuvo tres fallos del script al interpretar `device_id` como texto en lugar de bytes y se interrumpió con un error de sintaxis después de editar el script mientras estaba ejecutándose. Se corrigió solo el script y la segunda ejecución completó todos los casos. No cubre TLS real (el CP del laboratorio es `http` y el CLI sustituye el esquema con `--insecure-http`), ni macOS, ni carga.
 
 ## Servicios Linux multiinstancia (ADR-013 fase 3)
 

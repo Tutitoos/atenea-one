@@ -13,8 +13,9 @@ TOOLS=$PWD/tests/network-lab/tools.py
 CP=$PWD/tests/network-lab/cp.py
 export CP_URL=http://192.0.2.254:8080 CP_JAR=$LAB/cp.cookies
 FAILS=0
-ok()   { echo "  OK   $*"; }
-bad()  { echo "  FAIL $*"; FAILS=$((FAILS + 1)); }
+CHECKS=0
+ok()   { CHECKS=$((CHECKS + 1)); echo "  OK   $*"; }
+bad()  { CHECKS=$((CHECKS + 1)); echo "  FAIL $*"; FAILS=$((FAILS + 1)); }
 check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
 expect_eq() { if [ -n "$2" ] && [ "$2" = "$3" ]; then ok "$1 ($2)"; else bad "$1: esperado '$3', obtenido '$2'"; fi; }
 expect_ne() { if [ -n "$2" ] && [ -n "$3" ] && [ "$2" != "$3" ]; then ok "$1"; else bad "$1: '$2' y '$3' no son distintos y no vacíos"; fi; }
@@ -82,10 +83,10 @@ mknet() {  # mknet <org> <nombre> <v4> <v6>: red + raíz propia + certificado de
   api PUT /api/v1/networks/$NET_ID/issuer-cert --file $LAB/issuer-$name.cert >/dev/null && ok "red $name creada ($NET_ID, $3, raíz propia)" || bad "certificado de emisor de $name"
   for proto in 1 58; do api POST /api/v1/networks/$NET_ID/policies --json "{\"src\":{\"kind\":\"any\"},\"dst\":{\"kind\":\"any\"},\"proto\":$proto}" >/dev/null; done
 }
-peer() {  # peer <ns> <red>: enrola (token), aprueba, fija endpoint y arranca un agente clásico; deja P_DEV
-  local n=$1 net=$2
+peer() {  # peer <ns> <red> <ip> [rol]: enrola, aprueba, fija endpoint y arranca; deja P_DEV
+  local n=$1 net=$2 role=${4:-device}
   atenea device-init --dir $LAB/$n > $LAB/$n.info
-  api POST /api/v1/networks/$net/enrollment-tokens --json '{"ttl_secs":600}' > $LAB/$n.token.json
+  api POST /api/v1/networks/$net/enrollment-tokens --json "{\"ttl_secs\":600,\"role\":\"$role\"}" > $LAB/$n.token.json
   python3 - "$LAB/$n.token.json" "$CP_URL" > $LAB/$n.join.json <<'PY'
 import json, sys
 j = json.load(open(sys.argv[1])); j["join"]["url"] = sys.argv[2]; print(json.dumps(j["join"]))
@@ -94,7 +95,7 @@ PY
   P_DEV=$(uuid_of "$(sed -n 's/^device_id=//p' $LAB/$n.info)")
   api POST /api/v1/networks/$net/devices/$P_DEV/approve >/dev/null || bad "no se aprobó el peer $n"
   api PATCH /api/v1/networks/$net/devices/$P_DEV --json "{\"endpoints\":[\"192.0.2.$3:51820\"]}" >/dev/null
-  atenea agent-config --join "$(cat $LAB/$n.join.json)" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock --insecure-http
+  atenea agent-config --join "$(cat $LAB/$n.join.json)" --dir $LAB/$n --out $LAB/$n.toml --state-dir $LAB/$n.state --config-file $LAB/$n.cfg --ipc-socket $LAB/$n.sock --status-socket $LAB/$n.status.sock --insecure-http
   echo "interval_secs = 10" >> $LAB/$n.toml
   ip netns exec $n atenea up --config $LAB/$n.toml --log $LAB/$n.log >/dev/null || bad "arranque del peer $n"
 }
@@ -112,7 +113,7 @@ client_join() {
 }
 
 section "Compilación"
-cargo build --release --locked -q 2>&1 | tail -3
+cargo build --release --locked --offline -q 2>&1 | tail -3 || exit 1
 BIN=$CARGO_TARGET_DIR/release
 export PATH=$BIN:$PATH
 rm -rf "$LAB"; mkdir -p "$LAB" "$RUN"
@@ -178,7 +179,7 @@ api PUT /api/v1/networks/$NET_C/join-policy --json '{"policy":"con_solicitud"}' 
 expect_eq "A sigue con política cerrada" "$(api GET /api/v1/networks/$NET_A --field join_policy)" cerrada
 
 section "Peers: un agente clásico en cada red (pa en A, pb en B)"
-peer pa $NET_A 2; DEV_PA=$P_DEV
+peer pa $NET_A 2 server; DEV_PA=$P_DEV
 peer pb $NET_B 3; DEV_PB=$P_DEV
 
 section "Unión del cliente: código con token (A) y código sin token con solicitud (B)"
@@ -201,6 +202,90 @@ wait_state $NET_A conectada 60 && ok "red A conectada" || bad "red A no llegó a
 wait_state $NET_B conectada 60 && ok "red B conectada" || bad "red B no llegó a conectada ($(lj $NET_B state): $(lj $NET_B detail))"
 for _ in $(seq 1 30); do [ "$(python3 "$TOOLS" field $LAB/pa.sock config.lease_active)" = true ] && [ "$(python3 "$TOOLS" field $LAB/pb.sock config.lease_active)" = true ] && break; sleep 1; done
 
+
+section "Roles e información del servidor: control plane y agentes reales"
+expect_eq "rol: token server inscribe pa como server (API admin)" "$(dev_field $NET_A $DEV_PA role)" server
+expect_eq "rol: token normal inscribe cli-a como device (API admin)" "$(dev_field $NET_A $DEV_CA role)" device
+expect_eq "rol: solicitud inscribe cli-b como device (API admin)" "$(dev_field $NET_B $DEV_CB role)" device
+# Los agentes se arrancan después de aprobar: la primera lectura de /server/info ya está autorizada.
+wait_metadata() {  # socket, peer esperado, rol, peers extra, validar server
+  python3 - "$@" <<'PY'
+import json, re, subprocess, sys, time, uuid
+sock, peer, role, extra, server = sys.argv[1:]
+binary = subprocess.check_output(["atenea-control-plane", "--version"], text=True).strip()
+match = re.fullmatch(r"atenea-control-plane (\S+) \(([^()]+)\)", binary)
+assert match, binary
+deadline = time.monotonic() + 65
+state, error = None, None
+while time.monotonic() < deadline:
+    try:
+        state = json.loads(subprocess.check_output(["atenea", "status", "--socket", sock], text=True))
+        peers = {str(uuid.UUID(bytes=bytes(p["device_id"]))): p for p in state["peers"]}
+        assert peer in peers and peers[peer].get("role") == role, peers
+        assert all(p.get("role") == "device" for key, p in peers.items() if key != peer), peers
+        if extra:
+            assert extra in peers, peers
+        if server == "yes":
+            info = state["server"]
+            assert info is not None, state
+            assert info["control_plane"] == {"version": match[1], "commit": match[2]}, (binary, info)
+            assert type(info["issuer_cert_not_after_unix"]) is int, info
+            assert info["issuer_cert_not_after_unix"] > time.time(), info
+            assert info["last_error"] is None, info
+        sys.exit(0)
+    except (AssertionError, KeyError, ValueError, subprocess.CalledProcessError) as exc:
+        error = str(exc)
+        time.sleep(1)
+print(f"plazo agotado: {error}; binario={binary}; estado={json.dumps(state)}")
+sys.exit(1)
+PY
+}
+metadata_check() {
+  local description=$1; shift
+  if wait_metadata "$@" > "$LAB/metadata.txt" 2>&1; then ok "$description"; else bad "$description"; cat "$LAB/metadata.txt"; fi
+}
+metadata_check "rol: cli-a ve pa server y server/info coincide con el binario real" "$RUN/$(id8 $NET_A)/status.sock" "$DEV_PA" server "" yes
+metadata_check "rol: pa ve cli-a device y server/info válido" "$LAB/pa.status.sock" "$DEV_CA" device "" yes
+
+# Sin cookies/CSRF de administrador: la firma usa la identidad real de pa y el cuerpo exacto.
+if python3 - "$LAB/pa/identity.key" "$DEV_PA" "$NET_A" "$CP_URL" > "$LAB/role-device.txt" 2>&1 <<'PY'
+import hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.error, urllib.request
+key, device, network, base = sys.argv[1:]
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    der = tmp / "identity.der"
+    der.write_bytes(bytes.fromhex("302e020100300506032b657004220420") + bytes.fromhex(pathlib.Path(key).read_text().strip()))
+    os.chmod(der, 0o600)
+    def request(method, path, body):
+        ts, nonce = str(int(time.time())), os.urandom(16).hex()
+        message = b"atenea-one/api-auth/v1\0" + f"{method}\n{path}\n{ts}\n{nonce}\n".encode() + hashlib.blake2s(body).digest()
+        (tmp / "message").write_bytes(message)
+        sig = subprocess.check_output(["openssl", "pkeyutl", "-sign", "-rawin", "-keyform", "DER", "-inkey", str(der), "-in", str(tmp / "message")]).hex()
+        auth = f"AtDevice v1 device={device.replace('-', '')}, ts={ts}, nonce={nonce}, sig={sig}"
+        req = urllib.request.Request(base + path, method=method, data=body if method != "GET" else None,
+                                     headers={"Authorization": auth, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read().decode()
+    # Control positivo: la misma clave autentica una ruta de dispositivo real.
+    status, text = request("GET", "/api/v1/device/peers", b"")
+    assert status == 200, (status, text)
+    status, text = request("PATCH", f"/api/v1/networks/{network}/devices/{device}", b'{"role":"device"}')
+    print(f"PATCH firmado por dispositivo: HTTP {status} {text}")
+    assert status in (401, 403), (status, text)
+PY
+then ok "rol: firma válida de dispositivo rechazada en PATCH admin"; else bad "rol: firma válida de dispositivo rechazada en PATCH admin"; fi
+cat "$LAB/role-device.txt"
+expect_eq "rol: intento propio no cambia server en API admin" "$(dev_field $NET_A $DEV_PA role)" server
+if api PATCH /api/v1/networks/$NET_A/devices/$DEV_PA --json '{"role":"device"}' > "$LAB/role-admin.txt" 2>&1; then
+  ok "rol: administrador cambia pa a device"
+else
+  bad "rol: administrador cambia pa a device"; cat "$LAB/role-admin.txt"
+fi
+expect_eq "rol: API admin confirma pa device" "$(dev_field $NET_A $DEV_PA role)" device
+metadata_check "rol: cli-a refleja pa device tras sincronizar" "$RUN/$(id8 $NET_A)/status.sock" "$DEV_PA" device "" no
 section "Metadatos y recursos propios de cada red"
 IF_A=$(lj $NET_A interface); IF_B=$(lj $NET_B interface); PORT_A=$(lj $NET_A listen_port); PORT_B=$(lj $NET_B listen_port)
 for n in $NET_A $NET_B; do
@@ -360,5 +445,6 @@ cli network down $NET_A >/dev/null 2>&1; cli network down $NET_B >/dev/null 2>&1
 atenea down --socket $LAB/pa.sock >/dev/null 2>&1; atenea down --socket $LAB/pb.sock >/dev/null 2>&1; sleep 1
 kill $CPPID 2>/dev/null
 echo
+echo "COMPROBACIONES: $CHECKS; pasan: $((CHECKS - FAILS)); fallan: $FAILS"
 if [ $FAILS -eq 0 ]; then echo "DOS REDES: TODO OK"; else echo "DOS REDES: $FAILS fallo(s)"; fi
 exit $FAILS
