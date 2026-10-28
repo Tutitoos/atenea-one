@@ -5,9 +5,19 @@ set -eu
 # No habilitar servicios en un volumen distinto del sistema arrancado.
 [ "${3:-/}" = / ] || exit 0
 install -d -o root -g wheel -m 0700 '/Library/Application Support/Atenea' /var/run/atenea
+# `bootout` es asíncrono: si el proceso anterior aún no ha salido, `bootstrap` falla con «5: Input/output error».
+reload() {
+    launchctl bootout "system/$1" 2>/dev/null || :
+    tries=0
+    while launchctl print "system/$1" >/dev/null 2>&1; do
+        tries=$((tries + 1))
+        [ "$tries" -le 200 ] || { echo "$1 sigue cargado tras bootout" >&2; return 1; }
+        sleep 0.1
+    done
+    launchctl bootstrap system "$2"
+}
 if [ -f '/Library/Application Support/Atenea/agent.toml' ]; then
-    launchctl bootout system/one.atenea.agent 2>/dev/null || :
-    launchctl bootstrap system /Library/LaunchDaemons/one.atenea.agent.plist
+    reload one.atenea.agent /Library/LaunchDaemons/one.atenea.agent.plist
 fi
 # Reiniciar solo servicios de red registrados; no habilitar redes detenidas.
 for path in /Library /Library/Atenea /Library/Atenea/bin /Library/Atenea/bin/atenea-network.sh; do
@@ -23,7 +33,6 @@ for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
         continue
     fi
     if launchctl print "system/$label" >/dev/null 2>&1; then
-        launchctl bootout "system/$label"
-        launchctl bootstrap system "$plist"
+        reload "$label" "$plist"
     fi
 done
