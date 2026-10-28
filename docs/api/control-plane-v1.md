@@ -274,3 +274,20 @@ La migración `0007` añade `networks.join_policy` (`cerrada` por defecto, `con_
 - **Solicitud sin token:** `POST /api/v1/networks/{net}/join-requests` `{"bundle":hex 146 bytes,"name":…,"name_auto"?:bool}`, sin autenticación. Red inexistente y red `cerrada` devuelven la misma `404 not_found`. Mismas validaciones de `name` y `bundle` que `enroll`, mismo límite por IP (`enroll_per_minute`, `429 rate_limited`) y misma obtención de la IP cliente. Crea un dispositivo `pending` con `join_origin=request` (`201 {"device_id","network_id","status":"pending"}`); un administrador lo aprueba comparando la huella como siempre. Una clave ya registrada devuelve `409 conflict`.
 - **Tope y caducidad:** como máximo `max_pending_join_requests` (20) pendientes de origen `request` por red; la siguiente recibe `429 too_many_pending` y no se crea nada. Las pendientes `request` más antiguas que `join_request_ttl_secs` (7 días) se eliminan de forma perezosa, en la misma transacción y antes de contar; nunca se tocan dispositivos aprobados, revocados ni pendientes de origen `token`. La fila de la red se bloquea (`FOR UPDATE`) para que dos solicitudes simultáneas no superen el tope.
 - **Auditoría:** `device.join_requested` con la huella del dispositivo y `name_auto`; nunca el bundle completo.
+
+### Uso desde el panel
+
+En **Incorporar → Unirse a esta red**, los administradores y propietarios pueden
+copiar el código sin token, comparar la huella de raíz por otro canal y cambiar
+la política. Abrir solicitudes exige confirmación explícita; cancelar no modifica
+la política. Un miembro solo ve la política actual, nunca el código ni controles.
+Los errores de formato explican si se debe corregir el nombre o `PUBLIC_URL`.
+
+Crear un token muestra también el código **con token**, una sola vez y solo en
+memoria (no se guarda en caché de consultas ni en almacenamiento del navegador).
+Ocultar, salir de la sección o recargar elimina el secreto. El documento `join`
+y los comandos existentes se conservan; si `code` es null, se indica que se use
+ese flujo anterior. El portapapeles requiere contexto seguro y su fallo permite
+copiar manualmente el campo de solo lectura. En Dispositivos, las pendientes de
+origen `request` se distinguen por el texto **Solicitud de unión**. No hay QR ni
+nuevas operaciones de CLI, agente o escritorio.

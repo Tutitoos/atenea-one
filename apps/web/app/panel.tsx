@@ -8,6 +8,7 @@ import { ActionForm, Button, Dialog, RunButton, Status } from './ui';
 import { Organizations } from './organizations';
 import { Devices } from './devices';
 import { Enrollment } from './enrollment';
+import { JoinNetwork } from './join-network';
 import { Policies } from './policies';
 import { Subnets } from './subnets';
 import { Dns } from './dns';
@@ -52,7 +53,7 @@ function Network({net,view,memberships}:{net:string;view:string;memberships:Mode
  {['Dispositivos','Relays','Topología'].includes(view)&&<Status query={devices}/>}
  {view==='Dispositivos'&&<><Status query={routes}/>{routes.isError&&<p className="warning">No se han podido consultar las rutas aprobadas; no se puede evaluar la advertencia de forwarding del router.</p>}{devices.data&&<Devices devices={devices.data} accessRole={membership} net={net} elapsed={elapsed} refresh={refresh} routes={routes.data}/>}<Dns net={net} canEdit={canEdit}/></>}
  {view==='Subredes'&&<Subnets net={net} canEdit={canEdit} devices={devices.data??[]}/>}
- {view==='Incorporar'&&(canEdit?<Enrollment net={net}/>:<p>Solo owner o admin puede crear tokens.</p>)}
+ {view==='Incorporar'&&<>{query.data&&<JoinNetwork net={net} canEdit={canEdit} policy={query.data.join_policy}/>} {canEdit?<Enrollment net={net}/>:<p>Solo owner o admin puede crear tokens.</p>}</>}
  {view==='Políticas'&&<Policies net={net} canEdit={canEdit}/>}
  {view==='Relays'&&devices.data&&<Relays devices={devices.data} elapsed={elapsed}/>}
  {view==='Topología'&&devices.data&&<Topology devices={devices.data} elapsed={elapsed}/>}

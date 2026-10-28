@@ -8,7 +8,7 @@ const features = tableFeatures({});
 export function Devices({ devices, accessRole: role, net, elapsed, refresh, routes = [] }: { devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number; refresh: () => Promise<unknown>; routes?: Model<'Route'>[] }) {
   const columns: ColumnDef<typeof features, Model<'Device'>>[] = [
     { accessorKey: 'name', header: 'Dispositivo' },
-    { accessorKey: 'status', header: 'Estado' },
+    { accessorKey: 'status', header: 'Estado', cell: ({ row }) => <>{row.original.status}{row.original.status === 'pending' && row.original.join_origin === 'request' && <p><strong>Solicitud de unión</strong></p>}</> },
     { id: 'connection', header: 'Conexión declarada', cell: ({ row }) => connection(row.original.report, elapsed) },
     { id: 'paths', header: 'Caminos declarados / antigüedad', cell: ({ row }) => row.original.report ? <>{row.original.report.paths.map(p => <div key={p.peer}>{p.peer}: {p.path} · último RX {p.last_rx_secs === null || p.last_rx_secs === undefined ? 'desconocido' : `${p.last_rx_secs + (row.original.report?.age_secs ?? 0) + elapsed} s`} {p.rtt_ms != null && `· RTT ${p.rtt_ms} ms`}</div>)}<small>Informe hace {row.original.report.age_secs + elapsed} s</small></> : 'Sin informe' },
     { id: 'routing', header: 'Rutas / DNS / forwarding declarados', cell: ({ row }) => {

@@ -84,6 +84,21 @@ Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
   en caché de consultas, localStorage ni sessionStorage. Copiar usa el
   portapapeles del navegador, que requiere contexto seguro. Los comandos con
   token pueden quedar en el historial del shell; usa un entorno protegido.
+- En Incorporar, «Unirse a esta red» muestra el código sin token y la huella de
+  la raíz solo a owner/admin. Compara la huella por otro canal de confianza.
+  Copiar confirma el resultado sin cambiar de página. Si falla el portapapeles,
+  el campo de solo lectura permite seleccionar y copiar manualmente.
+- La política es Cerrada (solo con token) o Con solicitud (aprobación manual).
+  Permitir solicitudes exige confirmar: cualquiera con el código puede pedir
+  acceso; el servidor limita pendientes y un administrador aprueba comparando
+  la huella del dispositivo. Las pendientes sin token llevan la etiqueta
+  «Solicitud de unión» en Dispositivos. Los miembros solo ven la política.
+- Al crear un token también se muestra el código con token y la huella de raíz.
+  El código secreto se conserva solo en memoria junto a `join` y desaparece al
+  ocultarlo o salir; no se puede recuperar. Si el código es null, se mantiene
+  el flujo anterior con `join`. Un 409 en el código sin token explica si hay
+  que corregir el nombre de red o la URL pública del servidor. No se genera QR;
+  la incorporación desde CLI/escritorio por código pertenece a fases posteriores.
 - CSRF solo vive en memoria del cliente. localStorage guarda únicamente el tema.
 - Los caminos y relays son **observados/declarados por los agentes**, no pruebas
   independientes de disponibilidad. La edad parte de `age_secs` del servidor y
