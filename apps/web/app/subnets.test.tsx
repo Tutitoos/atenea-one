@@ -17,8 +17,15 @@ function mount(children: React.ReactNode) {
 }
 afterEach(() => vi.restoreAllMocks());
 it.each([false, true])('exige elegir SNAT explícitamente y envía %s sin valor predeterminado', async snat => {
-  vi.spyOn(api, 'GET').mockResolvedValue({ data: [route], response: new Response() });
-  const post = vi.spyOn(api, 'POST').mockResolvedValue({ response: new Response(null, { status: 204 }) });
+  let approved = false;
+  vi.spyOn(api, 'GET').mockImplementation((async () => ({
+    data: [{ ...route, status: approved ? 'approved' : 'pending', snat: approved ? snat : null }],
+    response: new Response(),
+  })) as never);
+  const post = vi.spyOn(api, 'POST').mockImplementation((async () => {
+    approved = true;
+    return { response: new Response(null, { status: 204 }) };
+  }) as never);
   const user = userEvent.setup();
   mount(<Subnets net="red" canEdit devices={[device]}/>);
   await user.click(await screen.findByRole('button', { name: 'Aprobar' }));
@@ -32,6 +39,8 @@ it.each([false, true])('exige elegir SNAT explícitamente y envía %s sin valor 
   await user.click(within(dialog).getByRole('button', { name: 'Aprobar ruta' }));
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/networks/{net}/routes/{id}/approve', { params: { path: { net: 'red', id: route.id } }, body: { snat } }));
   expect(await screen.findByText('Ruta aprobada.')).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('row', { name: new RegExp(route.prefix) })).toHaveTextContent('Aprobada');
 });
 it('explica el conflicto route_overlap sin ocultar el diálogo', async () => {
   vi.spyOn(api, 'GET').mockResolvedValue({ data: [route], response: new Response() });

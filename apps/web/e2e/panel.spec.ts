@@ -14,10 +14,15 @@ const labOk = (...args: string[]) => {
   try { lab(...args); return true; } catch { return false; }
 };
 
-const row = (page: Page, name: string): Locator => page.getByRole('row', { name: new RegExp(name) });
+const row = (page: Page, name: string): Locator => page.getByRole('row').filter({
+  has: page.getByRole('button', { name: `Ver detalle de ${name}`, exact: true }),
+});
+const detail = (page: Page, name: string) => page.getByRole('region', { name: `Detalle de ${name}`, exact: true });
 
 async function open(page: Page, view: string) {
-  await page.getByRole('navigation', { name: 'Secciones de red' }).getByRole('button', { name: view }).click();
+  await page.getByRole('navigation', { name: 'Secciones de red' }).getByRole('link', {
+    name: view === 'Dispositivos' ? /^Dispositivos/ : view, exact: view !== 'Dispositivos',
+  }).click();
 }
 
 async function dismiss(page: Page) {
@@ -58,17 +63,19 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await page.getByLabel('CIDR IPv6').fill('fd77::/64');
   await page.getByLabel('Ancla pública raíz (64 hex)').fill(rootAnchor);
   await page.getByRole('dialog').getByRole('button', { name: 'Crear red' }).click();
-  await expect(page.getByRole('heading', { name: 'red-lab' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'red-lab · Resumen' })).toBeVisible();
   const net = new URL(page.url()).searchParams.get('net')!;
   expect(net).toMatch(/^[0-9a-f-]{36}$/);
 
   // --- Certificado del emisor, generado offline por el laboratorio
   lab('issuer-cert', net);
-  await page.getByRole('button', { name: 'Certificado de emisor' }).click();
+  await open(page, 'DNS y certificado');
+  await page.getByRole('button', { name: 'Subir certificado', exact: true }).click();
   await page.getByLabel('Certificado público').setInputFiles('/tmp/lab/issuer.cert');
   await page.getByRole('button', { name: 'Subir issuer.cert' }).click();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: 'Certificado de emisor' })).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Certificado instalado.');
+  await dismiss(page);
+  await expect(page.getByRole('button', { name: 'Reemplazar certificado' })).toBeVisible();
 
   // --- Incorporar dos dispositivos: token único, enrolamiento por CLI, aprobación comparando huellas
   const joins: Record<string, string> = {};
@@ -87,21 +94,24 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await axeClean(page, 'dispositivos');
   for (const n of ['a', 'b']) {
     const r = row(page, `host-${n}`);
-    await expect(r).toContainText('pending');
-    await r.getByRole('button', { name: 'Aprobar' }).click();
+    await expect(r).toContainText('Pendiente');
+    await page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: `host-${n}`, exact: true }) })
+      .getByRole('button', { name: 'Aprobar', exact: true }).click();
     await expect(page.getByRole('dialog')).toContainText(fingerprints[n]);
     await page.getByRole('button', { name: 'Confirmar aprobación' }).click();
     await dismiss(page);
-    await expect(row(page, `host-${n}`)).toContainText('approved');
+    await expect(row(page, `host-${n}`)).toContainText('Aprobado');
   }
 
   // --- Política: cualquier tráfico entre dispositivos de la red
   await open(page, 'Políticas');
   await page.getByRole('button', { name: 'Crear política' }).click();
-  await page.getByRole('button', { name: 'Guardar política' }).click();
-  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
+  await page.getByRole('button', { name: 'Revisar política' }).click();
+  await page.getByRole('button', { name: 'Confirmar creación' }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Política creada.');
   await dismiss(page);
   await expect(page.getByText('Cualquiera → Cualquiera')).toBeVisible();
+  await expect(page.getByText('Cualquiera · Todos los puertos', { exact: true })).toBeVisible();
 
   // --- Agentes: se configuran con el `join` del panel y informan su estado
   lab('start-agent', 'a', joins.a);
@@ -110,9 +120,12 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   // Sin tráfico no hay handshake: se genera un ping por consulta, como haría un usuario.
   await expect(row(page, 'host-b')).toContainText(/10\.77\.0\.\d+/);
   const ipB = (await row(page, 'host-b').innerText()).match(/10\.77\.0\.\d+/)![0];
+  for (const n of ['a', 'b']) {
+    await row(page, `host-${n}`).getByRole('button', { name: `Ver detalle de host-${n}` }).click();
+  }
   const pathOf = async (n: string) => {
     labOk('ping', 'a', ipB);
-    return row(page, `host-${n}`).innerText();
+    return detail(page, `host-${n}`).innerText();
   };
   await expect.poll(async () => pathOf('a'), { timeout: 180_000, intervals: [3000] }).toMatch(/direct/);
   await expect.poll(async () => pathOf('b'), { timeout: 60_000, intervals: [3000] }).toMatch(/direct/);
@@ -134,7 +147,7 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await open(page, 'Topología');
   await axeClean(page, 'topología');
   await open(page, 'Auditoría');
-  for (const action of ['device.enroll', 'device.approve', 'policy.create']) {
+  for (const action of ['Dispositivo incorporado', 'Dispositivo aprobado', 'Política creada']) {
     await expect(page.getByText(action).first()).toBeVisible();
   }
 
@@ -150,11 +163,13 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
 
   // --- Revocación: B deja de comunicarse (lease ≤ 60 s + tolerancia 30 s)
   await open(page, 'Dispositivos');
-  await row(page, 'host-b').getByRole('button', { name: 'Revocar' }).click();
-  await expect(page.getByRole('dialog')).toContainText(fingerprints.b);
+  await row(page, 'host-b').getByRole('button', { name: 'Ver detalle de host-b' }).click();
+  await expect(detail(page, 'host-b')).toContainText(fingerprints.b);
+  await detail(page, 'host-b').getByRole('button', { name: 'Revocar', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveAccessibleName('Revocar host-b');
   await page.getByRole('button', { name: 'Confirmar revocación' }).click();
   await dismiss(page);
-  await expect(row(page, 'host-b')).toContainText('revoked');
+  await expect(row(page, 'host-b')).toContainText('Revocado');
   const t0 = Date.now();
   await expect.poll(() => labOk('ping', 'a', ipB), { timeout: 150_000, intervals: [2000] }).toBe(false);
   console.log(`revocación efectiva en ${Math.round((Date.now() - t0) / 1000)} s`);

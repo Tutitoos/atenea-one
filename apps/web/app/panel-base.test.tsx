@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -11,6 +11,7 @@ import { Field } from './ui';
 import { Organizations } from './organizations';
 import Panel from './panel';
 import { device } from './device.fixture';
+import { readFileSync } from 'node:fs';
 
 const org = { id: '00000000-0000-4000-8000-000000000001', name: 'Organización sintética', role: 'owner' as const };
 const network = { id: '00000000-0000-4000-8000-000000000002', org_id: org.id, name: 'Red sintética', ipv4_cidr: '10.0.0.0/24', ipv6_cidr: 'fd00::/64', has_issuer_cert: true, join_policy: 'cerrada' };
@@ -132,4 +133,64 @@ it.each([0, 1, 2])('concordancia de políticas con %s', async count => {
   expect(await screen.findByText(`${count} ${count === 1 ? 'política' : 'políticas'}`)).toBeVisible();
   expect(await screen.findByText('1 solicitud requiere revisión.')).toBeVisible();
   expect(screen.getByText('0 relays observados por los agentes.')).toBeVisible();
+});
+
+it('una organización sin redes ofrece un único botón «Crear red», y con redes también', async () => {
+  mockData(true, false, false);
+  const empty = wrap(<Organizations org={org} choose={() => {}} />);
+  await screen.findByText('No hay redes.');
+  expect(screen.getAllByRole('button', { name: 'Crear red' })).toHaveLength(1);
+  empty.unmount();
+
+  vi.restoreAllMocks();
+  mockData(true, false, true);
+  wrap(<Organizations org={org} choose={() => {}} />);
+  await screen.findByRole('link', { name: network.name });
+  expect(screen.getAllByRole('button', { name: 'Crear red' })).toHaveLength(1);
+});
+
+it('actualiza las membresías al crear una organización para poder administrar su red inmediatamente', async () => {
+  let created = false;
+  vi.spyOn(api, 'POST').mockImplementation((async () => {
+    created = true;
+    return { data: org };
+  }) as never);
+  vi.spyOn(api, 'GET').mockImplementation((async (path: string) => {
+    if (path === '/api/v1/session') return { data: {
+      user: { display_name: 'Prueba' }, memberships: created ? [{ org_id: org.id, role: 'owner' }] : [],
+    } };
+    if (path === '/api/v1/orgs') return { data: created ? [org] : [] };
+    if (path === '/api/v1/networks/{net}') return { data: { ...network, has_issuer_cert: false } };
+    if (path.endsWith('/networks')) return { data: [network] };
+    if (path.endsWith('/dns')) return { data: { servers: [], domains: [] } };
+    return { data: [] };
+  }) as never);
+  const user = userEvent.setup();
+  wrap(<Panel/>);
+  await user.click(await screen.findByRole('button', { name: 'Crear organización' }));
+  await user.type(screen.getByRole('textbox', { name: 'Nombre' }), org.name);
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Crear organización' }));
+  await screen.findByText('Acción completada.');
+  await user.keyboard('{Escape}');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Organización' }), org.id);
+  await user.click(await screen.findByRole('link', { name: network.name }));
+  await user.click(screen.getByRole('link', { name: 'DNS y certificado' }));
+  expect(await screen.findByRole('button', { name: 'Subir certificado' })).toBeVisible();
+});
+
+it('mantiene el contraste AA del texto secundario en los fondos claros del panel', () => {
+  const styles = readFileSync('app/styles.css', 'utf8');
+  const tokens = [...styles.matchAll(/:root \{([^}]+)\}/g)].at(-1)![1];
+  const luminance = (token: string) => {
+    const hex = new RegExp(`--${token}: #([0-9a-f]{6});`).exec(tokens)![1];
+    const channels = hex.match(/../g)!.map(channel => {
+      const value = parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  for (const background of ['bg', 'side', 'card']) {
+    const ratio = (luminance(background) + 0.05) / (luminance('muted') + 0.05);
+    expect(ratio, `Contraste de --muted sobre --${background}`).toBeGreaterThanOrEqual(4.5);
+  }
 });

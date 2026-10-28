@@ -5,8 +5,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
 import { Button, ConfirmDialog, Dialog, Empty, RunButton, ShortId, Status, StatusBadge } from './ui';
 
-function Approval({ route, device, net, refresh }: {
-  route: Model<'Route'>; device: string; net: string; refresh: () => Promise<unknown>;
+function Approval({ route, device, net, onApproved }: {
+  route: Model<'Route'>; device: string; net: string; onApproved: () => Promise<unknown>;
 }) {
   const snatLabel = useId();
   const [snat, setSnat] = useState('');
@@ -29,7 +29,7 @@ function Approval({ route, device, net, refresh }: {
       setPending(true); setMessage('');
       void api.POST('/api/v1/networks/{net}/routes/{id}/approve', {
         params: { path: { net, id: route.id } }, body: { snat: snat === 'true' },
-      }).then(async () => { await refresh(); setMessage('Ruta aprobada.'); }, error => {
+      }).then(onApproved, error => {
         setMessage(error instanceof ApiError && error.status === 409 && error.detail.error.code === 'route_overlap' ?
           'No se puede aprobar: el prefijo se solapa con la red del túnel u otra ruta aprobada. Revisa las subredes antes de volver a intentarlo.' :
           error instanceof Error ? error.message : 'No se pudo aprobar la ruta.');
@@ -43,12 +43,14 @@ export function Subnets({ net, canEdit, devices }: {
   net: string; canEdit: boolean; devices: Model<'Device'>[];
 }) {
   const cache = useQueryClient();
+  const [message, setMessage] = useState('');
   const query = useQuery({ queryKey: ['network', net, 'routes'],
     queryFn: () => result(api.GET('/api/v1/networks/{net}/routes', { params: { path: { net } } })) });
   const refresh = () => cache.invalidateQueries({ queryKey: ['network', net] });
   return <section aria-label="Subredes"><h2>Subredes</h2>
     <p className="warning">Solo se sirven prefijos privados (RFC 1918, CGNAT y ULA). No hay salida a Internet ni ruta por defecto. Las rutas las declara el agente y requieren aprobación de owner o admin.</p>
     <Status query={query}/>{query.isError && <RunButton run={() => query.refetch()}>Reintentar rutas</RunButton>}
+    <p role="status">{message}</p>
     {query.data && (query.data.length ? <div className="table-scroll"><table>
       <caption>Rutas declaradas por los dispositivos</caption>
       <thead><tr>{['Dispositivo', 'Prefijo', 'Estado', 'SNAT', 'Fecha de declaración', 'Fecha de decisión', 'Acciones']
@@ -69,7 +71,9 @@ export function Subnets({ net, canEdit, devices }: {
           <td>{!canEdit ? 'Solo lectura' : <div className="actions">
             {!approved && <Dialog trigger="Aprobar" title="Aprobar ruta de subred"
               description="La aprobación autoriza este prefijo; elige el tratamiento del origen antes de confirmar.">
-              <Approval route={route} device={name} net={net} refresh={refresh}/>
+              <Approval route={route} device={name} net={net} onApproved={async () => {
+                await refresh(); setMessage('Ruta aprobada.');
+              }}/>
             </Dialog>}
             {route.status !== 'rejected' && <ConfirmDialog trigger={approved ? 'Revocar' : 'Rechazar'}
               title={approved ? 'Revocar ruta' : 'Rechazar ruta'}

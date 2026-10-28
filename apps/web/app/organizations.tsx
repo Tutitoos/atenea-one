@@ -26,7 +26,10 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
     description="Serás propietario de la nueva organización.">
     <ActionForm label="Crear organización" fields={[{ name: 'name', label: 'Nombre' }]} submit={async values => {
       await result(api.POST('/api/v1/orgs', { body: { name: nameSchema.parse(values.name) } }));
-      await cache.invalidateQueries({ queryKey: ['organizations'] });
+      await Promise.all([
+        cache.invalidateQueries({ queryKey: ['organizations'] }),
+        cache.invalidateQueries({ queryKey: ['session'] }),
+      ]);
     }}/>
   </Dialog>;
   if (!current) return <section><PageHeader title="Organizaciones" description="Selecciona una organización en la barra lateral." actions={createOrganization}/></section>;
@@ -51,7 +54,7 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
         <Tabs.Trigger value="networks">Redes</Tabs.Trigger><Tabs.Trigger value="members">Miembros</Tabs.Trigger>
         <Tabs.Trigger value="settings">Ajustes</Tabs.Trigger>
       </Tabs.List>
-      <Tabs.Content value="networks"><h2>Redes</h2>{createNetwork}<Status query={networks}/>
+      <Tabs.Content value="networks"><h2>Redes</h2>{networks.data?.length ? createNetwork : null}<Status query={networks}/>
         {networks.data?.length ? <ul className="cards">{networks.data.map(network => <li className="card" key={network.id}>
           <h3><Link to={`/?org=${current.id}&net=${network.id}&view=Resumen`}>{network.name}</Link></h3>
           <code>{network.ipv4_cidr} · {network.ipv6_cidr}</code><p>
