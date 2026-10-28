@@ -226,3 +226,14 @@ Resultado: GitHub Release con **33 ficheros** (binarios Linux/macOS/Windows, `.d
 
 **Sin comprobar:** el despliegue de estos artefactos en un host real y la migración `0006` sobre una base con datos; firmas de plataforma (los instaladores de macOS y Windows siguen sin firmar ni notarizar); que el binario del agente de macOS arranque con la configuración del piloto. `0.1.1` sigue siendo una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
 
+### Publicación real de `v0.1.2` (2026-10-28)
+
+El tag firmado `v0.1.2` (commit `9e80d7b`) se publicó con autorización expresa del responsable, al primer intento y con la aprobación del entorno `release` correcta a la primera (cuerpo JSON con `environment_ids` numérico). Solo cambia la versión de las cinco crates de binario y dos piezas de empaquetado que salieron del despliegue real de `v0.1.1`:
+
+1. **`.deb`:** `prerm upgrade` recuerda si el agente estaba activo y `postinst` lo vuelve a arrancar solo en ese caso (antes `dpkg -i` sobre un agente en marcha lo dejaba **parado**; ocurrió en el nodo del piloto). Una instalación nueva sigue sin arrancar nada.
+2. **`.pkg` de macOS:** el lanzador crea `/var/run/atenea` como 0750 root:`status_gid` cuando la configuración define `status_gid`, de modo que el estado se lea sin `sudo`.
+
+Resultado: 33 ficheros y tres imágenes públicas en GHCR por digest. Verificado fuera de CI: `scripts/release/verify.sh` pasó con la clave pública del responsable obtenida por otro canal; los tres manifiestos de GHCR se leen sin credenciales (HTTP 200) y llevan la versión `0.1.2`; y los scripts `prerm` y `postinst` extraídos del `.deb` publicado y `atenea-launchd.sh` extraído del `.pkg` publicado son **idénticos byte a byte** a los del tag.
+
+**Sin comprobar:** el comportamiento de ambos arreglos con los paquetes publicados instalados en un host real. El del `.deb` se probó antes con un `systemctl` simulado (no con PID 1 ni con este paquete); el del lanzador se observó en un Mac real bajo `launchd` pero con los binarios de `v0.1.1` y el lanzador instalado con `install-launchd.sh`, no desde este `.pkg`. `0.1.2` sigue siendo una versión de piloto: no es apta para datos sensibles hasta la auditoría independiente.
+

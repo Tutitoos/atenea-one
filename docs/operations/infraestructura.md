@@ -424,3 +424,5 @@ Se aplicó con un playbook mínimo que ejecuta solo el rol `base` (no hay etique
 
 **Límites:** (1) es una *segunda* vía, no una alternativa total: depende de que el agente del nodo y el túnel funcionen; si el agente cae, o el equipo del operador pierde el túnel, solo queda Tailscale o la consola del proveedor. (2) Quien controle esa dirección del túnel (el equipo del operador) tiene SSH al nodo: hay que tratar su clave y su agente como credenciales de administración. (3) No se ha probado el acceso con el nodo recién reiniciado ni con el agente parado.
 
+**Observado después (2026-10-28):** con el Mac del operador fuera de casa (detrás de un punto de acceso móvil, sin Wi-Fi doméstica y a otra IP pública), el túnel de Atenea siguió disponible hacia el nodo (RTT ≈130 ms) y se administró el nodo por SSH a `10.77.0.1` con ese mismo túnel. Es la primera comprobación de la segunda vía con un cliente fuera de la LAN; sigue sin probarse con el agente del nodo parado.
+
