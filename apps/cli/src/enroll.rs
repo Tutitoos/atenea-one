@@ -178,6 +178,7 @@ pub fn pinned_config(
     port: u16,
     ipc_socket: &Path,
     status_socket: &Path,
+    status_gid: Option<u32>,
     insecure_http: bool,
 ) -> Result<(), String> {
     let join = Join {
@@ -197,7 +198,7 @@ pub fn pinned_config(
         ipc_socket: Some(ipc_socket.into()),
         advertise_routes: Vec::new(),
         status_socket: Some(status_socket.into()),
-        status_gid: None,
+        status_gid,
         insecure_http,
     };
     let mut table: toml::Table = toml::from_str(&render(&join, &args, &bundle(dir)?.device_id)?)
@@ -349,7 +350,7 @@ pub fn agent_config(mut args: AgentConfigArgs) -> Result<(), String> {
 #[cfg(test)]
 #[path = "../../agent/src/config.rs"]
 #[allow(dead_code)]
-mod agent_config_contract;
+pub(crate) mod agent_config_contract;
 
 #[cfg(test)]
 mod tests {

@@ -23,18 +23,20 @@ export function createSampler() {
   };
 }
 
-const sampler = createSampler();
+/** Un muestreador por red: al cambiar de red no se calculan tasas contra la lectura de otra. */
+const samplers = new Map<string, ReturnType<typeof createSampler>>();
 
-/** Única orden del frontend hacia Rust: lectura del estado. Rechaza respuestas con otra forma. */
-export async function readAgent(): Promise<Sample> {
+/** Lectura del estado de la instancia predeterminada (`network` vacío) o de una red unida. Rechaza respuestas con otra forma. */
+export async function readAgent(network = ''): Promise<Sample> {
   let raw: string;
   try {
-    raw = await invoke<string>('status');
+    raw = await invoke<string>('status', { network: network || null });
   } catch (e) {
     // Tauri rechaza con el texto devuelto por la orden, no con un Error.
     throw new Error(typeof e === 'string' ? e : 'No se pudo leer el estado del agente.', { cause: e });
   }
   const parsed = reply.safeParse(JSON.parse(raw));
   if (!parsed.success) throw new Error('El agente respondió con un formato inesperado.');
-  return sampler(parsed.data, Date.now());
+  if (!samplers.has(network)) samplers.set(network, createSampler());
+  return samplers.get(network)!(parsed.data, Date.now());
 }

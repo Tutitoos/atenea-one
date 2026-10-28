@@ -11,6 +11,7 @@ import Device from './routes/device';
 import Devices from './routes/devices';
 import DevicesIndex from './routes/devices-index';
 import Diagnostics from './routes/diagnostics';
+import Networks from './routes/networks';
 import Shell from './routes/shell';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -38,6 +39,7 @@ function app(entry = '/devices') {
               <Route index element={<DevicesIndex />} />
               <Route path=":id" element={<Device />} />
             </Route>
+            <Route path="networks" element={<Networks />} />
             <Route path="diagnostics" element={<Diagnostics />} />
           </Route>
         </Routes>
@@ -46,23 +48,39 @@ function app(entry = '/devices') {
   );
 }
 
+const NET_ID = '0199ab12-3456-7def-8abc-0123456789ab';
+const net = (over: object = {}) => ({ network_id: NET_ID, name: 'casa', server: 'control.example.test', interface: 'atenea0', listen_port: 51821, join_status: 'aprobada', state: 'conectada', ...over });
+const info = { name: 'casa', server: 'control.example.test', network_id: NET_ID, root_fingerprint: '6c4b-fd0b-2585-9aae', has_token: false };
+const CODE = 'ATENEA1-ABCDEF-GH23';
+
+/** Responde como Rust: `status` con el estado (o el fallo), `network_list` con las redes y el resto por orden. */
+function serve(statusReply: string, networks: object[] = [], fail?: string, extra: Record<string, (args: unknown) => unknown> = {}) {
+  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'network_list') return JSON.stringify(networks);
+    if (cmd in extra) return extra[cmd](args) as never;
+    if (fail) throw fail;
+    return statusReply as never;
+  });
+}
+const calls = (cmd: string) => vi.mocked(invoke).mock.calls.filter(([c]) => c === cmd);
+
 beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); });
 
 it('la banda de avisos solo aparece si hay motivos que contar', async () => {
   // Caso real de Rust: un par por relay degrada el estado pero no aporta ningún motivo textual.
-  vi.mocked(invoke).mockResolvedValue(agent(undefined, { level: 'degraded', text: 'Degradado: algún par por relay o sin camino', reasons: [] }));
+  serve(agent(undefined, { level: 'degraded', text: 'Degradado: algún par por relay o sin camino', reasons: [] }));
   const { unmount } = app();
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));
   expect(screen.queryByRole('list', { name: 'Avisos' })).not.toBeInTheDocument();
   unmount();
-  vi.mocked(invoke).mockResolvedValue(agent(undefined, { level: 'down', text: 'Sin conexión: sin lease activo', reasons: ['sin lease activo'] }));
+  serve(agent(undefined, { level: 'down', text: 'Sin conexión: sin lease activo', reasons: ['sin lease activo'] }));
   app();
   expect(await screen.findByRole('list', { name: 'Avisos' })).toHaveTextContent('sin lease activo');
 });
 
 
 it('el servidor sale en su propio grupo, aparte de los pares, y su detalle muestra servicios y relays', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent());
+  serve(agent());
   app();
   const groups = await screen.findAllByRole('heading', { level: 2, name: /^(Local|Servidor|Pares)$/ });
   expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Servidor', 'Pares']);
@@ -76,17 +94,17 @@ it('el servidor sale en su propio grupo, aparte de los pares, y su detalle muest
 });
 
 it('un error del control plane pone el servidor en rojo y sin control plane configurado no hay grupo Servidor', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent(undefined, degraded, { sync: { ...server.sync, last_error: 'acceso denegado' }, coordinator: server.coordinator }));
+  serve(agent(undefined, degraded, { sync: { ...server.sync, last_error: 'acceso denegado' }, coordinator: server.coordinator }));
   const { unmount } = app('/devices/server');
   expect(await screen.findByText('Control plane: acceso denegado')).toBeInTheDocument();
   unmount();
-  vi.mocked(invoke).mockResolvedValue(agent(undefined, degraded, {}));
+  serve(agent(undefined, degraded, {}));
   app();
   await screen.findByRole('link', { name: /10\.77\.0\.4/ });
   expect(screen.queryByRole('heading', { level: 2, name: 'Servidor' })).not.toBeInTheDocument();
 });
 it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y tráfico', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent());
+  serve(agent());
   app();
   // Este dispositivo se llama como el sistema; el par con nombre de la red usa ese nombre y el otro, su IP.
   expect(await screen.findByRole('heading', { name: 'MacBook de prueba', level: 2 })).toBeInTheDocument();
@@ -101,7 +119,7 @@ it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y
 });
 
 it('la búsqueda filtra por IP y avisa si no hay resultados', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent());
+  serve(agent());
   app();
   const search = await screen.findByRole('searchbox', { name: 'Buscar dispositivos' });
   await userEvent.type(search, 'servidor');
@@ -113,7 +131,7 @@ it('la búsqueda filtra por IP y avisa si no hay resultados', async () => {
 });
 
 it('un alias local gana al nombre de la red y vaciarlo lo devuelve', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent());
+  serve(agent());
   app(`/devices/${'a'.repeat(64)}`);
   // El nombre de la red (el del sistema del otro equipo) es el título hasta que haya un alias local.
   await userEvent.click(await screen.findByRole('button', { name: 'servidor-vps' }));
@@ -129,7 +147,7 @@ it('un alias local gana al nombre de la red y vaciarlo lo devuelve', async () =>
 });
 
 it('si el agente falla no enseña datos y muestra el motivo', async () => {
-  vi.mocked(invoke).mockRejectedValue('Agente parado o sin acceso al estado');
+  serve('', [], 'Agente parado o sin acceso al estado');
   app();
   expect(await screen.findAllByText('Agente parado o sin acceso al estado')).not.toHaveLength(0);
   expect(screen.getByRole('status')).toHaveTextContent('Sin datos');
@@ -137,15 +155,131 @@ it('si el agente falla no enseña datos y muestra el motivo', async () => {
 });
 
 it('una respuesta con otra forma se rechaza en la frontera', async () => {
-  vi.mocked(invoke).mockResolvedValue(JSON.stringify({ status: { peers: 3 } }));
+  serve(JSON.stringify({ status: { peers: 3 } }));
   app();
   expect(await screen.findAllByText('El agente respondió con un formato inesperado.')).not.toHaveLength(0);
   expect(screen.getByRole('status')).toHaveTextContent('Sin datos');
 });
 
+it('sin redes unidas no hay selector; con redes el selector pide el estado de la elegida', async () => {
+  serve(agent());
+  const { unmount } = app();
+  await screen.findByRole('navigation', { name: 'Secciones' });
+  expect(screen.queryByRole('combobox', { name: 'Red' })).not.toBeInTheDocument();
+  expect(calls('status')[0][1]).toEqual({ network: null });
+  unmount();
+
+  serve(agent(), [net()]);
+  app();
+  await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Red' }), 'casa');
+  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: NET_ID }));
+  expect(localStorage.getItem('atenea.network')).toBe(NET_ID);
+});
+
+it('una red elegida que ya no existe vuelve a la predeterminada', async () => {
+  localStorage.setItem('atenea.network', NET_ID);
+  serve(agent(), [net({ network_id: '0199ab12-3456-7def-8abc-0123456789ff', name: 'otra' })]);
+  app();
+  await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: null }));
+  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue('');
+});
+
+it('sin elección guardada y con la predeterminada caída enseña la primera red; una elección explícita se respeta', async () => {
+  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'network_list') return JSON.stringify([net()]) as never;
+    if ((args as { network: string | null }).network === null) throw 'Agente parado o sin acceso al estado';
+    return agent() as never;
+  });
+  const { unmount } = app();
+  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue(NET_ID);
+  await screen.findByRole('heading', { name: 'MacBook de prueba', level: 2 });
+  expect(localStorage.getItem('atenea.network')).toBeNull();
+  unmount();
+
+  localStorage.setItem('atenea.network', '');
+  app();
+  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue('');
+  expect((await screen.findAllByText('Agente parado o sin acceso al estado')).length).toBeGreaterThan(0);
+});
+
+it('redes: enseña el estado de cada una y conectar/desconectar pide la operación con su id', async () => {
+  serve(agent(), [net(), net({ network_id: '0199ab12-3456-7def-8abc-0123456789cd', name: 'trabajo', state: 'detenida' })], undefined, { network_apply: () => '' });
+  app('/networks');
+  const casa = await screen.findByRole('region', { name: 'casa' });
+  expect(within(casa).getByText(/Conectada/)).toBeInTheDocument();
+  await userEvent.click(within(casa).getByRole('button', { name: 'Desconectar' }));
+  await waitFor(() => expect(calls('network_apply')).toEqual([['network_apply', { op: 'down', network: NET_ID }]]));
+  await userEvent.click(within(screen.getByRole('region', { name: 'trabajo' })).getByRole('button', { name: 'Conectar' }));
+  await waitFor(() => expect(calls('network_apply').at(-1)).toEqual(['network_apply', { op: 'up', network: '0199ab12-3456-7def-8abc-0123456789cd' }]));
+});
+
+it('un conflicto de red muestra su motivo en rojo', async () => {
+  serve(agent(), [net({ state: 'conflicto', detail: 'network_overlap: solapa con otra interfaz' })]);
+  app('/networks');
+  expect(await screen.findByText('network_overlap: solapa con otra interfaz')).toBeInTheDocument();
+});
+
+it('salir de una red exige confirmar y se puede cancelar sin llamar a nada', async () => {
+  serve(agent(), [net()], undefined, { network_apply: () => '' });
+  app('/networks');
+  await userEvent.click(await screen.findByRole('button', { name: 'Salir de la red…' }));
+  const dialog = screen.getByRole('alertdialog', { name: 'Salir de casa' });
+  expect(dialog).toHaveTextContent('revoque');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(calls('network_apply')).toHaveLength(0);
+  await userEvent.click(screen.getByRole('button', { name: 'Salir de la red…' }));
+  await userEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Salir de la red' }));
+  await waitFor(() => expect(calls('network_apply')).toEqual([['network_apply', { op: 'leave', network: NET_ID }]]));
+});
+
+it('unirse: primero se revisa el código y no se cambia nada hasta confirmar', async () => {
+  serve(agent(), [], undefined, {
+    network_inspect: () => JSON.stringify(info),
+    network_apply: () => `red=${NET_ID}\ndispositivo=x\nhuella_dispositivo=aaaa-bbbb-cccc\nestado=pendiente_de_aprobacion`,
+  });
+  app('/networks');
+  await userEvent.type(await screen.findByRole('textbox', { name: 'Código de red' }), CODE);
+  await userEvent.click(screen.getByRole('button', { name: 'Revisar código' }));
+
+  const confirm = await screen.findByRole('group', { name: 'Confirmar unión' });
+  expect(confirm).toHaveTextContent('control.example.test');
+  expect(confirm).toHaveTextContent('6c4b-fd0b-2585-9aae');
+  expect(confirm).toHaveTextContent('por otro canal');
+  expect(confirm).toHaveTextContent('un administrador debe aprobar');
+  expect(calls('network_inspect')).toEqual([['network_inspect', { code: CODE }]]);
+  expect(calls('network_apply')).toHaveLength(0);
+
+  await userEvent.click(within(confirm).getByRole('button', { name: 'Unirme a esta red' }));
+  await waitFor(() => expect(calls('network_apply')).toEqual([['network_apply', { op: 'join', code: CODE }]]));
+  expect(await screen.findByText(/Solicitud enviada a «casa»/)).toBeInTheDocument();
+  expect(screen.getByText('aaaa-bbbb-cccc')).toBeInTheDocument();
+});
+
+it('un código no válido o un fallo de autorización se muestran y no dejan nada a medias', async () => {
+  serve(agent(), [], undefined, {
+    network_inspect: (args) => { if ((args as { code: string }).code === 'basura') throw 'código no válido: no es un código de red'; return JSON.stringify(info); },
+    network_apply: () => { throw 'Cancelado: no se ha cambiado nada'; },
+  });
+  app('/networks');
+  const box = await screen.findByRole('textbox', { name: 'Código de red' });
+  await userEvent.type(box, 'basura');
+  await userEvent.click(screen.getByRole('button', { name: 'Revisar código' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('código no válido');
+  expect(screen.queryByRole('group', { name: 'Confirmar unión' })).not.toBeInTheDocument();
+
+  await userEvent.clear(box);
+  await userEvent.type(box, CODE);
+  await userEvent.click(screen.getByRole('button', { name: 'Revisar código' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Unirme a esta red' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Cancelado: no se ha cambiado nada');
+  // Sigue en la confirmación: se puede reintentar o cancelar.
+  expect(screen.getByRole('group', { name: 'Confirmar unión' })).toBeInTheDocument();
+});
+
 it('las pantallas no tienen violaciones de accesibilidad detectables', async () => {
-  vi.mocked(invoke).mockResolvedValue(agent());
-  for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/diagnostics']) {
+  serve(agent());
+  for (const entry of ['/devices', `/devices/${'a'.repeat(64)}`, '/networks', '/diagnostics']) {
     const { container, unmount } = app(entry);
     await screen.findByRole('navigation', { name: 'Secciones' });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));

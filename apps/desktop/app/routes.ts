@@ -6,6 +6,7 @@ export default [
   layout('routes/shell.tsx', [
     index('routes/home.tsx'),
     route('devices', 'routes/devices.tsx', [index('routes/devices-index.tsx'), route(':id', 'routes/device.tsx')]),
+    route('networks', 'routes/networks.tsx'),
     route('diagnostics', 'routes/diagnostics.tsx'),
   ]),
 ] satisfies RouteConfig;

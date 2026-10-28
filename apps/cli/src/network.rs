@@ -7,12 +7,21 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum NetworkCmd {
+    /// Examine un código sin privilegios, disco ni red; nunca muestra el token.
+    Inspect {
+        code: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Se une a una red con un código (`ATENEA1-…`) tras confirmarlo; claves nuevas por red.
     Join {
         code: String,
         /// Nombre de este dispositivo en la red. Sin él se usa el nombre del sistema.
         #[arg(long)]
         name: Option<String>,
+        /// Grupo que puede leer el socket de estado de esta red; por defecto, solo root.
+        #[arg(long)]
+        status_gid: Option<u32>,
         /// No pregunta: confirma la unión (obligatorio sin terminal interactiva).
         #[arg(long)]
         yes: bool,
@@ -53,6 +62,12 @@ pub fn run(
     cmd: NetworkCmd,
 ) -> Result<(), String> {
     use std::io::IsTerminal;
+    let cmd = match cmd {
+        NetworkCmd::Inspect { code, json } => {
+            return imp::inspect(&code, json, &mut std::io::stdout().lock());
+        }
+        cmd => cmd,
+    };
     let mut ctx = imp::Ctx::new(root)?;
     ctx.backend = backend;
     let interactive = std::io::stdin().is_terminal();
@@ -61,6 +76,7 @@ pub fn run(
         NetworkCmd::Join {
             code,
             name,
+            status_gid,
             yes,
             insecure_http,
         } => imp::join(
@@ -68,6 +84,7 @@ pub fn run(
             &imp::JoinOpts {
                 code,
                 name,
+                status_gid,
                 yes,
                 insecure_http,
             },
@@ -80,6 +97,7 @@ pub fn run(
         NetworkCmd::Leave { network, yes } => {
             imp::leave(&ctx, &network, yes, &mut input, interactive)
         }
+        NetworkCmd::Inspect { .. } => unreachable!(),
     }
 }
 
@@ -347,6 +365,7 @@ mod imp {
     pub struct JoinOpts {
         pub code: String,
         pub name: Option<String>,
+        pub status_gid: Option<u32>,
         pub yes: bool,
         pub insecure_http: bool,
     }
@@ -385,6 +404,7 @@ mod imp {
             port,
             &run.join("control.sock"),
             &run.join("status.sock"),
+            opts.status_gid,
             opts.insecure_http,
         )
         .map_err(fail)?;
@@ -439,6 +459,50 @@ mod imp {
             .next()
             .unwrap_or_default()
             .into()
+    }
+
+    #[derive(Serialize)]
+    struct CodeInfo<'a> {
+        name: &'a str,
+        server: String,
+        network_id: String,
+        root_fingerprint: String,
+        has_token: bool,
+    }
+
+    fn code_info(code: &JoinCode) -> CodeInfo<'_> {
+        CodeInfo {
+            name: &code.name,
+            server: server_of(&code.url),
+            network_id: uuid(&code.network_id),
+            root_fingerprint: anchor_fingerprint(&code.root_anchor),
+            has_token: code.token.is_some(),
+        }
+    }
+
+    fn write_code_info(info: &CodeInfo<'_>, output: &mut dyn Write) -> Result<(), String> {
+        writeln!(
+            output,
+            "Red:            {}\nServidor:       {}\nId de la red:   {}\nHuella de la raíz: {}",
+            info.name, info.server, info.network_id, info.root_fingerprint
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn inspect(text: &str, json: bool, output: &mut dyn Write) -> Result<(), String> {
+        let code = JoinCode::decode(text).map_err(|e| format!("código no válido: {e}"))?;
+        let info = code_info(&code);
+        if json {
+            writeln!(
+                output,
+                "{}",
+                serde_json::to_string(&info).map_err(|e| e.to_string())?
+            )
+            .map_err(|e| e.to_string())
+        } else {
+            write_code_info(&info, output)?;
+            writeln!(output, "Lleva token:    {}", info.has_token).map_err(|e| e.to_string())
+        }
     }
 
     fn write_meta(ctx: &Ctx, meta: &Meta) -> Result<(), String> {
@@ -513,19 +577,14 @@ mod imp {
         interactive: bool,
     ) -> Result<(), String> {
         let code = JoinCode::decode(&opts.code).map_err(|e| format!("código no válido: {e}"))?;
-        let id = uuid(&code.network_id);
+        let info = code_info(&code);
         let url = if opts.insecure_http {
             code.url.replacen("https://", "http://", 1)
         } else {
             code.url.clone()
         };
-        println!("Red:            {}", code.name);
-        println!("Servidor:       {}", server_of(&code.url));
-        println!("Id de la red:   {id}");
-        println!(
-            "Huella de la raíz: {}",
-            anchor_fingerprint(&code.root_anchor)
-        );
+        write_code_info(&info, &mut std::io::stdout().lock())?;
+        let id = info.network_id;
         println!(
             "Código:         {}",
             if code.token.is_some() {
@@ -954,6 +1013,7 @@ mod imp {
                 code,
                 name: Some("equipo-prueba".into()),
                 yes,
+                status_gid: None,
                 insecure_http: true,
             }
         }
@@ -1003,6 +1063,126 @@ mod imp {
         const A: &str = "11111111-1111-1111-1111-111111111111";
         const B: &str = "11112222-2222-2222-2222-222222222222";
         const C: &str = "33333333-3333-3333-3333-333333333333";
+
+        #[test]
+        fn inspect_reports_only_public_fields_without_touching_disk() {
+            let d = temp("inspect");
+            let root = d.join("redes");
+            for token in [None, Some("TOKEN_NO_MOSTRAR")] {
+                for json in [false, true] {
+                    let mut output = Vec::new();
+                    inspect(&code_text(443, token, 1), json, &mut output).unwrap();
+                    let text = String::from_utf8(output).unwrap();
+                    assert!(!text.contains("TOKEN_NO_MOSTRAR"));
+                    if json {
+                        assert_eq!(text.lines().count(), 1);
+                        assert_eq!(
+                            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+                            serde_json::json!({
+                                "name": "Red de ejemplo",
+                                "server": "127.0.0.1:443",
+                                "network_id": "01010101-0101-0101-0101-010101010101",
+                                "root_fingerprint": anchor_fingerprint(&[7; 32]),
+                                "has_token": token.is_some(),
+                            })
+                        );
+                    } else {
+                        assert!(text.contains("Red de ejemplo"));
+                        assert!(text.contains("127.0.0.1:443"));
+                        assert!(text.contains("01010101-0101-0101-0101-010101010101"));
+                        assert!(text.contains(&anchor_fingerprint(&[7; 32])));
+                    }
+                    crate::network::run(
+                        Some(root.clone()),
+                        Backend::Auto,
+                        crate::network::NetworkCmd::Inspect {
+                            code: code_text(443, token, 1),
+                            json,
+                        },
+                    )
+                    .unwrap();
+                }
+            }
+            assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn inspect_rejects_tampered_and_truncated_codes_without_output() {
+            let valid = code_text(443, Some("TOKEN_NO_MOSTRAR"), 1);
+            let mut tampered = valid.clone();
+            tampered.replace_range(12..13, if &valid[12..13] == "A" { "B" } else { "A" });
+            for code in [tampered, valid[..valid.len() - 8].into()] {
+                let mut output = Vec::new();
+                let error = inspect(&code, true, &mut output).unwrap_err();
+                assert!(error.starts_with("código no válido: "), "{error}");
+                assert!(output.is_empty());
+                assert!(!error.contains("TOKEN_NO_MOSTRAR"));
+            }
+        }
+
+        #[test]
+        fn network_cli_accepts_inspect_and_optional_u32_status_gid() {
+            use clap::Parser;
+            #[derive(Parser)]
+            struct Args {
+                #[command(subcommand)]
+                command: crate::network::NetworkCmd,
+            }
+            let inspect =
+                Args::try_parse_from(["network", "inspect", "ATENEA1-…", "--json"]).unwrap();
+            assert!(matches!(
+                inspect.command,
+                crate::network::NetworkCmd::Inspect { json: true, .. }
+            ));
+            for (flags, expected) in [
+                (vec![], None),
+                (vec!["--status-gid", "545"], Some(545)),
+                (vec!["--status-gid", "4294967295"], Some(u32::MAX)),
+            ] {
+                let parsed =
+                    Args::try_parse_from(["network", "join", "ATENEA1-…"].into_iter().chain(flags))
+                        .unwrap();
+                let crate::network::NetworkCmd::Join { status_gid, .. } = parsed.command else {
+                    panic!("se esperaba join");
+                };
+                assert_eq!(status_gid, expected);
+            }
+            assert!(
+                Args::try_parse_from([
+                    "network",
+                    "join",
+                    "ATENEA1-…",
+                    "--status-gid",
+                    "4294967296"
+                ])
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn join_writes_optional_status_gid_using_agent_contract() {
+            for gid in [None, Some(545), Some(u32::MAX)] {
+                let d = temp("status-gid");
+                let c = ctx(&d);
+                let id = uuid(&[1; 16]);
+                let (port, server) = serve(201, created(1));
+                let mut options = opts(code_text(port, None, 1), true);
+                options.status_gid = gid;
+                join(&c, &options, &mut Cursor::new(""), false).unwrap();
+                server.join().unwrap();
+                let text = std::fs::read_to_string(c.device_dir(&id).join("agent.toml")).unwrap();
+                let config = enroll::agent_config_contract::Config::parse(&text).unwrap();
+                assert_eq!(config.status_gid, gid);
+                assert_eq!(
+                    config.status_socket,
+                    Some(c.run_dir(&id).join("status.sock"))
+                );
+                let table: toml::Table = toml::from_str(&text).unwrap();
+                assert_eq!(table.contains_key("status_gid"), gid.is_some());
+                std::fs::remove_dir_all(d).unwrap();
+            }
+        }
 
         #[test]
         fn concurrent_joins_serialize_allocation_and_keep_distinct_keys() {

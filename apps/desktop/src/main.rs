@@ -1,17 +1,21 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-//! Aplicación de escritorio: icono en la bandeja y una ventana con el estado del agente.
+//! Aplicación de escritorio: icono en la bandeja y una ventana con el estado de las redes.
 //!
-//! Solo lee el socket de estado (`status`); no envía órdenes de control. La única orden que
-//! el frontend puede invocar es `status`, y no hay permisos de plugins (ver `capabilities/`).
+//! Lee los sockets de estado sin privilegios (`status`). Las operaciones que cambian el sistema
+//! (unirse, conectar, desconectar, salir de una red) no las hace la app: pide al sistema operativo la
+//! autorización de administrador y ejecuta el CLI (`networks.rs`, ADR-013 §3.4 opción A). El frontend
+//! solo puede invocar las órdenes listadas en `generate_handler!`, sin permisos de plugins (`capabilities/`).
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
+
+mod networks;
 
 use serde_json::Value;
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WindowEvent, Wry};
 
 const TRAY_PNG: &[u8] = include_bytes!("../icons/tray.png");
 const POLL: Duration = Duration::from_secs(2);
@@ -73,17 +77,69 @@ fn checked(line: String) -> Result<String, String> {
     }
 }
 
+/// Socket de estado de una red unida: `<run>/<id8>/status.sock`, el mismo que usa el CLI.
+fn network_socket(id: &str) -> Result<String, String> {
+    if cfg!(windows) {
+        return Err("las redes múltiples no están soportadas en Windows".into());
+    }
+    if !networks::valid_uuid(id) {
+        return Err("identificador de red no válido".into());
+    }
+    let run = std::env::var("ATENEA_RUN_DIR").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/var/run/atenea".into()
+        } else {
+            "/run/atenea".into()
+        }
+    });
+    Ok(format!("{run}/{}/status.sock", networks::short_id(id)))
+}
+
+/// Estado de la instancia predeterminada (`network` vacío) o de una red unida con `atenea network join`.
 #[tauri::command]
-async fn status() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let status: Value =
-            serde_json::from_str(&ask(&socket_path())?).map_err(|e| e.to_string())?;
+async fn status(network: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = match network.as_deref() {
+            Some(id) => network_socket(id)?,
+            None => socket_path(),
+        };
+        let status: Value = serde_json::from_str(&ask(&path)?).map_err(|e| e.to_string())?;
         let a = assess(&status);
         Ok(serde_json::json!({
             "status": status,
             "health": { "level": a.level(), "text": a.text, "reasons": a.reasons },
         })
         .to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Redes unidas (`atenea network list --json`, sin privilegios).
+#[tauri::command]
+async fn network_list() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(networks::list)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Datos de un código pegado, para la confirmación previa. No toca el disco ni la red.
+#[tauri::command]
+async fn network_inspect(code: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || networks::inspect(&code))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Unirse, conectar, desconectar o salir de una red. El sistema operativo pide la autorización.
+#[tauri::command]
+async fn network_apply(
+    op: String,
+    network: Option<String>,
+    code: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        networks::apply(&op, network.as_deref(), code.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -188,17 +244,101 @@ fn show_window(app: &AppHandle) {
     }
 }
 
+/// Lo que responde cada origen de estado: la instancia predeterminada y cada red unida.
+struct Source {
+    label: String,
+    health: Health,
+    text: String,
+}
+
+/// Icono, tooltip y líneas del menú a partir de los orígenes que **responden**. Una red detenida a
+/// propósito no responde y no cuenta: no tiene que poner rojo el icono de las que sí están conectadas.
+fn summarize(sources: &[Source]) -> (Health, String, Vec<(String, String)>) {
+    match sources {
+        [] => (
+            Health::Stopped,
+            "Agente parado o sin acceso al estado".into(),
+            vec![("*".into(), "Agente parado o sin acceso al estado".into())],
+        ),
+        [one] => (
+            one.health,
+            one.text.clone(),
+            vec![("*".into(), one.text.clone())],
+        ),
+        many => {
+            let worst = many.iter().max_by_key(|s| s.health).expect("no vacío");
+            (
+                worst.health,
+                format!("{} redes · {}", many.len(), worst.text),
+                many.iter()
+                    .map(|s| (s.label.clone(), format!("{}: {}", s.label, s.text)))
+                    .collect(),
+            )
+        }
+    }
+}
+
+fn read_source(label: &str, path: &str) -> Option<Source> {
+    let v: Value = serde_json::from_str(&ask(path).ok()?).ok()?;
+    let a = assess(&v);
+    Some(Source {
+        label: label.into(),
+        health: a.health,
+        text: a.text,
+    })
+}
+
+/// Redes unidas (id, nombre) para la bandeja.
+fn joined_networks() -> Vec<(String, String)> {
+    let Ok(Value::Array(list)) =
+        networks::list().and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+    else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|n| {
+            Some((
+                n["network_id"].as_str()?.to_string(),
+                n["name"].as_str()?.to_string(),
+            ))
+        })
+        .filter(|(id, _)| networks::valid_uuid(id))
+        .collect()
+}
+
+fn tray_menu(
+    app: &AppHandle,
+    lines: &[(String, String)],
+) -> tauri::Result<(Menu<Wry>, Vec<MenuItem<Wry>>)> {
+    let items: Vec<MenuItem<Wry>> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, (_, text))| {
+            MenuItem::with_id(app, format!("state{i}"), text, false, None::<&str>)
+        })
+        .collect::<tauri::Result<_>>()?;
+    let open = MenuItem::with_id(app, "open", "Abrir Atenea One", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
+    let mut all: Vec<&dyn IsMenuItem<Wry>> =
+        items.iter().map(|i| i as &dyn IsMenuItem<Wry>).collect();
+    all.extend([&open as &dyn IsMenuItem<Wry>, &quit]);
+    Ok((Menu::with_items(app, &all)?, items))
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![status])
+        .invoke_handler(tauri::generate_handler![
+            status,
+            network_list,
+            network_inspect,
+            network_apply
+        ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let base = Image::from_bytes(TRAY_PNG)?;
-            let state = MenuItem::with_id(app, "state", "Comprobando…", false, None::<&str>)?;
-            let open = MenuItem::with_id(app, "open", "Abrir Atenea One", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&state, &open, &quit])?;
+            let (menu, mut items) =
+                tray_menu(app.handle(), &[("*".into(), "Comprobando…".into())])?;
             let tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon(&base, Health::Stopped))
                 .tooltip("Atenea One")
@@ -212,24 +352,42 @@ fn main() {
             if std::env::args().any(|a| a == "--open") {
                 show_window(app.handle());
             }
+            let handle = app.handle().clone();
             std::thread::spawn(move || {
+                let mut nets: Vec<(String, String)> = Vec::new();
+                let mut labels: Vec<String> = vec!["*".into()];
+                let mut tick = 0u32;
                 loop {
-                    let (health, text) = match ask(&socket_path()) {
-                        Ok(json) => serde_json::from_str(&json).map_or(
-                            (Health::Stopped, "Estado ilegible".to_string()),
-                            |v| {
-                                let a = assess(&v);
-                                (a.health, a.text)
-                            },
-                        ),
-                        Err(_) => (
-                            Health::Stopped,
-                            "Agente parado o sin acceso al estado".to_string(),
-                        ),
-                    };
+                    // La lista de redes se consulta con el CLI: cada 5 lecturas (~10 s), no en cada una.
+                    if tick.is_multiple_of(5) {
+                        nets = joined_networks();
+                    }
+                    tick = tick.wrapping_add(1);
+                    let mut sources: Vec<Source> = read_source("Predeterminada", &socket_path())
+                        .into_iter()
+                        .collect();
+                    for (id, name) in &nets {
+                        if let Some(s) = network_socket(id).ok().and_then(|p| read_source(name, &p))
+                        {
+                            sources.push(s);
+                        }
+                    }
+                    let (health, text, lines) = summarize(&sources);
+                    let keys: Vec<String> = lines.iter().map(|(k, _)| k.clone()).collect();
+                    if keys != labels {
+                        // Cambió el conjunto de redes que responden: se reconstruye el menú (no en cada lectura,
+                        // para no cerrar un menú que el usuario tenga abierto).
+                        if let Ok((menu, new_items)) = tray_menu(&handle, &lines) {
+                            let _ = tray.set_menu(Some(menu));
+                            items = new_items;
+                            labels = keys;
+                        }
+                    }
+                    for (item, (_, line)) in items.iter().zip(&lines) {
+                        let _ = item.set_text(line);
+                    }
                     let _ = tray.set_icon(Some(tray_icon(&base, health)));
                     let _ = tray.set_tooltip(Some(&text));
-                    let _ = state.set_text(&text);
                     std::thread::sleep(POLL);
                 }
             });
@@ -284,5 +442,45 @@ mod tests {
         assert!(checked(r#"{"error":"no autorizado"}"#.into()).is_err());
         assert!(checked(String::new()).is_err());
         assert!(checked(r#"{"peers":[]}"#.into()).is_ok());
+    }
+
+    fn src(label: &str, health: Health, text: &str) -> Source {
+        Source {
+            label: label.into(),
+            health,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn tray_summary_counts_only_sources_that_answer() {
+        let (h, text, lines) = summarize(&[]);
+        assert_eq!(
+            (h, text.as_str()),
+            (Health::Stopped, "Agente parado o sin acceso al estado")
+        );
+        assert_eq!(lines.len(), 1);
+
+        // Una sola fuente: el mismo texto de siempre, sin prefijo.
+        let (h, text, lines) = summarize(&[src("casa", Health::Ok, "Conectado")]);
+        assert_eq!((h, text.as_str()), (Health::Ok, "Conectado"));
+        assert_eq!(lines, [("*".to_string(), "Conectado".to_string())]);
+
+        // Varias: gana la peor, una línea por red con su nombre.
+        let (h, text, lines) = summarize(&[
+            src("casa", Health::Ok, "Conectado"),
+            src("trabajo", Health::Degraded, "Degradado: por relay"),
+        ]);
+        assert_eq!(
+            (h, text.as_str()),
+            (Health::Degraded, "2 redes · Degradado: por relay")
+        );
+        assert_eq!(
+            lines[1],
+            (
+                "trabajo".to_string(),
+                "trabajo: Degradado: por relay".to_string()
+            )
+        );
     }
 }

@@ -10,7 +10,8 @@ Todos aceptan `--root <dir>` (también `ATENEA_NETWORKS_DIR`). `join`, `up`, `do
 El indicador global `--backend auto|process|system` selecciona el gestor. `auto` usa systemd en Linux si es PID 1 y launchd en macOS; sin systemd conserva el arranque como proceso. `process` fuerza ese modo (laboratorios) y `system` fuerza el gestor nativo. Se conserva la selección en `network.json` (`service_backend`) y `list` la muestra como `backend`. Antes de cambiar de gestor hay que parar la instancia con su gestor actual.
 
 ```sh
-sudo atenea network join "ATENEA1-…" [--name EQUIPO] [--yes] [--insecure-http]
+atenea network inspect "ATENEA1-…" [--json]
+sudo atenea network join "ATENEA1-…" [--name EQUIPO] [--yes] [--status-gid GID] [--insecure-http]
 atenea network list [--json]
 sudo atenea network up    <id|prefijo|sufijo|nombre>
 sudo atenea network down  <id|prefijo|sufijo|nombre>
@@ -19,7 +20,9 @@ sudo atenea network up <uuid> --backend system    # habilita el servicio para el
 sudo atenea network up <uuid> --backend process   # laboratorio: proceso, sin servicio
 ```
 
+- **`inspect <código>`**: decodifica y muestra nombre, servidor, UUID, huella de la raíz y si lleva token; no requiere root, no toca el disco ni usa la red. Nunca muestra el token. Con `--json` imprime una sola línea con este formato (valores del vector sintético de [código de red v1](../protocol/join-code-v1.md)): `{"name":"Red de ejemplo","server":"control.example.test","network_id":"01020304-0506-0708-090a-0b0c0d0e0f10","root_fingerprint":"6c4b-fd0b-2585-9aae-61ad-9159-3650-be21","has_token":false}`. Un código inválido termina con error `código no válido: …`, salida distinta de cero y sin nada en stdout.
 - **`join <código>`**: decodifica el código (cualquier error termina sin tocar el disco), **muestra y pide confirmación** (nombre de la red, servidor, id, **huella de la raíz**, si el código lleva token o es de solicitud, y el aviso de que una red puede instalar rutas privadas y DNS para dominios concretos). Sin terminal interactiva y sin `--yes` se niega; con `--yes` no pregunta. Después crea claves **nuevas para esa red** (`device-init`), genera el `agent.toml` con la raíz **fijada desde el código** (nunca desde el servidor) y registra el dispositivo: con token por `POST /api/v1/enroll`, sin token por `POST /api/v1/networks/{id}/join-requests` (red `con_solicitud`). Termina imprimiendo la huella del dispositivo, el estado (`pendiente_de_aprobacion` o `aprobada`) y el siguiente paso. Si falla antes de que el servidor acepte, **borra** el directorio de la red; si el servidor ya aceptó y falla algo local, lo conserva y lo explica. `--name` es el nombre del dispositivo (sin él, el del sistema). `--insecure-http` es solo de laboratorio: sustituye `https://` por `http://` en la URL del código.
+  La opción `--status-gid <u32>` escribe `status_gid = N` en el `agent.toml` de esa red para permitir que ese grupo lea su socket de estado; sin ella se conserva el acceso exclusivo de root.
 - **`list`**: nombre, id corto, servidor, interfaz, puerto y estado: `detenida`, `iniciada, sin configuración` (pendiente de aprobación o sin sincronizar), `conectada`, `conflicto: …` (la configuración solapa con otra interfaz o ruta, ver límites) o `desconocida` (sin permiso para leer el socket de estado). `--json` es estable para la app: array de objetos con los campos de `network.json` más `state` (`detenida`, `iniciada_sin_configuracion`, `conectada`, `conflicto`, `desconocida`) y `detail`.
 - **`up` / `down`**: arrancan o paran la instancia de esa red con su configuración; son idempotentes. La red se identifica por id completo, prefijo o sufijo único (≥ 4 caracteres) o nombre único; si es ambiguo se listan las candidatas.
 - **`leave`**: confirma, para la instancia, ejecuta `atenea-agent cleanup` solo de esa red y **borra su directorio, claves incluidas** (irreversible). No toca ninguna otra red. Si la limpieza falla, no borra nada.
@@ -42,7 +45,7 @@ Raíz por defecto: `/var/lib/atenea/networks` (Linux) y `/Library/Application Su
 
 `network.json`: `network_id`, `name`, `server`, `url`, `root_anchor_fingerprint`, `device_id`, `device_fingerprint`, `interface`, `listen_port`, `created` (segundos Unix) y `join_status`. **El token del código no se guarda nunca en ningún fichero.**
 
-Nota (decisión fuera del contrato): el directorio de la red es 0711 en vez de 0700 para que `list` funcione sin root leyendo `network.json`. Otros usuarios locales pueden así leer, sabiendo el UUID, el host del servidor, el id y el nombre de la red, las huellas (de la raíz y del dispositivo), la interfaz y el puerto; nunca claves ni token (`device/` es 0700 y `agent.toml` 0600). Sin acceso al socket de estado (modo 0600 de root) `list` muestra `desconocida`.
+Nota (decisión fuera del contrato): el directorio de la red es 0711 en vez de 0700 para que `list` funcione sin root leyendo `network.json`. Otros usuarios locales pueden así leer, sabiendo el UUID, el host del servidor, el id y el nombre de la red, las huellas (de la raíz y del dispositivo), la interfaz y el puerto; nunca claves ni token (`device/` es 0700 y `agent.toml` 0600). Sin acceso al socket de estado `list` muestra `desconocida`.
 
 | Recurso | Regla |
 | --- | --- |
@@ -70,12 +73,17 @@ Las redes llevan `resolver_owner = "<id8>"` en su TOML; los resolutores tienen l
 
 El desinstalador retira servicios/plists y limpia cada red sin borrar sus claves ni directorios; `postinstall` conserva el comportamiento heredado y reinicia solo las redes cargadas, no las deshabilitadas, esperando a que cada servicio quede descargado antes de volver a cargarlo (`bootout` es asíncrono). Esto se comprobó en la CI de macOS; **no ejecutar `tests/macos/run.sh`, `postinstall`, desinstaladores ni `launchctl` en el equipo del piloto**. La CI no ejercita en macOS `network_overlap` ni `dns_domain_conflict` (solo pruebas unitarias y, el solape, el laboratorio de Linux).
 
+## Aplicación de escritorio
+
+La sección **Redes** de la aplicación (ADR-013 fase 4, [ADR-011 §2](../architecture/ADR-011-aplicacion-de-escritorio.md)) usa solo estos comandos: `list --json` y `inspect --json` sin privilegios, y `join`, `up`, `down` y `leave` con la autorización del sistema operativo (macOS: diálogo de administrador; Linux: `pkexec`) en cada operación. Unirse ejecuta `join … --yes --status-gid <grupo primario del usuario>` y a continuación `up`, en una sola autorización. El token de un código con token es visible un instante en la línea de órdenes de esa operación. Windows no está soportado. **La elevación real no se ha probado**; consulta los límites de ADR-013 §9.
+
 ## Privilegios
 
 La CLI **no se autoeleva** (opción A de ADR-013 §3.4): se ejecuta como root o con `sudo`; no invoca `sudo` ni `pkexec`. Sin permisos devuelve «permiso denegado: ejecuta con sudo». El token del código es visible en la línea de órdenes (historial, `ps`): para códigos con token se recomienda un historial desactivado.
 
 ## Límites y seguridad
 
+- **Socket de estado.** El de una red unida sin `--status-gid` es solo de root, de modo que `list` sin root muestra `desconocida` cuando el socket está activo pero no puede leerlo.
 - **Modo proceso:** solo en contenedores sin systemd o con `--backend process`; no vuelve tras reiniciar. Linux/systemd y macOS/launchd sí tienen servicio persistente por red.
 - **Solapamiento.** El CIDR no viaja en el código: se detecta al llegar la primera configuración verificada, no en `join`. `NetConf::overlap_with_host`, antes de `configure_link`, rechaza con `network_overlap` y detalle si otra interfaz tiene una ruta **igual o más específica** que un prefijo de `network_prefixes` (mismo CIDR o `10.77.0.128/25` ajeno dentro de `10.77.0.0/24`). Una ruta más ancha (`10.0.0.0/8` de VPN/Docker/LAN) no es conflicto: gana la más específica. Ignora siempre las rutas host (/32 o /128) de las propias `tunnel_addrs`, aunque macOS las liste en `lo0`; otra Atenea con el mismo CIDR se detecta por su ruta de red. El dispositivo TUN creado al arrancar queda vacío si se rechaza. No se comprueban solapes entre rutas de pares ni subredes anunciadas. La colisión de dominios DNS se comprueba por separado en macOS (apartado anterior). Hay pruebas de parseo con fixtures sintéticos de formato real `netstat`/`ip -j route` y pruebas de extremo a extremo Linux; **no con dos redes reales en un Mac**.
 - **`leave` no revoca.** Borra el estado local y las claves, pero el dispositivo sigue registrado en el servidor hasta que un administrador lo **revoque** por su huella.
