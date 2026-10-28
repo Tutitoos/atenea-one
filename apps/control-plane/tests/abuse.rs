@@ -396,3 +396,241 @@ async fn tope_de_flujos_oidc_es_duro_bajo_concurrencia() {
     assert_eq!(total, 10_000);
     t.finish().await;
 }
+
+fn leave_request(
+    device: &Device,
+    key: &atenea_identity::SigningKey,
+    nonce: [u8; 16],
+) -> Request<Body> {
+    let auth = atenea_identity::api_auth::sign_request(
+        key,
+        *device.id.as_bytes(),
+        "POST",
+        "/api/v1/device/leave",
+        b"",
+        now(),
+        nonce,
+    );
+    Request::builder()
+        .method("POST")
+        .uri("/api/v1/device/leave")
+        .header("authorization", auth)
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn salida_firmada_revoca_solo_al_propietario_y_es_idempotente() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let (s, net, d) = approved(&t).await;
+    let (_, other_net, other) = approved(&t).await;
+    let sibling = Device::new();
+    let token = t.token(&s, net, true).await;
+    assert_eq!(t.enroll(&token, &sibling).await.status, StatusCode::CREATED);
+    let allocated: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ip_allocations WHERE device_id=$1")
+            .bind(d.id)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(allocated, 2);
+    let pending = Device::new();
+    assert_eq!(
+        t.json(
+            "PUT",
+            &format!("/api/v1/networks/{net}/join-policy"),
+            Some(&s),
+            json!({"policy":"con_solicitud"})
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let reply = t
+        .json(
+            "POST",
+            &format!("/api/v1/networks/{net}/join-requests"),
+            None,
+            json!({"bundle":hex::encode(pending.bundle.encode()),"name":"pendiente sintético"}),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED);
+    let unknown = Device::new();
+    for request in [
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/device/leave")
+            .body(Body::empty())
+            .unwrap(),
+        leave_request(&d, &other.key, [10; 16]),
+        leave_request(&unknown, &unknown.key, [11; 16]),
+    ] {
+        t.send(request)
+            .await
+            .error(StatusCode::UNAUTHORIZED, "invalid_signature");
+    }
+    let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1")
+        .bind(d.id)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "approved");
+    sqlx::query("INSERT INTO device_routes(id,network_id,device_id,prefix,status,snat) VALUES($1,$2,$3,'192.168.50.0/24','approved',true)").bind(Uuid::new_v4()).bind(net).bind(d.id).execute(&t.pool).await.unwrap();
+    for timestamp in [now() - 61, now() + 61] {
+        let auth = atenea_identity::api_auth::sign_request(
+            &d.key,
+            *d.id.as_bytes(),
+            "POST",
+            "/api/v1/device/leave",
+            b"",
+            timestamp,
+            [20; 16],
+        );
+        t.send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/device/leave")
+                .header("authorization", auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .error(StatusCode::UNAUTHORIZED, "invalid_signature");
+    }
+    let auth = atenea_identity::api_auth::sign_request(
+        &d.key,
+        *d.id.as_bytes(),
+        "GET",
+        "/api/v1/device/config",
+        b"",
+        now(),
+        [21; 16],
+    );
+    t.send(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/device/leave")
+            .header("authorization", auth)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .error(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let body = json!({"device_id":other.id,"network_id":other_net}).to_string();
+    let auth = atenea_identity::api_auth::sign_request(
+        &d.key,
+        *d.id.as_bytes(),
+        "POST",
+        "/api/v1/device/leave",
+        body.as_bytes(),
+        now(),
+        [22; 16],
+    );
+    t.send(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/device/leave")
+            .header("authorization", auth)
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await
+    .error(StatusCode::BAD_REQUEST, "invalid_request");
+    assert_eq!(
+        t.send(leave_request(&d, &d.key, [12; 16])).await.status,
+        StatusCode::OK
+    );
+    t.send(leave_request(&d, &d.key, [12; 16]))
+        .await
+        .error(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let first: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT revoked_at FROM devices WHERE id=$1")
+            .bind(d.id)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        t.send(leave_request(&d, &d.key, [13; 16])).await.status,
+        StatusCode::OK
+    );
+    let second: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT revoked_at FROM devices WHERE id=$1")
+            .bind(d.id)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(first, second);
+    let allocations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ip_allocations WHERE device_id=$1")
+            .bind(d.id)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(allocations, 0);
+    let routes: i64 = sqlx::query_scalar("SELECT count(*) FROM device_routes WHERE device_id=$1 AND status='rejected' AND snat IS NULL AND decided_by IS NULL").bind(d.id).fetch_one(&t.pool).await.unwrap();
+    assert_eq!(routes, 1);
+    let audits: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE actor_kind='device' AND actor_id=$1 AND target=$1 AND action='device.leave'").bind(d.id.to_string()).fetch_one(&t.pool).await.unwrap();
+    assert_eq!(audits, 1);
+    t.config(&d, now(), [14; 16])
+        .await
+        .error(StatusCode::FORBIDDEN, "device_not_approved");
+    assert_eq!(
+        t.send(leave_request(&pending, &pending.key, [15; 16]))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM devices WHERE id=$1 AND network_id=$2")
+            .bind(other.id)
+            .bind(other_net)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "approved");
+    let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1")
+        .bind(sibling.id)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "approved");
+    let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1")
+        .bind(pending.id)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "revoked");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn salida_respeta_limites_de_cuerpo_y_ritmo() {
+    let Some(t) = TestApp::configured(Config {
+        device_per_minute: 1,
+        ..Config::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let (_, _, d) = approved(&t).await;
+    t.send(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/device/leave")
+            .body(Body::from(vec![0; 1025]))
+            .unwrap(),
+    )
+    .await
+    .error(StatusCode::BAD_REQUEST, "invalid_request");
+    assert_eq!(
+        t.send(leave_request(&d, &d.key, [30; 16])).await.status,
+        StatusCode::OK
+    );
+    t.send(leave_request(&d, &d.key, [31; 16]))
+        .await
+        .error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    t.finish().await;
+}

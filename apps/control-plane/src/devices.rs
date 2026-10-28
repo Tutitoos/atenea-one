@@ -328,6 +328,16 @@ pub async fn revoke(
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
+    revoke_device(&s, net, dev, Some((u, org))).await?;
+    Ok(Json(json!({"device_id":dev,"status":"revoked"})))
+}
+
+async fn revoke_device(
+    s: &AppState,
+    net: Uuid,
+    dev: Uuid,
+    admin: Option<(Uuid, Uuid)>,
+) -> Result<(), ApiError> {
     let mut tx = s.pool.begin().await?;
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
         .bind(net)
@@ -350,7 +360,7 @@ pub async fn revoke(
         .fetch_one(&mut *tx)
         .await?;
         return if exists {
-            Ok(Json(json!({"device_id":dev,"status":"revoked"})))
+            Ok(())
         } else {
             Err(ApiError::not_found())
         };
@@ -359,19 +369,77 @@ pub async fn revoke(
         .bind(dev)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind(u).execute(&mut *tx).await?;
+    let (actor_kind, actor, org, action) = match admin {
+        Some((user, org)) => ("user", user, org, "device.revoke"),
+        None => {
+            let org = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
+                .bind(net)
+                .fetch_one(&mut *tx)
+                .await?;
+            ("device", dev, org, "device.leave")
+        }
+    };
+    sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind(admin.map(|(user, _)| user)).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
-        "user",
-        u,
+        actor_kind,
+        actor,
         Some(org),
         Some(net),
-        "device.revoke",
+        action,
         dev,
         json!({}),
     )
     .await?;
     tx.commit().await?;
+    if admin.is_none() {
+        s.panel.changed(net, "devices");
+        s.panel.changed(net, "audit");
+    }
+    Ok(())
+}
+
+pub async fn leave(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    uri: axum::http::Uri,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let signed = atenea_identity::api_auth::parse_authorization(
+        h.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(invalid)?,
+    )
+    .map_err(|_| invalid())?;
+    let now = crate::api::now() as u64;
+    if now.abs_diff(signed.ts) > 60 {
+        return Err(invalid());
+    }
+    let dev = Uuid::from_bytes(signed.device_id);
+    let row = sqlx::query("SELECT network_id,identity_pubkey FROM devices WHERE id=$1")
+        .bind(dev)
+        .fetch_optional(&s.pool)
+        .await?
+        .ok_or_else(invalid)?;
+    let key: [u8; 32] = row
+        .get::<Vec<u8>, _>("identity_pubkey")
+        .try_into()
+        .map_err(|_| invalid())?;
+    atenea_identity::api_auth::verify_request(
+        &signed,
+        &key,
+        "POST",
+        uri.path_and_query().map_or(uri.path(), |p| p.as_str()),
+        &body,
+    )
+    .map_err(|_| invalid())?;
+    crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
+    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
+    if !body.is_empty() {
+        return Err(ApiError::bad("invalid_request"));
+    }
+    revoke_device(&s, row.get("network_id"), dev, None).await?;
     Ok(Json(json!({"device_id":dev,"status":"revoked"})))
 }
 #[derive(Deserialize)]

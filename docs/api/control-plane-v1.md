@@ -64,6 +64,8 @@ Authorization: AtDevice v1 device=<hex 16 bytes>, ts=<unix s>, nonce=<hex 16 byt
 
 `sig = Ed25519(identity_sk, "atenea-one/api-auth/v1\0" ‖ METHOD ‖ "\n" ‖ PATH_Y_QUERY ‖ "\n" ‖ ts ‖ "\n" ‖ nonce ‖ "\n" ‖ BLAKE2s-256(cuerpo))` (`METHOD` en mayúsculas; `ts` y `nonce` en el mismo texto que la cabecera). El servidor exige `|now − ts| ≤ 60 s`, rechaza un `nonce` repetido dentro de 120 s (caché en memoria; con varias instancias, tabla con TTL), busca el dispositivo y verifica con `verify_strict`. Un dispositivo `revoked` o `pending` autenticado recibe `403 device_not_approved` (no se emite configuración). Fallos de firma, desfase de reloj o repetición: `401 invalid_signature` (misma respuesta, sin distinguir la causa). La construcción y verificación viven en `atenea-identity` (`api_auth`), compartida por servidor y agente.
 
+Excepción de estado para la retirada propia: `POST /api/v1/device/leave` admite `pending`, `approved` y `revoked` con idéntica autenticación, tolerancia temporal y anti-replay (§14). No entrega configuración ni eleva permisos.
+
 ## 4. API REST
 
 Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}`, `{dev}` usan UUID.
@@ -93,8 +95,9 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?}` | público | Solicitud de unión sin token (§13) |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
 | `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12) |
+| `POST /api/v1/device/leave` (cuerpo vacío) | dispositivo (§3.3) | Revoca únicamente la identidad firmante, también pendiente; idempotente (§14) |
 
-Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
+Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.create`, `network.issuer_cert`, `token.create`, `device.enroll`, `device.approve`, `device.revoke`, `device.leave`, `device.update`, `policy.create` y `policy.delete`. Cada emisión firmada se registra en `configuration_versions`; `config.issue` conserva además versión y hash de la primera emisión por dispositivo en cada ventana de una hora. Repetir una revocación ya aplicada no genera otro evento.
 
 ## 5. Enrolamiento
 
@@ -109,7 +112,7 @@ Las mutaciones generan `audit_events`: `org.create`, `member.set`, `network.crea
 5. Mientras esté `pending`, `GET /device/config` devuelve `403 device_not_approved`. Un administrador compara la **huella del bundle** (`atenea device-init` la imprime; el inventario la muestra) por otro canal antes de aprobar.
 
 Límite de tasa de `/api/v1/enroll` por IP de origen (token bucket en memoria, configurable; por defecto 10 por minuto) para frenar la adivinación de tokens (256 bits: no es el control principal).
-Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en `trusted_proxies`; si no, el peer. `GET /auth/login` tiene límite análogo (`login_per_minute`, `429 rate_limited`) y tope de 10 000 flujos OIDC vigentes; `oidc_flows` y `sessions` caducados se purgan cada minuto. Las peticiones firmadas (`config`, `peers`, `status`, `routes`) se limitan por dispositivo (`device_per_minute`, `429`) tras verificar la firma y antes de abrir transacción; la caché de nonces está acotada (65 536; llena → `429`). Un dispositivo no aprobado recibe `403` sin bloquear la fila de la red. `config.issue` se audita como máximo una vez por dispositivo y hora.
+Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en `trusted_proxies`; si no, el peer. `GET /auth/login` tiene límite análogo (`login_per_minute`, `429 rate_limited`) y tope de 10 000 flujos OIDC vigentes; `oidc_flows` y `sessions` caducados se purgan cada minuto. Las peticiones firmadas (`config`, `peers`, `status`, `routes`, `leave`) se limitan por dispositivo (`device_per_minute`, `429`) tras verificar la firma y antes de abrir transacción; la caché de nonces está acotada (65 536; llena → `429`). Salvo en `leave`, un dispositivo no aprobado recibe `403` sin bloquear la fila de la red. `config.issue` se audita como máximo una vez por dispositivo y hora.
 
 `POST …/networks` exige CIDR privados (RFC 1918, 100.64/10, ULA), IPv4 ≥ /8 e IPv6 ≥ /32 (`400 invalid_cidr`), reforzado por CHECK `NOT VALID` (migración 0004). Una red heredada fuera de rango no se firma (`409 invalid_network_prefix`). `PATCH …/devices/{dev}` valida `endpoints` con `sanitize_candidates` (sin loopback, multicast, no especificadas, enlace local ni puerto 0; `400 invalid_endpoints`); al cargar los pares para emitir también se sanean los datos heredados, con máximo cuatro endpoints. `POST …/enrollment-tokens` responde con `Cache-Control: no-store` y `X-Content-Type-Options: nosniff`. `revoke` es idempotente: repetirlo no reescribe `revoked_at` ni duplica auditoría.
 
@@ -291,3 +294,9 @@ ese flujo anterior. El portapapeles requiere contexto seguro y su fallo permite
 copiar manualmente el campo de solo lectura. En Dispositivos, las pendientes de
 origen `request` se distinguen por el texto **Solicitud de unión**. No hay QR ni
 nuevas operaciones de CLI, agente o escritorio.
+
+## 14. Retirada del propio dispositivo (ADR-013 §11)
+
+`POST /api/v1/device/leave` autentica una petición AtDevice con cuerpo vacío, firmada por la clave de identidad del dispositivo. No acepta un destino: usa exclusivamente el id autenticado y su red almacenada. Límite de cuerpo: 1024 bytes; cuerpo no vacío → `400 invalid_request`. Se aplica el límite compartido `device_per_minute`, la ventana de 60 segundos y la caché anti-replay existentes; desconocidos, firma/clave ajena o timestamp inválido → `401 invalid_signature`, sin distinguir existencia.
+
+En una transacción compartida con la revocación administrativa pasa `pending` o `approved` a `revoked`, libera direcciones y rechaza rutas, con `decided_by = NULL` (no es una decisión de usuario). Auditoría: `actor_kind = device`, `actor_id` y `target` iguales al dispositivo, `action = device.leave`. Tras el commit notifica al panel. Responde `200 {"device_id":"00000000-0000-0000-0000-000000000002","status":"revoked"}` (ejemplo sintético). Repetir con firma y nonce nuevos también responde 200 sin alterar fecha ni duplicar auditoría. Una firma capturada no permite repetir la operación ni cambiar su destino. No afecta otras redes; la configuración ya emitida conserva su caducidad existente.

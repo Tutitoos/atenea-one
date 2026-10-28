@@ -88,6 +88,7 @@ Cada fase deja `check.sh` y CI en verde y documentación con los límites reales
 - **Un código filtrado** permite enviar solicitudes (no entrar): aprobar compara siempre la huella del dispositivo.
 - **Privilegios:** la opción B añade superficie local; la opción A no la añade pero es menos cómoda.
 - **Sin comprobar hoy:** coordinator y relay con dos redes reales en el mismo servidor (el código las separa, no se ha ejecutado), y el solapamiento de dos interfaces de Atenea en macOS.
+- **Salida:** `leave` revoca el dispositivo antes de borrar claves (§11); solo `--offline` deja el registro remoto pendiente de revocación administrativa.
 
 ## 6. Decisiones del responsable (2026-10-28)
 
@@ -155,3 +156,15 @@ Defectos que la prueba sacó y que **`v0.1.3` contiene**: (1) en macOS `network 
 **Reversibilidad.** Parcial y manual: el respaldo `legacy-agent.toml.bak` conserva la configuración; revertir es `network down`, mover `device/` a la ruta heredada, restaurar el `agent.toml` y habilitar el servicio heredado (procedimiento en [redes-multiples-cli.md](../operations/redes-multiples-cli.md)). No hay reversión automática tras terminar con éxito.
 
 **Límites.** Solo Linux y macOS (Windows: «no soportado»). Herramientas externas que leían `/var/run/atenea/status.sock` (scripts de soak, `atenea status --socket`, `ATENEA_STATUS_SOCKET` de la aplicación) deben apuntar a `<run>/<id8>/status.sock`. Un host que nunca migra sigue funcionando exactamente igual. **Sin comprobar** en un Mac real (solo pruebas unitarias y el ensayo Linux con systemd real).
+
+## 11. Salida con revocación del propio dispositivo (2026-10-28)
+
+**Decisión.** `POST /api/v1/device/leave`, cuerpo vacío, usa exactamente `api_auth` como config/peers/status: firma Ed25519 del método, ruta y query, cuerpo, identificador, timestamp y nonce; tolerancia de reloj de 60 segundos, nonce de un solo uso y límite compartido `device_per_minute`. No acepta identificadores de destino ni red: el destino es exclusivamente el dispositivo autenticado y su red almacenada. Se limita el cuerpo a 1024 bytes y cualquier cuerpo no vacío se rechaza.
+
+**Estados e idempotencia.** Se verifica la clave guardada antes de examinar el estado. El mismo mecanismo criptográfico admite `pending`: no se exige aprobación para retirar una solicitud propia. `approved` y `pending` pasan a `revoked`; un dispositivo ya revocado obtiene 200 sin reescribir la fecha ni duplicar auditoría, siempre con firma y nonce nuevos. Dispositivos desconocidos, claves ajenas, firmas inválidas y timestamps fuera de ventana reciben el mismo 401 `invalid_signature`; los replays y límites conservan los errores uniformes del mecanismo existente. Los errores usan el sobre JSON del API; no se informa de existencia a quien no demuestra posesión.
+
+**Atomicidad y efectos.** La transacción bloquea primero la red y comparte la revocación administrativa: marca revocado, libera asignaciones IP y rechaza rutas (sin usuario decisor en la salida autónoma). Auditoría con actor `device`, actor y objeto iguales al dispositivo, acción `device.leave`; la revocación administrativa conserva `user`/`device.revoke`. Tras el commit se notifica al panel. El dispositivo deja de recibir configuraciones; no se invalida instantáneamente una configuración ya emitida (caducidad existente).
+
+**CLI y aplicación.** Tras confirmar, `network leave` llama al servidor con las claves de esa red antes de parar o borrar nada. Fallo de transporte o rechazo conserva todo y termina con error claro. Solo `--offline` omite el servidor, borra lo local y advierte que SIGUE registrado y que un administrador debe revocarlo por huella. Si el servidor revoca pero falla la limpieza, se informa que ya está revocado y se conservan los ficheros que no se hayan podido limpiar. La aplicación no ofrece salida offline y muestra el error del CLI.
+
+**Amenazas.** Solo quien posee la clave privada puede salir: ya podía dejar de usarla o destruirla. Permitir su revocación añade únicamente denegación de servicio contra sí mismo, no elevación ni capacidad de afectar otra identidad o red. Firma ligada a método/ruta/cuerpo, ventana temporal y anti-replay impiden reutilizar una petición de configuración o de otra operación. No se añade ninguna primitiva ni dependencia criptográfica.

@@ -38,6 +38,62 @@ fn bundle(dir: &Path) -> Result<DeviceBundle, String> {
     Ok(bundle)
 }
 
+/// Retira el dispositivo con la misma firma de petición que usa el agente.
+#[cfg(unix)]
+pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
+    let config = dir.join("agent.toml");
+    let insecure_http = if config.exists() {
+        let text =
+            std::fs::read_to_string(&config).map_err(|e| format!("{}: {e}", config.display()))?;
+        let table: toml::Table = toml::from_str(&text).map_err(|e| format!("agent.toml: {e}"))?;
+        table
+            .get("sync")
+            .and_then(|s| s.get("insecure_http"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let url = format!("{}/api/v1/device/leave", base_url(url, insecure_http)?);
+    let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
+    let key = crate::issue::read_seed(&dir.join("identity.key"))?;
+    let id = hex::decode::<16>(&device.replace('-', "")).ok_or("id del dispositivo inválido")?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let mut nonce = [0; 16];
+    nonce.copy_from_slice(&atenea_identity::generate_seed()[..16]);
+    let auth = atenea_identity::api_auth::sign_request(
+        &key,
+        id,
+        "POST",
+        uri.path_and_query().ok_or("URL inválida")?.as_str(),
+        b"",
+        ts,
+        nonce,
+    );
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let response = agent
+        .post(&url)
+        .header("Authorization", &auth)
+        .send_empty()
+        .map_err(|e| format!("no se pudo contactar con el servidor: {e}"))?;
+    if response.status().as_u16() != 200 {
+        return Err(format!(
+            "el servidor rechazó la revocación (HTTP {})",
+            response.status()
+        ));
+    }
+    Ok(())
+}
+
 fn http_error(status: u16, body: &str) -> String {
     let code = serde_json::from_str::<serde_json::Value>(body)
         .ok()

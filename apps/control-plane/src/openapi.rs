@@ -513,6 +513,16 @@ pub fn document() -> OpenApi {
         ),
         (
             Post,
+            "/api/v1/device/leave",
+            "leaveDeviceNetwork",
+            "Revoca el propio dispositivo (también pendiente); cuerpo vacío, firma y nonce nuevos en cada intento",
+            "device",
+            "200",
+            "",
+            "DeviceState",
+        ),
+        (
+            Post,
             "/api/v1/device/routes",
             "declareRoutes",
             "Reemplaza las rutas declaradas; máximo una petición cada 5 s",
@@ -813,6 +823,7 @@ pub fn document() -> OpenApi {
                 | "networkEvents"
                 | "declareRoutes"
                 | "getDevicePeers"
+                | "leaveDeviceNetwork"
         ) {
             operation = operation.response(
                 "429",
@@ -863,6 +874,9 @@ pub fn document() -> OpenApi {
         if id == "reportDeviceStatus" {
             operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo."));
         }
+        if id == "leaveDeviceNetwork" {
+            operation = operation.description(Some("Cuerpo vacío (límite 1024 bytes; exceso o contenido no vacío: 400 invalid_request). Reutiliza la firma AtDevice, ventana de 60 s, anti-replay y device_per_minute. Admite pending y approved; revoked responde 200 sin cambios. Actor device, acción device.leave; libera direcciones y rechaza rutas solo del firmante."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -877,7 +891,14 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 35);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 36);
+        let leave = &document["paths"]["/api/v1/device/leave"]["post"];
+        assert!(leave["security"][0].get("device").is_some());
+        assert!(leave.get("requestBody").is_none());
+        assert_eq!(
+            leave["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/DeviceState"
+        );
         assert_eq!(
             document["paths"]["/api/v1/session"]["get"]["responses"]["200"]["content"]["application/json"]
                 ["schema"]["$ref"],

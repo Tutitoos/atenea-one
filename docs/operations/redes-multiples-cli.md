@@ -15,7 +15,7 @@ sudo atenea network join "ATENEA1-…" [--name EQUIPO] [--yes] [--status-gid GID
 atenea network list [--json]
 sudo atenea network up    <id|prefijo|sufijo|nombre>
 sudo atenea network down  <id|prefijo|sufijo|nombre>
-sudo atenea network leave <id|prefijo|sufijo|nombre> [--yes]
+sudo atenea network leave <id|prefijo|sufijo|nombre> [--yes] [--offline]
 sudo atenea network up <uuid> --backend system    # habilita el servicio para el siguiente arranque
 sudo atenea network up <uuid> --backend process   # laboratorio: proceso, sin servicio
 ```
@@ -25,7 +25,8 @@ sudo atenea network up <uuid> --backend process   # laboratorio: proceso, sin se
   La opción `--status-gid <u32>` escribe `status_gid = N` en el `agent.toml` de esa red para permitir que ese grupo lea su socket de estado; sin ella se conserva el acceso exclusivo de root.
 - **`list`**: nombre, id corto, servidor, interfaz, puerto y estado: `detenida`, `iniciada, sin configuración` (pendiente de aprobación o sin sincronizar), `conectada`, `conflicto: …` (la configuración solapa con otra interfaz o ruta, ver límites) o `desconocida` (sin permiso para leer el socket de estado). `--json` es estable para la app: array de objetos con los campos de `network.json` más `state` (`detenida`, `iniciada_sin_configuracion`, `conectada`, `conflicto`, `desconocida`) y `detail`.
 - **`up` / `down`**: arrancan o paran la instancia de esa red con su configuración; son idempotentes. La red se identifica por id completo, prefijo o sufijo único (≥ 4 caracteres) o nombre único; si es ambiguo se listan las candidatas.
-- **`leave`**: confirma, para la instancia, ejecuta `atenea-agent cleanup` solo de esa red y **borra su directorio, claves incluidas** (irreversible). No toca ninguna otra red. Si la limpieza falla, no borra nada.
+- **`leave`**: confirma y **revoca el dispositivo en el servidor mediante una petición firmada con las claves de esa red**, también si la solicitud está pendiente de aprobación. Solo después para la instancia, ejecuta `atenea-agent cleanup` de esa red y **borra su directorio, claves incluidas** (irreversible). No toca ninguna otra red. Si el servidor no responde o rechaza, falla sin parar ni borrar nada; reintenta cuando esté disponible. Si la revocación ya se completó y falla la limpieza local, el error lo indica: el dispositivo **ya está revocado**, aunque queden ficheros locales. Repetir la revocación es seguro.
+- **`leave --offline`**: salida de emergencia sin contactar con el servidor; conserva la confirmación y `--yes`, limpia y borra solo lo local. Emite un aviso explícito: el dispositivo **SIGUE registrado en el servidor** y un administrador debe revocarlo por la huella y el id mostrados. Sin las claves borradas ya no podrás firmar su retirada. La aplicación no ofrece esta opción: si el servidor falla, muestra el error del CLI.
 
 `join`, `leave` y la asignación de interfaz/puerto se serializan con un bloqueo exclusivo del directorio raíz (`File::lock`); también `up` y `down` lo respetan. La asignación reserva los recursos declarados de la instancia heredada aunque esté parada, y comprueba los puertos contra el sistema.
 
@@ -109,7 +110,7 @@ La CLI **no se autoeleva** (opción A de ADR-013 §3.4): se ejecuta como root o 
 - **Socket de estado.** El de una red unida sin `--status-gid` es solo de root, de modo que `list` sin root muestra `desconocida` cuando el socket está activo pero no puede leerlo.
 - **Modo proceso:** solo en contenedores sin systemd o con `--backend process`; no vuelve tras reiniciar. Linux/systemd y macOS/launchd sí tienen servicio persistente por red.
 - **Solapamiento.** El CIDR no viaja en el código: se detecta al llegar la primera configuración verificada, no en `join`. `NetConf::overlap_with_host`, antes de `configure_link`, rechaza con `network_overlap` y detalle si otra interfaz tiene una ruta **igual o más específica** que un prefijo de `network_prefixes` (mismo CIDR o `10.77.0.128/25` ajeno dentro de `10.77.0.0/24`). Una ruta más ancha (`10.0.0.0/8` de VPN/Docker/LAN) no es conflicto: gana la más específica. Ignora siempre las rutas host (/32 o /128) de las propias `tunnel_addrs`, aunque macOS las liste en `lo0`; otra Atenea con el mismo CIDR se detecta por su ruta de red. El dispositivo TUN creado al arrancar queda vacío si se rechaza. No se comprueban solapes entre rutas de pares ni subredes anunciadas. La colisión de dominios DNS se comprueba por separado en macOS (apartado anterior). Hay pruebas de parseo con fixtures sintéticos de formato real `netstat`/`ip -j route` y pruebas de extremo a extremo Linux; **no con dos redes reales en un Mac**.
-- **`leave` no revoca.** Borra el estado local y las claves, pero el dispositivo sigue registrado en el servidor hasta que un administrador lo **revoque** por su huella.
+- **Salida offline.** Solo `leave --offline` deja el registro remoto activo; requiere revocación administrativa posterior por huella. La salida normal revoca antes de destruir las claves (ADR-013 §11).
 - **Consentimiento.** Una red hostil puede ofrecer rutas privadas y DNS para dominios concretos (ADR-007, nunca la ruta por defecto): compara nombre, servidor y **huella de la raíz por otro canal** antes de confirmar. El código no autentica (solo detecta erratas).
 - En macOS la interfaz se nombra `atenea<N>` en `agent.toml` pero el sistema usa `utunN`; la comprobación contra el sistema es solo de metadatos. Sin probar en macOS.
 

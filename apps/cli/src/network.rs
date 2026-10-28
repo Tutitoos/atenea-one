@@ -38,11 +38,14 @@ pub enum NetworkCmd {
     Up { network: String },
     /// Para la instancia de la red.
     Down { network: String },
-    /// Sale de la red: para la instancia, limpia rutas/DNS y BORRA sus claves (irreversible).
+    /// Revoca el dispositivo en el servidor, para la instancia, limpia rutas/DNS y BORRA sus claves.
     Leave {
         network: String,
         #[arg(long)]
         yes: bool,
+        /// Borra solo lo local: el administrador deberá revocar el dispositivo en el servidor.
+        #[arg(long)]
+        offline: bool,
     },
     /// Informa, sin root, de si hay una instalación heredada pendiente de importar.
     Legacy {
@@ -112,9 +115,11 @@ pub fn run(
         }
         NetworkCmd::Up { network } => imp::up(&ctx, &network),
         NetworkCmd::Down { network } => imp::down(&ctx, &network),
-        NetworkCmd::Leave { network, yes } => {
-            imp::leave(&ctx, &network, yes, &mut input, interactive)
-        }
+        NetworkCmd::Leave {
+            network,
+            yes,
+            offline,
+        } => imp::leave(&ctx, &network, yes, offline, &mut input, interactive),
         NetworkCmd::Inspect { .. } => unreachable!(),
     }
 }
@@ -674,7 +679,7 @@ mod imp {
             }
             Err(e) => Err(format!(
                 "{}. El servidor YA aceptó la solicitud: se conserva {} (claves nuevas del dispositivo); \
-                 si no puedes completarla, usa `atenea network leave {id}` y pide al administrador que revoque el dispositivo",
+                 si no puedes completarla, usa `atenea network leave {id}` para revocar el dispositivo",
                 e.message,
                 net.display()
             )),
@@ -905,6 +910,7 @@ mod imp {
         ctx: &Ctx,
         query: &str,
         yes: bool,
+        offline: bool,
         input: &mut dyn BufRead,
         interactive: bool,
     ) -> Result<(), String> {
@@ -912,7 +918,7 @@ mod imp {
         let m = resolve(&metas, query)?;
         let net = ctx.net_dir(&m.network_id);
         println!(
-            "Vas a salir de la red «{}» ({}). Se detendrá su instancia, se limpiarán sus rutas y DNS y se BORRARÁN las claves de este dispositivo en esa red: es irreversible.",
+            "Vas a salir de la red «{}» ({}). Se revocará el dispositivo en el servidor (salvo --offline), se detendrá su instancia, se limpiarán sus rutas y DNS y se BORRARÁN las claves de este dispositivo en esa red: es irreversible.",
             m.name, m.network_id
         );
         confirm("¿Salir de la red?", yes, interactive, input)?;
@@ -926,30 +932,54 @@ mod imp {
                 net.display()
             ));
         }
-        stop(ctx, m)?;
-        let agent = ctx.agent_bin()?;
-        let status = Command::new(&agent)
-            .args(["cleanup", "--config"])
-            .arg(ctx.device_dir(&m.network_id).join("agent.toml"))
-            .status()
-            .map_err(|e| format!("{}: {e}", agent.display()))?;
-        if !status.success() {
-            return Err(format!(
-                "la limpieza del agente falló ({status}); no se ha borrado nada de la red"
-            ));
+        if offline {
+            eprintln!("{}", offline_warning(m));
+        } else {
+            crate::enroll::leave(&m.url, &m.device_id, &ctx.device_dir(&m.network_id))
+                .map_err(|e| format!("{e}. No se ha parado ni borrado nada. Reintenta con el servidor disponible; --offline solo borra lo local y requiere revocación administrativa por huella."))?;
         }
-        network_service::remove(backend(ctx, m), &m.network_id)?;
-        std::fs::remove_dir_all(&net).map_err(|e| io_err(&net, &e))?;
-        let _ = std::fs::remove_dir_all(ctx.run_dir(&m.network_id));
+        let cleanup = || -> Result<(), String> {
+            stop(ctx, m)?;
+            let agent = ctx.agent_bin()?;
+            let status = Command::new(&agent)
+                .args(["cleanup", "--config"])
+                .arg(ctx.device_dir(&m.network_id).join("agent.toml"))
+                .status()
+                .map_err(|e| format!("{}: {e}", agent.display()))?;
+            if !status.success() {
+                return Err(format!(
+                    "la limpieza del agente falló ({status}); no se han borrado las claves"
+                ));
+            }
+            network_service::remove(backend(ctx, m), &m.network_id)?;
+            std::fs::remove_dir_all(&net).map_err(|e| io_err(&net, &e))?;
+            let _ = std::fs::remove_dir_all(ctx.run_dir(&m.network_id));
+            Ok(())
+        };
+        cleanup().map_err(|e| {
+            if offline {
+                e
+            } else {
+                format!(
+                    "El dispositivo YA está revocado en el servidor; la limpieza local falló: {e}"
+                )
+            }
+        })?;
         println!(
             "Has salido de la red «{}»; sus claves se han borrado.",
             m.name
         );
-        println!(
-            "El dispositivo SIGUE registrado en el servidor: un administrador debe revocarlo. Huella del dispositivo: {} (id {}).",
-            m.device_fingerprint, m.device_id
-        );
+        if !offline {
+            println!("Dispositivo revocado en el servidor.");
+        }
         Ok(())
+    }
+
+    fn offline_warning(m: &Meta) -> String {
+        format!(
+            "AVISO --offline: el dispositivo SIGUE registrado en el servidor; un administrador debe revocarlo. Huella del dispositivo: {} (id {}).",
+            m.device_fingerprint, m.device_id
+        )
     }
 
     // ---- Migración de la instalación heredada (ADR-013 §10) ----
@@ -2037,14 +2067,107 @@ mod imp {
             put_meta(&c, &fake_meta(A, "Casa", "atenea0", 51820, 1));
             put_meta(&c, &fake_meta(C, "Oficina", "atenea1", 51821, 2));
             std::fs::create_dir_all(c.run_dir(C)).unwrap();
-            let e = leave(&c, "casa", false, &mut Cursor::new(""), false).unwrap_err();
+            let e = leave(&c, "casa", false, true, &mut Cursor::new(""), false).unwrap_err();
             assert!(e.contains("--yes"));
             assert!(c.net_dir(A).exists());
-            leave(&c, "casa", true, &mut Cursor::new(""), false).unwrap();
+            let warning = offline_warning(&read_metas(&c).unwrap()[0]);
+            assert!(warning.contains("SIGUE registrado"));
+            assert!(warning.contains("ffff"));
+            leave(&c, "casa", true, true, &mut Cursor::new(""), false).unwrap();
             assert!(!c.net_dir(A).exists());
             assert!(c.device_dir(C).join("noise.key").exists());
             assert!(c.net_dir(C).join("network.json").exists());
             assert!(c.run_dir(C).exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn leave_calls_server_before_deleting_and_preserves_files_on_rejection() {
+            for status in [200, 401, 503] {
+                let d = temp("salir-remoto");
+                let c = ctx(&d);
+                let (port, request) = serve(status, "{}".into());
+                let mut m = fake_meta(A, "Casa", "atenea0", 51820, 1);
+                m.url = format!("http://127.0.0.1:{port}");
+                m.device_id = A.into();
+                m.join_status = "pendiente_de_aprobacion".into();
+                put_meta(&c, &m);
+                let key = atenea_identity::signing_key([42; 32]);
+                crate::issue::write_secret(
+                    &c.device_dir(A).join("identity.key"),
+                    &hex::encode(&[42; 32]),
+                )
+                .unwrap();
+                let result = leave(&c, "casa", true, false, &mut Cursor::new(""), false);
+                let request = request.join().unwrap();
+                assert!(request.starts_with("POST /api/v1/device/leave HTTP/1.1"));
+                let authorization = request
+                    .lines()
+                    .find_map(|l| {
+                        l.split_once(':')
+                            .filter(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                            .map(|(_, v)| v.trim())
+                    })
+                    .unwrap();
+                let signed = atenea_identity::api_auth::parse_authorization(authorization).unwrap();
+                atenea_identity::api_auth::verify_request(
+                    &signed,
+                    &key.verifying_key().to_bytes(),
+                    "POST",
+                    "/api/v1/device/leave",
+                    b"",
+                )
+                .unwrap();
+                assert_eq!(result.is_ok(), status == 200);
+                assert_eq!(c.net_dir(A).exists(), status != 200);
+                if status != 200 {
+                    assert!(c.device_dir(A).join("identity.key").exists());
+                }
+                std::fs::remove_dir_all(d).unwrap();
+            }
+        }
+
+        #[test]
+        fn leave_transport_failure_preserves_local_state() {
+            let d = temp("salir-sin-servidor");
+            let c = ctx(&d);
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut m = fake_meta(A, "Casa", "atenea0", 51820, 1);
+            m.url = format!("http://{}", listener.local_addr().unwrap());
+            m.device_id = A.into();
+            drop(listener);
+            put_meta(&c, &m);
+            crate::issue::write_secret(
+                &c.device_dir(A).join("identity.key"),
+                &hex::encode(&[42; 32]),
+            )
+            .unwrap();
+            let error = leave(&c, "casa", true, false, &mut Cursor::new(""), false).unwrap_err();
+            assert!(error.contains("No se ha parado ni borrado nada"));
+            assert!(c.device_dir(A).join("identity.key").exists());
+            assert!(c.net_dir(A).join("network.json").exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn leave_reports_revocation_when_cleanup_fails() {
+            let d = temp("salir-limpieza");
+            let mut c = ctx(&d);
+            c.agent = Some(PathBuf::from("/usr/bin/false"));
+            let (port, request) = serve(200, "{}".into());
+            let mut m = fake_meta(A, "Casa", "atenea0", 51820, 1);
+            m.url = format!("http://127.0.0.1:{port}");
+            m.device_id = A.into();
+            put_meta(&c, &m);
+            crate::issue::write_secret(
+                &c.device_dir(A).join("identity.key"),
+                &hex::encode(&[42; 32]),
+            )
+            .unwrap();
+            let error = leave(&c, "casa", true, false, &mut Cursor::new(""), false).unwrap_err();
+            request.join().unwrap();
+            assert!(error.contains("YA está revocado"));
+            assert!(c.device_dir(A).join("identity.key").exists());
             std::fs::remove_dir_all(d).unwrap();
         }
 

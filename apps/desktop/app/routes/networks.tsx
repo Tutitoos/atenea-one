@@ -29,7 +29,7 @@ function NetworkCard({ net, busy, onChange }: { net: Network; busy: boolean; onC
       </div>
       {leaving && (
         <div role="alertdialog" aria-label={`Salir de ${net.name}`} className="mt-3 rounded-md border border-line p-3 text-sm">
-          <p>Se borrarán las claves de este equipo para «{net.name}». El dispositivo seguirá registrado en el servidor hasta que un administrador lo revoque. No se puede deshacer.</p>
+          <p>Se revocará el dispositivo en el servidor y se borrarán las claves de este equipo para «{net.name}». Si el servidor no responde, no se borrará nada. No se puede deshacer.</p>
           <div className="mt-2 flex gap-2">
             <button type="button" className={primary} disabled={busy} onClick={() => { setLeaving(false); onChange('leave', net.network_id); }}>Salir de la red</button>
             <button type="button" className={button} onClick={() => setLeaving(false)}>Cancelar</button>

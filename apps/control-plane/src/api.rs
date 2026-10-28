@@ -118,6 +118,10 @@ pub fn router(s: AppState) -> Router {
         )
         .route("/api/v1/device/config", get(issue::get))
         .route("/api/v1/device/peers", get(issue::peers))
+        .route(
+            "/api/v1/device/leave",
+            post(devices::leave).layer(axum::extract::DefaultBodyLimit::max(1024)),
+        )
         .route("/api/v1/device/routes", post(crate::routes::declare))
         .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
         .route(
@@ -162,9 +166,13 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 }
 async fn uniform_errors(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
     let report = req.uri().path() == "/api/v1/device/status";
+    let leave = req.uri().path() == "/api/v1/device/leave";
     let response = next.run(req).await;
     if report && response.status() == StatusCode::PAYLOAD_TOO_LARGE {
         return ApiError::bad("invalid_report").into_response();
+    }
+    if leave && response.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        return ApiError::bad("invalid_request").into_response();
     }
     if (response.status().is_client_error() || response.status().is_server_error())
         && response

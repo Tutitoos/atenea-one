@@ -72,7 +72,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-fn read_seed(path: &Path) -> Result<SigningKey, String> {
+pub(crate) fn read_seed(path: &Path) -> Result<SigningKey, String> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(path)
         .map_err(|e| format!("{}: {e}", path.display()))?

@@ -225,7 +225,7 @@ it('salir de una red exige confirmar y se puede cancelar sin llamar a nada', asy
   app('/networks');
   await userEvent.click(await screen.findByRole('button', { name: 'Salir de la red…' }));
   const dialog = screen.getByRole('alertdialog', { name: 'Salir de casa' });
-  expect(dialog).toHaveTextContent('revoque');
+  expect(dialog).toHaveTextContent('Se revocará el dispositivo en el servidor');
   await userEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   expect(calls('network_apply')).toHaveLength(0);

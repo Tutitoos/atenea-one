@@ -324,7 +324,7 @@ expect_eq "recursos de B (dirección, rutas, puerto, sockets) intactos" "$(res_s
 expect_eq "B sigue con configuración vigente" "$(sfield $NET_B config.lease_active)" true
 expect_eq "B sigue conectada en el listado" "$(lj $NET_B state)" conectada
 check "pa ya no se alcanza desde el cliente" bash -c "! ip netns exec cli ping -c 2 -W 2 $IP_PA"
-api POST /api/v1/networks/$NET_A/devices/$DEV_CA/revoke >/dev/null && ok "el admin revoca el dispositivo antiguo de A en el servidor"
+expect_eq "leave revoca A en el servidor sin intervención administrativa" "$(dev_field $NET_A $DEV_CA status)" revoked
 
 section "Volver a unir A (claves nuevas) para probar la revocación de B"
 TOK_JSON=$(api POST /api/v1/networks/$NET_A/enrollment-tokens --json '{"ttl_secs":600}')
