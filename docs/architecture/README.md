@@ -12,6 +12,10 @@
 | [008](ADR-008-clientes-windows-macos.md) | Clientes macOS y Windows (solo cliente; excepción Wintun) | Aceptado |
 | [009](ADR-009-operacion-y-releases.md) | Operación, disponibilidad, secretos y releases | Aceptado |
 | [010](ADR-010-l2-ethernet.md) | L2 Ethernet opt-in por red (fase 10): viabilidad por SO, modelo y trama | Aceptado (implementación en pausa hasta la auditoría) |
+| [011](ADR-011-aplicacion-de-escritorio.md) | Aplicación de escritorio (Tauri 2): estado de las redes y operaciones con autorización del sistema | Aceptado (revisado por ADR-013) |
+| [012](ADR-012-nombres-de-dispositivo.md) | Nombres de dispositivo: metadatos de presentación sin firmar | Aceptado |
+| [013](ADR-013-redes-multiples-y-union-por-codigo.md) | Varias redes por dispositivo y unión por código | Aceptado (fases 1–4 implementadas; Windows pendiente) |
+| [014](ADR-014-servidores-roles-y-redes-por-servidor.md) | Servidores con varias redes, rol de servidor y pulido de la aplicación | Propuesto |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
