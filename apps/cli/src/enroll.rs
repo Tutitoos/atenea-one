@@ -73,6 +73,8 @@ pub struct Registered {
 /// Error de `register`; `accepted` indica que el servidor ya respondió 201 (hay estado remoto).
 pub struct RegisterError {
     pub message: String,
+    // Solo lo lee `network join`, que existe únicamente en Unix.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub accepted: bool,
 }
 
@@ -163,6 +165,8 @@ pub fn enroll(
 }
 
 /// Genera el `agent.toml` de una red con la raíz fijada por quien llama (nunca por el servidor).
+/// Solo la usa `network join`, que existe únicamente en Unix.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn pinned_config(
     url: &str,
