@@ -290,14 +290,20 @@ mod imp {
             .and_then(toml::Value::as_str)
             .and_then(|s| s.parse::<std::net::SocketAddr>().ok())
             .map(|a| a.port());
-        let interface = (0..1000)
-            .map(|n| format!("atenea{n}"))
-            .find(|name| {
-                !metas.iter().any(|m| &m.interface == name)
-                    && legacy_interface != Some(name.as_str())
-                    && !Path::new("/sys/class/net").join(name).exists()
-            })
-            .ok_or("no queda ninguna interfaz atenea<N> libre")?;
+        // macOS solo admite `utun`/`utunN` en el agente: el kernel elige el índice libre, así que no hay nombre
+        // `atenea<N>` que reservar ni colisión que comprobar (cada instancia abre su propio utun).
+        let interface = if cfg!(target_os = "macos") {
+            "utun".to_string()
+        } else {
+            (0..1000)
+                .map(|n| format!("atenea{n}"))
+                .find(|name| {
+                    !metas.iter().any(|m| &m.interface == name)
+                        && legacy_interface != Some(name.as_str())
+                        && !Path::new("/sys/class/net").join(name).exists()
+                })
+                .ok_or("no queda ninguna interfaz atenea<N> libre")?
+        };
         let port = (51820..=u16::MAX)
             .find(|p| {
                 !metas.iter().any(|m| m.listen_port == *p)
@@ -930,6 +936,15 @@ mod imp {
 
         const SERVER_ANCHOR: [u8; 32] = [9; 32];
 
+        /// En macOS la interfaz es siempre `utun` (la elige el kernel); en Linux, la `atenea<N>` libre más baja.
+        fn expected_interface(n: u32) -> String {
+            if cfg!(target_os = "macos") {
+                "utun".into()
+            } else {
+                format!("atenea{n}")
+            }
+        }
+
         fn temp(tag: &str) -> PathBuf {
             let n = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1214,7 +1229,10 @@ mod imp {
             let c = ctx(&d);
             let metas = read_metas(&c).unwrap();
             assert_eq!(metas.len(), 2);
-            assert_ne!(metas[0].interface, metas[1].interface);
+            assert_eq!(
+                metas[0].interface != metas[1].interface,
+                !cfg!(target_os = "macos")
+            );
             assert_ne!(metas[0].listen_port, metas[1].listen_port);
             assert_ne!(
                 std::fs::read(c.device_dir(&metas[0].network_id).join("noise.key")).unwrap(),
@@ -1228,7 +1246,7 @@ mod imp {
             let legacy: toml::Table =
                 toml::from_str("interface = 'atenea0'\nlisten = '0.0.0.0:51820'\n").unwrap();
             let (interface, port) = allocate(&[], &legacy).unwrap();
-            assert_eq!(interface, "atenea1");
+            assert_eq!(interface, expected_interface(1));
             assert!(port > 51820);
         }
 
@@ -1293,7 +1311,7 @@ mod imp {
             assert_eq!(metas.len(), 1);
             assert_eq!(
                 (metas[0].interface.as_str(), metas[0].join_status.as_str()),
-                ("atenea0", "pendiente_de_aprobacion")
+                (expected_interface(0).as_str(), "pendiente_de_aprobacion")
             );
             let e = join(&c, &opts(code, true), &mut Cursor::new(""), false).unwrap_err();
             assert!(e.contains("ya estás unido"), "{e}");
@@ -1325,7 +1343,10 @@ mod imp {
             }
             assert_ne!(keys[0], keys[1]);
             let metas = read_metas(&c).unwrap();
-            assert_ne!(metas[0].interface, metas[1].interface);
+            assert_eq!(
+                metas[0].interface != metas[1].interface,
+                !cfg!(target_os = "macos")
+            );
             assert_ne!(metas[0].listen_port, metas[1].listen_port);
             std::fs::remove_dir_all(d).unwrap();
         }
@@ -1378,7 +1399,7 @@ mod imp {
         fn allocation_avoids_metadata_and_busy_ports() {
             let a = fake_meta(A, "a", "atenea0", 51820, 1);
             let (iface, port) = allocate(std::slice::from_ref(&a), &toml::Table::new()).unwrap();
-            assert_eq!(iface, "atenea1");
+            assert_eq!(iface, expected_interface(1));
             assert!(port > 51820);
             let _busy = std::net::UdpSocket::bind(("0.0.0.0", port)).unwrap();
             let (_, next) = allocate(&[a], &toml::Table::new()).unwrap();

@@ -45,7 +45,7 @@ device_id = "22222222222222222222222222222222"
 trust_anchor = "1111111111111111111111111111111111111111111111111111111111111111"
 ```
 
-`utun` pide al kernel un índice libre; `utunN` solicita ese índice concreto y falla si está ocupado. El nombre real se utiliza para rutas, MTU y exclusión de candidatos. No usar `atenea0` en macOS. Las rutas de ficheros son ejemplos del paquete, no valores predeterminados nuevos del programa. Claves y TOML deben ser 0600 root; el directorio de configuración, 0700 root:wheel.
+`utun` pide al kernel un índice libre; `utunN` solicita ese índice concreto y falla si está ocupado. El nombre real se utiliza para rutas, MTU y exclusión de candidatos. No usar `atenea0` en macOS. Las rutas de ficheros son ejemplos del paquete, no valores predeterminados nuevos del programa. Claves y TOML deben ser 0600 root; el directorio de configuración, 0711 root:wheel (atravesable, no listable: `atenea network list` y la aplicación leen sin root `networks/<uuid>/network.json`, que no contiene secretos; antes de v0.1.3 era 0700 y `list` sin root fallaba con «permiso denegado»). En Linux `/var/lib/atenea` sigue siendo 0700 root:atenea y `list` solo funciona como root: **límite conocido**, la aplicación no se prueba en Linux.
 
 Tras colocar configuración y claves:
 

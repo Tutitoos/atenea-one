@@ -4,7 +4,10 @@
 set -eu
 # No habilitar servicios en un volumen distinto del sistema arrancado.
 [ "${3:-/}" = / ] || exit 0
-install -d -o root -g wheel -m 0700 '/Library/Application Support/Atenea' /var/run/atenea
+# 0711: atravesable (no listable) para que `atenea network list` y la app lean `networks/<uuid>/network.json`
+# sin root (ADR-013 fase 4). Las claves y el agent.toml conservan sus propios modos restrictivos.
+install -d -o root -g wheel -m 0711 '/Library/Application Support/Atenea'
+install -d -o root -g wheel -m 0700 /var/run/atenea
 # `bootout` es asíncrono: si el proceso anterior aún no ha salido, `bootstrap` falla con «5: Input/output error».
 reload() {
     launchctl bootout "system/$1" 2>/dev/null || :
