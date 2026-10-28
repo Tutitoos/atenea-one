@@ -182,12 +182,12 @@ fn assess(s: &Value) -> Assessment {
         worsen(Health::Degraded, None);
     }
     let text = match health {
-        Health::Ok if peers.is_empty() => "Conectado (sin pares)".to_string(),
+        Health::Ok if peers.is_empty() => "Conectado (sin otros dispositivos)".to_string(),
         Health::Ok => "Conectado".to_string(),
         Health::Degraded => format!(
             "Degradado: {}",
             why.first()
-                .map_or("algún par por relay o sin camino", String::as_str)
+                .map_or("algún dispositivo por relay o sin camino", String::as_str)
         ),
         _ => format!(
             "Sin conexión: {}",

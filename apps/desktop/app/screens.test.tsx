@@ -20,7 +20,7 @@ const peer = (key: string, addr: string, path: string, name?: string) => ({
   public_key: key, addrs: [addr], name, endpoint: '192.0.2.7:51820', session: 'activa 5s', last_handshake_secs_ago: 5,
   tx_bytes: 2048, rx_bytes: 4096, path, candidates: 2, paths: [{ kind: path, ready: true, healthy: true, rtt_ms: null }],
 });
-const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún par por relay o sin camino'] };
+const degraded = { level: 'degraded', text: 'Degradado', reasons: ['algún dispositivo por relay o sin camino'] };
 const server = { sync: { url: 'https://control.example.test', last_ok_unix: Math.floor(Date.now() / 1000) - 5, last_error: null, sync_ok: 40, sync_denied: 1, sync_errors: 2 }, coordinator: { url: 'https://control.example.test', last_announce_ok_unix: Math.floor(Date.now() / 1000) - 3, last_error: null, announces: 120, events: 9 } };
 const relay = { allocations: 1, drops: {}, entries: [{ peer: 'aa', transport: 'Udp', relay: 'relay-uno', state: 'ready', rtt_ms: 42, tx_bytes: 2048, rx_bytes: 1024 }] };
 const agent = (peers = [peer('a'.repeat(64), '10.77.0.3', 'direct', 'servidor-vps'), peer('b'.repeat(64), '10.77.0.4', 'relay-udp')], health: object = degraded, extra: object = { ...server, relay }) => JSON.stringify({
@@ -70,7 +70,7 @@ beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); });
 
 it('la banda de avisos solo aparece si hay motivos que contar', async () => {
   // Caso real de Rust: un par por relay degrada el estado pero no aporta ningún motivo textual.
-  serve(agent(undefined, { level: 'degraded', text: 'Degradado: algún par por relay o sin camino', reasons: [] }));
+  serve(agent(undefined, { level: 'degraded', text: 'Degradado: algún dispositivo por relay o sin camino', reasons: [] }));
   const { unmount } = app();
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Degradado'));
   expect(screen.queryByRole('list', { name: 'Avisos' })).not.toBeInTheDocument();
@@ -81,11 +81,11 @@ it('la banda de avisos solo aparece si hay motivos que contar', async () => {
 });
 
 
-it('el servidor sale en su propio grupo, aparte de los pares, y su detalle muestra servicios y relays', async () => {
+it('el servidor sale en su propio grupo, aparte de los demás dispositivos, y su detalle muestra servicios y relays', async () => {
   serve(agent());
   app();
-  const groups = await screen.findAllByRole('heading', { level: 2, name: /^(Local|Servidor|Pares)$/ });
-  expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Servidor', 'Pares']);
+  const groups = await screen.findAllByRole('heading', { level: 2, name: /^(Local|Servidor|Dispositivos)$/ });
+  expect(groups.map((g) => g.textContent)).toEqual(['Local', 'Servidor', 'Dispositivos']);
   await userEvent.click(await screen.findByRole('link', { name: /control\.example\.test/ }));
   const detail = within(screen.getByRole('main'));
   expect(await detail.findByRole('heading', { level: 2, name: 'control.example.test' })).toBeInTheDocument();

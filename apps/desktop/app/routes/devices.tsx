@@ -60,7 +60,7 @@ export default function Devices() {
           className="w-full select-text rounded-lg border border-line bg-card px-2.5 py-1.5 text-fg"
         />
         <div className="mt-2 flex-1 overflow-y-auto">
-          {sample ? <><Group title="Local" entries={self.filter(match)} /><Group title="Servidor" entries={server.filter(match)} /><Group title="Pares" entries={peers.filter(match)} />{!visible.length && <Empty>Sin resultados.</Empty>}</> : <Empty>Sin datos del agente.</Empty>}
+          {sample ? <><Group title="Local" entries={self.filter(match)} /><Group title="Servidor" entries={server.filter(match)} /><Group title="Dispositivos" entries={peers.filter(match)} />{!visible.length && <Empty>Sin resultados.</Empty>}</> : <Empty>Sin datos del agente.</Empty>}
         </div>
       </div>
       <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5"><Outlet context={agent} /></main>
