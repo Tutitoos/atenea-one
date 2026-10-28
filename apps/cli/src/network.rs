@@ -38,14 +38,23 @@ pub enum NetworkCmd {
 }
 
 #[cfg(not(unix))]
-pub fn run(_root: Option<PathBuf>, _cmd: NetworkCmd) -> Result<(), String> {
+pub fn run(
+    _root: Option<PathBuf>,
+    _backend: crate::network_service::Backend,
+    _cmd: NetworkCmd,
+) -> Result<(), String> {
     Err("`atenea network` no está soportado todavía en Windows".into())
 }
 
 #[cfg(unix)]
-pub fn run(root: Option<PathBuf>, cmd: NetworkCmd) -> Result<(), String> {
+pub fn run(
+    root: Option<PathBuf>,
+    backend: crate::network_service::Backend,
+    cmd: NetworkCmd,
+) -> Result<(), String> {
     use std::io::IsTerminal;
-    let ctx = imp::Ctx::new(root)?;
+    let mut ctx = imp::Ctx::new(root)?;
+    ctx.backend = backend;
     let interactive = std::io::stdin().is_terminal();
     let mut input = std::io::stdin().lock();
     match cmd {
@@ -76,6 +85,7 @@ pub fn run(root: Option<PathBuf>, cmd: NetworkCmd) -> Result<(), String> {
 
 #[cfg(unix)]
 mod imp {
+    use crate::network_service::{self, Backend, Service};
     use crate::{enroll, issue};
     use atenea_crypto::hex;
     use atenea_identity::anchor_fingerprint;
@@ -104,12 +114,16 @@ mod imp {
         pub created: u64,
         /// `pendiente_de_aprobacion` o `aprobada` (lo que el CLI supo al unirse).
         pub join_status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub service_backend: Option<Service>,
     }
 
     pub struct Ctx {
         root: PathBuf,
         run: PathBuf,
         agent: Option<PathBuf>,
+        pub backend: Backend,
+        legacy: PathBuf,
     }
 
     impl Ctx {
@@ -137,6 +151,12 @@ mod imp {
                 root: std::path::absolute(root).map_err(|e| e.to_string())?,
                 run: std::path::absolute(run).map_err(|e| e.to_string())?,
                 agent: std::env::var_os("ATENEA_AGENT_BIN").map(PathBuf::from),
+                backend: Backend::Auto,
+                legacy: PathBuf::from(if cfg!(target_os = "macos") {
+                    "/Library/Application Support/Atenea/agent.toml"
+                } else {
+                    "/etc/atenea/agent.toml"
+                }),
             })
         }
         fn net_dir(&self, id: &str) -> PathBuf {
@@ -237,19 +257,33 @@ mod imp {
         Ok(metas)
     }
 
-    /// Interfaz `atenea<N>` y puerto UDP libres: se excluyen los de las demás redes y se comprueba el sistema.
-    // shortcut: carrera entre dos `join` simultáneos; se asume un administrador a la vez.
-    pub fn allocate(metas: &[Meta]) -> Result<(String, u16), String> {
+    fn legacy_config(ctx: &Ctx) -> Result<toml::Table, String> {
+        match std::fs::read_to_string(&ctx.legacy) {
+            Ok(text) => toml::from_str(&text).map_err(|e| format!("configuración heredada: {e}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
+            Err(e) => Err(io_err(&ctx.legacy, &e)),
+        }
+    }
+    /// Interfaz y puerto libres; reserva también los recursos de legacy aunque esté detenida.
+    pub fn allocate(metas: &[Meta], legacy: &toml::Table) -> Result<(String, u16), String> {
+        let legacy_interface = legacy.get("interface").and_then(toml::Value::as_str);
+        let legacy_port = legacy
+            .get("listen")
+            .and_then(toml::Value::as_str)
+            .and_then(|s| s.parse::<std::net::SocketAddr>().ok())
+            .map(|a| a.port());
         let interface = (0..1000)
             .map(|n| format!("atenea{n}"))
             .find(|name| {
                 !metas.iter().any(|m| &m.interface == name)
+                    && legacy_interface != Some(name.as_str())
                     && !Path::new("/sys/class/net").join(name).exists()
             })
             .ok_or("no queda ninguna interfaz atenea<N> libre")?;
         let port = (51820..=u16::MAX)
             .find(|p| {
                 !metas.iter().any(|m| m.listen_port == *p)
+                    && legacy_port != Some(*p)
                     && std::net::UdpSocket::bind(("0.0.0.0", *p)).is_ok()
             })
             .ok_or("no queda ningún puerto UDP libre desde 51820")?;
@@ -392,6 +426,7 @@ mod imp {
                 "pendiente_de_aprobacion"
             }
             .into(),
+            service_backend: None,
         };
         write_meta(ctx, &meta).map_err(accepted)?;
         Ok(meta)
@@ -418,6 +453,59 @@ mod imp {
             .map_err(|e| e.to_string())
     }
 
+    /// `flock` del directorio, compartido por join/up/down/leave; no deja ficheros temporales ni
+    /// depende de eliminar un candado para liberar. El kernel lo suelta también si el proceso cae.
+    fn root_lock(ctx: &Ctx) -> Result<std::fs::File, String> {
+        let file = std::fs::File::open(&ctx.root).map_err(|e| io_err(&ctx.root, &e))?;
+        file.lock().map_err(|e| io_err(&ctx.root, &e))?;
+        Ok(file)
+    }
+
+    fn save_backend(ctx: &Ctx, meta: &Meta, service: Service) -> Result<(), String> {
+        let mut meta = meta.clone();
+        meta.service_backend = Some(service);
+        let path = ctx.net_dir(&meta.network_id).join("network.json");
+        let tmp = path.with_file_name(format!(".network-{}.json", std::process::id()));
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&tmp)
+            .map_err(|e| io_err(&tmp, &e))?;
+        let result = (|| {
+            f.write_all(&serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            f.sync_all().map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, &path).map_err(|e| io_err(&path, &e))
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(tmp);
+        }
+        result
+    }
+
+    // Migra configuraciones de fase 2 al arrancar; solo para redes gestionadas (nunca legacy).
+    fn ensure_resolver_owner(ctx: &Ctx, id: &str) -> Result<(), String> {
+        let path = ctx.device_dir(id).join("agent.toml");
+        let text = std::fs::read_to_string(&path).map_err(|e| io_err(&path, &e))?;
+        let mut table: toml::Table = toml::from_str(&text).map_err(|e| e.to_string())?;
+        if let Some(owner) = table.get("resolver_owner") {
+            return if owner.as_str() == Some(short(id)) {
+                Ok(())
+            } else {
+                Err("resolver_owner no coincide con la red".into())
+            };
+        }
+        table.insert("resolver_owner".into(), short(id).into());
+        let tmp = path.with_file_name(format!(".agent-{}.toml", std::process::id()));
+        issue::write_secret(&tmp, &toml::to_string(&table).map_err(|e| e.to_string())?)?;
+        let result = std::fs::rename(&tmp, &path).map_err(|e| io_err(&path, &e));
+        if result.is_err() {
+            let _ = std::fs::remove_file(tmp);
+        }
+        result
+    }
+
     pub fn join(
         ctx: &Ctx,
         opts: &JoinOpts,
@@ -431,20 +519,6 @@ mod imp {
         } else {
             code.url.clone()
         };
-        let metas = read_metas(ctx)?;
-        if let Some(m) = metas.iter().find(|m| m.network_id == id) {
-            return Err(format!(
-                "ya estás unido a la red «{}» ({id}); no se ha cambiado nada",
-                m.name
-            ));
-        }
-        if let Some(m) = metas.iter().find(|m| short(&m.network_id) == short(&id)) {
-            return Err(format!(
-                "el id corto {} ya lo usa la red «{}»; no se puede unir sin colisión de sockets",
-                short(&id),
-                m.name
-            ));
-        }
         println!("Red:            {}", code.name);
         println!("Servidor:       {}", server_of(&code.url));
         println!("Id de la red:   {id}");
@@ -464,15 +538,28 @@ mod imp {
             "AVISO: una red puede instalar rutas privadas y DNS para dominios concretos en este equipo; confirma que el código te lo dio alguien de confianza y compara la huella por otro canal."
         );
         confirm("¿Unirte a esta red?", opts.yes, interactive, input)?;
-        mkdir(&ctx.root, 0o755, true).or_else(
-            |e| {
-                if ctx.root.is_dir() { Ok(()) } else { Err(e) }
-            },
-        )?;
+        if !ctx.root.exists() {
+            mkdir(&ctx.root, 0o755, true)?;
+        }
+        let _lock = root_lock(ctx)?;
+        let metas = read_metas(ctx)?;
+        if let Some(m) = metas.iter().find(|m| m.network_id == id) {
+            return Err(format!(
+                "ya estás unido a la red «{}» ({id}); no se ha cambiado nada",
+                m.name
+            ));
+        }
+        if let Some(m) = metas.iter().find(|m| short(&m.network_id) == short(&id)) {
+            return Err(format!(
+                "el id corto {} ya lo usa la red «{}»; no se puede unir sin colisión de sockets",
+                short(&id),
+                m.name
+            ));
+        }
         let net = ctx.net_dir(&id);
         // 0711: `network.json` (público) se lee sin root; las claves quedan en `device/` (0700).
         mkdir(&net, 0o711, false)?;
-        let alloc = match allocate(&metas) {
+        let alloc = match legacy_config(ctx).and_then(|legacy| allocate(&metas, &legacy)) {
             Ok(a) => a,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&net);
@@ -527,9 +614,13 @@ mod imp {
             Ok(text) => {
                 let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
                 let cfg = &v["config"];
-                if cfg["last_error"] == "network_overlap" {
+                if matches!(
+                    cfg["last_error"].as_str(),
+                    Some("network_overlap" | "dns_domain_conflict")
+                ) {
                     State::Conflict(format!(
-                        "network_overlap: {}",
+                        "{}: {}",
+                        cfg["last_error"].as_str().unwrap_or("conflicto"),
                         cfg["last_error_detail"]
                             .as_str()
                             .unwrap_or("solapa con otra red o ruta local")
@@ -568,6 +659,17 @@ mod imp {
         }
     }
 
+    fn backend(ctx: &Ctx, m: &Meta) -> Service {
+        let saved = m.service_backend.or_else(|| {
+            if ctx.run_dir(&m.network_id).join("status.sock").exists() {
+                Some(Service::Process)
+            } else {
+                None
+            }
+        });
+        network_service::choose(ctx.backend, saved)
+    }
+
     pub fn list_json(ctx: &Ctx) -> Result<serde_json::Value, String> {
         Ok(read_metas(ctx)?
             .iter()
@@ -575,6 +677,7 @@ mod imp {
                 let state = probe(ctx, m);
                 let mut v = serde_json::to_value(m).expect("serializable");
                 v["state"] = state.code().into();
+                v["backend"] = backend(ctx, m).name().into();
                 if let State::Conflict(d) | State::Unknown(d) = &state {
                     v["detail"] = d.clone().into();
                 }
@@ -593,13 +696,14 @@ mod imp {
         if !json {
             for m in &metas {
                 println!(
-                    "{}  {}  {}  {}  {}  {}",
+                    "{}  {}  {}  {}  {}  {}  {}",
                     m.name,
                     short(&m.network_id),
                     m.server,
                     m.interface,
                     m.listen_port,
-                    probe(ctx, m).text()
+                    probe(ctx, m).text(),
+                    backend(ctx, m).name()
                 );
             }
         }
@@ -607,10 +711,38 @@ mod imp {
     }
 
     pub fn up(ctx: &Ctx, query: &str) -> Result<(), String> {
+        let _lock = root_lock(ctx)?;
         let metas = read_metas(ctx)?;
         let m = resolve(&metas, query)?;
-        if !matches!(probe(ctx, m), State::Stopped) {
+        let service = backend(ctx, m);
+        if m.service_backend.is_none()
+            && service != Service::Process
+            && !matches!(probe(ctx, m), State::Stopped)
+        {
+            return Err(
+                "instancia de fase 2 en modo proceso: párala con --backend process antes de migrar"
+                    .into(),
+            );
+        }
+        if m.service_backend.is_some_and(|old| old != service)
+            && !matches!(probe(ctx, m), State::Stopped)
+        {
+            return Err(
+                "la red está iniciada con otro gestor: usa `down --backend auto` antes de cambiar"
+                    .into(),
+            );
+        }
+        // Una instancia proceso de fase 2 conserva el owner legacy hasta pararse: no cambiar su
+        // configuración mientras vive, porque cleanup debe usar la misma marca DNS que al arrancar.
+        if service == Service::Process && !matches!(probe(ctx, m), State::Stopped) {
             println!("«{}» ya estaba iniciada", m.name);
+            return Ok(());
+        }
+        ensure_resolver_owner(ctx, &m.network_id)?;
+        if service != Service::Process {
+            network_service::start(service, &ctx.root, &m.network_id)?;
+            save_backend(ctx, m, service)?;
+            println!("red «{}» iniciada mediante {}", m.name, service.name());
             return Ok(());
         }
         let run = ctx.run_dir(&m.network_id);
@@ -625,12 +757,21 @@ mod imp {
             Some(ctx.agent_bin()?),
             &device.join("agent.log"),
         )?;
+        save_backend(ctx, m, Service::Process)?;
         println!("red «{}» iniciada ({})", m.name, m.interface);
         Ok(())
     }
 
     /// Para la instancia; `Ok(false)` si no estaba iniciada. Espera a que el socket desaparezca.
     fn stop(ctx: &Ctx, m: &Meta) -> Result<bool, String> {
+        let service = backend(ctx, m);
+        if m.service_backend.is_some_and(|old| old != service) {
+            return Err("la red usa otro gestor; utiliza --backend auto para pararla".into());
+        }
+        if service != Service::Process {
+            network_service::stop(service, &m.network_id)?;
+            return Ok(true);
+        }
         let run = ctx.run_dir(&m.network_id);
         let control = run.join("control.sock");
         if !control.exists()
@@ -656,6 +797,7 @@ mod imp {
     }
 
     pub fn down(ctx: &Ctx, query: &str) -> Result<(), String> {
+        let _lock = root_lock(ctx)?;
         let metas = read_metas(ctx)?;
         let m = resolve(&metas, query)?;
         println!(
@@ -685,6 +827,9 @@ mod imp {
             m.name, m.network_id
         );
         confirm("¿Salir de la red?", yes, interactive, input)?;
+        let _lock = root_lock(ctx)?;
+        let metas = read_metas(ctx)?;
+        let m = resolve(&metas, query)?;
         let meta = std::fs::symlink_metadata(&net).map_err(|e| io_err(&net, &e))?;
         if !meta.is_dir() {
             return Err(format!(
@@ -704,6 +849,7 @@ mod imp {
                 "la limpieza del agente falló ({status}); no se ha borrado nada de la red"
             ));
         }
+        network_service::remove(backend(ctx, m), &m.network_id)?;
         std::fs::remove_dir_all(&net).map_err(|e| io_err(&net, &e))?;
         let _ = std::fs::remove_dir_all(ctx.run_dir(&m.network_id));
         println!(
@@ -746,6 +892,8 @@ mod imp {
                         .find(|p| p.exists())
                         .unwrap(),
                 ),
+                backend: Backend::Process,
+                legacy: dir.join("legacy.toml"),
             }
         }
 
@@ -841,6 +989,7 @@ mod imp {
                 listen_port: port,
                 created,
                 join_status: "aprobada".into(),
+                service_backend: None,
             }
         }
 
@@ -854,6 +1003,54 @@ mod imp {
         const A: &str = "11111111-1111-1111-1111-111111111111";
         const B: &str = "11112222-2222-2222-2222-222222222222";
         const C: &str = "33333333-3333-3333-3333-333333333333";
+
+        #[test]
+        fn concurrent_joins_serialize_allocation_and_keep_distinct_keys() {
+            let d = temp("concurrente");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let mut workers = Vec::new();
+            let mut servers = Vec::new();
+            for n in [1, 2] {
+                let (port, server) = serve(201, created(n));
+                servers.push(server);
+                let b = barrier.clone();
+                let c = ctx(&d);
+                workers.push(std::thread::spawn(move || {
+                    b.wait();
+                    join(
+                        &c,
+                        &opts(code_text(port, None, n), true),
+                        &mut Cursor::new(""),
+                        false,
+                    )
+                }));
+            }
+            for w in workers {
+                w.join().unwrap().unwrap();
+            }
+            for s in servers {
+                s.join().unwrap();
+            }
+            let c = ctx(&d);
+            let metas = read_metas(&c).unwrap();
+            assert_eq!(metas.len(), 2);
+            assert_ne!(metas[0].interface, metas[1].interface);
+            assert_ne!(metas[0].listen_port, metas[1].listen_port);
+            assert_ne!(
+                std::fs::read(c.device_dir(&metas[0].network_id).join("noise.key")).unwrap(),
+                std::fs::read(c.device_dir(&metas[1].network_id).join("noise.key")).unwrap()
+            );
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn legacy_resources_are_reserved_even_when_it_is_stopped() {
+            let legacy: toml::Table =
+                toml::from_str("interface = 'atenea0'\nlisten = '0.0.0.0:51820'\n").unwrap();
+            let (interface, port) = allocate(&[], &legacy).unwrap();
+            assert_eq!(interface, "atenea1");
+            assert!(port > 51820);
+        }
 
         #[test]
         fn invalid_code_does_not_touch_disk() {
@@ -1000,11 +1197,11 @@ mod imp {
         #[test]
         fn allocation_avoids_metadata_and_busy_ports() {
             let a = fake_meta(A, "a", "atenea0", 51820, 1);
-            let (iface, port) = allocate(std::slice::from_ref(&a)).unwrap();
+            let (iface, port) = allocate(std::slice::from_ref(&a), &toml::Table::new()).unwrap();
             assert_eq!(iface, "atenea1");
             assert!(port > 51820);
             let _busy = std::net::UdpSocket::bind(("0.0.0.0", port)).unwrap();
-            let (_, next) = allocate(&[a]).unwrap();
+            let (_, next) = allocate(&[a], &toml::Table::new()).unwrap();
             assert_ne!(next, port);
         }
 
@@ -1073,6 +1270,31 @@ mod imp {
             assert_eq!(v[0]["name"], "Casa");
             assert_eq!(v[0]["listen_port"], 51820);
             assert_eq!(v[0]["interface"], "atenea0");
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn up_keeps_running_phase_two_configuration_and_owner_unchanged() {
+            use std::os::unix::net::UnixListener;
+            let d = temp("fase-dos-activa");
+            let c = ctx(&d);
+            put_meta(&c, &fake_meta(A, "Casa", "atenea0", 51820, 1));
+            let path = c.device_dir(A).join("agent.toml");
+            std::fs::write(&path, "interface = 'atenea0'\n").unwrap();
+            std::fs::create_dir_all(c.run_dir(A)).unwrap();
+            let listener = UnixListener::bind(c.run_dir(A).join("status.sock")).unwrap();
+            let h = std::thread::spawn(move || {
+                let (mut s, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(&s).read_line(&mut line).unwrap();
+                writeln!(s, r#"{{"config":{{"version":1}}}}"#).unwrap();
+            });
+            up(&c, A).unwrap();
+            h.join().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(path).unwrap(),
+                "interface = 'atenea0'\n"
+            );
             std::fs::remove_dir_all(d).unwrap();
         }
 

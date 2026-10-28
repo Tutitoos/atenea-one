@@ -40,3 +40,43 @@ Limitaciones honestas:
 - «Ficheros intactos» compara `network.json`, `agent.toml`, claves y bundle; el estado y la configuración firmada que el agente reescribe se excluyen a propósito. El script añade `interval_secs = 10` a `[sync]` del `agent.toml` del cliente (como `e2e-cp.sh`) entre `join` y `up`.
 - Coordinator y relay no intervienen; los caminos son directos por el puente `br0`. Un solo servidor y una sola máquina: no mide carga ni macOS.
 - Ejecutado el 2026-10-28 en Docker (Apple silicon, arm64): `DOS REDES: TODO OK`, 117 comprobaciones sin fallos. No cubre TLS real (el CP del laboratorio es `http` y el CLI sustituye el esquema con `--insecure-http`), ni macOS, ni carga.
+
+## Servicios Linux multiinstancia (ADR-013 fase 3)
+
+```sh
+# Reutiliza una imagen systemd previamente disponible; no la construye ni descarga.
+ATENEA_PACKAGING_IMAGE=atenea-packaging tests/packaging/run.sh
+# Sin descargas y sin modificar la imagen de infraestructura ya disponible:
+ATENEA_PACKAGING_IMAGE=atenea-infra:local ATENEA_PACKAGING_NO_DNS=1 tests/packaging/run.sh
+```
+
+Requiere Docker Linux con cgroup v2, las imágenes locales `atenea-lab` y la indicada
+por `ATENEA_PACKAGING_IMAGE`, y los volúmenes de compilación/caché ya preparados.
+La imagen de empaquetado debe contener las herramientas de
+`tests/packaging/Dockerfile`; no se reconstruye ni se elimina. La compilación de
+los dos binarios usa `--locked --offline`: si falta la caché, falla sin descargar.
+El modo explícito `ATENEA_PACKAGING_NO_DNS=1` permite reutilizar `atenea-infra:local`
+sin instalar nada: omite los ensayos de DNS dividido con `systemd-resolved` y
+anuncia la ausencia de `shellcheck`. El resto (systemd real, `.deb`, redes,
+tráfico, actualización y retirada) es el mismo. Todas las invocaciones Docker
+usan `--pull=never --network none`; la compilación usa `CARGO_BUILD_JOBS=2`.
+
+`tests/packaging/in-container.sh` conserva las pruebas legacy y carga
+`multi-network.sh` dentro del contenedor con systemd como PID 1. Genera claves y
+configuraciones firmadas efímeras para legacy y dos redes, cada una con un peer
+en su namespace y tráfico TCP local real. Una red usa la raíz por defecto y la
+otra `/opt/atenea-sintetico/networks`, para probar también el dropin `--root`
+bajo `ProtectSystem=strict`. Comprueba restricciones iguales a legacy, UUID,
+condición sin configuración, sockets, interfaces y puertos distintos; down,
+restart y disable de una red sin cambiar PIDs, sockets, interfaces ni cortar
+conexiones TCP establecidas de legacy y la otra red; actualización Debian que
+reinicia solo las previamente activas, `daemon-reexec` con habilitaciones intactas,
+y remove/purge sin recursos de red residuales ni cambios en claves/configuración.
+También para legacy y comprueba que las otras redes siguen comunicándose.
+
+Ejecutado localmente en modo offline con `atenea-infra:local`: todas las pruebas
+de servicio, tráfico firmado y conservación tras remove/purge terminaron en verde.
+DNS dividido con systemd-resolved y shellcheck **no comprobados** en esa imagen;
+siguen incluidos en el modo completo por defecto para CI. No prueba macOS, reinicio
+del kernel, control plane, coordinator ni relay; `daemon-reexec` no sustituye un
+reinicio completo del sistema. Todos los datos del escenario son sintéticos.

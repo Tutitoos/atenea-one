@@ -40,6 +40,10 @@ pub(crate) trait HostNetwork {
     fn existing_routes(&self) -> Result<Vec<Prefix>, String>;
     fn add_route(&self, prefix: &str) -> Result<(), String>;
     fn remove_route(&self, prefix: &str) -> Result<(), String>;
+    /// Solo lectura; un error impide aplicar la configuración.
+    fn dns_domain_conflict(&self, _: &DnsConfig) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn set_dns(&self, dns: &DnsConfig) -> Result<(), String>;
     fn clear_dns(&self) -> Result<(), String>;
     fn set_snat(&self, routes: &[AdvertisedRoute], replace: bool) -> Result<(), String>;

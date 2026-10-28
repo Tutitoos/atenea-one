@@ -2764,6 +2764,21 @@ mod tests {
     }
 
     #[test]
+    fn dns_domain_conflict_se_expone_con_detalle() {
+        let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
+        e.note_config_error(
+            "dns_domain_conflict",
+            Some("dominio DNS red.internal reclamado por otro resolutor".into()),
+        );
+        let s = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(s["config"]["last_error"], "dns_domain_conflict");
+        assert_eq!(
+            s["config"]["last_error_detail"],
+            "dominio DNS red.internal reclamado por otro resolutor"
+        );
+    }
+
+    #[test]
     fn no_configuration_means_no_traffic() {
         let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
         assert!(

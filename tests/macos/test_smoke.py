@@ -94,7 +94,7 @@ Internet:
 Destination Gateway Flags Netif Expire
 default 192.0.2.1 UGScg en0
 10.77/24 utun4 USc utun4
-10.88/24 utun4 USc utun4
+10.77.0.128/25 utun4 USc utun4
 192.0.2 link#7 UCS en0 !
 192.0.2.7 aa:bb:cc:00:00:00 UHLWI en0 100
 """
@@ -102,47 +102,70 @@ default 192.0.2.1 UGScg en0
 
 Internet6:
 Destination Gateway Flags Netif Expire
-default fe80::%utun0 UGcIg utun0
+default fe80::1%utun0 UGcIg utun0
 ::1 ::1 UHL lo0
 fd77::/64 link#12 UC utun4
 fd77::2 link#12 UHL lo0
-fd88::/64 utun4 USc utun4
-fe80::%en0/64 link#7 UCI en0
+fd77:0:0:1::/64 utun4 USc utun4
+fe80::1%en0/128 link#7 UCI en0
 ff02::%en0/32 link#7 UmCI en0
 """
 
     def test_darwin_shorthand_ipv4_and_gatewayless_ipv6(self):
-        self.assertEqual(smoke.route_interfaces(self.V4, "10.88.0.0/24"), {"utun4"})
-        self.assertEqual(smoke.route_interfaces(self.V6, "fd88::/64"), {"utun4"})
+        self.assertEqual(smoke.route_interfaces(self.V4, "10.77.0.0/24"), {"utun4"})
+        self.assertEqual(smoke.route_interfaces(self.V4, "10.77.0.128/25"), {"utun4"})
+        self.assertEqual(smoke.route_interfaces(self.V6, "fd77:0:0:1::/64"), {"utun4"})
         self.assertEqual(smoke.route_interfaces(self.V4, "192.0.2.0/24"), {"en0"})
 
     def test_defaults_broader_routes_and_host_routes_do_not_prove_exact_prefix(self):
-        self.assertEqual(smoke.route_interfaces(self.V6, "fd89::/64"), set())
-        self.assertEqual(smoke.route_interfaces(self.V4, "10.88.0.0/25"), set())
+        self.assertEqual(smoke.route_interfaces(self.V6, "fd77:0:0:2::/64"), set())
+        self.assertEqual(smoke.route_interfaces(self.V4, "10.77.0.128/26"), set())
         self.assertEqual(smoke.route_interfaces(self.V6, "fd77::2/128"), {"lo0"})
-        self.assertEqual(smoke.route_interfaces(self.V6.replace("fd88::/64 utun4 USc", "fd88::/64 utun4 Sc"), "fd88::/64"), set())
+        self.assertEqual(smoke.route_interfaces(self.V6.replace("fd77:0:0:1::/64 utun4 USc", "fd77:0:0:1::/64 utun4 Sc"), "fd77:0:0:1::/64"), set())
 
     def test_wrong_or_ambiguous_interface_fails_the_assertion(self):
-        for table in (self.V6.replace("fd88::/64 utun4 USc utun4", "fd88::/64 link#7 USc en0"),
-                      self.V6 + "fd88::/64 link#7 USc en0\n"):
+        for table in (self.V6.replace("fd77:0:0:1::/64 utun4 USc utun4", "fd77:0:0:1::/64 link#7 USc en0"),
+                      self.V6 + "fd77:0:0:1::/64 link#7 USc en0\n"):
             with mock.patch.object(smoke, "call", return_value=table):
                 with self.assertRaises(AssertionError):
-                    smoke.check_route("fd88::/64", "utun4")
+                    smoke.check_route("fd77:0:0:1::/64", "utun4")
 
     def test_route_check_reads_the_correct_numeric_family_table(self):
         with mock.patch.object(smoke, "call", return_value=self.V6) as command:
             with contextlib.redirect_stderr(io.StringIO()):
-                smoke.check_route("fd88::/64", "utun4")
+                smoke.check_route("fd77:0:0:1::/64", "utun4")
             command.assert_called_once_with("/usr/sbin/netstat", "-rn", "-f", "inet6")
         with mock.patch.object(smoke, "call", return_value=self.V4) as command:
             with contextlib.redirect_stderr(io.StringIO()):
-                smoke.check_route("10.88.0.0/24", "utun4")
+                smoke.check_route("10.77.0.128/25", "utun4")
             command.assert_called_once_with("/usr/sbin/netstat", "-rn", "-f", "inet")
 
     def test_missing_or_malformed_table_fails_closed(self):
-        for table in ("", "Destination Gateway Flags Netif\nfd88::/64\n"):
+        for table in ("", "Destination Gateway Flags Netif\nfd77:0:0:1::/64\n"):
             with self.assertRaises(AssertionError):
-                smoke.route_interfaces(table, "fd88::/64")
+                smoke.route_interfaces(table, "fd77:0:0:1::/64")
+
+
+class NetworkPackaging(unittest.TestCase):
+    def test_shell_contract_rejects_ids_and_untrusted_roots_without_privileges(self):
+        helper = smoke.REPO / "packaging/macos/atenea-network.sh"
+        network = "77777777-7777-4777-8777-777700000001"
+        with tempfile.TemporaryDirectory() as directory:
+            # Solo aislar stat macOS; se ejercita el parser shell real, sin agente ni launchctl.
+            script = '. "$1"; trusted_path() { return 0; }; network_paths "$2" "$3" || exit 78; printf "%s\\n%s\\n" "$config" "$runtime"'
+            result = subprocess.run(["/bin/sh", "-c", script, "test", str(helper), network, directory],
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), [
+                f"{directory}/{network}/device/agent.toml", "/var/run/atenea/00000001"])
+            for bad_id, bad_root in ((network[:-1] + "A", directory), ("../" + network, directory),
+                                     (network.replace("-", ""), directory), (network, directory + "/"),
+                                     (network, directory + "/../x"), (network, "relative")):
+                rejected = subprocess.run(["/bin/sh", "-c", script, "test", str(helper), bad_id, bad_root],
+                                          capture_output=True)
+                self.assertEqual(rejected.returncode, 78)
+            untrusted = '. "$1"; trusted_path() { return 1; }; network_paths "$2" "$3"'
+            result = subprocess.run(["/bin/sh", "-c", untrusted, "test", str(helper), network, directory])
+            self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

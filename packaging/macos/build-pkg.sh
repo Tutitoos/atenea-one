@@ -17,6 +17,7 @@ for bin in atenea atenea-agent; do
 done
 install -m 0755 "$repo/packaging/macos/atenea-uninstall.sh" "$root/Library/Atenea/bin/atenea-uninstall.sh"
 install -m 0755 "$repo/packaging/macos/atenea-launchd.sh" "$root/Library/Atenea/bin/atenea-launchd.sh"
+install -m 0644 "$repo/packaging/macos/atenea-network.sh" "$root/Library/Atenea/bin/atenea-network.sh"
 install -m 0644 "$repo/packaging/macos/one.atenea.agent.plist" "$root/Library/LaunchDaemons/one.atenea.agent.plist"
 install -m 0755 "$repo/packaging/macos/postinstall" "$work/scripts/postinstall"
 install -m 0644 /dev/stdin "$root/private/etc/paths.d/atenea" <<'EOF'

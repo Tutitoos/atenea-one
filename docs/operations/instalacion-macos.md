@@ -4,6 +4,8 @@ macOS es **solo cliente**: consume rutas aprobadas y DNS dividido; rechaza `adve
 
 Para estar en varias redes a la vez y unirse con un código (`atenea network join`), véase [Varias redes con la CLI](redes-multiples-cli.md).
 
+Desde ADR-013 fase 3, `sudo atenea network up <UUID>` genera un LaunchDaemon `one.atenea.network.<id8>` (root:wheel 0644); `down` lo deshabilita y para, y `leave` además lo retira y borra la identidad local. La etiqueta `one.atenea.agent` y su configuración heredada no se convierten ni se reutilizan. Cada instancia limpia únicamente sus resolutores marcados; los antiguos pertenecen solo a la heredada. La desinstalación conserva claves y directorios de red. La aceptación privilegiada de multiinstancia queda pendiente de CI: **no ejecutar esos scripts en el Mac del piloto**. Más detalles en [servicios por red](redes-multiples-cli.md#servicios-por-red-y-compatibilidad).
+
 ## Construcción sin instalar
 
 ```sh

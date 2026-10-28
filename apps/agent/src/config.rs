@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     interface: String,
+    resolver_owner: Option<String>,
     listen: SocketAddr,
     #[serde(default = "default_cookie_threshold")]
     handshake_cookie_threshold_per_second: NonZeroU32,
@@ -39,6 +40,8 @@ struct RawConfig {
 #[derive(Debug)]
 pub struct Config {
     pub interface: String,
+    /// Ausente conserva los resolutores legacy; id8 explícito para instancias por red.
+    pub resolver_owner: Option<String>,
     pub listen: SocketAddr,
     pub handshake_cookie_threshold_per_second: NonZeroU32,
     pub ipc_socket: PathBuf,
@@ -177,6 +180,14 @@ impl Config {
 
     pub fn parse(text: &str) -> Result<Config, String> {
         let raw: RawConfig = toml::from_str(text).map_err(|e| e.to_string())?;
+        if raw.resolver_owner.as_ref().is_some_and(|owner| {
+            owner.len() != 8
+                || !owner
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err("resolver_owner: se esperan 8 dígitos hex en minúsculas (id8)".into());
+        }
         if raw.interface.is_empty()
             || raw.interface.len() > 15
             || !raw
@@ -227,6 +238,7 @@ impl Config {
             trust_anchor: hex::decode::<32>(&raw.trust_anchor)
                 .ok_or("trust_anchor: se esperan 64 dígitos hex")?,
             interface: raw.interface,
+            resolver_owner: raw.resolver_owner,
             listen: raw.listen,
             handshake_cookie_threshold_per_second: raw.handshake_cookie_threshold_per_second,
             ipc_socket: raw.ipc_socket,
@@ -323,6 +335,27 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         assert_eq!(c.handshake_cookie_threshold_per_second.get(), 100);
     }
 
+    #[test]
+    fn resolver_owner_es_explicito_y_no_se_infiere_de_network_id() {
+        assert!(Config::parse(GOOD).unwrap().resolver_owner.is_none());
+        assert_eq!(
+            Config::parse(&format!("{GOOD}\nresolver_owner = \"0000000a\""))
+                .unwrap()
+                .resolver_owner
+                .as_deref(),
+            Some("0000000a")
+        );
+        for owner in [
+            "",
+            "0000000",
+            "000000000",
+            "0000000A",
+            "../red/a",
+            "gggggggg",
+        ] {
+            assert!(Config::parse(&format!("{GOOD}\nresolver_owner = \"{owner}\"")).is_err());
+        }
+    }
     #[test]
     fn cookie_threshold_is_a_positive_u32() {
         for value in [1, 100, u32::MAX] {

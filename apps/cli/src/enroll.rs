@@ -200,8 +200,12 @@ pub fn pinned_config(
         status_gid: None,
         insecure_http,
     };
-    let text = render(&join, &args, &bundle(dir)?.device_id)?;
-    crate::issue::write_secret(out, &text)
+    let mut table: toml::Table = toml::from_str(&render(&join, &args, &bundle(dir)?.device_id)?)
+        .map_err(|e| e.to_string())?;
+    let net = network_id.replace('-', "");
+    hex::decode::<16>(&net).ok_or("network_id inválido")?;
+    table.insert("resolver_owner".into(), net[24..].into());
+    crate::issue::write_secret(out, &toml::to_string(&table).map_err(|e| e.to_string())?)
 }
 
 #[derive(Deserialize)]

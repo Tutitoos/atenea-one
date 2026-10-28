@@ -85,7 +85,11 @@ pub fn main() -> ExitCode {
         }
         Cmd::Cleanup { config } => {
             return match Config::load(&config).and_then(|cfg| {
-                let mut netconf = crate::netconf::NetConf::new(cfg.interface, Default::default());
+                let mut netconf = crate::netconf::NetConf::new(
+                    cfg.interface,
+                    Default::default(),
+                    cfg.resolver_owner,
+                );
                 netconf.cleanup()?;
                 #[cfg(target_os = "windows")]
                 netconf.remove_orphan_adapter()?;
@@ -226,6 +230,21 @@ impl Runtime {
             })
             .collect();
         let wanted = (usize::from(v.config.mtu), addrs);
+        match self.netconf.dns_domain_conflict(&v.config) {
+            Ok(None) => {}
+            Ok(Some(detail)) => {
+                tracing::warn!(%detail, "configuración rechazada: dns_domain_conflict");
+                self.engine
+                    .note_config_error("dns_domain_conflict", Some(detail));
+                return;
+            }
+            Err(e) => {
+                tracing::error!("no se pudo comprobar conflictos DNS: {e}");
+                self.reject("network_failed");
+                self.seen = None;
+                return;
+            }
+        }
         if self.iface.as_ref() != Some(&wanted) {
             // Antes de tocar la interfaz o las rutas; una falsa seguridad aquí sería peor que no aplicar.
             match self.netconf.overlap_with_host(&v.config) {
@@ -329,7 +348,11 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         .as_ref()
         .map(|p| crate::ipc::bind(p, cfg.status_gid, true))
         .transpose()?;
-    let mut netconf = crate::netconf::NetConf::new(tun.name().into(), Default::default());
+    let mut netconf = crate::netconf::NetConf::new(
+        tun.name().into(),
+        Default::default(),
+        cfg.resolver_owner.clone(),
+    );
     netconf.cleanup()?;
     let resolved_endpoints = if cfg.sync.is_none() && cfg.coordinator.is_none() {
         Some(Vec::new())

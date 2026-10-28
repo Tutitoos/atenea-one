@@ -4,6 +4,8 @@
 
 Para estar en varias redes a la vez y unirse con un código (`atenea network join`), véase [Varias redes con la CLI](redes-multiples-cli.md).
 
+Desde ADR-013 fase 3, el `.deb` instala la plantilla `atenea-network@<UUID>.service`. `sudo atenea network up <UUID> --backend system` la habilita y arranca para que vuelva tras reiniciar; `down` la deshabilita y para. La unidad heredada `atenea-agent.service` y `/etc/atenea/agent.toml` continúan igual y pueden coexistir con las redes nuevas. Durante una actualización `dpkg -i` vuelven únicamente las instancias previamente activas. Desinstalar/purgar para todas las instancias y limpia sus recursos, pero conserva claves, configuraciones y directorios de red; solo `network leave` borra una identidad. Véanse los [servicios por red](redes-multiples-cli.md#servicios-por-red-y-compatibilidad).
+
 ## Construcción e instalación
 
 La compilación se hace fuera del empaquetador. `packaging/deb/build.sh` recibe un directorio con los ejecutables Linux `atenea` y `atenea-agent`, la versión Debian, la arquitectura y el fichero de salida:

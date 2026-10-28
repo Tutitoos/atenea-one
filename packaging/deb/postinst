@@ -11,11 +11,24 @@ case "${1:-}" in
         install -d -o root -g atenea -m 0700 /var/lib/atenea
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload
+            restarted=no
+            if [ -f /run/atenea-network.restart-after-upgrade ]; then
+                while read -r unit; do
+                    [ -n "$unit" ] || continue
+                    systemctl start "$unit"
+                done < /run/atenea-network.restart-after-upgrade
+                rm -f /run/atenea-network.restart-after-upgrade
+                restarted=yes
+            fi
+            rm -f /run/atenea-network.units-before-remove
             # Solo tras una actualización con el agente en marcha: una instalación nueva no arranca nada.
             if [ -e /run/atenea-agent.restart-after-upgrade ]; then
-                rm -f /run/atenea-agent.restart-after-upgrade
                 systemctl start atenea-agent.service
-                echo 'Atenea actualizado: agente reiniciado.'
+                rm -f /run/atenea-agent.restart-after-upgrade
+                restarted=yes
+            fi
+            if [ "$restarted" = yes ]; then
+                echo 'Atenea actualizado: instancias previamente activas reiniciadas.'
                 exit 0
             fi
         fi

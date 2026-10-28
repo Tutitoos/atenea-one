@@ -21,9 +21,10 @@ done
 root=$(cd "$(dirname "$0")/../.." && pwd)
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-install -d "$stage/DEBIAN" "$stage/usr/bin" "$stage/usr/lib/systemd/system" "$stage/usr/share/doc/atenea"
+install -d "$stage/DEBIAN" "$stage/usr/bin" "$stage/usr/lib/atenea" "$stage/usr/lib/systemd/system" "$stage/usr/share/doc/atenea"
 install -m 0755 "$bin/atenea" "$bin/atenea-agent" "$stage/usr/bin/"
-install -m 0644 "$root/packaging/systemd/atenea-agent.service" "$stage/usr/lib/systemd/system/"
+install -m 0644 "$root/packaging/systemd/atenea-agent.service" "$root/packaging/systemd/atenea-network@.service" "$stage/usr/lib/systemd/system/"
+install -m 0755 "$root/packaging/systemd/network-agent" "$stage/usr/lib/atenea/"
 install -m 0644 "$root/packaging/deb/agent.toml.example" "$root/packaging/deb/99-atenea-router.conf.example" "$stage/usr/share/doc/atenea/"
 chmod 0755 "$stage"
 install -m 0644 "$root/docs/operations/instalacion-linux.md" "$root/docs/operations/router-de-subred.md" "$stage/usr/share/doc/atenea/"

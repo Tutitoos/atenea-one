@@ -74,8 +74,13 @@ fn overlaps(a: &Prefix, b: &Prefix) -> bool {
     prefix_contains(a, &b.addr) || prefix_contains(b, &a.addr)
 }
 impl NetConf<Platform> {
-    pub fn new(interface: String, bins: Binaries) -> Self {
-        Self::with_host(Platform::new(interface, bins))
+    pub fn new(interface: String, bins: Binaries, resolver_owner: Option<String>) -> Self {
+        let host = Platform::new(interface, bins);
+        #[cfg(target_os = "macos")]
+        let host = host.with_resolver_owner(resolver_owner);
+        #[cfg(not(target_os = "macos"))]
+        let _ = resolver_owner;
+        Self::with_host(host)
     }
     #[cfg(target_os = "windows")]
     pub fn remove_orphan_adapter(&self) -> Result<(), String> {
@@ -117,6 +122,9 @@ impl<H: HostNetwork> NetConf<H> {
     pub fn configure_link(&self, mtu: usize, addrs: &[(IpAddr, u8)]) -> Result<(), String> {
         self.host.configure_link(mtu, addrs)
     }
+    pub fn dns_domain_conflict(&self, cfg: &DeviceConfig) -> Result<Option<String>, String> {
+        self.host.dns_domain_conflict(&cfg.dns)
+    }
     /// `Ok(Some(mensaje))` si otra interfaz reclama parte de la red del túnel: una ruta ajena igual o
     /// más específica que un prefijo de `network_prefixes`. Una ruta más ancha (VPN, Docker, LAN) no
     /// es conflicto: gana la más específica y el tráfico ya va por el túnel. Se ignoran siempre las
@@ -155,6 +163,9 @@ impl<H: HostNetwork> NetConf<H> {
         Ok(())
     }
     pub fn apply(&mut self, cfg: &DeviceConfig, protected: &[IpAddr]) -> Result<(), String> {
+        if let Some(detail) = self.dns_domain_conflict(cfg)? {
+            return Err(detail);
+        }
         let wanted: Vec<&Prefix> = cfg.peers.iter().flat_map(|p| &p.routes).collect();
         let wanted_keys: BTreeSet<String> = wanted.iter().map(|p| cidr(p)).collect();
         let removed: Vec<String> = self.installed.difference(&wanted_keys).cloned().collect();

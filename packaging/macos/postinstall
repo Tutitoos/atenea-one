@@ -9,3 +9,21 @@ if [ -f '/Library/Application Support/Atenea/agent.toml' ]; then
     launchctl bootout system/one.atenea.agent 2>/dev/null || :
     launchctl bootstrap system /Library/LaunchDaemons/one.atenea.agent.plist
 fi
+# Reiniciar solo servicios de red registrados; no habilitar redes detenidas.
+for path in /Library /Library/Atenea /Library/Atenea/bin /Library/Atenea/bin/atenea-network.sh; do
+    [ ! -L "$path" ] || exit 78
+    set -- $(/usr/bin/stat -f '%u %Sp' "$path")
+    case "$1 $2" in '0 '?????-??-*) ;; *) exit 78 ;; esac
+done
+. /Library/Atenea/bin/atenea-network.sh
+for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
+    [ -e "$plist" ] || continue
+    if ! network_plist "$plist"; then
+        echo "No se toca un plist de red no reconocido: $plist" >&2
+        continue
+    fi
+    if launchctl print "system/$label" >/dev/null 2>&1; then
+        launchctl bootout "system/$label"
+        launchctl bootstrap system "$plist"
+    fi
+done

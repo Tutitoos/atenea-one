@@ -12,6 +12,7 @@ struct MemoryHost {
     existing: RefCell<Vec<Prefix>>,
     dns: RefCell<Option<DnsConfig>>,
     dns_fails: Cell<bool>,
+    dns_preflight: RefCell<Option<Result<String, String>>>,
     subnet_routing: bool,
     forwarding: Cell<bool>,
     snat_calls: Cell<usize>,
@@ -33,6 +34,9 @@ impl HostNetwork for MemoryHost {
     fn remove_route(&self, prefix: &str) -> Result<(), String> {
         self.routes.borrow_mut().remove(prefix);
         Ok(())
+    }
+    fn dns_domain_conflict(&self, _: &DnsConfig) -> Result<Option<String>, String> {
+        self.dns_preflight.borrow().clone().transpose()
     }
     fn set_dns(&self, dns: &DnsConfig) -> Result<(), String> {
         if self.dns_fails.get() {
@@ -85,6 +89,20 @@ fn config() -> DeviceConfig {
         rules: vec![],
         advertised: vec![],
         dns: DnsConfig::default(),
+    }
+}
+#[test]
+fn conflicto_dns_y_error_de_lectura_impiden_aplicar_rutas_y_dns() {
+    let mut net = NetConf::with_host(MemoryHost::default());
+    let cfg = config();
+    for result in [
+        Some(Ok("red.internal pertenece a otra instancia".into())),
+        Some(Err("no se puede leer el resolutor".into())),
+    ] {
+        net.host.dns_preflight.replace(result);
+        assert!(net.apply(&cfg, &[]).is_err());
+        assert!(net.host.routes.borrow().is_empty());
+        assert!(net.host.dns.borrow().is_none());
     }
 }
 #[test]

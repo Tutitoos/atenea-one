@@ -2,9 +2,20 @@
 # Copyright 2026 Tutitoos
 # SPDX-License-Identifier: Apache-2.0
 set -eu
+umask 077
 case "${1:-}" in
     remove|deconfigure|upgrade)
         if [ -d /run/systemd/system ]; then
+            # Conservar la lista también para postrm: la plantilla ya no existirá tras remove.
+            systemctl list-units --all --plain --no-legend 'atenea-network@*.service' > /run/atenea-network.units-before-remove
+            rm -f /run/atenea-network.restart-after-upgrade
+            while read -r unit _; do
+                [ -n "$unit" ] || continue
+                if [ "${1:-}" = upgrade ] && systemctl is-active --quiet "$unit"; then
+                    printf '%s\n' "$unit" >> /run/atenea-network.restart-after-upgrade
+                fi
+                systemctl stop "$unit"
+            done < /run/atenea-network.units-before-remove
             # En una actualización se recuerda si estaba en marcha para volver a arrancarlo (postinst).
             if [ "${1:-}" = upgrade ] && systemctl is-active --quiet atenea-agent.service; then
                 : > /run/atenea-agent.restart-after-upgrade

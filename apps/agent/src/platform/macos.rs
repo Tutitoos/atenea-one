@@ -31,6 +31,7 @@ impl Default for Binaries {
 pub struct Network {
     interface: String,
     bins: Binaries,
+    resolver_marker: String,
 }
 #[cfg(not(all(test, unix)))]
 fn output(command: &mut Command) -> std::io::Result<std::process::Output> {
@@ -151,21 +152,31 @@ fn domain_ok(domain: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }
-fn owned(path: &Path) -> Result<bool, String> {
+fn owned(path: &Path, marker: &str) -> Result<bool, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.file_type().is_symlink() {
         return Ok(false);
     }
     // Solo importa el prefijo: un resolutor ajeno no UTF-8 no debe impedir la limpieza.
-    let mut head = Vec::with_capacity(OWNER.len());
+    let mut head = Vec::with_capacity(marker.len());
     std::fs::File::open(path)
-        .and_then(|f| f.take(OWNER.len() as u64).read_to_end(&mut head))
+        .and_then(|f| f.take(marker.len() as u64).read_to_end(&mut head))
         .map_err(|e| e.to_string())?;
-    Ok(head == OWNER.as_bytes())
+    Ok(head == marker.as_bytes())
 }
 impl Network {
     pub fn new(interface: String, bins: Binaries) -> Self {
-        Self { interface, bins }
+        Self {
+            interface,
+            bins,
+            resolver_marker: OWNER.into(),
+        }
+    }
+    pub fn with_resolver_owner(mut self, owner: Option<String>) -> Self {
+        if let Some(owner) = owner {
+            self.resolver_marker = format!("# Atenea One: resolver administrado ({owner})\n");
+        }
+        self
     }
     #[cfg_attr(test, allow(dead_code))]
     pub fn ensure_available() -> Result<(), String> {
@@ -267,6 +278,31 @@ impl HostNetwork for Network {
     fn remove_route(&self, p: &str) -> Result<(), String> {
         self.route("delete", p)
     }
+    fn dns_domain_conflict(&self, dns: &DnsConfig) -> Result<Option<String>, String> {
+        if dns.domains.iter().any(|d| !domain_ok(d)) {
+            return Err("dominio DNS de enrutamiento inválido".into());
+        }
+        let entries = match std::fs::read_dir(&self.bins.resolver_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if let Some(domain) = dns.domains.iter().find(|domain| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(domain))
+            }) && !owned(&entry.path(), &self.resolver_marker)?
+            {
+                return Ok(Some(format!(
+                    "dominio DNS {domain} reclamado por otro resolutor"
+                )));
+            }
+        }
+        Ok(None)
+    }
     fn clear_dns(&self) -> Result<(), String> {
         let entries = match std::fs::read_dir(&self.bins.resolver_dir) {
             Ok(e) => e,
@@ -275,25 +311,24 @@ impl HostNetwork for Network {
         };
         for entry in entries {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if owned(&path)? {
+            if owned(&path, &self.resolver_marker)? {
                 std::fs::remove_file(path).map_err(|e| e.to_string())?;
             }
         }
         Ok(())
     }
     fn set_dns(&self, dns: &DnsConfig) -> Result<(), String> {
-        if dns.domains.iter().any(|d| !domain_ok(d)) {
-            return Err("dominio DNS de enrutamiento inválido".into());
+        if let Some(detail) = self.dns_domain_conflict(dns)? {
+            return Err(detail);
         }
         std::fs::create_dir_all(&self.bins.resolver_dir).map_err(|e| e.to_string())?;
-        for domain in &dns.domains {
-            let path = self.bins.resolver_dir.join(domain);
-            if path.try_exists().map_err(|e| e.to_string())? && !owned(&path)? {
-                return Err("resolutor ajeno: no se sobrescribe".into());
-            }
-        }
         self.clear_dns()?;
-        for domain in &dns.domains {
+        let domains: std::collections::BTreeSet<_> = dns
+            .domains
+            .iter()
+            .map(|domain| domain.to_ascii_lowercase())
+            .collect();
+        for domain in domains {
             let result = (|| {
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
@@ -301,7 +336,7 @@ impl HostNetwork for Network {
                     .mode(0o644)
                     .open(self.bins.resolver_dir.join(domain))
                     .map_err(|e| e.to_string())?;
-                file.write_all(OWNER.as_bytes())
+                file.write_all(self.resolver_marker.as_bytes())
                     .map_err(|e| e.to_string())?;
                 for server in &dns.servers {
                     writeln!(file, "nameserver {server}").map_err(|e| e.to_string())?;
@@ -398,6 +433,79 @@ mod tests {
             assert!(host.set_dns(&dns).is_err());
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn legacy_y_dos_redes_aislan_resolutores_y_conflictos() {
+        let dir = std::env::temp_dir().join(format!("atenea-dns-multired-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let host = |owner: Option<&str>| {
+            Network::new(
+                "utun9".into(),
+                Binaries {
+                    resolver_dir: dir.clone(),
+                    ..Default::default()
+                },
+            )
+            .with_resolver_owner(owner.map(str::to_owned))
+        };
+        let legacy = host(None);
+        let a = host(Some("0000000a"));
+        let b = host(Some("0000000b"));
+        let dns = |domain: &str| DnsConfig {
+            servers: vec!["10.77.0.1".parse().unwrap()],
+            domains: vec![domain.into()],
+        };
+        legacy.set_dns(&dns("legacy.internal")).unwrap();
+        a.set_dns(&dns("red-a.internal")).unwrap();
+        b.set_dns(&dns("red-b.internal")).unwrap();
+        std::fs::write(dir.join("ajeno.internal"), "nameserver 192.0.2.53\n").unwrap();
+        let before = std::fs::read(dir.join("red-b.internal")).unwrap();
+        for other in [&legacy, &a] {
+            assert!(
+                other
+                    .dns_domain_conflict(&dns("RED-B.INTERNAL"))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(other.set_dns(&dns("red-b.internal")).is_err());
+            assert_eq!(std::fs::read(dir.join("red-b.internal")).unwrap(), before);
+        }
+        assert_eq!(a.dns_domain_conflict(&dns("red-a.internal")).unwrap(), None);
+        assert!(
+            a.dns_domain_conflict(&dns("ajeno.internal"))
+                .unwrap()
+                .is_some()
+        );
+        a.cleanup().unwrap();
+        assert!(!dir.join("red-a.internal").exists());
+        assert!(dir.join("legacy.internal").exists());
+        assert!(dir.join("red-b.internal").exists());
+        assert!(dir.join("ajeno.internal").exists());
+        legacy.cleanup().unwrap();
+        assert!(dir.join("red-b.internal").exists());
+        b.cleanup().unwrap();
+        assert!(dir.join("ajeno.internal").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn preflight_falla_cerrado_si_no_puede_leer_resolutores() {
+        let dir = std::env::temp_dir().join(format!("atenea-dns-error-{}", std::process::id()));
+        std::fs::write(&dir, "no es directorio").unwrap();
+        let host = Network::new(
+            "utun9".into(),
+            Binaries {
+                resolver_dir: dir.clone(),
+                ..Default::default()
+            },
+        );
+        let dns = DnsConfig {
+            servers: vec!["10.77.0.1".parse().unwrap()],
+            domains: vec!["red.internal".into()],
+        };
+        assert!(host.dns_domain_conflict(&dns).is_err());
+        assert!(host.set_dns(&dns).is_err());
+        std::fs::remove_file(dir).unwrap();
     }
 }
 #[cfg(test)]

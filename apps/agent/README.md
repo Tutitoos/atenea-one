@@ -102,6 +102,8 @@ El servicio arranca aunque no pueda resolver los endpoints del control plane, co
 
 El DNS configura solo servidores por enlace y dominios `~lab.internal`, nunca `~.`. Se desactiva el uso del enlace como ruta DNS predeterminada. Un sistema sin resolved informa `unsupported`; una configuración sin servidores o dominios informa `none`. Los cambios de resolved desaparecen con el enlace.
 
+En macOS los resolutores de `/etc/resolver` se aíslan con `resolver_owner = "0000000a"` en el TOML local: ocho hexadecimales en minúsculas, los últimos del UUID canónico. Si falta el campo se conserva la marca legacy; no se deduce de `network_id`. Cada instancia limpia solo su marca, también en `cleanup --config …`; ni adopta ni sobrescribe resolutores ajenos. La marca por red es `# Atenea One: resolver administrado (0000000a)` y la legacy sigue siendo `# Atenea One: resolver administrado`. Antes de aplicar cada configuración verificada, incluso si solo cambia DNS, un dominio reclamado por otro resolutor se rechaza con `config.last_error = "dns_domain_conflict"` y `last_error_detail`, sin cambiar direcciones ni rutas. Un fallo al inspeccionar resolutores también impide aplicar. Linux mantiene el DNS por enlace de resolved.
+
 SNAT afecta exclusivamente al tráfico que entra por la TUN y sale hacia cada subred marcada `snat = true` en la configuración firmada. Las reglas se reemplazan en una transacción nftables en la tabla exclusiva `inet atenea_INTERFAZ`. Sin SNAT, la LAN necesita una ruta de retorno a la red del túnel. El agente elimina su tabla al arrancar y cerrar; tras una caída:
 
 ```sh

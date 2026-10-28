@@ -8,6 +8,7 @@ mod enroll;
 mod ipc;
 mod issue;
 mod network;
+mod network_service;
 // Mismo código que el agente: el nombre del sistema se lee igual al enrolar y al informar.
 #[path = "../../agent/src/names.rs"]
 mod names;
@@ -124,6 +125,9 @@ enum Cmd {
         /// Directorio raíz de las redes (por defecto `ATENEA_NETWORKS_DIR` o el del sistema).
         #[arg(long, global = true)]
         root: Option<PathBuf>,
+        /// Selección del gestor: auto (systemd/launchd si existe), process o system.
+        #[arg(long, global = true, value_enum, default_value = "auto")]
+        backend: network_service::Backend,
         #[command(subcommand)]
         cmd: network::NetworkCmd,
     },
@@ -191,7 +195,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
             spec,
             out,
         } => issue::issue(&issuer_key, &issuer_cert, &spec, &out),
-        Cmd::Network { root, cmd } => network::run(root, cmd),
+        Cmd::Network { root, backend, cmd } => network::run(root, backend, cmd),
         Cmd::Up { config, agent, log } => up(&config, agent, &log),
         Cmd::Status { socket } => {
             println!("{}", ask(&socket, "status")?);

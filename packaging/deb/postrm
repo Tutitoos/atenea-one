@@ -5,6 +5,21 @@ set -eu
 case "${1:-}" in
     remove|purge)
         if [ -d /run/systemd/system ]; then
+            if [ -f /run/atenea-network.units-before-remove ]; then
+                while read -r unit _; do
+                    [ -n "$unit" ] || continue
+                    systemctl disable "$unit" 2>/dev/null || true
+                    systemctl reset-failed "$unit" 2>/dev/null || true
+                done < /run/atenea-network.units-before-remove
+            fi
+            # Incluye instancias habilitadas pero no cargadas, sin tocar sus dropins ni claves.
+            systemctl list-unit-files --no-legend 'atenea-network@*.service' |
+                while read -r unit _; do
+                    case "$unit" in
+                        atenea-network@?*.service) systemctl disable "$unit" 2>/dev/null || true ;;
+                    esac
+                done
+            rm -f /run/atenea-network.units-before-remove /run/atenea-network.restart-after-upgrade /run/atenea-agent.restart-after-upgrade
             systemctl disable atenea-agent.service 2>/dev/null || true
             systemctl daemon-reload
             systemctl reset-failed atenea-agent.service 2>/dev/null || true

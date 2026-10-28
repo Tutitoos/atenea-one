@@ -1,3 +1,5 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
 [Unit]
 Description=Agente de red Atenea One
 Wants=network-online.target
@@ -15,6 +17,8 @@ Restart=on-failure
 RestartSec=3s
 RuntimeDirectory=atenea
 RuntimeDirectoryMode=0750
+# No retirar el padre compartido: otras redes pueden seguir activas.
+RuntimeDirectoryPreserve=yes
 StateDirectory=atenea
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/atenea /run/atenea

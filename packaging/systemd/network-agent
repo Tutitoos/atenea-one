@@ -1,0 +1,31 @@
+#!/bin/bash
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
+# systemd no puede derivar id8 de %i; el lanzador solo prepara ese directorio y hace exec.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+    echo 'Uso: network-agent run|cleanup UUID [CONFIG_ABSOLUTA]' >&2
+    exit 2
+fi
+operation=$1
+uuid=$2
+case "$operation" in run|cleanup) ;; *) echo 'Operación no admitida' >&2; exit 2 ;; esac
+[[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
+    echo 'Se requiere un UUID canónico en minúsculas' >&2
+    exit 2
+}
+config=${3:-/var/lib/atenea/networks/$uuid/device/agent.toml}
+[[ "$config" = /* ]] || { echo 'La configuración debe tener una ruta absoluta' >&2; exit 2; }
+# El padre legacy es compartido: no seguir enlaces ni aceptar escritura de otros usuarios.
+parent=/run/atenea
+[ ! -L "$parent" ] && [ -d "$parent" ] && [ "$(stat -c %u "$parent")" = 0 ] || {
+    echo 'Directorio de runtime padre inseguro' >&2
+    exit 1
+}
+mode=$(stat -c %a "$parent")
+(( (8#$mode & 0022) == 0 )) || { echo 'Runtime padre escribible por terceros' >&2; exit 1; }
+runtime="$parent/${uuid: -8}"
+[ ! -L "$runtime" ] || { echo 'Runtime de red no puede ser un enlace' >&2; exit 1; }
+install -d -o root -g atenea -m 0750 "$runtime"
+exec /usr/bin/atenea-agent "$operation" --config "$config"
