@@ -495,7 +495,7 @@ network_prefixes = ["10.77.0.0/24", "fd77::/64"]
 bundle = "{work}/peer/bundle.bin"
 addrs = ["10.77.0.1", "fd77::1"]
 endpoints = ["127.0.0.1:51821"]
-routes = {('["10.77.0.128/25", "fd77:0:0:1::/64"]' if extended else '[]')}
+routes = {('["10.88.0.0/24", "fd88::/64"]' if extended else '[]')}
 [[rule]]
 src = "any"
 dst = "any"
@@ -558,8 +558,8 @@ dst = "any"
         until(lambda: ask(work / "control.sock", "status").get("dns") == "applied", description="rutas y DNS v2", process=agent)
         status = ask(work / "status.sock", "status")
         phase("estado v2: " + json.dumps(status, sort_keys=True))
-        assert {r["prefix"] for r in status["routes"] if r["state"] == "installed"} == {"10.77.0.128/25", "fd77:0:0:1::/64"}, status
-        for prefix in ("10.77.0.128/25", "fd77:0:0:1::/64"):
+        assert {r["prefix"] for r in status["routes"] if r["state"] == "installed"} == {"10.88.0.0/24", "fd88::/64"}, status
+        for prefix in ("10.88.0.0/24", "fd88::/64"):
             check_route(prefix, interface)
         assert "mtu 1280" in call("/sbin/ifconfig", interface)
         assert RESOLVER.read_text() == OWNER + "nameserver 10.77.0.1\n"
