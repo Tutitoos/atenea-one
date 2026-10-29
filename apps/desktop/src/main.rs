@@ -15,6 +15,8 @@ mod ping;
 mod tray_actions;
 
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{IsMenuItem, Menu, MenuItem};
@@ -222,15 +224,30 @@ impl Assessment {
     }
 }
 
+/// Segundos que se tolera un lease perdido antes de darlo por caída. Tras suspender el equipo el agente
+/// lo caduca y tarda en renovarlo (sincroniza cada ~60 s y la red tarda en volver).
+const LEASE_GRACE_SECS: i64 = 90;
+
 /// Estado global y su resumen: lo comparten la bandeja y la ventana (el frontend no lo recalcula).
 fn assess(s: &Value) -> Assessment {
+    static LOST_SINCE: LazyLock<Mutex<HashMap<String, i64>>> = LazyLock::new(Default::default);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |time| time.as_secs() as i64);
-    assess_at(s, now)
+    // Una entrada por red (cada una tiene su propia clave pública) con el instante en que se vio el lease perdido.
+    let key = s["public_key"].as_str().unwrap_or_default().to_string();
+    let mut lost = LOST_SINCE.lock().unwrap_or_else(|e| e.into_inner());
+    let since = if s["config"]["lease_active"].as_bool() == Some(true) {
+        lost.remove(&key);
+        None
+    } else {
+        Some(*lost.entry(key).or_insert(now))
+    };
+    drop(lost);
+    assess_at(s, now, since)
 }
 
-fn assess_at(s: &Value, now: i64) -> Assessment {
+fn assess_at(s: &Value, now: i64, lease_lost_since: Option<i64>) -> Assessment {
     let mut health = Health::Ok;
     let mut why: Vec<String> = Vec::new();
     let mut worsen = |h: Health, text: Option<String>| {
@@ -238,11 +255,18 @@ fn assess_at(s: &Value, now: i64) -> Assessment {
         why.extend(text);
     };
     let cfg = &s["config"];
-    if cfg["lease_active"].as_bool() != Some(true) {
+    let lease_lost = cfg["lease_active"].as_bool() != Some(true);
+    let reconnecting = lease_lost && lease_lost_since.is_some_and(|t| now - t < LEASE_GRACE_SECS);
+    if reconnecting {
+        worsen(Health::Degraded, None);
+    } else if lease_lost {
         worsen(Health::Down, Some("sin lease activo".into()));
     }
     if let Some(e) = cfg["last_error"].as_str() {
-        worsen(Health::Down, Some(format!("configuración: {e}")));
+        // «expired» es la propia caducidad del lease: se explica con «Reconectando…», no con un error.
+        if !(reconnecting && e == "expired") {
+            worsen(Health::Down, Some(format!("configuración: {e}")));
+        }
     }
     if let Some(e) = s["sync"]["last_error"].as_str() {
         worsen(Health::Degraded, Some(format!("control plane: {e}")));
@@ -277,6 +301,7 @@ fn assess_at(s: &Value, now: i64) -> Assessment {
     let text = match health {
         Health::Ok if peers.is_empty() => "Conectado (sin otros dispositivos)".to_string(),
         Health::Ok => "Conectado".to_string(),
+        Health::Degraded if reconnecting => "Reconectando…".to_string(),
         Health::Degraded => format!(
             "Degradado: {}",
             why.first()
@@ -550,8 +575,9 @@ mod tests {
         assert_eq!(assess(&status(true, "none")).health, Health::Ok);
         assert_eq!(assess(&status(true, "probing")).health, Health::Ok);
         assert_eq!(assess(&status(true, "relay-tls")).health, Health::Degraded);
-        assert_eq!(assess(&status(false, "none")).health, Health::Down);
-        let a = assess(&status(false, "direct"));
+        // Un lease perdido hace tiempo es una caída real.
+        let long_ago = Some(1_800_000_000 - 1000);
+        let a = assess_at(&status(false, "direct"), 1_800_000_000, long_ago);
         assert_eq!(
             (a.health, a.text.as_str(), a.level()),
             (Health::Down, "Sin conexión: sin lease activo", "down")
@@ -582,7 +608,7 @@ mod tests {
         ] {
             let mut s = status(true, "direct");
             s["server"] = json!({"issuer_cert_not_after_unix": now + seconds});
-            let assessment = assess_at(&s, now);
+            let assessment = assess_at(&s, now, None);
             assert_eq!(assessment.health, expected);
             if seconds <= 0 {
                 assert_eq!(assessment.reasons, ["El certificado de la red ha caducado"]);
@@ -605,9 +631,45 @@ mod tests {
         ] {
             let mut s = status(true, "direct");
             s["server"] = server;
-            assert_eq!(assess_at(&s, now).health, Health::Ok);
+            assert_eq!(assess_at(&s, now, None).health, Health::Ok);
         }
-        assert_eq!(assess_at(&status(true, "direct"), now).health, Health::Ok);
+        assert_eq!(
+            assess_at(&status(true, "direct"), now, None).health,
+            Health::Ok
+        );
+    }
+
+    #[test]
+    fn lost_lease_is_reconnecting_only_during_grace() {
+        let now = 1_800_000_000;
+        // Tras despertar, el agente caduca el lease y la configuración antes de renovarlos.
+        let mut s = status(false, "none");
+        s["config"]["last_error"] = json!("expired");
+        s["sync"]["last_error"] = json!("error de red");
+        for since in [now, now - (LEASE_GRACE_SECS - 1)] {
+            let a = assess_at(&s, now, Some(since));
+            assert_eq!(
+                (a.health, a.text.as_str()),
+                (Health::Degraded, "Reconectando…")
+            );
+            assert!(
+                !a.reasons
+                    .iter()
+                    .any(|r| r.contains("expired") || r == "sin lease activo")
+            );
+        }
+        let a = assess_at(&s, now, Some(now - LEASE_GRACE_SECS));
+        assert_eq!(a.health, Health::Down);
+        assert_eq!(a.text, "Sin conexión: sin lease activo");
+        // Un error de configuración distinto de la caducidad sigue siendo una caída inmediata.
+        let mut s = status(false, "none");
+        s["config"]["last_error"] = json!("firma inválida");
+        assert_eq!(assess_at(&s, now, Some(now)).health, Health::Down);
+        // Con el lease activo no hay gracia que valga.
+        assert_eq!(
+            assess_at(&status(true, "direct"), now, Some(now - 1000)).health,
+            Health::Ok
+        );
     }
 
     #[test]
