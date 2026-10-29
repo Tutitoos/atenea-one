@@ -254,6 +254,32 @@ El ensayo implementado comprueba:
 - Tras apagar el principal, `relay.yml` con relay+STUN reales, sus puertos
   restringidos, único secreto `relay.key` y segunda convergencia sin cambios.
 
+### Ensayo opcional entre dos revisiones reales (N → N+1)
+
+Si se cargan imágenes de dos revisiones, el laboratorio añade una fase tras el
+upgrade/rollback anterior. Sin esas variables el comportamiento no cambia.
+
+1. `bash tests/infra/rehearsal-images.sh <worktree> <etiqueta>` construye sin red
+   `atenea-rehearsal/{control-plane,coordinator,relay}:<etiqueta>` de **una** revisión
+   (compila con la caché local y solo sustituye binarios e identidad sobre las bases
+   `atenea/<servicio>:local`, como `scripts/release/build-local.sh`, pero sin su
+   `cargo metadata`, que pide fuentes de otras plataformas ausentes de la caché). Se
+   ejecuta una vez con un worktree de la etiqueta anterior y otra con el del HEAD.
+   El **panel web de esas imágenes es el de las bases `:local`, no el de la revisión**.
+2. `INFRA_CONTROL_PLANE_IMAGE`, `INFRA_COORDINATOR_IMAGE` e `INFRA_RELAY_IMAGE` fijan N;
+   `INFRA_NEXT_CONTROL_PLANE_IMAGE`, `INFRA_NEXT_COORDINATOR_IMAGE` e
+   `INFRA_NEXT_RELAY_IMAGE`, N+1; `INFRA_N_COMMIT` e `INFRA_NEXT_COMMIT` activan la
+   comprobación del commit que informa cada binario en ejecución.
+
+La fase reconverge con N, siembra dos usuarios sintéticos, ejecuta `upgrade.yml` con
+control-plane N+1 y un coordinator que no puede llegar a `healthy` (**el fallo ocurre
+después de aplicar la migración**) y comprueba: mensaje de rescue, mapa de digests y
+`.env` restaurados byte a byte, los tres servicios otra vez en la imagen N, historial
+`1..8` (el rescue no deshace migraciones), columnas `role` presentes bajo el binario
+N, datos sembrados intactos y salud completa. Después repite `upgrade.yml` con
+N+1 en los tres servicios (migración ya aplicada), con identidad de imagen, commit,
+historial `1..8`, datos y panel HTTPS.
+
 El contenedor exterior y sus volúmenes anónimos se eliminan al salir; todos
 los contenedores/redes/volúmenes del Docker anidado desaparecen con él. No se
 tocan recursos de otros laboratorios ni se publica en GHCR.

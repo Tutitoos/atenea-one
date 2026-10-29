@@ -130,6 +130,79 @@ cmp /lab/previous-map /opt/atenea/compose.override.yaml
 cmp /lab/previous-env /opt/atenea/.env
 python3 /src/tests/infra/check.py principal
 echo 'PASS upgrade feliz y upgrade fallido con rollback al mapa anterior'
+if [ -f /tmp/infra-next-images ]; then
+  # Ensayo entre dos revisiones reales (N = imágenes con que convergió el nodo; N+1 = /tmp/infra-next-images).
+  # 1) baseline N, 2) testigos, 3) upgrade que falla DESPUÉS de migrar 0008 y rescue a N, 4) reintento correcto.
+  next_image() { while read -r service digest; do [[ $service != "$1" ]] || { echo "$digest"; return; }; done < /tmp/infra-next-images; return 1; }
+  stack() { docker compose --project-directory /opt/atenea "$@"; }
+  running() { docker inspect -f '{{.Image}}' "$(stack ps -q "$1")"; }
+  sql() { stack exec -T postgres psql -U postgres -d atenea -At "$@"; }
+  versions() { sql -c 'SELECT string_agg(version::text, '"','"' ORDER BY version) FROM _sqlx_migrations WHERE success'; }
+  fingerprint() { sql -c "SELECT md5(string_agg(id::text||oidc_subject||email, ',' ORDER BY id)) FROM users"; }
+  roles() { sql -c "SELECT count(*) FROM information_schema.columns WHERE table_name IN ('devices','enrollment_tokens') AND column_name='role'"; }
+  expect() { [ "$2" = "$3" ] || { echo "ERROR $1: esperado '$3', obtenido '$2'" >&2; exit 1; }; echo "PASS $1"; }
+  commit_of() { docker exec "$(stack ps -q "$1")" "/usr/local/bin/atenea-$1" --version; }
+  inventory() { # fichero, control-plane, coordinator, relay
+    python3 - "$@" <<'PY'
+import sys, yaml
+from pathlib import Path
+inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
+v = inv['all']['vars']
+v['atenea_stack_images'].update({'control-plane': sys.argv[2], 'coordinator': sys.argv[3], 'relay': sys.argv[4]})
+v['atenea_backup_verified'] = True
+v['atenea_stack_health_timeout'] = 40
+Path(sys.argv[1]).write_text(yaml.safe_dump(inv))
+PY
+  }
+  ansible-playbook -i /lab/inventory.yml site.yml
+  for s in control-plane coordinator relay; do expect "N: $s con la imagen de la revisión anterior" "$(running "$s")" "$(image "$s")"; done
+  expect 'N: historial de migraciones 1–7' "$(versions)" '1,2,3,4,5,6,7'
+  expect 'N: columnas role aún no existen' "$(roles)" 0
+  if [ -n "${INFRA_N_COMMIT:-}" ]; then
+    expect 'N: control-plane informa el commit anterior' "$(commit_of control-plane | sed 's/.*(\(.*\))/\1/')" "$INFRA_N_COMMIT"
+  fi
+  sql -c "INSERT INTO users(id,oidc_issuer,oidc_subject,email,display_name) VALUES ('00000000-0000-0000-0000-000000000001','https://rehearsal.invalid','owner','owner@example.invalid','Propietario sintético'),('00000000-0000-0000-0000-000000000007','https://rehearsal.invalid','member','member@example.invalid','Miembro sintético')" >/dev/null
+  witness=$(fingerprint)
+  [ -n "$witness" ] && echo 'PASS testigos de datos sembrados en N'
+  cp /opt/atenea/compose.override.yaml /lab/rehearsal-previous-map
+  cp /opt/atenea/.env /lab/rehearsal-previous-env
+  # Fallo tras migrar: control-plane N+1 migra y arranca; el coordinator es Caddy y no llega a healthy.
+  inventory /lab/rehearsal-fail.yml "$(next_image control-plane)" "$(image caddy)" "$(image relay)"
+  if ansible-playbook -i /lab/rehearsal-fail.yml upgrade.yml | tee /lab/rehearsal-fail.log; then
+    echo 'ERROR: el upgrade forzado debía fallar' >&2; exit 1
+  fi
+  python3 - <<'PY'
+from pathlib import Path
+text = Path('/lab/rehearsal-fail.log').read_text()
+assert 'rollback al mapa de digests anterior saludable' in text, text
+assert 'El stack no alcanzó salud' in text, text
+PY
+  echo 'PASS el upgrade forzado falló y ejecutó el rescue'
+  cmp /lab/rehearsal-previous-map /opt/atenea/compose.override.yaml
+  cmp /lab/rehearsal-previous-env /opt/atenea/.env
+  echo 'PASS rescue restauró mapa de digests y entorno byte a byte'
+  python3 /src/tests/infra/check.py principal
+  for s in control-plane coordinator relay; do expect "rescue: $s vuelve a la imagen de la revisión anterior" "$(running "$s")" "$(image "$s")"; done
+  expect 'rescue: 0008 sigue aplicada (el rescue no deshace migraciones)' "$(versions)" '1,2,3,4,5,6,7,8'
+  expect 'rescue: columnas role presentes bajo el binario anterior' "$(roles)" 2
+  expect 'rescue: datos sembrados intactos' "$(fingerprint)" "$witness"
+  if [ -n "${INFRA_N_COMMIT:-}" ]; then
+    expect 'rescue: control-plane en ejecución es el de la revisión anterior' "$(commit_of control-plane | sed 's/.*(\(.*\))/\1/')" "$INFRA_N_COMMIT"
+  fi
+  # Reintento correcto con 0008 ya aplicada (la migración debe ser idempotente).
+  inventory /lab/rehearsal-next.yml "$(next_image control-plane)" "$(next_image coordinator)" "$(next_image relay)"
+  ansible-playbook -i /lab/rehearsal-next.yml upgrade.yml
+  python3 /src/tests/infra/check.py principal
+  for s in control-plane coordinator relay; do expect "N+1: $s con la imagen nueva" "$(running "$s")" "$(next_image "$s")"; done
+  expect 'N+1: historial 1–8' "$(versions)" '1,2,3,4,5,6,7,8'
+  expect 'N+1: datos sembrados intactos' "$(fingerprint)" "$witness"
+  if [ -n "${INFRA_NEXT_COMMIT:-}" ]; then
+    for s in control-plane coordinator relay; do expect "N+1: $s informa el commit nuevo" "$(commit_of "$s" | sed 's/.*(\(.*\))/\1/')" "$INFRA_NEXT_COMMIT"; done
+  fi
+  curl --fail --silent --show-error --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 https://panel.stack.test/ >/dev/null
+  echo 'PASS N+1: panel HTTPS tras el upgrade'
+  echo 'PASS ensayo N -> fallo tras migrar 0008 -> rescue a N -> N+1 con coordinator y relay reales'
+fi
 systemctl disable --now atenea-stack.service
 docker compose --project-directory /opt/atenea down -v
 # Mismo nodo desechable, sin representar otro proveedor; reutiliza solo certificado/clave relay.
