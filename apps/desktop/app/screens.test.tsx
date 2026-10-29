@@ -65,6 +65,7 @@ function serve(statusReply: string, networks: object[] = [net()], fail?: string,
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'network_list') return JSON.stringify(networks);
     if (cmd === 'network_legacy' && !(cmd in extra)) return '{"present":false}' as never;
+    if (cmd === 'autostart_get' && !(cmd in extra)) return null as never;
     if (cmd in extra) return extra[cmd](args) as never;
     if (fail) throw fail;
     return statusReply as never;
@@ -586,6 +587,34 @@ it('lee y cambia la preferencia de notificaciones', async () => {
   await waitFor(() => expect(toggle).not.toBeChecked());
   expect(calls('notifications_set')[0][1]).toEqual({ on: false });
   expect((await axe(container)).violations).toEqual([]);
+});
+
+it('lee y cambia «Abrir al iniciar sesión»', async () => {
+  serve(agent(), [net()], undefined, { autostart_get: () => false, autostart_set: () => undefined });
+  const { container } = app('/diagnostics');
+  const toggle = await screen.findByRole('switch', { name: 'Abrir al iniciar sesión' });
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  await userEvent.click(toggle);
+  await waitFor(() => expect(toggle).toBeChecked());
+  expect(calls('autostart_set')[0][1]).toEqual({ on: true });
+  expect((await axe(container)).violations).toEqual([]);
+});
+
+it('mantiene el estado de inicio si guardarlo falla', async () => {
+  serve(agent(), [net()], undefined, { notifications_get: () => true, autostart_get: () => true, autostart_set: () => { throw 'No se pudo escribir el fichero de arranque'; } });
+  app('/diagnostics');
+  const toggle = await screen.findByRole('switch', { name: 'Abrir al iniciar sesión' });
+  await waitFor(() => expect(toggle).toBeChecked());
+  await userEvent.click(toggle);
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo escribir el fichero de arranque');
+  expect(toggle).toBeChecked();
+});
+
+it('no ofrece «Abrir al iniciar sesión» donde el sistema no lo soporta', async () => {
+  serve(agent(), [net()], undefined, { notifications_get: () => true, autostart_get: () => null });
+  app('/diagnostics');
+  await screen.findByRole('switch', { name: 'Notificaciones del sistema' });
+  await waitFor(() => expect(screen.queryByRole('switch', { name: 'Abrir al iniciar sesión' })).not.toBeInTheDocument());
 });
 
 it('dibuja tráfico con escala automática, leyenda e historial relativo accesibles', async () => {

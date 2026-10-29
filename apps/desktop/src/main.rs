@@ -8,6 +8,7 @@
 //! solo puede invocar las órdenes listadas en `generate_handler!`, sin permisos de plugins (`capabilities/`).
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
+mod autostart;
 mod networks;
 mod notify;
 mod panel;
@@ -204,6 +205,31 @@ async fn notifications_get(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 async fn notifications_set(app: AppHandle, on: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || notify::set(&notifications_path(&app)?, on))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Carpetas del usuario y ejecutable propio para el fichero de arranque (`autostart.rs`).
+fn autostart_env(
+    app: &AppHandle,
+) -> Result<(std::path::PathBuf, Option<std::path::PathBuf>), String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    Ok((home, std::env::var_os("XDG_CONFIG_HOME").map(Into::into)))
+}
+
+#[tauri::command]
+async fn autostart_get(app: AppHandle) -> Result<Option<bool>, String> {
+    let (home, xdg) = autostart_env(&app)?;
+    tauri::async_runtime::spawn_blocking(move || autostart::get(&home, xdg.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn autostart_set(app: AppHandle, on: bool) -> Result<(), String> {
+    let (home, xdg) = autostart_env(&app)?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || autostart::set(&home, xdg.as_deref(), &exe, on))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -446,7 +472,9 @@ fn main() {
             device_ping,
             open_panel,
             notifications_get,
-            notifications_set
+            notifications_set,
+            autostart_get,
+            autostart_set
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
