@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-017: Redes por instancia en Windows
 
-- **Estado:** Propuesto (2026-10-29). Decisiones del responsable pendientes (§ «Decisiones que necesito del responsable»). No hay código de esta fase.
+- **Estado:** **Aceptado** por el responsable el 2026-10-29 con las seis recomendaciones de § «Decisiones del responsable». Sin código todavía; la fase 3 queda condicionada a que el responsable aporte una máquina Windows real (decisión 6).
 - **Relacionados:** ADR-008 (cliente Windows), ADR-011 (aplicación de escritorio), ADR-013 (redes múltiples; aplazó Windows a una fase propia), ADR-014.
 
 ## Contexto
@@ -104,9 +104,9 @@ Para el runner de CI no hay servidor de control en Windows, así que la fase 2 p
 - **Capturar la salida con un fichero elegido por el usuario:** escritura privilegiada en una ruta controlada por un usuario sin privilegios.
 - **FFI a `ShellExecuteEx` desde la app:** obliga a levantar `unsafe_code = forbid` en un crate de interfaz.
 
-## Decisiones que necesito del responsable
+## Decisiones del responsable (2026-10-29)
 
-Mis recomendaciones entre paréntesis; aceptar todas basta con decirlo.
+Aceptadas todas con la opción indicada entre paréntesis.
 
 1. **Migrar o no la instancia heredada (§10):** ¿hay alguna instalación Windows real que conservar? *(No: reinstalar y unirse.)*
 2. **Arranque de las redes unidas (§1):** automático retrasado o manual. *(Automático retrasado: la red vuelve tras reiniciar, como en Linux y macOS.)*
