@@ -35,7 +35,7 @@ check "Dex responde" python3 -c "import urllib.request;urllib.request.urlopen('h
 
 ip link add br0 type bridge && ip link set br0 up && ip addr add 192.0.2.254/24 dev br0
 i=0
-for n in a b; do
+for n in a b c; do
   i=$((i + 1))
   ip netns add $n
   ip link add va-$n type veth peer name v$n
@@ -128,6 +128,76 @@ sleep 1
 expect_eq "UDP sin política descartado en origen" "$(( $(ctr a tx_acl_denied) - D0 ))" 1
 check "el control plane registró la auditoría de la red" bash -c "python3 $CP api GET '/api/v1/networks/$NETID/audit?limit=100' | python3 -c \"import sys;t=sys.stdin.read();assert all(a in t for a in ['device.enroll','device.approve','policy.create','config.issue'])\""
 
+section "Políticas: el SYN inverso llega pero no completa conexión; un dispositivo nuevo no hereda acceso"
+tcp_probe() {  # tcp_probe <ns-origen> <ip> <puerto>: connected|failed (4 s)
+  ip netns exec "$1" python3 -c "
+import socket, sys
+s = socket.socket(); s.settimeout(4)
+try:
+    s.connect((sys.argv[1], int(sys.argv[2]))); print('connected')
+except OSError:
+    print('failed')" "$2" "$3"
+}
+ip netns exec a python3 -c "
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], 9500)); s.listen(1); s.settimeout(8)
+try:
+    s.accept(); print('accepted')
+except OSError:
+    print('timeout')" "$IP_A4" > $LAB/listen.txt &
+L=$!
+sleep 1
+RA0=$(ctr a rx_acl_denied); TA0=$(ctr a tx_acl_denied); TB0=$(ctr b tx_acl_denied)
+expect_eq "B→A:9500 TCP no completa la conexión (A solo permite A→B 9000-9100)" "$(tcp_probe b $IP_A4 9500)" failed
+wait $L
+expect_eq "el escuchador de A no recibe ninguna conexión" "$(cat $LAB/listen.txt)" timeout
+expect_eq "el SYN de B sí pasó la ACL de entrada de A (la regla inversa no lleva puertos)" "$(( $(ctr a rx_acl_denied) - RA0 ))" 0
+check "A no pudo responder: su ACL de salida descartó la respuesta" test "$(( $(ctr a tx_acl_denied) - TA0 ))" -ge 1
+expect_eq "B no fue frenado en origen (la regla inversa permite TCP a cualquier puerto)" "$(( $(ctr b tx_acl_denied) - TB0 ))" 0
+api POST /api/v1/networks/$NETID/policies --json "{\"src\":{\"kind\":\"device\",\"device_id\":\"$DEV_A\"},\"dst\":{\"kind\":\"device\",\"device_id\":\"$DEV_B\"},\"proto\":17,\"port_min\":9600,\"port_max\":9700}" >/dev/null && ok "política UDP A→B 9600-9700" || bad "no se creó la política UDP"
+sleep 15
+udp_count() {  # udp_count <ns-receptor> <ip-receptor> <puerto> <ns-emisor>: datagramas distintos recibidos
+  ip netns exec "$1" python3 "$TOOLS" udp-server "$2" "$3" 6 > $LAB/udp.txt &
+  local R=$!
+  sleep 1
+  ip netns exec "$4" python3 "$TOOLS" udp-client "$2" "$3" 20
+  wait $R
+  cat $LAB/udp.txt
+}
+check "UDP A→B al puerto permitido (9650) llega" test "$(udp_count b $IP_B4 9650 a)" -gt 0
+expect_eq "UDP A→B a un puerto no permitido (9500) se frena en origen" "$(udp_count b $IP_B4 9500 a)" 0
+check "UDP B→A a un puerto NO permitido (9500) llega: la regla inversa no lleva puertos" test "$(udp_count a $IP_A4 9500 b)" -gt 0
+enroll c
+DEV_C=$(uuid_of "$(sed -n 's/^device_id=//p' $LAB/c.info)")
+api POST /api/v1/networks/$NETID/devices/$DEV_C/approve >/dev/null && ok "C aprobado (dispositivo nuevo)" || bad "no se aprobó C"
+api PATCH /api/v1/networks/$NETID/devices/$DEV_C --json '{"endpoints":["192.0.2.3:51820"]}' >/dev/null
+atenea agent-config --join "$(cat $LAB/c.join.json)" --dir $LAB/c --out $LAB/c.toml --state-dir $LAB/c.state --config-file $LAB/c.cfg --ipc-socket $LAB/c.sock --insecure-http
+echo "interval_secs = 10" >> $LAB/c.toml
+ip netns exec c atenea up --config $LAB/c.toml --log $LAB/c.log >/dev/null && ok "agente de C arrancado" || { bad "arranque de C"; cat $LAB/c.log; }
+for _ in $(seq 1 30); do [ "$(field c config.lease_active)" = true ] && break; sleep 1; done
+expect_eq "C obtuvo una configuración vigente" "$(field c config.lease_active)" true
+IP_C4=$(ip -n c -4 -o addr show dev atenea0 | python3 -c "import sys,re;print(re.search(r'inet (\S+?)/',sys.stdin.read()).group(1))")
+reaches() { for _ in $(seq 1 25); do ip netns exec "$1" ping -c 1 -W 2 "$2" >/dev/null 2>&1 && return 0; done; return 1; }
+peers_of() { atenea status --socket "$LAB/$1.sock" | python3 -c "import json,sys;print(len(json.load(sys.stdin)['peers']))"; }
+check "con ICMP any↔any el dispositivo recién aprobado alcanza a A" reaches c $IP_A4
+check "con ICMP any↔any A alcanza al dispositivo recién aprobado" reaches a $IP_C4
+api GET /api/v1/networks/$NETID/policies > $LAB/policies.json
+for P in $(python3 -c "import json;print(' '.join(p['id'] for p in json.load(open('$LAB/policies.json')) if p['src']['kind']=='any' and p['dst']['kind']=='any'))"); do
+  api DELETE /api/v1/networks/$NETID/policies/$P >/dev/null || bad "no se borró la política any↔any $P"
+done
+for PR in 1 58; do
+  api POST /api/v1/networks/$NETID/policies --json "{\"src\":{\"kind\":\"device\",\"device_id\":\"$DEV_A\"},\"dst\":{\"kind\":\"device\",\"device_id\":\"$DEV_B\"},\"proto\":$PR}" >/dev/null && ok "política ICMP proto $PR solo entre A y B" || bad "no se creó la política proto $PR"
+done
+settled() { local n=0; for _ in $(seq 1 50); do if ip netns exec c ping -c 1 -W 1 $IP_A4 >/dev/null 2>&1; then n=0; else n=$((n + 1)); fi; [ $n -ge 3 ] && return 0; sleep 1; done; return 1; }
+check "sin any↔any, C deja de alcanzar a A" settled
+check "sin any↔any, A no alcanza a C" bash -c "! ip netns exec a ping -c 2 -W 2 $IP_C4"
+check "sin any↔any, C no alcanza a B" bash -c "! ip netns exec c ping -c 2 -W 2 $(ip -n b -4 -o addr show dev atenea0 | python3 -c "import sys,re;print(re.search(r'inet (\S+?)/',sys.stdin.read()).group(1))")"
+for _ in $(seq 1 30); do [ "$(peers_of c)" = 0 ] && [ "$(peers_of a)" = 1 ] && break; sleep 1; done
+expect_eq "C no recibe ningún par en su configuración" "$(peers_of c)" 0
+expect_eq "A solo conserva a B como par" "$(peers_of a)" 1
+check "A y B siguen comunicándose por sus políticas explícitas" reaches a $IP_B4
+
 section "Revocación (ADR-002: validez 40 s, tolerancia 30 s, sondeo del agente cada 10 s)"
 T_REV=$(date +%s)
 api POST /api/v1/networks/$NETID/devices/$DEV_A/revoke >/dev/null && ok "A revocado en el control plane" || bad "revocación"
@@ -158,7 +228,7 @@ for _ in $(seq 1 30); do [ "$(field b config.lease_active)" = true ] && break; s
 expect_eq "al volver el control plane, B recupera una configuración vigente" "$(field b config.lease_active)" true
 
 section "Limpieza"
-atenea down --socket $LAB/a.sock; atenea down --socket $LAB/b.sock; sleep 1
+atenea down --socket $LAB/a.sock; atenea down --socket $LAB/b.sock; atenea down --socket $LAB/c.sock; sleep 1
 kill $CPPID 2>/dev/null
 echo
 if [ $FAILS -eq 0 ]; then echo "E2E CONTROL PLANE: TODO OK"; else echo "E2E CONTROL PLANE: $FAILS fallo(s)"; fi
