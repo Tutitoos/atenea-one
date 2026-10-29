@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-016: Políticas de acceso mínimas para el piloto y para redes con terceros
 
-- **Estado:** Propuesto (2026-10-29). Decisión del responsable pendiente. No cambia código del agente ni del control plane; solo fija cómo se usan las políticas existentes y qué límites se aceptan.
+- **Estado:** **Aceptado** por el responsable el 2026-10-29, con autorización de aplicarlo en el piloto cuando termine el soak vigente. No cambia código del agente ni del control plane; solo fija cómo se usan las políticas existentes y qué límites se aceptan.
 - **Relacionados:** ADR-002, ADR-007, ADR-014 y `docs/protocol/signed-config-v1.md` §8.
 
 ## Contexto

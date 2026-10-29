@@ -17,7 +17,7 @@
 | [013](ADR-013-redes-multiples-y-union-por-codigo.md) | Varias redes por dispositivo y unión por código | Aceptado (fases 1–4 implementadas; Windows pendiente) |
 | [014](ADR-014-servidores-roles-y-redes-por-servidor.md) | Servidores con varias redes, rol de servidor y pulido de la aplicación | Aceptado (fases 1 y 5 en curso) |
 | [015](ADR-015-bloque-b-miembros-y-renombrado.md) | Bloque B del panel: privacidad de miembros, renombrado e información del servidor | Aceptado (implementado, sin desplegar) |
-| [016](ADR-016-politicas-de-acceso-minimas.md) | Políticas de acceso mínimas para el piloto y para redes con terceros | Propuesto |
+| [016](ADR-016-politicas-de-acceso-minimas.md) | Políticas de acceso mínimas para el piloto y para redes con terceros | Aceptado (sin aplicar en el piloto) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
