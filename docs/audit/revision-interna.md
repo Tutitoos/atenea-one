@@ -1,10 +1,12 @@
 # Revisión interna de seguridad (fase 11): resumen sanitizado para el auditor externo
 
+**Actualizado el 2026-10-29 al commit 8d975a6**. El paquete sigue siendo **no apto para datos sensibles hasta la auditoría independiente**. La actualización por lectura se concentra en §6.4; los recuentos históricos no son una revisión del código nuevo.
+
 Referencia de código de la revisión histórica: `a0f8ac71b5e83607603c45b46113a2aa0ea607b6` (2026-10-26); las correcciones y mediciones posteriores se distinguen en §6.3 y no se atribuyen a ese commit. Este documento **no es una auditoría ni una garantía**: resume una revisión interna hecha por lectura, lo que se cambió después y lo que sigue abierto. La auditoría independiente sigue pendiente y es bloqueante ([matriz, caso «Auditoría independiente»](../operations/matriz-de-aceptacion.md)).
 
 ## Etiquetas de evidencia
 
-- **VERIFICADO**: lo he comprobado leyendo el fichero enlazado en esta redacción (no ejecutando nada).
+- **VERIFICADO — lectura**: fichero o historial leído en esta actualización; no acredita ejecución. El «VERIFICADO» sin sufijo de las secciones históricas conserva su atribución original, no una nueva comprobación.
 - **PARCIAL**: hay evidencia, pero falta parte del criterio.
 - **SIN COMPROBAR**: no hay evidencia en el repositorio ni la he leído.
 - **INFERIDO**: deducción mía a partir de lo leído, no observada.
@@ -64,7 +66,7 @@ Estado histórico del código corregido = commits siguientes. **INFERIDO** que c
 | [`151d3d7`](https://github.com/Tutitoos/atenea-one/commit/151d3d7627d55c69d7db0bbedc17b63f59a51d7d) | `cargo-deny` operativo, `publish=false`, `rustls-pemfile` sustituido, excepciones temporales justificadas |
 | [`954a503`](https://github.com/Tutitoos/atenea-one/commit/954a50393b5f56061788052902e896593e601144) | Fuzzing sin red; registro de la primera ejecución de los trece objetivos (13 ficheros en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets/), VERIFICADO por listado) |
 | [`d9ab7ec`](https://github.com/Tutitoos/atenea-one/commit/d9ab7ec4b4af44dd022ab655b7747c16231a6f8b) | wire v2 (MAC1/MAC2/cookie, versión de cable), relay v2 (`relay_id` en token y ALLOC), bidireccionalidad de políticas explícita |
-| [`a0f8ac7`](https://github.com/Tutitoos/atenea-one/commit/a0f8ac71b5e83607603c45b46113a2aa0ea607b6) (HEAD) | Carga y presupuestos, soak local con hallazgo conocido, cubos de cookie por par, parada acotada del agente, matriz de aceptación y documento de soporte |
+| [`a0f8ac7`](https://github.com/Tutitoos/atenea-one/commit/a0f8ac71b5e83607603c45b46113a2aa0ea607b6) (referencia histórica, no HEAD actual) | Carga y presupuestos, soak local con hallazgo conocido, cubos de cookie por par, parada acotada del agente, matriz de aceptación y documento de soporte |
 
 Pruebas añadidas o conservadas que cubren temas de los hallazgos (nombre → primer commit que lo introduce según `git log -S`; VERIFICADO que la función existe en HEAD):
 
@@ -150,7 +152,42 @@ Fuente normativa: [modelo de amenazas](../security/threat-model.md), [wire-v2](.
 - **Multipar**: dos defectos de sondeo corregidos con pruebas que fallaban antes; N=8 bloqueado pasó de 17/28 a 28/28 con `MAX_PER_IP=64`, pero la atribución al episodio histórico sigue siendo **INFERENCIA** ([caídas y leases](../operations/caidas-y-leases.md)).
 - **Fallos y recuperación**: simulacros CP/BD con corte a `valid_until + 30 s` (medido, **histórico pre-v2**, no repetido tras el cutover); restauración medida con datos pequeños en Docker/Mac; destino off-node de copias y ensayo de pérdida simultánea sin comprobar ([copias](../operations/copias-y-recuperacion.md), [soporte](../operations/soporte-limites-y-recuperacion.md)).
 - **Procedencia de resultados LOCAL-V2**: las salidas `/tmp/v2-*.txt` **no están versionadas** y se ejecutaron sobre un árbol previo a `d9ab7ec` con ediciones entre tandas; solo la CI se atribuye a ese commit. Datos citados por la matriz, no verificables desde un clon.
-- **CI 40228501883**: la matriz lo cita como verde sobre `d9ab7ec` (check, panel, macos, windows, supply-chain). No consta CI sobre `a0f8ac7`; no la he consultado (sin red): SIN COMPROBAR.
+- **CI histórica 40228501883**: la matriz la cita como verde sobre `d9ab7ec` (check, panel, macos, windows, supply-chain). No acredita `a0f8ac7` ni `8d975a6`; para la CI manual posterior, su procedencia y sus brechas, ver [evidencia](evidencia.md#actualización-de-evidencia-2026-10-29).
+
+### 6.4 Actualización del 2026-10-29 — `a0f8ac7` → `8d975a6`
+
+**VERIFICADO — lectura** de `git log a0f8ac7..HEAD`, mensajes de los commits indicados y fuentes enlazadas. «Con prueba» significa que existe la regresión o un resultado documentado: **no** que se haya ejecutado aquí. Esta actualización no renueva el recuento de severidades de §2 ni constituye una segunda revisión independiente.
+
+#### Defectos encontrados y corregidos
+
+| Defecto y corrección | Evidencia y diferencia entre prueba y ejecución |
+| --- | --- |
+| macOS: `network join` elegía `atenea0`, incompatible con `utun`/`utunN`; el directorio de datos `0700` impedía listar redes sin root. `cc5c860` cambia la interfaz a `utun` y el directorio a `0711` (atravesable, no listable; claves con sus propios permisos). | **VERIFICADO — lectura**, mensaje de `cc5c860`, [ADR-013 §9](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md#9-estado-de-la-fase-4-aplicación), [release](../operations/release.md), `packaging/macos/postinstall`. **Corregido con prueba real documentada** usando CLI de `cc5c860` y agente publicado 0.1.3; no con el `.pkg` publicado. Instalación y unión completas desde ese `.pkg`: **SIN COMPROBAR** aquí. |
+| `leave` solo limpiaba lo local y dejaba una identidad registrada. `d59e5b2` añade `POST /api/v1/device/leave` firmado por el propio dispositivo antes de borrar nada; `--offline` sigue siendo limpieza local explícita, no revocación. | **VERIFICADO — lectura**, [ADR-013 §11](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md#11-salida-con-revocación-del-propio-dispositivo-2026-10-28) y [`abuse.rs`](../../apps/control-plane/tests/abuse.rs): `salida_firmada_revoca_solo_al_propietario_y_es_idempotente`, `salida_respeta_limites_de_cuerpo_y_ritmo`. **Corregido con pruebas de regresión existentes** (firma ajena/replay/cuerpo, aislamiento, pendientes, idempotencia y cuotas); ejecución individual **SIN COMPROBAR** aquí. No invalida instantáneamente un lease ya emitido. |
+| Recuperación del agente (`454e144`): candidatos vacíos/filtrados ya no borran pistas ni liberan el retardo; tráfico en cola puede pedir rendezvous durante ese retardo respetando el intervalo mínimo; también puede pedir relay si no hay uno preparado. | **VERIFICADO — lectura**, [notas v0.1.6, Agente](../operations/v0.1.6.md#agente) y [`engine.rs`](../../apps/agent/src/engine.rs): `recovery_empty_candidates_preserve_previous_hints`, `recovery_queued_traffic_discovers_during_probe_hold`, `recovery_queued_traffic_requests_relay_during_probe_hold`. **Corregido con regresiones existentes**; ejecución y efecto en el piloto **SIN COMPROBAR** aquí. No confundir con las mediciones anteriores de §6.3. |
+| Panel (`0fa1f9f`): Crear red duplicado, permisos erróneos de organización recién creada, contraste en tema claro y confirmación de ruta. | **VERIFICADO — lectura**, [especificación del bloque A, estado de implementación](../superpowers/specs/2026-10-28-panel-bloque-a-design.md#estado-de-implementación-2026-10-28) y mensaje de commit: **corregidos con regresiones que fallaban sin el arreglo**, E2E real documentado **3/3**. No demuestra contraste de todos los estados, otros navegadores ni recorrido humano completo de teclado. |
+| Un script dejó vacío ADR-014 en `a5e6937`; `c24f225` restaura su contenido y las decisiones aceptadas. | **VERIFICADO — lectura**, mensajes de ambos commits y [ADR-014](../architecture/ADR-014-servidores-roles-y-redes-por-servidor.md). **Corregido sin prueba automatizada de regresión acreditada**; restauración documental, no defecto del protocolo. |
+
+#### Decisiones aceptadas, no hallazgos eliminados
+
+| ADR | Decisión (**VERIFICADO — lectura** del ADR) |
+| --- | --- |
+| [011](../architecture/ADR-011-aplicacion-de-escritorio.md) | Tauri 2: estado sin privilegios y operaciones sobre redes mediante CLI elevado por `osascript … with administrator privileges`/`pkexec`, no gestor privilegiado residente; arranque de usuario opcional. |
+| [012](../architecture/ADR-012-nombres-de-dispositivo.md) | Nombre del sistema por defecto y nombre personalizable, metadatos de presentación sin firmar. |
+| [013](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md) | Una instancia, claves, estado y servicio por red; unión por código con raíz fijada, solicitud sin token sujeta a aprobación; migración de la heredada y salida con revocación. |
+| [014](../architecture/ADR-014-servidores-roles-y-redes-por-servidor.md) | Rol `device|server` fijado administrativamente y distribuido como presentación sin firmar; información del servidor y camino `none` bajo demanda, no autoridad nueva. |
+| [015](../architecture/ADR-015-bloque-b-miembros-y-renombrado.md) | Miembros por nombre/correo, alta de usuario OIDC existente por correo, renombrados y caducidad del emisor; aceptado el 2026-10-28 aunque las notas v0.1.6 aún conservan una frase anterior «Propuesto». |
+| [016](../architecture/ADR-016-politicas-de-acceso-minimas.md) | Políticas explícitas por dispositivo/protocolo en lugar de `any↔any` para terceros, aceptado el 2026-10-29; aplicación al piloto autorizada solo después del soak, todavía no aplicada según el ADR. |
+
+#### Riesgos que permanecen abiertos
+
+- **PARCIAL — ACL sin estado:** [ADR-016, hechos medidos](../architecture/ADR-016-politicas-de-acceso-minimas.md#hechos-medidos) documenta laboratorio real: TCP inverso permite el SYN pero no completa la conexión; UDP inverso llega sin limitar puertos; ICMP es bidireccional. Un dispositivo nuevo con `any↔any` obtiene acceso; con políticas explícitas entre los anteriores queda sin pares. No es aislamiento unidireccional. TCP/UDP IPv6, muchos pares y aplicación en el piloto: **SIN COMPROBAR** aquí.
+- **PARCIAL — nombres y `role` sin firmar:** [ADR-012](../architecture/ADR-012-nombres-de-dispositivo.md) y [ADR-014](../architecture/ADR-014-servidores-roles-y-redes-por-servidor.md) los limitan a presentación; no deben alimentar ACL, identidad ni rutas. No se convierten en autenticados por mostrarse en la app.
+- **PARCIAL — alta por correo:** [ADR-015](../architecture/ADR-015-bloque-b-miembros-y-renombrado.md) exige owner y cuenta que ya inició sesión OIDC; no invita ni crea cuentas. El owner puede averiguar correos existentes: ráfaga 10 y reposición 10/minuto por sesión/operación, no límite global entre sesiones ni persistente tras reinicio. Solo owner/admin ve el correo; member recibe null.
+- **PARCIAL — escritorio:** [ADR-011, límites](../architecture/ADR-011-aplicacion-de-escritorio.md#límites) declara ausencia de firma de desarrollador, notarización y updater; distribución aparte del release del agente. No extrapolar pruebas sintéticas a elevación `pkexec`, notificaciones, bandeja o integración física completas; esas ejecuciones siguen **SIN COMPROBAR** aquí.
+- **SIN COMPROBAR — aceptación larga y externa:** soak de 72 h sin completar y auditoría independiente pendiente ([README del paquete](README.md#actualización-del-2026-10-29), [matriz](../operations/matriz-de-aceptacion.md)); el intento inválido no suma horas válidas. Token hardware de raíz/firma pendiente. No se afirma contratación del auditor.
+- **PARCIAL — retroceso v0.1.6:** [notas, §6](../operations/v0.1.6.md#6-retroceso-mecanismo-existente-y-evidencia) documentan **58/58** del control plane y ensayo N→N+1 con Ansible/Compose, fallo tras 0008, rescue y reintento. Solo laboratorio, nodo único y dos usuarios sintéticos; ni agentes/tráfico ni datos/carga del piloto ni bloqueos de migración en él. Retroceso del piloto y restauración de su copia previa: **SIN COMPROBAR**.
+- **PARCIAL — CI manual:** [CI](../operations/ci.md) ya no se ejecuta por push, PR ni semanalmente. Un resultado verde anterior no cubre `8d975a6`; ver [tabla de evidencia actualizada](evidencia.md#actualización-de-evidencia-2026-10-29).
 
 ## 7. Excepciones de dependencias (`deny.toml`)
 
@@ -169,6 +206,8 @@ VERIFICADO leyendo [`deny.toml`](../../deny.toml) y [DEP-2026-01/02 del modelo d
 
 - **Informe histórico (frente B, B-F5), VERIFICADO en su texto:** vio `rsa 0.9.10` en `Cargo.lock` y lo atribuyó solo a `[dev-dependencies]` del control plane. **Esa atribución está incompleta/obsoleta.**
 - **Grafo exacto, VERIFICADO leyendo [`dist/audit/dependencies.json`](../../dist/audit/dependencies.json)** (generado para `a0f8ac71b5e83607603c45b46113a2aa0ea607b6`, alcance declarado «cargo metadata; incluye desarrollo y todas las plataformas»; 452 paquetes; cada dependencia con nombre, versión y origen): `openidconnect 4.0.1` (registro crates.io) depende de `rsa 0.9.10`, `p256 0.13.2` y `p384 0.13.1`; estos dos últimos dependen de `elliptic-curve 0.13.8`, y `crypto-bigint 0.5.5` aparece en el grafo. Los únicos paquetes que dependen de `openidconnect` o `rsa` son el propio `atenea-control-plane` (workspace), `jsonwebtoken 10.4.0`, `elliptic-curve`, `sqlx-mysql` y `openidconnect`.
+
+Las referencias numéricas de línea conservadas en este apartado son del **commit a0f8ac7**, no localizadores recalculados para `8d975a6`.
 - **Contraste con el código, VERIFICADO por lectura:** [`apps/control-plane/Cargo.toml`](../../apps/control-plane/Cargo.toml) declara `openidconnect = "4"` en dependencias normales (línea 24) y `rsa = { version = "0.9", features = ["pem"] }` solo en `[dev-dependencies]` (línea 42); [`apps/control-plane/src/auth.rs`](../../apps/control-plane/src/auth.rs) importa `openidconnect` (línea 7). [`apps/control-plane/tests/oidc.rs`](../../apps/control-plane/tests/oidc.rs) es el único uso directo de `RsaPrivateKey` (línea 34: clave RSA efímera de pruebas).
 - **Conclusión:** hay **dos** orígenes de `rsa 0.9.10`. (1) el dev-dependency directo, el que vio el informe; (2) la dependencia transitiva de producción vía `openidconnect`, que el informe no contempló y que es la que justifica la excepción de `deny.toml` (cuyo `exclude-dev = true` no la elimina; sin ella `cargo deny` no habría necesitado la excepción). Coincide con el [modelo de amenazas (DEP-2026-02)](../security/threat-model.md#riesgos-aceptados-temporalmente-dependencias). El informe histórico es por tanto obsoleto en este punto y no es un bloqueante.
 - **Límite, INFERIDO:** `dependencies.json` no distingue aristas normales de dev; que `rsa` llegue a producción se deduce de que `openidconnect` es dependencia normal (Cargo.toml) y lista `rsa` entre las suyas. No se ejecutó `cargo`; que el binario solo verifique (sin firmar con RSA/ECDSA) sigue siendo una declaración de uso del proyecto, no demostrada aquí.

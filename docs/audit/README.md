@@ -2,6 +2,25 @@
 
 **Estado: no apto para datos sensibles hasta esta auditoría.** Este paquete no es una afirmación de seguridad ni sustituye un informe independiente. La contratación/designación del auditor, resolución de críticos/altos y retest siguen **PENDIENTE DEL RESPONSABLE** en la [matriz de aceptación](../operations/matriz-de-aceptacion.md#casos-de-aceptación); política de comunicación: [SECURITY.md](../../SECURITY.md).
 
+## Actualización del 2026-10-29
+
+El paquete se redactó contra `a0f8ac7` (2026-10-26). Desde entonces el repositorio ha recibido **89 commits** (`git rev-list --count a0f8ac7..HEAD`), con **458 ficheros** cambiados y 31 561 inserciones frente a 920 supresiones (`git diff --shortstat a0f8ac7 HEAD`). El código de referencia de esta actualización es **`8d975a6`** (2026-10-29), último commit antes de actualizar estos documentos. El [snapshot](../../scripts/audit/snapshot.sh) archiva el commit que contiene esta actualización, no `8d975a6`: su `COMMIT` es la referencia exacta de la entrega.
+
+**Lo que cambia respecto a lo que leen los documentos restantes** (comprobado con `git diff --name-status a0f8ac7 HEAD`; ver cada documento para el detalle):
+
+- **Control plane:** migraciones `0005` a `0008`; unión por código y solicitudes de unión sin token (endpoint público), `POST /api/v1/device/leave` firmado por el dispositivo, nombres y rol de dispositivo (metadatos **sin firmar**), información del servidor, miembros con correo y alta por correo, renombrado de organización y red.
+- **Agente y CLI:** varias redes por dispositivo (`atenea network …`), servicio del sistema por red (systemd y launchd), migración de la instalación heredada con scripts privilegiados, tres correcciones del motor de recuperación de rutas.
+- **Aplicación de escritorio (`apps/desktop`)**, nueva: nuevo límite de confianza; las operaciones que cambian el sistema se ejecutan elevando (`osascript` en macOS, `pkexec` en Linux) sobre el CLI (ADR-011), y puede escribir un fichero de arranque de usuario.
+- **Panel web:** rediseño completo (bloques A y B) con E2E real.
+- **Decisiones:** ADR-006 y ADR-010 a ADR-016 (el índice está en [architecture/README.md](../architecture/README.md)). ADR-016 documenta, con medición, que la ACL sin estado deja pasar el tráfico inverso (TCP: solo el SYN; UDP e ICMP: sin límite de puertos).
+- **Operación:** releases `v0.1.0` a `v0.1.5` publicados y verificados, despliegue real del piloto (tres equipos), CI **solo manual**.
+
+**Sigue sin hacerse** (estado a 2026-10-29): el soak de 72 h (hubo un intento el 2026-10-27, inválido por condiciones del equipo; hay otro programado), la auditoría independiente, la firma nativa y notarización de instaladores, el *updater* de la aplicación de escritorio y la prueba de la v0.1.6 contra el piloto real (solo laboratorio).
+
+**Referencias de línea.** Las referencias `fichero:Lnn` de los documentos que no se han recalculado siguen siendo de `a0f8ac7` y llevan esa marca. Las de los ficheros de producción modificados desde entonces pueden haberse desplazado más de lo que explica la cabecera de copyright.
+
+**Firma.** La firma que había en `dist/audit/` (2026-10-27) **no valida** el contenido nuevo (comprobado con `openssl pkeyutl -verify`: *Signature Verification Failure*, como corresponde a otro `SHA256SUMS`). La firma de esta entrega la debe hacer el responsable con su clave; ver «Firma de la instantánea».
+
 ## Referencia y alcance temporal
 
 Referencia obtenida con `git rev-parse HEAD` al generar el paquete: **`a0f8ac71b5e83607603c45b46113a2aa0ea607b6`** ([commit público](https://github.com/Tutitoos/atenea-one/commit/a0f8ac71b5e83607603c45b46113a2aa0ea607b6)). Redacción: **2026-10-26**. Esta referencia fija el código leído, no atribuye al commit los documentos y scripts nuevos todavía sin commit. El [snapshot](../../scripts/audit/snapshot.sh) vuelve a resolver HEAD y fija su commit/fecha en `COMMIT`, `SOURCE_DATE_EPOCH` y en el propio tarball: **solo incluye archivos versionados en ese commit**, nunca cambios sin commit ni archivos ignorados. Antes de entregar el paquete definitivo, el responsable debe registrar sus cambios y regenerar; aquí no se realiza commit ni publicación.

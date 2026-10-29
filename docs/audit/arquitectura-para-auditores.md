@@ -1,32 +1,37 @@
 # Arquitectura para auditores
 
-**Referencia de código:** `a0f8ac71b5e83607603c45b46113a2aa0ea607b6` (`git rev-parse HEAD`). Este documento describe ese árbol; los números de línea se refieren a él. **No es una afirmación de seguridad, de auditoría realizada ni de aptitud para producción**: el [README del paquete](README.md) mantiene el estado «no apto para datos sensibles hasta auditoría independiente».
+Actualizado el 2026-10-29 al commit 8d975a6; lo marcado «commit a0f8ac7» no se ha recalculado.
+
+**Referencia de código actual:** `8d975a6`. Las ampliaciones identificadas como «2026-10-29» describen ese árbol. **Todas las referencias de línea heredadas de las secciones 2–7 corresponden al commit a0f8ac7 y no se han recalculado**, salvo la actualización de dependencias indicada en §6; no se deben localizar esas líneas en HEAD. No es una afirmación de auditoría realizada ni de aptitud para producción: el [README del paquete](README.md) mantiene el estado «no apto para datos sensibles hasta auditoría independiente».
 
 ## Convención de evidencia
 
 | Etiqueta | Significado aquí |
 | --- | --- |
-| **VERIFICADO (lectura)** | El contenido citado se leyó en el fichero enlazado. No demuestra ejecución, corrección ni ausencia de defectos. |
+| **VERIFICADO — lectura** (antes «VERIFICADO (lectura)») | El contenido citado se leyó en el fichero enlazado; las etiquetas heredadas y sus líneas conservan la atribución al commit a0f8ac7. No demuestra ejecución, corrección ni ausencia de defectos. |
 | **PARCIAL** | Hay evidencia, pero no cubre todo el criterio (por ejemplo: contrato leído, implementación o ejecución sin comprobar). |
 | **SIN COMPROBAR** | No se leyó ni se ejecutó lo necesario. |
 | **INFERIDO** | Deducción del autor a partir de diseño/código; no es medición ni cita literal. |
 
-No se ejecutó ninguna prueba, compilación, fuzz, Docker ni laboratorio al preparar este documento. «VERIFICADO» nunca significa «probado en ejecución».
+No se ejecutó ninguna prueba de producto, compilación, fuzz, Docker ni laboratorio al preparar este documento; solo los comprobadores documentales del encargo. «VERIFICADO — lectura» nunca significa «probado en ejecución».
 
 ## 1. Componentes
 
 | Componente | Código | Qué hace | Estado persistente | Secretos que custodia |
 | --- | --- | --- | --- | --- |
-| **Agente** (`atenea-agent`) | [`apps/agent`](../../apps/agent/src), [`crates/crypto`](../../crates/crypto/src), [`crates/identity`](../../crates/identity/src), [`crates/policies`](../../crates/policies/src), [`crates/tunnel`](../../crates/tunnel/src), [`crates/windows`](../../crates/windows/src) | Dueño de la TUN y de las claves del dispositivo; verifica la configuración firmada, hace Noise IK, aplica ACL, rutas y DNS; IPC local. | `state.bin` (anti-rollback), configuración firmada, ficheros de clave | `noise.key` (X25519), `identity.key` (Ed25519) |
-| **CLI** (`atenea`) | [`apps/cli`](../../apps/cli/src) | `root-init`, `issuer-init`, `issuer-cert`, `device-init`, `issue`, `enroll`, `agent-config`, IPC al agente. | Ficheros de clave/certificado que escribe | Semilla raíz y de emisor al generarlas |
-| **Control plane** | [`apps/control-plane`](../../apps/control-plane/src), [`docs/api/control-plane-v1.md`](../api/control-plane-v1.md) | Axum + PostgreSQL. OIDC, RBAC, redes, IPAM, enrolamiento, aprobación/revocación, ACL, **emisión de la configuración firmada por petición**. | PostgreSQL (fuente de verdad) | Clave de **emisor**; `DATABASE_URL`; secreto de cliente OIDC |
+| **Agente** (`atenea-agent`) | [`apps/agent`](../../apps/agent/src), [`crates/crypto`](../../crates/crypto/src), [`crates/identity`](../../crates/identity/src), [`crates/policies`](../../crates/policies/src), [`crates/tunnel`](../../crates/tunnel/src), [`crates/windows`](../../crates/windows/src) | Una instancia por red en Linux/macOS: dueño de TUN, claves y estado de esa red; verifica configuración firmada, hace Noise IK y aplica ACL/rutas/DNS; IPC separado. | Configuración y estado antirrollback por red; véase §2.1 | `noise.key` (X25519), `identity.key` (Ed25519), propias de cada unión |
+| **CLI** (`atenea`) | [`apps/cli`](../../apps/cli/src) | Herramientas de claves/emisión y enrolamiento existentes; ahora `network join/list/up/down/leave/inspect/legacy/migrate-legacy`, con elevación para cambios del sistema. | `network.json` público por red; `device/` privado con claves, configuración y estado | Semillas raíz/emisor al generarlas y claves de red durante creación/migración/salida |
+| **Control plane** | [`apps/control-plane`](../../apps/control-plane/src), [`docs/api/control-plane-v1.md`](../api/control-plane-v1.md) | Axum + PostgreSQL: OIDC/RBAC, unión por token o solicitud pública, aprobación/revocación y salida propia, políticas, nombres/roles de presentación, miembros por correo, renombrado e información de servidor; emisión firmada por petición. | PostgreSQL (fuente de verdad) | Clave de **emisor**; `DATABASE_URL`; secreto de cliente OIDC |
 | **Coordinator** | [`apps/coordinator`](../../apps/coordinator/src), [`crates/nat-traversal`](../../crates/nat-traversal/src), [`coordinator-v1`](../protocol/coordinator-v1.md) | Presencia en memoria, rendezvous, STUN propio, emisión de tokens de relay. No consulta PostgreSQL. | Ninguno duradero | Clave de firma de tokens de relay |
 | **Relay** | [`apps/relay`](../../apps/relay/src), [`crates/relay-core`](../../crates/relay-core/src), [`relay-v2`](../protocol/relay-v2.md) | Reenvío UDP y TLS/TCP de datagramas E2E opacos entre asignaciones emparejadas. No tiene claves E2E. | Ninguno duradero | Clave TLS; secreto de cookie (memoria); claves públicas del coordinator |
 | **Entrada 443** | [`deploy/compose/prod/haproxy.cfg`](../../deploy/compose/prod/haproxy.cfg), Caddy, [ADR-004](../architecture/ADR-004-entrada-443.md) | HAProxy L4 enruta por SNI/ALPN sin terminar TLS: relay o panel/API. | — | — |
 | **Panel** | [`apps/web`](../../apps/web), servido por el control plane (`panel.rs`) | SPA que consume la API; no define modelos propios. | — | Cookie de sesión HttpOnly (la gestiona el navegador) |
+| **Escritorio** (`atenea-desktop`, Tauri 2 + React) | [`apps/desktop`](../../apps/desktop), [ADR-011](../architecture/ADR-011-aplicacion-de-escritorio.md) | Webview embebido y backend Rust sin privilegios: estado por red, diagnóstico y petición de operaciones al CLI elevado. No es un administrador autenticado del control plane. | Preferencias/alias del usuario y entrada de arranque de usuario; no custodia claves de red | No recibe claves privadas; lee metadatos y estado autorizados por permisos locales |
 | **Par de pruebas** | [`crates/testpeer`](../../crates/testpeer/src) | `Engine` sin TUN para laboratorios/CI. | — | Claves sintéticas |
 
 Estado del contrato de cada pieza: [ADR-001](../architecture/ADR-001-noise-ik.md) a [ADR-009](../architecture/ADR-009-operacion-y-releases.md) (incluidos [ADR-006](../architecture/ADR-006-licencia.md), licencia Apache-2.0, y ADR-009, operación y releases) figuran **Aceptados** en el [índice](../architecture/README.md); ADR-006 y ADR-009 se aceptaron el 2026-10-26, después de la lectura inicial de este paquete que los encontró inexistente y «Propuesto». Aceptar un ADR no equivale a verificar su implementación.
+
+**Actualización 2026-10-29 — VERIFICADO — lectura:** las filas agente/CLI/control plane/escritorio incorporan [ADR-011](../architecture/ADR-011-aplicacion-de-escritorio.md), [ADR-012](../architecture/ADR-012-nombres-de-dispositivo.md), [ADR-013](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md), [ADR-014](../architecture/ADR-014-servidores-roles-y-redes-por-servidor.md), [ADR-015](../architecture/ADR-015-bloque-b-miembros-y-renombrado.md) y [ADR-016](../architecture/ADR-016-politicas-de-acceso-minimas.md), con el código detallado abajo. Sus secciones históricas pueden conservar pendientes ya resueltos por secciones posteriores: no equivalen a estado ejecutado aquí.
 
 ## 2. Mapa de componentes y fronteras de confianza
 
@@ -45,7 +50,9 @@ flowchart LR
     RL["Relay UDP/TLS<br/>sin claves E2E"]
   end
   subgraph DEV["Dispositivos (A y B)"]
-    AG["Agente<br/>noise.key · identity.key · state.bin"]
+    AG["Agente por red<br/>claves y estado propios · root"]
+    DESK["Escritorio Tauri / usuario<br/>webview → backend Rust"]
+    ECLI["CLI elevado por operación"]
   end
   IDP["Proveedor OIDC (externo)"]
   ADM["Navegador del administrador (panel)"]
@@ -56,6 +63,9 @@ flowchart LR
   CP -- "OIDC code + PKCE" --- IDP
   CP --- DB
   AG -- "GET /api/v1/device/config<br/>AtDevice (Ed25519)" --> CP
+  DESK -- "socket status por red (sin control)" --> AG
+  DESK -- "autorización del SO: osascript / pkexec" --> ECLI
+  ECLI -- "join / up / down / leave / migrate-legacy" --> AG
   AG -- "announce / rendezvous / relay<br/>AtDevice + configuración presentada" --> CO
   AG <-- "Noise IK directo (UDP)" --> AG
   AG -- "ALLOC + DATA E2E (UDP o TLS/TCP)" --> HAP -- "SNI relay + ALPN atenea-relay/2" --> RL
@@ -75,6 +85,27 @@ flowchart LR
 | F7 | Navegador → control plane | Sesión OIDC | Cookie `atenea_session` (HttpOnly, SameSite=Lax), CSRF en escrituras, WebSocket con `Origin` | [`auth.rs`](../../apps/control-plane/src/auth.rs) L59–L60 y L269–L308, [control-plane §3.1](../api/control-plane-v1.md) | VERIFICADO (lectura parcial: cookie y creación de sesión); validación de ID token completa SIN COMPROBAR aquí |
 | F8 | Proceso local → agente | IPC (Unix socket / pipe con nombre) | Modo 0600/0660, `SO_PEERCRED`; en Windows, DACL e impersonación | [ADR-007 §6](../architecture/ADR-007-subredes-dns-privilegios.md), [ADR-008 §4](../architecture/ADR-008-clientes-windows-macos.md), [`ipc.rs`](../../apps/agent/src/ipc.rs) L69, [`security.rs`](../../crates/windows/src/security.rs) | PARCIAL (contratos y fragmentos leídos; revisión completa de plataformas pendiente) |
 | F9 | Internet → HAProxy | TCP 443 | Sin terminar TLS; relay solo con SNI = `RELAY_HOST` **y** ALPN `atenea-relay/2` | [`haproxy.cfg`](../../deploy/compose/prod/haproxy.cfg) L12–L24 | VERIFICADO (lectura de la configuración); comportamiento en red real SIN COMPROBAR |
+
+
+### 2.1 Fronteras añadidas y modelo de varias redes (2026-10-29)
+
+**VERIFICADO — lectura**, no ejecución: [`network.rs`](../../apps/cli/src/network.rs) (`Ctx`, `provision`, `read_metas`, migración), [`issue.rs`](../../apps/cli/src/issue.rs) (`device_create`), [`network_service.rs`](../../apps/cli/src/network_service.rs), launchers y [ADR-013](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md).
+
+| Recurso por red | Separación y autoridad |
+| --- | --- |
+| Disco | Raíz predeterminada Linux `/var/lib/atenea/networks`, macOS `/Library/Application Support/Atenea/networks`; debajo `<uuid>/network.json` no secreto y `<uuid>/device/` privado (0700). `device_create` genera identidad Ed25519, Noise X25519, id de dispositivo y `bundle.bin` nuevos para cada unión; `agent.toml`, configuración firmada y estado antirrollback también pertenecen a esa red. La migración heredada mueve la identidad existente, no genera otra. |
+| Ejecución | Un proceso de agente, interfaz y puerto UDP por red. Sockets `<run>/<id8>/control.sock` y `status.sock`, con `id8` derivado del UUID; los servicios Linux/macOS son `atenea-network@<UUID>.service` y `one.atenea.network.<id8>`. El CLI comprueba colisiones; la limpieza DNS macOS usa `resolver_owner` por red. No hay multiplexor único de redes. |
+| Privilegios | Escritorio y lecturas `list/inspect/legacy` no elevadas. Cambios mediante CLI elevado y agente privilegiado; systemd declara `User=root`, grupo `atenea`, `CAP_NET_ADMIN` y endurecimiento en [`atenea-network@.service`](../../packaging/systemd/atenea-network@.service); macOS usa LaunchDaemon del sistema. Windows no soporta estas operaciones de redes múltiples, aunque subsisten agente/IPC Windows históricos. |
+| Conflictos | La guarda se aplica a la primera configuración verificada: el código de unión no contiene los CIDR. ADR-013 §7 delimita rutas ajenas iguales/más específicas y exclusión de rutas anchas; no prometer rechazo completo durante la mera decodificación del código. Solapamientos, DNS y recuperación real de rutas requieren pruebas por plataforma. |
+
+| Frontera nueva | Qué cruza y qué no garantiza | Fuente comprobada |
+| --- | --- | --- |
+| F10 Webview → Rust → CLI elevado | `network_apply` acepta solo join/up/down/leave/migrate. Rust valida operación, UUID, código y nombre antes del script; join deriva el UUID con `inspect`. Ruta instalada `/Library/Atenea/bin/atenea` o `/usr/bin/atenea`, sustituible mediante `ATENEA_CLI`: esa variable y la propiedad del binario forman parte de la revisión. macOS eleva con `osascript … with administrator privileges`; Linux con `pkexec /bin/sh -c`. El diálogo del SO, no una preferencia del frontend, concede autoridad por operación. | [`main.rs`](../../apps/desktop/src/main.rs), [`networks.rs`](../../apps/desktop/src/networks.rs), ADR-011 |
+| F11 Usuario → estado local por red | La app lee estado, nunca abre el socket de control; join pasa `--status-gid` con el grupo primario para permitir esa lectura. Pertenecer al grupo de lectura expone el mismo estado a otros procesos autorizados; no entrega control ni claves privadas. | [`networks.rs`](../../apps/desktop/src/networks.rs), ADR-011 §2–3 |
+| F12 Instalador/gestor de servicios → sistema | postinstall y launchers actúan con privilegios sobre servicios/rutas. Los scripts macOS comprueban cadena de propietarios/permisos y enlaces antes de cargar ayudas/plists; Linux valida operación, UUID y runtime. No confundirlos con ficheros de inicio del usuario. | [`postinstall`](../../packaging/macos/postinstall), [`atenea-network.sh`](../../packaging/macos/atenea-network.sh), [`network-agent`](../../packaging/systemd/network-agent) |
+| F13 Escritorio → arranque de usuario | `autostart.rs` escribe temporal y rename o borra una entrada propia: `~/Library/LaunchAgents/one.atenea.desktop.plist` o `$XDG_CONFIG_HOME/autostart/one.atenea.desktop.desktop` (alternativa `~/.config`). Valida ruta absoluta del ejecutable y caracteres de sintaxis; no eleva, no instala daemon root ni llama a launchctl. Revisar enlaces y sustituciones en directorios del usuario. Windows no soportado. | [`autostart.rs`](../../apps/desktop/src/autostart.rs), ADR-011 |
+
+**SIN COMPROBAR aquí:** aislamiento efectivo entre dos agentes, permisos efectivos de sockets, recuperación de rutas, diálogos/cancelación de elevación, sustitución de ejecutables y comportamiento real de instalación/migración/arranque al iniciar sesión.
 
 ### Qué puede y qué no puede hacer cada pieza si se compromete (INFERIDO de ADR/contratos)
 
@@ -160,6 +191,18 @@ sequenceDiagram
 
 Riesgos de diseño documentados: la `proof` del bundle no prueba posesión de la clave X25519; el enlace real es la comparación de huella por otro canal ([signed-config-v1 §7](../protocol/signed-config-v1.md)); el enrolamiento no tiene verificación automática (MVP).
 
+### 4.1.1 Unión por código, metadatos y API añadida (2026-10-29)
+
+**VERIFICADO — lectura:** [`api.rs`](../../apps/control-plane/src/api.rs), [`devices.rs`](../../apps/control-plane/src/devices.rs), [`config.rs`](../../apps/control-plane/src/config.rs), [`issue.rs`](../../apps/control-plane/src/issue.rs), [`orgs.rs`](../../apps/control-plane/src/orgs.rs) y ADR-012–015 enlazados en §1. Las líneas/tablas anteriores de §4.1 conservan su atribución al **commit a0f8ac7**; el token ya no es la única vía.
+
+1. `network inspect` decodifica el código sin disco/red/elevación; la app presenta servidor, red y huella para contraste fuera de banda. `join` genera las claves propias y fija el ancla del código, no una raíz aprendida sin contraste desde la API. El nombre del código es informativo, no credencial.
+2. Con token se conserva `POST /api/v1/enroll`. Sin token se envía bundle/nombre a **`POST /api/v1/networks/{net}/join-requests` público**: validación de bundle y nombre, cuota por IP compartida con enrolamiento, transacción con bloqueo de red, solo `con_solicitud`. Red cerrada e inexistente dan 404 `not_found`. El valor predeterminado es **20 solicitudes pendientes de origen request por red**, con purga perezosa a **7 días** al solicitar; son parámetros de configuración, no límites universales de todos los pendientes. La solicitud queda pending; la aprobación administrativa y el contraste de huella siguen siendo la barrera de entrada.
+3. El agente pide `/api/v1/device/peers` con petición AtDevice y recibe nombres/roles de sus pares visibles. **La firma autentica la petición, no convierte la respuesta JSON en SignedConfig.** `name`, `hostname`, alias locales y `role=device|server` son presentación **sin firma del emisor** y no pueden decidir identidad, ACL, DNS o rutas. El administrador fija el rol; no se deduce de IP/nombre. Las claves, direcciones y reglas siguen en la configuración firmada.
+4. **`GET /api/v1/server/info`** usa autenticación de dispositivo aprobado y devuelve versión/commit del control plane, hora y caducidad del certificado de emisor **de su red** (null si falta). No permite elegir otra red ni inventa versiones de coordinator/relay. **`GET /api/v1/server`** exige sesión con al menos una membresía y devuelve versión/commit del control plane y hora; no usa AtDevice. Son diagnóstico JSON, no sustituyen la validación del certificado firmado.
+5. **`POST /api/v1/orgs/{org}/members`** añade por correo completo de un usuario OIDC ya existente: owner, sesión/CSRF, límite por sesión/operación (ráfaga 10, reposición 10/min) antes de buscar; sin coincidencia 404 y varias coincidencias 409. No crea usuarios ni invitaciones. Solo owner/admin ven correo; los nombres visibles no autorizan. El renombrado de organización/red conserva identidad y ancla; códigos anteriores mantienen su nombre informativo (ADR-015).
+
+**SIN COMPROBAR aquí:** cuotas bajo ataque/concurrencia, ausencia de canales de enumeración por tiempo, integración real con OIDC, aprobación y comparación fuera de banda, y UI contra servidor desplegado. Las pruebas citadas por los ADR no se repitieron.
+
 ### 4.2 Emisión, verificación y lease de configuración
 
 ```mermaid
@@ -230,6 +273,8 @@ sequenceDiagram
 
 Evidencia: [ADR-002](../architecture/ADR-002-revocacion-lease.md) (decisión), [control-plane §6](../api/control-plane-v1.md) («Revocación»), [`devices.rs` L207](../../apps/control-plane/src/devices.rs) (la sentencia `UPDATE … status='revoked'`), [`engine.rs` L686](../../apps/agent/src/engine.rs) (`apply_config`). Estado: lógica VERIFICADO (lectura); latencias medidas en [caídas y leases](../operations/caidas-y-leases.md) y E2E de fase 3B — PARCIAL (documentadas, no repetidas aquí; el [índice de evidencia](evidencia.md) las atribuye). Un dispositivo hostil puede ignorar su lease: lo contiene la configuración de sus peers.
 
+**Actualización 2026-10-29 — VERIFICADO — lectura:** [`devices.rs`](../../apps/control-plane/src/devices.rs) implementa también **`POST /api/v1/device/leave`**: cuerpo vacío (límite 1024 bytes), firma AtDevice de método/ruta/cuerpo, ventana 60 s, cuota por dispositivo y nonce. Admite pending/approved y el ya revocado con firma/nonce nuevos; el objetivo sale de la identidad autenticada, no de parámetros de otra red. Comparte revocación transaccional y registra `device.leave`; no invalida instantáneamente configuraciones emitidas. En [`network.rs`](../../apps/cli/src/network.rs), `leave` revoca antes de parar/borrar y conserva lo local ante error remoto; `--offline` solo limpia y exige revocación administrativa. La app no ofrece offline ([ADR-013 §11](../architecture/ADR-013-redes-multiples-y-union-por-codigo.md)). **SIN COMPROBAR aquí:** replay, carreras y fallos parciales en ejecución.
+
 ### 4.4 Handshake Noise IK, MAC1/MAC2 y cookie
 
 ```mermaid
@@ -275,6 +320,8 @@ Límites reconocidos por los propios contratos: MAC1 y la clave de respuesta son
 | Cabecera de datos sin AEAD adicional (límite de `snow` documentado en ADR-003) | [ADR-003](../architecture/ADR-003-cifrado-antirreplay.md) | VERIFICADO (lectura del ADR) |
 
 La unicidad de nonce ante clonación de VM/snapshot y reinicio es un riesgo reconocido ([ADR-003 «Reinicio y clonación»](../architecture/ADR-003-cifrado-antirreplay.md)); no hay prueba formal (según la matriz). SIN COMPROBAR (independiente).
+
+**Actualización 2026-10-29 — VERIFICADO — lectura:** [`control-plane/issue.rs`](../../apps/control-plane/src/issue.rs) obtiene las reglas de `access_policies` mediante `policies::rules`; `compile` añade por cada regla la inversa (selectores intercambiados, mismo protocolo, `port_min=port_max=0`). Es una ACL **sin estado**, no conntrack. [ADR-016](../architecture/ADR-016-politicas-de-acceso-minimas.md) documenta que el TCP inverso no completa conexión pero el **SYN llega**; UDP e ICMP son efectivamente **bidireccionales**, y los puertos solo restringen el sentido original. `any↔any` amplía pares/acceso al aprobar nuevos dispositivos; las políticas explícitas y un dispositivo sin política no equivalen a ese caso. El rol de presentación no sirve como selector. **PARCIAL:** se leyó el código de compilación y el resultado documental del laboratorio, no se repitió; IPv6 TCP/UDP, escala de reglas y aplicación real del piloto siguen **SIN COMPROBAR aquí**. ADR-016 acepta aplicar la política mínima después del soak, no afirma que ya se haya aplicado.
 
 ### 4.6 Relay: concesión, ALLOC y reenvío
 
@@ -347,7 +394,7 @@ Los registros no deben contener tokens, claves ni cuerpos de configuración ([si
 
 ## 6. Primitivas y bibliotecas (versiones de `Cargo.lock`)
 
-Versiones tomadas de [`Cargo.lock`](../../Cargo.lock) del HEAD. Varias bibliotecas aparecen en **más de una versión** porque `snow` y otros crates arrastran las suyas; la tabla indica cuál consume el código propio.
+Tabla heredada del **commit a0f8ac7**. **Actualización 2026-10-29 — VERIFICADO — lectura:** `git diff a0f8ac7 HEAD -- Cargo.toml Cargo.lock crates/windows/Cargo.toml` no cambia las versiones criptográficas de esta tabla; sí cambia `windows-service` de 0.8.0 a **0.8.1** y retira su dependencia de `windows-sys` 0.59.0 (usa 0.61.2). No se recalcularon las referencias de línea del resto de filas. El escritorio tiene workspace y [`Cargo.lock`](../../apps/desktop/Cargo.lock) separados: [`Cargo.toml`](../../apps/desktop/Cargo.toml) declara Tauri 2 y el lock fija **tauri 2.12.5**; este nuevo árbol no queda cubierto por el lock raíz ni por la tabla criptográfica.
 
 | Primitiva / función | Biblioteca y versión (`Cargo.lock`) | Uso en el código propio | Estado |
 | --- | --- | --- | --- |
@@ -366,7 +413,7 @@ Versiones tomadas de [`Cargo.lock`](../../Cargo.lock) del HEAD. Varias bibliotec
 | Hash de sesiones/tokens/configuración | `sha2` 0.10.9 (control plane) | [`auth.rs` L24](../../apps/control-plane/src/auth.rs), [`devices.rs` L38](../../apps/control-plane/src/devices.rs), [`issue.rs` L270](../../apps/control-plane/src/issue.rs) | VERIFICADO (lectura) |
 | Base de datos | `sqlx` 0.8.6 (Postgres) | [`control-plane`](../../apps/control-plane/src) | VERIFICADO (lectura de la dependencia) |
 | HTTP/servidor | `axum` 0.8.9, `tower` 0.5.3, `tokio` 1.54.1 | apps/coordinator, control-plane, relay | VERIFICADO (lectura de la dependencia) |
-| TUN / FFI de plataforma | `libc` 0.2.191 (Linux/macOS), `libloading` 0.8.9 + `windows-sys` 0.61.2 (Windows), `windows-service` 0.8.0 | [`crates/tunnel`](../../crates/tunnel/src), [`crates/windows`](../../crates/windows/src); inventario de `unsafe` en el [mapa](mapa-del-codigo.md#5-inventario-de-bloques-unsafe) | VERIFICADO (lectura) |
+| TUN / FFI de plataforma | `libc` 0.2.191 (Linux/macOS), `libloading` 0.8.9 + `windows-sys` 0.61.2 (Windows), **`windows-service` 0.8.1** (subido el 2026-10-26, commit `aad61a3`; tabla revisada el 2026-10-29) | [`crates/tunnel`](../../crates/tunnel/src), [`crates/windows`](../../crates/windows/src); inventario de `unsafe` en el [mapa](mapa-del-codigo.md#5-inventario-de-bloques-unsafe) | Versión nueva VERIFICADO — lectura de lock/manifiesto; resto de atribuciones al commit a0f8ac7 |
 | Wintun (DLL de terceros) | No es un crate: Wintun 0.14.1; el instalador valida SHA-256 y firma; no se versiona la DLL | [ADR-008 §4](../architecture/ADR-008-clientes-windows-macos.md) | PARCIAL: contrato leído; comprobación del instalador SIN COMPROBAR |
 
 El inventario completo de dependencias, licencias y excepciones está en [`dependencies.md`](../architecture/dependencies.md) y en `AUDIT-DEPENDENCIES.json` que genera el [snapshot](README.md#snapshot-sin-red-y-verificación) (sin SBOM de pnpm ni de plataformas).
@@ -380,15 +427,15 @@ Observaciones surgidas al leer documentación y código; no son hallazgos de seg
 3. **Comprobaciones de permisos desiguales.** El agente, el emisor del control plane y la clave de firma del coordinator validan modo/tipo; la clave TLS del relay, `DATABASE_URL_FILE` y el secreto OIDC por fichero **no** tienen esa comprobación en el código (el despliegue de producción fija 0400 para la clave del relay). Evaluar si debe ser un control del software o solo del despliegue.
 4. **Datos de sesión/OIDC en claro en BD.** `csrf_token`, `pkce_verifier` y `nonce` se guardan sin hash (decisión documentada; acotada por TTL).
 5. **PROXY v2 hacia el panel.** La configuración de producción lo envía también a Caddy; ADR-004 §3 describe la variante anterior (ver §4.7).
-6. **ADR-006 (licencia) y ADR-009 (operación y releases) aceptados el 2026-10-26.** Los objetivos RPO ≤ 24 h / RTO ≤ 2 h son objetivos del piloto aún sin medir en un VPS; la publicación y la clave de firma de releases siguen pendientes de decisión.
+6. **ADR-006/009 y operación.** La observación del **commit a0f8ac7** sobre publicación pendiente es histórica: `git log a0f8ac7..HEAD` registra versiones 0.1.1–0.1.5 y cambios de empaquetado. **VERIFICADO — lectura del historial**, no verificación de artefactos publicados, firma, backups o restauración; ejecución y cumplimiento RPO/RTO **SIN COMPROBAR aquí**.
 7. **Estado del agente sin autenticación de contenido** (conocido): protege la corrupción, no a un root local.
 8. **`unsafe`:** véase [mapa del código §5](mapa-del-codigo.md#5-inventario-de-bloques-unsafe); `crates/windows` aplica `#[allow(unsafe_code)]` a `mod service` aunque `service.rs` no contiene la palabra `unsafe`.
 9. **Wintun cargado por ruta configurable.** `ATENEA_WINTUN_DLL` (absoluta) o `wintun.dll` junto al ejecutable ([`tunnel/windows.rs` L83–L99](../../crates/tunnel/src/windows.rs)); el código no verifica hash ni firma de la DLL (eso recae en el instalador). Los permisos del directorio de instalación: SIN COMPROBAR.
 
 ## 8. Alcance y límites de este documento
 
-- Lectura estática del árbol `a0f8ac7`; sin compilar, ejecutar pruebas, fuzz, laboratorios ni Docker.
-- Los números de línea son del HEAD indicado; cualquier cambio posterior los desplaza.
-- «VERIFICADO (lectura)» de un contrato no implica conformidad del código, y la conformidad del código no implica seguridad; no se revisó `snow`, `ring` ni otras dependencias.
+- Lectura estática original del **commit a0f8ac7** más ampliaciones del 2026-10-29 a `8d975a6`; sin compilar, fuzz, laboratorios ni Docker. Solo se ejecutan los comprobadores documentales del encargo.
+- Las referencias de línea heredadas corresponden al **commit a0f8ac7**, no al HEAD actual; las ampliaciones enlazan ficheros y símbolos sin inventar líneas.
+- «VERIFICADO — lectura» de un contrato no implica conformidad del código, ni conformidad implica revisión independiente; no se revisó internamente `snow`, `ring`, Tauri ni otras dependencias.
 - Infraestructura real (DNS, ACME, firewall del proveedor, UDP/TCP 443 alcanzables), instaladores firmados y máquinas físicas Windows/macOS: SIN COMPROBAR. Véase [evidencia y brechas](evidencia.md) y la [matriz de aceptación](../operations/matriz-de-aceptacion.md).
 - Modelo de amenazas de referencia: [`threat-model.md`](../security/threat-model.md) (T1–T30), no releído en su totalidad para este documento.
