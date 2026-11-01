@@ -1,4 +1,4 @@
-FROM postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+FROM postgres:17@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f
 RUN apt-get update && apt-get install -y --no-install-recommends pgbackrest age python3 && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/lib/pgbackrest /var/log/pgbackrest /run/pgbackrest && chown postgres:postgres /var/lib/pgbackrest /var/log/pgbackrest /run/pgbackrest
 COPY deploy/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
