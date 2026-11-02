@@ -34,7 +34,7 @@ services:
       ATENEA_COORD_CONFIG: /etc/atenea/stun.toml
     volumes:
       - '${ATENEA_RUNTIME_DIR:?}/config/stun.toml:/etc/atenea/stun.toml:ro'
-    ports: ['3478:3478/udp']
+    ports: ['3478:3478/udp', '3479:3479/udp']
     networks: [edge]
     healthcheck:
       test: [CMD, /usr/local/bin/healthcheck, http, '127.0.0.1:8081']

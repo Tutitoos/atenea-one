@@ -9,7 +9,7 @@
 | TCP 80 | Caddy, HTTP-01 y redirección a HTTPS |
 | TCP 443 | HAProxy: SNI del relay **y** ALPN `atenea-relay/2` → relay; todo lo demás → Caddy |
 | UDP 443 | Relay |
-| UDP 3478 | STUN del coordinator; segundo socket 3479 interno |
+| UDP 3478, 3479 | STUN del coordinator (dos puertos para clasificar el mapeo) |
 
 HAProxy no termina TLS y **no** acepta PROXY del exterior. Solo el backend relay recibe `send-proxy-v2`. HAProxy y relay comparten el namespace estable de `netns` (`network_mode: service:netns`); el relay escucha TLS en `127.0.0.1:8443` y solo acepta PROXY desde loopback. No se publica 8443 ni se amplía confianza a toda la subred Docker. `netns` posee las redes, los alias DNS y los puertos 443 TCP/UDP; usa la imagen HAProxy fijada por digest, UID 99, `/bin/sleep infinity`, sin capacidades ni secretos, con healthcheck `/bin/true`. Reiniciar HAProxy o relay no sustituye el namespace del otro. Los contenedores conservan usuarios, filesystem, secretos y límites separados. El overlay de métricas conecta **netns**, no HAProxy/relay, a monitoring; Prometheus consulta `netns:9100`.
 
@@ -123,7 +123,7 @@ STACK E2E: TODO OK (API OIDC; navegador cubierto por tests/e2e-panel)
 
 La topología añade rutas de retorno efímeras en los namespaces de coordinator y HAProxy mediante contenedores auxiliares, sin alterar sus imágenes, permisos ni Compose productivo. Solo el tráfico al control plane recibe el SNAT exterior del runner; aplicarlo también a STUN ocultaba las NAT domésticas y solo permitía relay, no P2P.
 
-También se ejecutó `docker compose config --quiet` para el base y para **base + backup + observability juntos**, con resultado `PASS docker compose config base y base+backup+observability`. Es validación de composición, no arranque ni ensayo de los servicios de esos overlays.
+También se ejecutó `docker compose config --quiet` para el base y para **base + backup + observability juntos**, con resultado `PASS docker compose config base y base+backup+observability`. Es validación de composición, no arranque ni ensayo de los servicios de esos overlays. La observabilidad es **opcional**: `site.yml` no la aplica y se activa solo añadiendo `-f observability.yaml`; el arranque real de Prometheus, Loki, Alloy y Grafana **no se ha ensayado**.
 
 
 ## Evidencia de upgrade y límites

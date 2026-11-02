@@ -36,8 +36,13 @@ Las mediciones de infraestructura publicadas abajo son anteriores al cutover wir
    de prohibir root/contraseña; el usuario administrativo tiene sudo por clave.
 7. Ejecutar `relay.yml` sobre el segundo nodo, configurar el coordinator principal
    con ambos endpoints y sus `relay_id` distintos en `ATENEA_COORD_RELAYS` y comprobar conmutación desde fuera.
-8. Configurar el hook `observability_agent_tasks` con una ruta de tareas del
-   exportador revisada por el operador; por defecto no instala otro servicio.
+8. **Observabilidad: opcional, no se aplica por defecto.** `site.yml` no arranca
+   Prometheus, Loki, Alloy ni Grafana: solo incluye el rol `observability_agent`,
+   que no hace nada salvo que el operador defina el hook `observability_agent_tasks`
+   con una ruta de tareas revisada por él. El overlay
+   `deploy/compose/prod/observability.yaml` se activa a mano añadiéndolo con `-f`
+   al Compose base. Solo se validó con `docker compose config`; su arranque real
+   **no se ha ensayado**.
    Habilitar y ensayar las copias antes de una actualización.
 
 El controlador Ansible también se ejecuta en contenedor: construir
@@ -83,8 +88,8 @@ clave privada tenga dueño/modo correctos; la clave permanece exclusivamente en
 y `stun`, sin PostgreSQL, Dex ni claves privadas de firma de configuración o tokens.
 `stun` ejecuta el binario coordinator con anclas **públicas**, sin
 `relay_signing_key_file`, sin relays y HTTP en loopback del contenedor; no es un
-segundo coordinator público. Se publica solo UDP 3478; su segundo puerto STUN
-3479 es interno. El servicio relay sirve TLS directamente en TCP 443,
+segundo coordinator público. Se publican UDP 3478 y 3479 (los dos puertos STUN,
+necesarios para distinguir el mapeo independiente del dependiente). El servicio relay sirve TLS directamente en TCP 443,
 `proxy_protocol=false`, UDP 443. No necesita HAProxy ni Caddy.
 
 Preparar `config/stun.toml`, `config/relay.toml` a partir de los `.example`,
@@ -113,8 +118,8 @@ loopback e ICMP/ICMPv6 (necesario para PMTU y descubrimiento IPv6).
 
 | Nodo | TCP entrante | UDP entrante |
 | --- | --- | --- |
-| Principal | 22 solo redes administrativas; 80; 443 | 443; 3478 |
-| Relay secundario | 22 solo redes administrativas; 443 | 443; 3478 |
+| Principal | 22 solo redes administrativas; 80; 443 | 443; 3478; 3479 |
+| Relay secundario | 22 solo redes administrativas; 443 | 443; 3478; 3479 |
 
 El control también se aplica al forwarding/DNAT: Docker puede eludir INPUT al
 publicar puertos, por lo que se valida el **puerto original** de los flujos DNAT
@@ -392,7 +397,7 @@ Un único VPS Debian 13 (6 vCPU, 11,7 GiB de RAM), desplegado con este rol desde
 - El certificado TLS del relay lo firma una CA propia del piloto (caduca a los 90 días, renovación manual): los agentes necesitan `relay_ca_file`.
 - **El coordinator no era alcanzable por el proxy (corregido en `c05871c`).** El agente firma la ruta exacta de cada petición y el `Caddyfile` publicaba el coordinator en `/coord/*` quitando el prefijo, así que la firma no podía coincidir y el agente recibía `acceso denegado`. `tests/stack` no lo detectó porque el agente habla directo con el coordinator. Ahora se publica `/v1/*` sin reescribir la ruta y los agentes usan `coordinator.url = "https://PANEL_HOST"`.
 - **Un cambio en un fichero montado no llegaba al contenedor (corregido).** `ansible.builtin.copy` reemplaza `Caddyfile`, `haproxy.cfg`, las configuraciones públicas y los secretos de forma atómica (inodo nuevo) y los contenedores seguían montando el inodo antiguo: el host mostraba la configuración nueva mientras Caddy servía la antigua, y `compose up -d` no recrea el servicio porque su definición no cambia. Hubo que recrear Caddy a mano. Ahora `apply.yml` ejecuta `docker compose up -d --force-recreate --wait` cuando la distribución, la configuración pública o los secretos cambian y ya había contenedores (en el primer despliegue no hace nada extra; un upgrade que solo cambia digests no lo dispara). Se recrean todos los servicios juntos para conservar la unión netns/HAProxy/relay, con la interrupción breve que eso implica. Regresión en `tests/infra/in-container.sh`: añade una marca a `coordinator.toml`, converge y exige que el contenedor en ejecución la vea y se haya recreado. Con el rol anterior ese test falla (verificado con el árbol de `HEAD`); con el arreglo, `tests/infra` completo termina en `INFRA OK` (554 s).
-- **El STUN queda sin clasificar:** el Compose solo publica el 3478/udp y el agente necesita también el 3479 para distinguir mapeo independiente de dependiente; sin él informa `mapping = "unknown"` (degradado, no roto).
+- **El STUN quedaba sin clasificar (corregido en la 0.1.7):** el Compose solo publicaba el 3478/udp y el agente necesita también el 3479 para distinguir mapeo independiente de dependiente; sin él informa `mapping = "unknown"` (degradado, no roto). Desde la 0.1.7 se publican ambos y el firewall del nodo los permite; el firewall del proveedor sigue abriéndolo el operador.
 
 ### Enrolamiento y caminos reales (2026-10-27)
 

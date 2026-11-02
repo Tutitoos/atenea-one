@@ -194,7 +194,7 @@ commit en GHCR sin release: no desplegarlas hasta tener el manifiesto firmado.
 ## Evidencia y límites
 
 El ensayo cubre compilación Linux offline, `.deb` instalado en Debian/systemd,
-tres imágenes locales, SBOM validados, firma/verificación positiva y cinco
+cuatro imágenes locales (`control-plane`, `coordinator`, `relay`, `postgres-backup`), SBOM validados, firma/verificación positiva y cinco
 rechazos: byte de artefacto cambiado, SBOM alterado, otra clave, commit distinto y
 manifiesto truncado. La salida real completa se entrega con la ejecución final.
 
@@ -252,3 +252,5 @@ Publicada con autorización expresa del responsable (tag firmado sobre `042fb0a`
 ### `v0.1.7` preparada, sin publicar
 
 Versión subida en el árbol; sin tag, sin artefactos y sin despliegue. Solo cambia el control plane (rechazo `409 serial_rollback`) y el diálogo de certificado del panel. Alcance, procedimiento y comprobaciones: [v0.1.7](v0.1.7.md).
+
+A partir de esta versión el release incluye una **cuarta imagen, `postgres-backup`** (`deploy/backup/Dockerfile`), con el mismo tratamiento que las demás: construcción en CI con `--provenance=false --sbom=false`, `images.json`, tar y manifiesto OCI, SBOM propio (sin SBOM Rust ni panel: no contiene binarios de Atenea), digest de registro en GHCR y verificación en `verify.sh`. No admite `--version` (su entrypoint exige un secreto montado), así que el workflow comprueba `pgbackrest version` con otro entrypoint. No cambian las versiones de PostgreSQL ni pgBackRest. **Sin comprobar** hasta ejecutar el workflow: construcción y publicación reales de esta imagen.

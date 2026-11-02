@@ -67,7 +67,11 @@ jobs:
             docker build --provenance=false --sbom=false --build-arg "ATENEA_BUILD_COMMIT=$GITHUB_SHA" -t "atenea-release/$service:build" -f "deploy/images/$service/Dockerfile" .
             test "$(docker run --rm --network none "atenea-release/$service:build" --version)" = "atenea-$service $ATENEA_VERSION ($GITHUB_SHA)"
           done
-          python3 scripts/release/images.py dist "$GITHUB_SHA" "$ATENEA_VERSION" control-plane=atenea-release/control-plane:build coordinator=atenea-release/coordinator:build relay=atenea-release/relay:build
+          # El entrypoint de postgres-backup exige un secreto montado: se comprueba pgBackRest con otro entrypoint.
+          docker build --provenance=false --sbom=false --build-arg "ATENEA_BUILD_COMMIT=$GITHUB_SHA" -t atenea-release/postgres-backup:build -f deploy/backup/Dockerfile .
+          version_line=$(docker run --rm --network none --entrypoint pgbackrest atenea-release/postgres-backup:build version)
+          [[ "$version_line" =~ ^pgBackRest\ [0-9]+\.[0-9]+ ]]
+          python3 scripts/release/images.py dist "$GITHUB_SHA" "$ATENEA_VERSION" control-plane=atenea-release/control-plane:build coordinator=atenea-release/coordinator:build relay=atenea-release/relay:build postgres-backup=atenea-release/postgres-backup:build
       - name: Atestar procedencia de los artefactos
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

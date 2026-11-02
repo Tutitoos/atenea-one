@@ -53,7 +53,7 @@ for container in containers:
     for key, bindings in container['NetworkSettings']['Ports'].items():
         for binding in bindings or []:
             ports.add((key.split('/')[1], int(binding['HostPort'])))
-assert ports == ({('tcp', 443), ('udp', 443), ('udp', 3478)} if relay else {('tcp', 80), ('tcp', 443), ('udp', 443), ('udp', 3478)}), ports
+assert ports == ({('tcp', 443), ('udp', 443), ('udp', 3478), ('udp', 3479)} if relay else {('tcp', 80), ('tcp', 443), ('udp', 443), ('udp', 3478), ('udp', 3479)}), ports
 rules = json.loads(subprocess.check_output(['nft', '-j', 'list', 'table', 'inet', 'atenea_host'], text=True))['nftables']
 chains = [r['chain'] for r in rules if 'chain' in r]
 assert all(c['policy'] == 'drop' for c in chains if c['name'] in ['input', 'forward'])
@@ -66,7 +66,7 @@ for entry in rules:
             value = match['right']
             allowed[payload['protocol']].update(value['set'] if isinstance(value, dict) else [value])
 # El principal del ensayo abre además el UDP 51820 (atenea_extra_udp_ports); el relay conserva los de siempre.
-assert allowed == {'tcp': {22, 443} if relay else {22, 80, 443}, 'udp': {443, 3478} if relay else {443, 3478, 51820}}, allowed
+assert allowed == {'tcp': {22, 443} if relay else {22, 80, 443}, 'udp': {443, 3478, 3479} if relay else {443, 3478, 3479, 51820}}, allowed
 for secret in (root / 'secrets').iterdir():
     stat = secret.stat()
     assert stat.st_mode & 0o777 == 0o400, secret

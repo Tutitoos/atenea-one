@@ -6,5 +6,8 @@ COPY deploy/backup/backup-entrypoint.sh /usr/local/bin/backup-entrypoint
 COPY deploy/backup/schedule.sh /usr/local/bin/backup-schedule
 COPY deploy/backup/verify.sh /usr/local/bin/backup-verify
 RUN chmod 755 /usr/local/bin/backup-entrypoint /usr/local/bin/backup-schedule /usr/local/bin/backup-verify
+ARG ATENEA_BUILD_COMMIT=unknown
+LABEL org.opencontainers.image.revision=$ATENEA_BUILD_COMMIT
+LABEL org.opencontainers.image.source=https://github.com/Tutitoos/atenea-one
 ENTRYPOINT ["backup-entrypoint"]
 CMD ["postgres", "-c", "archive_mode=on", "-c", "archive_command=pgbackrest --stanza=atenea archive-push %p", "-c", "archive_timeout=60s"]

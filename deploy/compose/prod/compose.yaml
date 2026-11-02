@@ -143,7 +143,7 @@ services:
       RUST_LOG: info
     secrets: [relay-signing.hex]
     volumes: ['${ATENEA_RUNTIME_DIR:?}/config/coordinator.toml:/etc/atenea/coordinator.toml:ro']
-    ports: ['${ATENEA_BIND_IP:-0.0.0.0}:${STUN_PORT:-3478}:3478/udp']
+    ports: ['${ATENEA_BIND_IP:-0.0.0.0}:${STUN_PORT:-3478}:3478/udp', '${ATENEA_BIND_IP:-0.0.0.0}:3479:3479/udp']
     networks: [backend, edge]
     healthcheck:
       <<: *health

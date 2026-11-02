@@ -13,7 +13,7 @@ dist=${1:-"$root/dist"}
 mkdir -p "$dist"
 dist=$(cd "$dist" && pwd)
 [ -z "$(find "$dist" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo 'El directorio de salida debe estar vacío' >&2; exit 1; }
-for image in atenea-lab atenea-infra:local atenea/control-plane:local atenea/coordinator:local atenea/relay:local; do
+for image in atenea-lab atenea-infra:local atenea/control-plane:local atenea/coordinator:local atenea/relay:local atenea/postgres-backup:local; do
     docker image inspect "$image" >/dev/null
 done
 work=$(mktemp -d)
@@ -38,7 +38,8 @@ docker run --rm --pull never --network none \
         cp -R /src/Cargo.toml /src/Cargo.lock /src/crates /src/apps /tmp/release-src/
         cd /tmp/release-src
         cargo build --offline --locked --release -p atenea-cli -p atenea-agent -p atenea-control-plane -p atenea-coordinator -p atenea-relay
-        cargo metadata --offline --locked --format-version 1 > /out/cargo-metadata.json
+        # Sin red no están en caché las dependencias solo de Windows (windows-service): se limita a la plataforma del ensayo.
+        cargo metadata --offline --locked --format-version 1 --filter-platform "$(rustc -vV | awk "/^host:/ {print \$2}")" > /out/cargo-metadata.json
         for name in atenea atenea-agent atenea-control-plane atenea-coordinator atenea-relay; do
             output=$(/cache/target/release/$name --version)
             [ "$output" = "$name $ATENEA_VERSION ($ATENEA_BUILD_COMMIT)" ]
@@ -80,6 +81,14 @@ EOF
     [ "$(docker run --rm --pull never --network none "$ref" --version)" = "atenea-$service $ATENEA_VERSION ($ATENEA_BUILD_COMMIT)" ]
     image_args+=("$service=$ref")
 done
+# postgres-backup se reconstruye sin red sobre la imagen local ya instalada (apt necesita red): solo cambia la identidad.
+ref="atenea-release-postgres-backup:local-$$"
+refs+=("$ref")
+mkdir "$work/postgres-backup"
+printf 'FROM atenea/postgres-backup:local\nLABEL org.opencontainers.image.revision=%s\n' "$ATENEA_BUILD_COMMIT" > "$work/postgres-backup/Dockerfile"
+docker build --pull=false --network none -t "$ref" "$work/postgres-backup"
+[[ "$(docker run --rm --pull never --network none --entrypoint pgbackrest "$ref" version)" =~ ^pgBackRest\ [0-9]+\.[0-9]+ ]]
+image_args+=("postgres-backup=$ref")
 python3 scripts/release/images.py "$dist" "$ATENEA_BUILD_COMMIT" "$ATENEA_VERSION" "${image_args[@]}"
 complete=true
 echo 'PASS ensamblado local sin red; macOS .pkg y Windows ZIP NO construidos (solo runners)'

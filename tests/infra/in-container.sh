@@ -213,7 +213,7 @@ inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
 inv['all']['children'] = {'relays': {'hosts': {'localhost': {'ansible_connection': 'local'}}}}
 v = inv['all']['vars']
 v.update(atenea_node_role='relay', atenea_stack_dir='/opt/atenea-relay', atenea_secrets_source='/lab/relay.sops.yaml')
-v.pop('atenea_extra_udp_ports')  # el relay comprueba el comportamiento por defecto (solo 443 y 3478)
+v.pop('atenea_extra_udp_ports')  # el relay comprueba el comportamiento por defecto (solo 443, 3478 y 3479)
 v['atenea_env']['ATENEA_RUNTIME_DIR'] = '/opt/atenea-relay'
 v['atenea_stack_images'] = {'relay': v['atenea_stack_images']['relay'], 'stun': v['atenea_stack_images']['coordinator']}
 p = Path('/lab/public/config/relay.toml')

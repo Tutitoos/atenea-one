@@ -76,6 +76,12 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Certificado instalado.');
   await dismiss(page);
   await expect(page.getByRole('button', { name: 'Reemplazar certificado' })).toBeVisible();
+  await page.getByRole('button', { name: 'Reemplazar certificado' }).click();
+  await expect(page.getByRole('dialog').getByText(/--serial <serial vigente \+ 1> --valid-days 90/)).toBeVisible();
+  await page.getByLabel('Certificado público').setInputFiles('/tmp/lab/issuer.cert');
+  await page.getByRole('button', { name: 'Subir issuer.cert' }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Certificado instalado.');
+  await dismiss(page);
 
   // --- Incorporar dos dispositivos: token único, enrolamiento por CLI, aprobación comparando huellas
   const joins: Record<string, string> = {};

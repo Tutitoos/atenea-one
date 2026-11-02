@@ -40,7 +40,7 @@ echo 'PASS manifiesto y firma reproducibles con SOURCE_DATE_EPOCH'
 python3 - "$dist" <<'PY'
 import json, pathlib, sys
 dist = pathlib.Path(sys.argv[1])
-for name in ('control-plane', 'coordinator', 'relay'):
+for name in ('control-plane', 'coordinator', 'relay', 'postgres-backup'):
     bom = json.loads((dist / (name + '.cdx.json')).read_text())
     packages = [c for c in bom['components'] if c['bom-ref'].startswith('deb:')]
     assert packages, 'Falta inventario Debian/distroless'

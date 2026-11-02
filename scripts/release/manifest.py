@@ -119,7 +119,10 @@ def create(dist, key, version, commit):
         elif name.endswith(('-linux', '.deb')):
             entry['sboms'] = ['rust.cdx.json']
         elif name.endswith('.docker.tar'):
-            entry['sboms'] = [name.removesuffix('.docker.tar') + '.cdx.json', 'rust.cdx.json']
+            # postgres-backup no contiene binarios Rust ni panel: solo su inventario de imagen.
+            entry['sboms'] = [name.removesuffix('.docker.tar') + '.cdx.json']
+            if not name.startswith('postgres-backup'):
+                entry['sboms'].append('rust.cdx.json')
             if name.startswith('control-plane'):
                 entry['sboms'].append('panel.cdx.json')
     (dist / 'SHA256SUMS').write_text(''.join(f"{e['sha256']}  {e['name']}\n" for e in entries))
