@@ -74,4 +74,6 @@ if ((${#next[@]})); then
         printf '%s %s\n' "$1" "$(docker exec "$name" docker image inspect "$2" --format '{{.Id}}')"
     done | docker exec -i "$name" sh -c 'cat > /tmp/infra-next-images'
 fi
-docker exec -e INFRA_N_COMMIT="${INFRA_N_COMMIT:-}" -e INFRA_NEXT_COMMIT="${INFRA_NEXT_COMMIT:-}" "$name" bash /src/tests/infra/in-container.sh
+docker exec -e INFRA_N_COMMIT="${INFRA_N_COMMIT:-}" -e INFRA_NEXT_COMMIT="${INFRA_NEXT_COMMIT:-}" \
+    -e INFRA_N_MIGRATIONS="${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}" -e INFRA_N_ROLES="${INFRA_N_ROLES:-0}" \
+    "$name" bash /src/tests/infra/in-container.sh

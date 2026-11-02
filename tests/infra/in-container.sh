@@ -156,8 +156,9 @@ PY
   }
   ansible-playbook -i /lab/inventory.yml site.yml
   for s in control-plane coordinator relay; do expect "N: $s con la imagen de la revisión anterior" "$(running "$s")" "$(image "$s")"; done
-  expect 'N: historial de migraciones 1–7' "$(versions)" '1,2,3,4,5,6,7'
-  expect 'N: columnas role aún no existen' "$(roles)" 0
+  # Por defecto N es 0.1.5 (migraciones 1–7, sin columnas role); para N = 0.1.6 → INFRA_N_MIGRATIONS=1,…,8 e INFRA_N_ROLES=2.
+  expect "N: historial de migraciones ${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}" "$(versions)" "${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}"
+  expect "N: columnas role (${INFRA_N_ROLES:-0})" "$(roles)" "${INFRA_N_ROLES:-0}"
   if [ -n "${INFRA_N_COMMIT:-}" ]; then
     expect 'N: control-plane informa el commit anterior' "$(commit_of control-plane | sed 's/.*(\(.*\))/\1/')" "$INFRA_N_COMMIT"
   fi
