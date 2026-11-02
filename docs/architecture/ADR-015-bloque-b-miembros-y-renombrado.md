@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-015: Bloque B del panel: miembros, renombrado e información del servidor
 
-- **Estado:** **Aceptado** por el responsable el 2026-10-28. Implementado y probado (74 pruebas contra PostgreSQL real, E2E real del panel 3/3 y ensayo de retroceso 58/58); **desplegado en el piloto con la v0.1.6 (2026-11-02)**: panel nuevo servido y miembros con nombre y correo comprobados con el propietario. **La privacidad frente a un `member` se comprobó en el piloto el 2026-11-02** (v0.1.7) con una cuenta sintética creada y borrada después: ve los nombres y ningún correo, y recibe 403 en las operaciones de administración probadas (ver [v0.1.7](../operations/v0.1.7.md#6-resultado-real-2026-11-02)). No se probó con el navegador ni con la aplicación de escritorio.
+- **Estado:** **Aceptado** por el responsable el 2026-10-28. Implementado y probado (74 pruebas contra PostgreSQL real, E2E real del panel 3/3 y ensayo de retroceso 58/58); **desplegado en el piloto con la v0.1.6 (2026-11-02)**: panel nuevo servido y miembros con nombre y correo comprobados con el propietario. **La privacidad frente a un `member` y los límites del rol `admin` se comprobaron en el piloto el 2026-11-02** (v0.1.7) con cuentas sintéticas creadas y borradas después, por API y con un navegador (solo lectura y navegación): el `member` ve los nombres y ningún correo, no ve botones de administración y recibe 403 en las operaciones de administración probadas; el `admin` ve correos y las acciones de red, pero no las exclusivas del owner (ver [v0.1.7](../operations/v0.1.7.md#6-resultado-real-2026-11-02)). No se probó la aplicación de escritorio ni se pulsó ninguna acción en el navegador.
 - **Relacionados:** ADR-012, ADR-013 y ADR-014.
 
 ## Decisión
