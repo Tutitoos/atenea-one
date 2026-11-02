@@ -85,7 +85,15 @@ Límites, sin comprobar:
 - El laboratorio usa validez de configuración de 40 s y un solo agente; los plazos de producción son 300 s más 30 s de tolerancia.
 - No se probó un agente apagado durante la renovación (la regla del contrato, serial mayor o igual al persistido, indica que aceptará el nuevo al volver), ni renovar **después** de que el certificado haya caducado.
 - No se manejó la pantalla «Reemplazar certificado» del panel (solo el endpoint que usa) ni la aplicación de escritorio.
-- No se ensayó en el piloto real; el certificado del piloto no se tocó.
+- El ensayo no incluyó el piloto; la renovación real se hizo después (ver «Renovaciones realizadas»).
+
+## Renovaciones realizadas
+
+| Fecha | Red | Cambio | Resultado |
+| --- | --- | --- | --- |
+| 2026-11-02 | piloto | serial 1 a 2, 90 días (caduca el 2027-01-31) | Subido por la API, el mismo endpoint que usa el botón del panel (el botón no se manejó). El servidor informó la caducidad nueva y la auditoría registró `serial: 2`. Los tres equipos recibieron configuraciones emitidas tras la subida: el lease no cayó en ningún momento observado (el Mac se muestreó cada unos 25 s durante 3 minutos y recibió tres configuraciones seguidas; el CT y el VPS se comprobaron al cabo de unos 4 minutos), sin `sync.last_error` ni errores de configuración, con 0 errores en el control plane, 9 de 9 servicios sanos y 11 de 11 comprobaciones de tráfico. No se leyó el estado persistido de los agentes (es de root): que aceptan el serial 2 se deduce de que siguen recibiendo y aplicando configuraciones firmadas con el certificado nuevo. |
+
+Próxima renovación del piloto: **antes del 2027-01-17** (14 días antes de la caducidad), con serial **3**.
 
 ## Mejora pendiente, no implementada
 
