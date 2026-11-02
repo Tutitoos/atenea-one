@@ -8,7 +8,7 @@ Los valores `<…>` se sustituyen con el inventario privado del operador. No cop
 
 ## Reglas que no se pueden saltar
 
-1. **El serial debe ser estrictamente mayor que el vigente.** El servidor **no lo comprueba**: acepta un certificado válido de serial menor. Los agentes, en cambio, rechazan cualquier serial menor que el mayor que han visto (`issuer_rollback`). Subir un serial menor corta la red (ver «Qué pasa si te equivocas»).
+1. **El serial debe ser estrictamente mayor que el vigente.** Los agentes rechazan cualquier serial menor que el mayor que han visto (`issuer_rollback`). **El control plane 0.1.6 y los anteriores no lo comprueban**: aceptan un certificado válido de serial menor y entonces la red se corta (ver «Qué pasa si te equivocas»). Las versiones posteriores a la 0.1.6 (cambio en `main`, sin publicar a 2026-11-02) lo rechazan con `409 serial_rollback`. **Comprueba la versión del servidor antes de fiarte de esa protección.**
 2. **Validez de 90 días como máximo.** Según el contrato, el agente rechaza ventanas mayores (no ensayado aquí).
 3. **La raíz solo se usa en la estación de administración**, nunca en el VPS ni en un host expuesto (ADR-005).
 4. **La clave de emisor descifrada es temporal:** fichero con permisos 0600, sin imprimirla ni pegarla en ningún sitio, y borrada al terminar. Una shell persistente no ejecuta un `trap … EXIT`: la limpieza se hace explícitamente y se comprueba.
@@ -62,7 +62,8 @@ Todas deben cumplirse antes de dar la renovación por buena:
 
 | Situación | Efecto | Qué hacer |
 | --- | --- | --- |
-| Serial **menor o igual** que el vigente | Con serial menor, el servidor lo acepta y los agentes responden `issuer_rollback` en `sync.last_error`; dejan de recibir configuración y **pierden el lease** cuando caduca la última válida. Con el mismo serial, es idempotente y no pasa nada. | **Volver a subir de inmediato el certificado de serial mayor.** Los agentes se recuperan solos, sin tocarlos. |
+| Serial **menor** que el vigente | **Servidor 0.1.6 o anterior:** lo acepta; los agentes responden `issuer_rollback` en `sync.last_error`, dejan de recibir configuración y **pierden el lease** cuando caduca la última válida. **Servidor posterior:** `409 serial_rollback` y no cambia nada. | Si se aceptó: **volver a subir de inmediato el certificado de serial mayor**; los agentes se recuperan solos, sin tocarlos. |
+| Serial **igual** al vigente | Idempotente: no pasa nada. | Nada. |
 | Certificado de **otra red** o firmado por **otra raíz** | El servidor responde `invalid_certificate` y no cambia nada. | Emitirlo de nuevo con la raíz y el identificador correctos. |
 | Certificado de **otra clave de emisor** | El servidor responde `wrong_issuer` y no cambia nada. | Usar la clave de emisor que el control plane tiene instalada. |
 | Validez superior a 90 días | Los agentes lo rechazan (`CertExpired`, según el contrato de configuración firmada; **no ensayado**). | Emitirlo con `--valid-days` de 90 o menos. |
@@ -71,12 +72,13 @@ No borrar el estado de los agentes ni reemplazar sus anclas para saltarse un rec
 
 ## Qué se ensayó y con qué límites
 
-Ensayado el 2026-11-02 (`tests/network-lab/issuer-renewal.sh`, que se ejecuta con `bash tests/network-lab/run-e2e.sh issuer-renewal.sh`): control plane real, PostgreSQL, Dex y un agente real en el laboratorio, con **raíz y emisor desechables**. 28 comprobaciones, todas correctas:
+Ensayado el 2026-11-02 (`tests/network-lab/issuer-renewal.sh`, que se ejecuta con `bash tests/network-lab/run-e2e.sh issuer-renewal.sh`): control plane real, PostgreSQL, Dex y un agente real en el laboratorio, con **raíz y emisor desechables**. Con el control plane 0.1.6 pasaron 28 comprobaciones y con el de `main` (que rechaza el serial menor) 31, todas correctas:
 
 - Renovación del serial 1 al 2 y de 30 a 90 días: el servidor informa la caducidad nueva, la auditoría registra `serial: 2`, el **lease no cayó ni una vez** durante 30 s muestreados cada segundo, el agente recibió una configuración firmada con el serial 2 y no hubo errores.
 - Subir otra vez el mismo serial es idempotente.
 - Rechazos del servidor: certificado de otra red, de otra raíz y de otro emisor (`wrong_issuer`), sin cambiar el certificado vigente.
-- **Riesgo medido:** el servidor acepta el serial 1 después del 2; el agente lo informa como `issuer_rollback`, aumentan sus errores de sincronización y se queda sin lease; al volver a subir el serial 2 el agente recupera el lease y el error desaparece solo.
+- **Serial menor, servidor 0.1.6 (medido):** aceptó el serial 1 después del 2; el agente lo informó como `issuer_rollback`, aumentaron sus errores de sincronización y se quedó sin lease; al volver a subir el serial 2 recuperó el lease y el error desapareció solo.
+- **Serial menor, servidor de `main` (medido):** `409 serial_rollback`, el certificado vigente no cambia, no se registra auditoría y el agente no nota nada (lease sin caídas durante 25 s muestreados). Si el certificado menor llega al servidor por otra vía (se simuló escribiéndolo en la base de datos, como tras restaurar una copia), el agente lo rechaza igualmente y falla cerrado; subir el mayor lo recupera.
 
 Ensayado también el mismo día **con las claves reales** (raíz offline y clave de emisor de la custodia) sobre una red de prueba desechable en el servidor real, ya borrada: serial 1 de 7 días y renovación a serial 2 de 90 días, aceptados por el servidor, con la caducidad y los eventos de auditoría esperados. Sin agentes en esa red.
 
@@ -95,6 +97,6 @@ Límites, sin comprobar:
 
 Próxima renovación del piloto: **antes del 2027-01-17** (14 días antes de la caducidad), con serial **3**.
 
-## Mejora pendiente, no implementada
+## Rechazo del serial menor: hecho en `main`, sin desplegar
 
-El control plane podría rechazar con `409` un certificado de serial menor que el instalado, que convertiría el error más grave de este procedimiento en un rechazo inofensivo. Requiere una versión nueva y no debe esperarse para renovar: este runbook funciona sin ella.
+El control plane rechaza con `409 serial_rollback` un certificado de serial menor que el instalado (el mismo serial se sigue aceptando). Un certificado almacenado ilegible no lo impide, para poder repararlo. Está en `main` desde 2026-11-02, con una prueba de integración contra PostgreSQL y el ensayo de laboratorio anterior, pero **no está en ninguna versión publicada**: el piloto corre la 0.1.6, que no lo tiene, y por eso las reglas de arriba siguen valiendo tal cual hasta que se publique y despliegue una versión posterior. No hay que esperar a ella para renovar.

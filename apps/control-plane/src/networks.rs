@@ -317,18 +317,31 @@ pub async fn certificate(
 ) -> Result<StatusCode, ApiError> {
     let (u, org) = access(&s, &h, net, true).await?;
     let mut tx = s.pool.begin().await?;
-    let root: Vec<u8> =
-        sqlx::query_scalar("SELECT root_anchor FROM networks WHERE id=$1 FOR UPDATE")
-            .bind(net)
-            .fetch_one(&mut *tx)
-            .await?;
-    let root: [u8; 32] = root.try_into().map_err(|_| ApiError::internal())?;
+    let row = sqlx::query("SELECT root_anchor,issuer_cert FROM networks WHERE id=$1 FOR UPDATE")
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    let root: [u8; 32] = row
+        .get::<Vec<u8>, _>("root_anchor")
+        .try_into()
+        .map_err(|_| ApiError::internal())?;
+    let installed: Option<Vec<u8>> = row.get("issuer_cert");
     let cert =
         atenea_identity::IssuerCert::parse(&b).map_err(|_| ApiError::bad("invalid_certificate"))?;
     cert.verify(&root, *net.as_bytes(), crate::api::now() as u64)
         .map_err(|_| ApiError::bad("invalid_certificate"))?;
     if cert.issuer_pubkey != s.issuer.verifying_key().to_bytes() {
         return Err(ApiError::bad("wrong_issuer"));
+    }
+    // Los agentes rechazan un serial menor que el mayor que ya vieron (`issuer_rollback`) y pierden el lease al
+    // caducar su última configuración: retroceder el certificado instalado cortaría la red. Un certificado
+    // almacenado ilegible no impide repararlo con uno válido; el mismo serial es una renovación idempotente.
+    if let Some(current) = installed
+        .as_deref()
+        .and_then(|bytes| atenea_identity::IssuerCert::parse(bytes).ok())
+        && cert.issuer_serial < current.issuer_serial
+    {
+        return Err(ApiError::conflict("serial_rollback"));
     }
     sqlx::query("UPDATE networks SET issuer_cert=$1 WHERE id=$2")
         .bind(b.as_ref())

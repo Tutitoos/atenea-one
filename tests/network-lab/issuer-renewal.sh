@@ -123,9 +123,18 @@ MSG=$(upload $LAB/otro-emisor.cert 2>&1 || true)
 case "$MSG" in *wrong_issuer*) ok "certificado de OTRO emisor: rechazado con wrong_issuer";; *) bad "otro emisor: respuesta inesperada: $MSG";; esac
 check "tras los rechazos sigue la caducidad de ~90 días" test "$(days_left)" -ge 89
 
-section "RIESGO: el servidor acepta un serial MENOR; el agente lo rechaza (anti-retroceso)"
+section "El servidor rechaza un serial MENOR (409 serial_rollback) y no cambia nada"
+MSG=$(upload $LAB/s1.cert 2>&1 || true)
+case "$MSG" in *serial_rollback*) ok "certificado serial 1 tras el 2: rechazado con serial_rollback";; *) bad "serial menor: respuesta inesperada: $MSG";; esac
+check "tras el rechazo sigue la caducidad de ~90 días" test "$(days_left)" -ge 89
+DROPS=$(lease_drops 25)
+expect_eq "el agente no notó nada: el lease no cayó (25 s muestreados)" "$DROPS" 0
+expect_eq "sin errores de sincronización en el agente" "$(field a sync.last_error)" none
+
+section "Defensa en profundidad: si un certificado MENOR llegara al servidor por otra vía, el agente lo rechaza"
+# Simula una restauración de copia de seguridad (PITR) que deja instalado un certificado anterior.
 S0=$(field a sync.sync_errors)
-check "el servidor acepta subir el certificado serial 1 (no comprueba el orden)" upload $LAB/s1.cert
+psql "$ADMIN_URL" -qc "UPDATE networks SET issuer_cert = decode('$(python3 -c "print(open('$LAB/s1.cert','rb').read().hex())")','hex') WHERE id='$NETID'" >/dev/null
 for _ in $(seq 1 40); do [ "$(field a sync.last_error)" = issuer_rollback ] && break; sleep 1; done
 expect_eq "el agente rechaza el serial 1 y lo informa como sync.last_error" "$(field a sync.last_error)" issuer_rollback
 check "los errores de sincronización del agente aumentan" test "$(field a sync.sync_errors)" -gt "$S0"

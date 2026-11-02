@@ -874,6 +874,89 @@ async fn cidr_solapados_y_certificados_fuera_de_confianza() {
 }
 
 #[tokio::test]
+async fn renovar_el_certificado_no_admite_un_serial_menor() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let s = t.user().await;
+    let org = t.org(&s).await;
+    let root = signing_key(generate_seed());
+    let net = t.network(&s, org, &root, "10.31.0.0/24", "fd31::/64").await;
+    let cert = |serial: u64| {
+        atenea_identity::IssuerCert::issue(
+            &root,
+            *net.as_bytes(),
+            serial,
+            now() - 60,
+            now() + 3600 + serial * 100,
+            t.issuer.verifying_key().to_bytes(),
+            None,
+        )
+        .unwrap()
+        .encode()
+        .to_vec()
+    };
+    let put = |body: Vec<u8>| {
+        let request = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/v1/networks/{net}/issuer-cert"))
+            .header("cookie", format!("atenea_session={}", s.token))
+            .header("x-csrf-token", &s.csrf)
+            .header("content-type", "application/octet-stream")
+            .body(Body::from(body))
+            .unwrap();
+        t.send(request)
+    };
+    let stored = || async {
+        sqlx::query_scalar::<_, Option<Vec<u8>>>("SELECT issuer_cert FROM networks WHERE id=$1")
+            .bind(net)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap()
+    };
+    let events = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit_events WHERE network_id=$1 AND action='network.issuer_cert'",
+        )
+        .bind(net)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap()
+    };
+
+    assert_eq!(put(cert(2)).await.status, StatusCode::NO_CONTENT);
+    // Un serial menor haría que los agentes lo rechacen (issuer_rollback) y pierdan el lease: no se admite.
+    put(cert(1))
+        .await
+        .error(StatusCode::CONFLICT, "serial_rollback");
+    assert_eq!(
+        stored().await,
+        Some(cert(2)),
+        "el certificado vigente no cambia"
+    );
+    assert_eq!(events().await, 1, "un rechazo no deja evento de auditoría");
+    // Mismo serial: idempotente. Mayor: renovación.
+    assert_eq!(put(cert(2)).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(put(cert(3)).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(stored().await, Some(cert(3)));
+    put(cert(2))
+        .await
+        .error(StatusCode::CONFLICT, "serial_rollback");
+    assert_eq!(events().await, 3);
+
+    // Un certificado almacenado ilegible (BD restaurada o dañada) no debe impedir repararlo con uno válido.
+    sqlx::query("UPDATE networks SET issuer_cert=$1 WHERE id=$2")
+        .bind(vec![0u8; 178])
+        .bind(net)
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(put(cert(1)).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(stored().await, Some(cert(1)));
+    t.finish().await;
+}
+
+#[tokio::test]
 async fn limite_enrolamiento_separa_ips_de_origen() {
     let config = atenea_control_plane::config::Config {
         enroll_per_minute: 2,
