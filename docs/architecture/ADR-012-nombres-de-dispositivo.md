@@ -1,6 +1,6 @@
 # ADR-012: Nombres de dispositivo (nombre del sistema, personalizable)
 
-- **Estado:** **Aceptado** por el responsable el 2026-10-27 (nombres sin firmar, como metadato de visualización). Implementado en el repositorio (control plane, agente, CLI y aplicación de escritorio); **sin desplegar**.
+- **Estado:** **Aceptado** por el responsable el 2026-10-27 (nombres sin firmar, como metadato de visualización). Implementado (control plane, agente, CLI y aplicación de escritorio) y desplegado en el piloto desde la v0.1.1.
 - **Relacionados:** ADR-005 (contrato y autenticación de dispositivo), ADR-007, ADR-011 (aplicación de escritorio).
 
 ## Contexto

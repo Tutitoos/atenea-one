@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-015: Bloque B del panel: miembros, renombrado e información del servidor
 
-- **Estado:** **Aceptado** por el responsable el 2026-10-28. Implementado y probado (74 pruebas contra PostgreSQL real, E2E real del panel 3/3 y ensayo de retroceso 58/58); **no desplegado**: llega al piloto con la v0.1.6, después del soak.
+- **Estado:** **Aceptado** por el responsable el 2026-10-28. Implementado y probado (74 pruebas contra PostgreSQL real, E2E real del panel 3/3 y ensayo de retroceso 58/58); **desplegado en el piloto con la v0.1.6 (2026-11-02)**: panel nuevo servido y miembros con nombre y correo comprobados con el propietario; la privacidad frente a un `member` no se ha probado en el piloto.
 - **Relacionados:** ADR-012, ADR-013 y ADR-014.
 
 ## Decisión
