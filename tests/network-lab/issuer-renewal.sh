@@ -148,6 +148,16 @@ expect_eq "el agente recupera el lease sin tocarlo" "$(field a config.lease_acti
 for _ in $(seq 1 30); do [ "$(field a sync.last_error)" = none ] && break; sleep 1; done
 expect_eq "el error issuer_rollback desaparece del estado del agente" "$(field a sync.last_error)" none
 
+section "Renovación con el agente APAGADO: al volver acepta el serial nuevo (3) sin intervención"
+atenea down --socket $LAB/a.sock; sleep 2
+cert 3 90 $LAB/s3.cert
+check "certificado serial 3 subido con el agente apagado" upload $LAB/s3.cert
+sleep 45  # más que la validez de la configuración (40 s): al volver, la última configuración guardada ya habrá caducado
+ip netns exec a atenea up --config $LAB/a.toml --log $LAB/a.log >/dev/null && ok "agente arrancado de nuevo" || bad "no arrancó de nuevo"
+for _ in $(seq 1 40); do [ "$(field a config.lease_active)" = true ] && break; sleep 1; done
+expect_eq "tras volver, el agente recupera el lease (el servidor solo tiene el serial 3)" "$(field a config.lease_active)" true
+expect_eq "sin errores de sincronización tras volver" "$(field a sync.last_error)" none
+
 section "Limpieza"
 atenea down --socket $LAB/a.sock; sleep 1
 kill $CPPID 2>/dev/null

@@ -85,7 +85,7 @@ Ensayado también el mismo día **con las claves reales** (raíz offline y clave
 Límites, sin comprobar:
 
 - El laboratorio usa validez de configuración de 40 s y un solo agente; los plazos de producción son 300 s más 30 s de tolerancia.
-- No se probó un agente apagado durante la renovación (la regla del contrato, serial mayor o igual al persistido, indica que aceptará el nuevo al volver), ni renovar **después** de que el certificado haya caducado.
+- Con un agente **apagado** durante la renovación sí se ensayó en laboratorio (35 comprobaciones el 2026-11-02): se subió el serial 3 con el agente parado más tiempo que la validez de la configuración, y al volver recuperó el lease sin intervención. No se probó renovar **después** de que el certificado haya caducado, ni en el piloto con un equipo real apagado.
 - No se manejó la pantalla «Reemplazar certificado» del panel (solo el endpoint que usa) ni la aplicación de escritorio.
 - El ensayo no incluyó el piloto; la renovación real se hizo después (ver «Renovaciones realizadas»).
 
