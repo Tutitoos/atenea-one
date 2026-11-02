@@ -162,7 +162,8 @@ son secretos; guardar el del proveedor elegido tras resolverlo y revisar hashes.
 4. Rotar el destinatario age o la clave de datos **no rota** contraseñas, emisor,
    semilla del coordinator ni certificados TLS. Generar valores nuevos, actualizarlos
    en los servicios implicados, cifrar y redesplegar. Rotar emisor exige nuevo
-   certificado offline con serial mayor (ADR-005); renovar la raíz requiere su
+   certificado offline con serial mayor (ADR-005; para solo **renovar** el certificado
+   conservando la clave, ver [Renovación del certificado de emisor](renovacion-certificado-emisor.md)); renovar la raíz requiere su
    procedimiento de dos anclas o reincorporación, no este script.
 
 ## Actualización y rollback

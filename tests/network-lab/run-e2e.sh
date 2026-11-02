@@ -27,4 +27,4 @@ docker run -d --pull=never --name atenea-e2e-dex --network $NETNAME --network-al
 
 docker run --rm --pull=never --privileged --network $NETNAME -e CARGO_BUILD_JOBS=2 -e CARGO_NET_OFFLINE=true \
   -v "$PWD":/src:ro -v atenea-lab-target:/cache -v atenea-cargo-registry:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/cache/target \
-  -w /src atenea-lab bash tests/network-lab/e2e-cp.sh
+  -w /src atenea-lab bash "tests/network-lab/${1:-e2e-cp.sh}"
