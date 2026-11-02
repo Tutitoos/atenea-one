@@ -156,6 +156,8 @@ mod tests {
         ] {
             assert!(checked_exe(Path::new(bad)).is_err(), "{bad:?}");
         }
+        // En Windows una ruta con «/» inicial no es absoluta; el arranque con la sesión no existe allí.
+        #[cfg(unix)]
         assert!(checked_exe(Path::new("/Applications/Atenea One.app/Contents/MacOS/x")).is_ok());
     }
 
