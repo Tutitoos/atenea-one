@@ -248,3 +248,7 @@ Resultado: 33 ficheros y tres imágenes públicas en GHCR por digest. Verificado
 ### Publicación real de `v0.1.6` (2026-11-01)
 
 Publicada con autorización expresa del responsable (tag firmado sobre `042fb0a`, 33 ficheros, tres imágenes `amd64` por digest) y desplegada en el piloto. Verificada fuera de CI con `scripts/release/verify.sh`. El despliegue tuvo un primer intento fallido por no haber precargado las imágenes en el servidor; el rescue lo devolvió a 0.1.5 sin tocar datos. Detalle, resultados y lecciones: [v0.1.6 — notas de versión y procedimiento de despliegue](v0.1.6.md#10-resultado-real-del-despliegue-2026-11-0102).
+
+### `v0.1.7` preparada, sin publicar
+
+Versión subida en el árbol; sin tag, sin artefactos y sin despliegue. Solo cambia el control plane (rechazo `409 serial_rollback`) y el diálogo de certificado del panel. Alcance, procedimiento y comprobaciones: [v0.1.7](v0.1.7.md).

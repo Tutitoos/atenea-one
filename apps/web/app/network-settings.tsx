@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, result } from '@atenea/api-client';
+import { api, ApiError, result } from '@atenea/api-client';
 import type { SectionProps } from './sections';
 import { Dns } from './dns';
 import { Button, Card, ConfirmDialog, CopyButton, Dialog, Field, Status } from './ui';
@@ -46,7 +46,8 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
         title="Instalar certificado offline"
         description="Solo se sube issuer.cert público (178 bytes). Nunca subas claves privadas. Raíz y emisor se preparan offline (ADR-005).">
         <p>{data?.has_issuer_cert ? 'Hay un certificado instalado. Subir uno lo reemplaza.' : 'Falta el certificado de emisor.'}</p>
-        <pre>{`atenea issuer-cert --root raiz-offline --issuer-key emisor-offline --network-id ${net} --serial 1 --valid-days 30 --out issuer.cert`}</pre>
+        {data?.has_issuer_cert && <p>El serial debe ser mayor que el del certificado instalado (Auditoría, último evento «network.issuer_cert»). El servidor rechaza uno menor porque los agentes lo descartarían y perderían su configuración.</p>}
+        <pre>{`atenea issuer-cert --root raiz-offline --issuer-key emisor-offline --network-id ${net} --serial ${data?.has_issuer_cert ? '<serial vigente + 1>' : 1} --valid-days ${data?.has_issuer_cert ? 90 : 30} --out issuer.cert`}</pre>
         <form className="incorporar-form" onSubmit={async event => {
           event.preventDefault(); setCertificateError(''); setMessage('');
           const form = event.currentTarget;
@@ -60,7 +61,11 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
               headers: { 'Content-Type': 'application/octet-stream' },
             });
             await refresh(); setCertificate(null); form.reset(); setMessage('Certificado instalado.');
-          } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'No se pudo subir el certificado.'); }
+          } catch (cause) {
+            setMessage(cause instanceof ApiError && cause.detail.error.code === 'serial_rollback'
+              ? 'El certificado tiene un serial menor que el del certificado instalado: los agentes lo rechazarían. Emite uno con serial mayor.'
+              : cause instanceof Error ? cause.message : 'No se pudo subir el certificado.');
+          }
           finally { setPending(false); }
         }}>
           <Field label="Certificado público" help="Archivo binario issuer.cert de 178 bytes, firmado fuera de línea."

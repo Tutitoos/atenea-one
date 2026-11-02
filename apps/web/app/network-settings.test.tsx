@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { afterEach, expect, it, vi } from 'vitest';
 import { axe } from 'vitest-axe';
-import { api, type Model } from '@atenea/api-client';
+import { api, ApiError, type Model } from '@atenea/api-client';
 import { NetworkSettings } from './network-settings';
 import { Dns } from './dns';
 
@@ -80,6 +80,28 @@ it.each([false, true])('sube o reemplaza el certificado público (instalado: %s)
   expect(put).toHaveBeenCalledWith('/api/v1/networks/{net}/issuer-cert', expect.objectContaining({
     headers: { 'Content-Type': 'application/octet-stream' }, bodySerializer: expect.any(Function),
   }));
+});
+it.each([
+  [false, /--serial 1 --valid-days 30/],
+  [true, /--serial <serial vigente \+ 1> --valid-days 90/],
+])('el ejemplo de emisión no sugiere un serial fijo al renovar (instalado: %s)', async (installed, expected) => {
+  mockGet(); const user = userEvent.setup(); wrap(<Settings installed={installed}/>);
+  await user.click(screen.getByRole('button', { name: installed ? 'Reemplazar certificado' : 'Subir certificado' }));
+  expect(screen.getByText(expected, { selector: 'pre' })).toBeInTheDocument();
+  const rule = screen.queryByText(/El serial debe ser mayor que el del certificado instalado/);
+  if (installed) expect(rule).toBeInTheDocument(); else expect(rule).not.toBeInTheDocument();
+});
+it('explica el rechazo de un serial menor sin anunciar éxito', async () => {
+  mockGet();
+  vi.spyOn(api, 'PUT').mockRejectedValue(new ApiError(409, { error: { code: 'serial_rollback', message: 'serial_rollback' } }));
+  const refresh = vi.fn(async () => {}); const user = userEvent.setup(); wrap(<Settings installed refresh={refresh}/>);
+  await user.click(screen.getByRole('button', { name: 'Reemplazar certificado' }));
+  await user.upload(screen.getByLabelText('Certificado público'), new File([new Uint8Array(178)], 'issuer.cert'));
+  await user.click(screen.getByRole('button', { name: 'Subir issuer.cert' }));
+  expect(await screen.findByText(/serial menor que el del certificado instalado/)).toBeVisible();
+  expect(screen.queryByText('Certificado instalado.')).not.toBeInTheDocument();
+  expect(screen.queryByText('serial_rollback')).not.toBeInTheDocument();
+  expect(refresh).not.toHaveBeenCalled();
 });
 it('exige escribir el nombre para borrar y conserva errores del servidor', async () => {
   mockGet(); const remove = vi.spyOn(api, 'DELETE').mockRejectedValue(new Error('No se pudo eliminar.'));
