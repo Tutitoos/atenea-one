@@ -1,0 +1,1 @@
+{"include":["mcp/**/*","tests/**/*"],"compilerOptions":{"target":"ES2024","module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true,"noEmit":true,"allowImportingTsExtensions":true,"types":["node"]}}
