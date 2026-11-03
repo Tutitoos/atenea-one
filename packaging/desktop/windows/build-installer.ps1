@@ -26,8 +26,8 @@ try {
     # Sin «setup», «install» ni «update» en el nombre: Windows aplica a esos ejecutables heurísticas de compatibilidad.
     $installer = Join-Path $out "atenea-desktop-$Version-Windows-$arch.exe"
     # Chocolatey instala NSIS en Program Files (x86) y no actualiza el PATH de la sesión en curso.
-    $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
-    if (-not $makensis) { $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
+    $found = Get-Command makensis -ErrorAction SilentlyContinue
+    $makensis = if ($found) { $found.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
     if (-not (Test-Path -LiteralPath $makensis)) { throw 'No se encuentra makensis (NSIS)' }
     & $makensis -V2 "-DVERSION=$Version" "-DVIVERSION=$numeric" "-DBINARY=$((Resolve-Path -LiteralPath $Binary).Path)" `
         "-DICON=$repo\apps\desktop\icons\icon.ico" "-DBUILDINFO=$info" "-DOUTFILE=$installer" (Join-Path $PSScriptRoot 'installer.nsi')
