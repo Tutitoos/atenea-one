@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-018: Unirse con solo el código (conectividad en el código, ancla automática y `--up`)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-03 con las tres recomendaciones de § 8. Implementadas las fases 1 (formato), 2 (control plane), 3 (CLI), 4 (coordinator), 5 (despliegue) y 6 (panel y app); el resto del plan de § 7 es el de la v0.1.9 y cada fase espera su orden.
+- **Estado:** **Aceptado** por el responsable el 2026-11-03 con las tres recomendaciones de § 8. Implementadas y probadas en laboratorio las fases 1 a 7; la 8 (piloto) y la release v0.1.9 esperan su orden.
 - **Relacionados:** ADR-013 (redes múltiples y unión por código; §12 añadió `--stun-host`/`--relay-ca`), ADR-005 (custodia de la raíz), ADR-009 (operación), ADR-016 (políticas mínimas), [código de red v1](../protocol/join-code-v1.md), [coordinator v1](../protocol/coordinator-v1.md).
 
 ## 1. Contexto
@@ -113,4 +113,4 @@ Aprobación automática, cambios en el relay o en el protocolo de datos, Windows
 
 ## 10. Estado de la decisión
 
-**Aceptado** el 2026-11-03 (§ 8). Fases 1–6 implementadas. Fase 6: el panel enseña `sudo atenea network join '<CÓDIGO>' --up` (también con el código con token) y lo que anuncia el código, o avisa de que hacen falta `--stun-host`/`--relay-ca` si el servidor no anuncia conectividad; la app de escritorio muestra la conectividad en la confirmación y sigue funcionando con un CLI 0.1.8 (campo ausente). **Límite:** el panel no ofrece todavía el código «sin bloque» (`?conectividad=0`) para equipos con un CLI anterior; solo la API. Fases 7–8 pendientes. No se publica nada sin la autorización expresa del responsable.
+**Aceptado** el 2026-11-03 (§ 8). Fases 1–7 implementadas. Fase 6: el panel enseña `sudo atenea network join '<CÓDIGO>' --up` (también con el código con token) y lo que anuncia el código, o avisa de que hacen falta `--stun-host`/`--relay-ca` si el servidor no anuncia conectividad; la app de escritorio muestra la conectividad en la confirmación y sigue funcionando con un CLI 0.1.8 (campo ausente). **Límite:** el panel no ofrece todavía el código «sin bloque» (`?conectividad=0`) para equipos con un CLI anterior; solo la API. Fase 7: `tests/network-lab/two-networks.sh` une dos dispositivos a una red creada después de arrancar el coordinator solo con el código, con control negativo sin `anchors_source` (ver el README del laboratorio): 159/159. Fase 8 (piloto) pendiente. No se publica nada sin la autorización expresa del responsable.
