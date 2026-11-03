@@ -21,6 +21,7 @@
 | [017](ADR-017-redes-por-instancia-en-windows.md) | Redes por instancia en Windows (servicio, adaptador y tubería por red; UAC desde la app) | Aceptado (sin implementar) |
 | [018](ADR-018-union-solo-con-el-codigo.md) | Unirse con solo el código: conectividad en el código, anclas automáticas en el coordinator y `join --up` | Aceptado el 2026-11-03 (plan de la v0.1.9; sin implementar) |
 | [019](ADR-019-aplicacion-de-escritorio-wails.md) | Aplicación de escritorio con Wails v3 (sustituye a Tauri 2) | Decidido el 2026-11-03 (sin implementar; condicionado a los spikes S1–S6) |
+| [020](ADR-020-token-de-servicio-de-solo-lectura.md) | Token de servicio de solo lectura para asistentes de IA (`ai-atenea-one`) | Aceptado e implementado el 2026-11-03 (sin desplegar) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 

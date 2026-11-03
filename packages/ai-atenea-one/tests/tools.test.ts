@@ -61,7 +61,7 @@ describe("Client", () => {
     const c = mk(async () => { calls++; return new Response("{}"); });
     for (const p of [
       "/api/v1/networks/n1/join-code", "/api/v1/networks/n1/events", "/api/v1/session", "/api/v1/device/config",
-      "/api/v1/device/peers", "/api/v1/orgs/o1/service-tokens", "/healthz", "/auth/login", "/api/openapi.json",
+      "/api/v1/device/peers", "/api/v1/orgs/o1/service-tokens", "/api/v1/orgs/o1/members", "/healthz", "/auth/login", "/api/openapi.json",
       "https://evil.example.test/api/v1/orgs", "/api/v1/../x", "/api/v1/networks/a%2Fb/devices", "/api/v1/orgs/", "api/v1/orgs",
     ]) await expect(c.get(p), p).rejects.toThrow();
     expect(calls).toBe(0);
@@ -94,7 +94,7 @@ describe("Client", () => {
     const derived = Object.entries<Record<string, unknown>>(spec.paths)
       .filter(([p, v]) => "get" in v && p.startsWith("/api/v1/"))
       .map(([p]) => p)
-      .filter((p) => !/join-code|events|session|^\/api\/v1\/device\/|service-tokens/.test(p))
+      .filter((p) => !/join-code|events|session|^\/api\/v1\/device\/|service-tokens|members/.test(p))
       .sort();
     expect([...ALLOWED_TEMPLATES].sort()).toEqual(derived);
   });
