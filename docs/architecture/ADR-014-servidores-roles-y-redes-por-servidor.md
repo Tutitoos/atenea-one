@@ -52,7 +52,7 @@ Dos partes, de menor a mayor coste:
 ### 3.4 Un servidor, varias redes (fases 5–6)
 
 - **Clave del servidor en el cliente:** el host de `url` de cada red unida (`network.json`), normalizado. No hay entidad nueva en el servidor: el servidor ya aloja varias redes.
-- **Navegación:** Servidores → Redes → Dispositivos. Una sección «Servidores» lista cada host con las redes unidas a él y su estado agregado; el selector de red de la cabecera agrupa por servidor. El detalle de un servidor muestra su información (§3.3), sus redes con Conectar/Desconectar y los dispositivos con rol de servidor de esas redes.
+- **Navegación:** Servidores → Redes → Dispositivos. Una sección «Servidores» lista cada host con las redes unidas a él y su estado agregado; la lista de redes anidada bajo «Dispositivos» agrupa por servidor. El detalle de un servidor muestra su información (§3.3), sus redes con Conectar/Desconectar y los dispositivos con rol de servidor de esas redes.
 - **Información compartida:** relays y coordinator son del servidor, no de la red: se leen de cualquier red conectada a ese servidor (la que responda).
 - **El VPS en varias redes:** exige migrar su instancia heredada al modelo de redes (`atenea network migrate-legacy`, ya implementado) y una instancia por red con **un puerto UDP distinto y publicado** por cada una (`atenea_extra_udp_ports`). Cada red tiene sus propias claves en el VPS (ADR-013).
 
