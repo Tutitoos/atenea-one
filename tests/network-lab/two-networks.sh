@@ -127,7 +127,7 @@ check "Dex responde" python3 -c "import urllib.request;urllib.request.urlopen('h
 
 ip link add br0 type bridge && ip link set br0 up && ip addr add 192.0.2.254/24 dev br0
 i=0
-for n in cli pa pb; do
+for n in cli pa pb da db; do
   i=$((i + 1))
   ip netns add $n
   ip link add va-$n type veth peer name v$n
@@ -440,6 +440,88 @@ expect_eq "ficheros estáticos de A intactos" "$(static_hash $NET_A)" "$H_A"
 expect_eq "recursos de A (dirección, rutas, puerto, sockets) intactos" "$(res_sig $NET_A)" "$S_A"
 check "ping pa → cliente sigue funcionando" ip netns exec pa ping -c 3 -W 3 $IP_CA
 
+section "ADR-018: unirse con solo el código (CA y STUN en el código, anclas leídas del control plane)"
+# Dos dispositivos NUEVOS (da, db) se unen a una red creada después de arrancar el coordinator, solo con el código:
+# ni --stun-host, ni --relay-ca, ni endpoints fijados a mano, ni una ancla añadida al coordinator.
+# CA real (sin relay: solo se descarga, se verifica su hash y se escribe; el agente la carga al arrancar).
+openssl req -x509 -newkey ed25519 -nodes -days 2 -keyout $LAB/ca.key -out $LAB/relay-ca.pem -subj "/CN=Atenea Lab CA" \
+  -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign 2>/dev/null
+CA_SHA=$(openssl x509 -in $LAB/relay-ca.pem -outform DER | sha256sum | cut -c1-64)
+( umask 077; python3 -c "import secrets;print(secrets.token_hex(24))" > $LAB/anchors-token )
+# El control plane anuncia STUN y CA, abre el listener interno y emite códigos con la URL del router de rutas (8443).
+kill $CPPID; wait $CPPID 2>/dev/null
+export ATENEA_CP_PUBLIC_URL=https://192.0.2.254:8443 ATENEA_CP_STUN_HOST=192.0.2.254 ATENEA_CP_RELAY_CA_FILE=$LAB/relay-ca.pem
+export ATENEA_CP_INTERNAL_LISTEN=127.0.0.1:8082 ATENEA_CP_INTERNAL_SECRET_FILE=$LAB/anchors-token
+start_cp
+check "control plane de nuevo en /healthz con conectividad e interno activos" python3 -c "import urllib.request;urllib.request.urlopen('$CP_URL/healthz',timeout=2)"
+python3 tests/network-lab/path-proxy.py 8443 127.0.0.1:8080 127.0.0.1:8081 & PROXYPID=$!
+# Como el Caddy del stack real: una sola URL para el control plane y el coordinator.
+start_coord() {  # start_coord with|without: ancla estática solo de la red A; with añade anchors_source (opt-in)
+  { echo 'listen = "0.0.0.0:8081"'; echo 'stun_bind = "0.0.0.0"'; echo "anchors = [\"$(cat $LAB/root-red-a.pub)\"]"
+    if [ "$1" = with ]; then printf '[anchors_source]\nurl = "http://127.0.0.1:8082/internal/v1/root-anchors"\nsecret_file = "%s"\ninterval_secs = 5\n' $LAB/anchors-token; fi
+  } > $LAB/coordinator.toml
+  RUST_LOG=info ATENEA_COORD_CONFIG=$LAB/coordinator.toml atenea-coordinator > $LAB/coord-$1.log 2>&1 & COORDPID=$!
+  for _ in $(seq 1 20); do python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8081/healthz',timeout=2)" 2>/dev/null && return 0; sleep 1; done; return 1
+}
+start_coord without
+check "coordinator arrancado SIN anchors_source (solo la ancla estática de A)" python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8081/healthz',timeout=2)"
+
+mknet $ORG red-d 10.78.4.0/24 fd78:4::/64; NET_D=$NET_ID
+api PUT /api/v1/networks/$NET_D/join-policy --json '{"policy":"con_solicitud"}' >/dev/null && ok "D con política con_solicitud"
+JC_D=$(api GET /api/v1/networks/$NET_D/join-code)
+CODE_D=$(echo "$JC_D" | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')
+expect_eq "el servidor anuncia STUN y hash de la CA en el código" "$(echo "$JC_D" | python3 -c 'import sys,json;c=json.load(sys.stdin)["connectivity"];print(c["stun_host"],c["relay_ca_sha256"])')" "192.0.2.254 $CA_SHA"
+expect_eq "GET /api/v1/relay-ca sirve la CA (mismo hash, sin sesión)" "$(python3 -c "import urllib.request;print(urllib.request.urlopen('$CP_URL/api/v1/relay-ca',timeout=3).read().decode())" | openssl x509 -outform DER | sha256sum | cut -c1-64)" "$CA_SHA"
+# Un dispositivo por namespace, con su propia raíz de redes y de sockets.
+dcli() { local n=$1; shift; ip netns exec $n env ATENEA_NETWORKS_DIR=$LAB/nets-$n ATENEA_RUN_DIR=$LAB/run-$n atenea "$@"; }
+dfield() { python3 "$TOOLS" field "$LAB/run-$1/$(id8 $NET_D)/status.sock" "$2" 2>/dev/null; }
+dwait() {  # dwait <ns> <campo> <valor> <segundos>
+  local _; for _ in $(seq 1 "$4"); do [ "$(dfield "$1" "$2")" = "$3" ] && return 0; sleep 1; done; return 1
+}
+for n in da db; do
+  mkdir -p $LAB/run-$n
+  dcli $n network join "$CODE_D" --name dev-$n --yes --insecure-http --up > $LAB/join-$n.txt 2>&1 && ok "join $n con SOLO el código (sin --stun-host ni --relay-ca) y --up" || { bad "join $n"; cat $LAB/join-$n.txt; }
+  grep -q "AVISO: ni el código" $LAB/join-$n.txt && bad "join $n avisó de falta de conectividad" || ok "join $n no avisa de falta de conectividad"
+  AT=$LAB/nets-$n/$NET_D/device/agent.toml
+  expect_eq "$n: [coordinator] escrito desde el código (STUN :3478/:3479 y URL del propio código)" "$(python3 - "$AT" <<'PY'
+import sys, tomllib
+t = tomllib.load(open(sys.argv[1], 'rb'))
+c = t['coordinator']
+print(' '.join(c['stun']), c['url'] == t['sync']['url'])
+PY
+)" "192.0.2.254:3478 192.0.2.254:3479 True"
+  expect_eq "$n: la CA guardada tiene el SHA-256 del código" "$(openssl x509 -in $LAB/nets-$n/$NET_D/device/relay-ca.pem -outform DER | sha256sum | cut -c1-64)" "$CA_SHA"
+  expect_eq "$n: relay_ca_file apunta a esa CA" "$(python3 -c "import sys,tomllib;print(tomllib.load(open(sys.argv[1],'rb'))['coordinator']['relay_ca_file'])" "$AT")" "$LAB/nets-$n/$NET_D/device/relay-ca.pem"
+  FP=$(kv $LAB/join-$n.txt huella_dispositivo)
+  DEV=$(approve_fp $NET_D "$FP") && ok "admin aprueba $n comparando la huella $FP" || bad "$n no aparece pendiente"
+  eval "DEV_$n=$DEV"
+  # `--up` ya arrancó la red: se baja y se sube con sondeo de 10 s solo para no esperar el de 60 s por defecto.
+  dcli $n network down $NET_D >/dev/null 2>&1; set_interval "$AT"; dcli $n network up $NET_D >/dev/null 2>&1 && ok "red D arrancada en $n" || bad "network up $n"
+done
+IP_DA=$(dev_field $NET_D $DEV_da ipv4); IP_DB=$(dev_field $NET_D $DEV_db ipv4)
+for n in da db; do dwait $n config.lease_active true 60 && ok "$n sincronizó su configuración" || bad "$n sin configuración vigente"; done
+
+# Control negativo: sin anchors_source el coordinator rechaza la raíz nueva y los equipos no se encuentran.
+for n in da db; do dwait $n coordinator.last_error "acceso denegado" 40 && ok "control: sin anchors_source el coordinator rechaza a $n (acceso denegado)" || bad "control: $n no fue rechazado ($(dfield $n coordinator.last_error))"; done
+check "control: da no alcanza a db (sin endpoints ni rendezvous)" bash -c "! ip netns exec da ping -c 2 -W 2 $IP_DB"
+kill $COORDPID; wait $COORDPID 2>/dev/null
+
+# Con la opción activada, la misma red nueva se acepta sin tocar la configuración del coordinator.
+start_coord with
+check "coordinator arrancado CON anchors_source (la misma ancla estática, sin la de D)" python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8081/healthz',timeout=2)"
+for n in da db; do dwait $n coordinator.last_error none 60 && ok "$n: el coordinator acepta su anuncio" || bad "$n: error de coordinator '$(dfield $n coordinator.last_error)'"; done
+grep -q 'anclas remotas actualizadas' $LAB/coord-with.log && ok "el coordinator registró la lectura de anclas remotas" || bad "sin registro de anclas remotas"
+for _ in $(seq 1 60); do ip netns exec da ping -c 1 -W 2 $IP_DB >/dev/null 2>&1 && break; sleep 1; done
+check "ping da → db por D, sin endpoints fijados a mano (solo por rendezvous)" ip netns exec da ping -c 3 -W 3 $IP_DB
+check "ping db → da por D" ip netns exec db ping -c 3 -W 3 $IP_DA
+expect_eq "da ve a db en camino directo" "$(python3 - "$LAB/run-da/$(id8 $NET_D)/status.sock" <<'PY'
+import json, subprocess, sys
+s = json.loads(subprocess.check_output(['atenea', 'status', '--socket', sys.argv[1]]))
+print(sorted({p.get('path') for p in s.get('peers', [])}))
+PY
+)" "['direct']"
+for n in da db; do dcli $n network down $NET_D >/dev/null 2>&1; done
+kill $COORDPID $PROXYPID 2>/dev/null; wait $COORDPID $PROXYPID 2>/dev/null
 section "Limpieza"
 cli network down $NET_A >/dev/null 2>&1; cli network down $NET_B >/dev/null 2>&1
 atenea down --socket $LAB/pa.sock >/dev/null 2>&1; atenea down --socket $LAB/pb.sock >/dev/null 2>&1; sleep 1
