@@ -223,6 +223,16 @@ Referencias oficiales de implementación: [React](https://react.dev/reference/re
 [typescript-eslint](https://typescript-eslint.io/getting-started/),
 [jsx-a11y](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y).
 
+### Plugin de IA (`packages/ai-atenea-one`)
+
+Servidor MCP stdio de solo lectura (ADR-020). Versiones exactas en el manifiesto y `pnpm-lock.yaml`.
+
+| Paquete | Versión fijada | Licencia | Motivo |
+| --- | --- | --- | --- |
+| `@modelcontextprotocol/sdk` | 1.29.0 | MIT | Servidor MCP y transporte stdio (única dependencia nueva del workspace) |
+| `zod` | 4.6.7 | MIT | Esquemas de entrada de las tools; ya usado por el panel |
+| `vitest`, `typescript`, `@types/node` | 5.0.5, 5.9.3, 26.6.5 | MIT, Apache-2.0, MIT | Los mismos del panel; sin dependencias de ejecución adicionales (`fetch`, `node:net`, `node:dns` y `node:child_process` son de Node ≥ 22) |
+
 ### Fase 8 — Cliente macOS
 
 Sin dependencias externas nuevas. `atenea-tunnel` reutiliza `libc` 0.2 y Tokio ya resueltos en `Cargo.lock` (MIT OR Apache-2.0 y MIT, respectivamente), ahora también en macOS. El único código unsafe permanece en ese crate: socket de control utun, ioctl, connect, getsockopt, fcntl y readv/writev; sin copia ni asignación por paquete. El agente reutiliza permisos, credenciales Unix y persistencia existentes.
