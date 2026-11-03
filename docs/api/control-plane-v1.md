@@ -402,3 +402,18 @@ Las dos opciones van **juntas o ninguna**: una mitad, una dirección inválida, 
 - **No está en el router público:** el listener público responde `404` a esa ruta aunque se envíe el secreto correcto (probado).
 - **No se publica:** el overlay `deploy/compose/prod/anclas-remotas.yaml` abre el 8082 solo dentro de la red `backend` (sin `ports:`); Caddy solo conoce `control-plane:8080`. El ensayo de infraestructura comprueba que la ruta no responde por HAProxy/Caddy, que sin ese overlay el 8082 está cerrado y que el conjunto de puertos publicados no cambia.
 - No expone nada que la base no tenga ya de forma pública (raíces públicas); su riesgo es dar al coordinator la lista de redes que usan rendezvous y relay (ADR-018 § 4). Sin migraciones.
+
+## 19. Tokens de servicio de solo lectura (ADR-020)
+
+La migración `0009_service_tokens.sql` añade `users.kind` (`oidc` por defecto, `service`) y la tabla `service_tokens`. Cada token es un usuario interno `kind='service'` (sin identidad OIDC) con membresía `member` en una única organización: no hay rol nuevo y el aislamiento entre organizaciones (`404`) es el de siempre.
+
+- `POST /api/v1/orgs/{org}/service-tokens` `{"name": string, "ttl_secs": 3600..=7776000}` → `201 {"id", "token", "expires_at"}`. Solo owner con sesión y CSRF (`400 invalid_name`, `400 invalid_ttl`, `429 rate_limited`). `token` es `atsvc_` + 43 caracteres base64url (256 bits del RNG del sistema), se muestra **una sola vez** y solo se guarda su SHA-256.
+- `GET /api/v1/orgs/{org}/service-tokens` → `[{"id","name","created_at","expires_at","last_used_at","revoked_at"}]`, sin secretos; solo owner.
+- `DELETE /api/v1/orgs/{org}/service-tokens/{id}` → `204`; efecto inmediato (`404` si no existe, es ajeno o ya está revocado). Auditoría `service_token.create` y `service_token.revoke`.
+
+Uso: `Authorization: Bearer atsvc_…` en cualquier `GET` de lectura de administración, con el alcance de `member` (redes, dispositivos, rutas, DNS, políticas, auditoría, métricas, `/api/v1/server`). Sesión y token a la vez: gana la cookie. Reglas:
+
+- **Solo lectura:** cualquier método distinto de `GET`/`HEAD`/`OPTIONS` con un token `atsvc_` (incluidos `/api/v1/device/*` y `/api/v1/enroll`) → `403 service_token_read_only`, antes de tocar la base.
+- **Fuera de alcance:** `GET /api/v1/session`, `GET …/events` y todas las rutas `service-tokens` rechazan el token (`403`); `join-code` y la gestión de miembros exigen admin/owner (`403`). El usuario interno no se puede ascender con `PUT …/members/{user}` (`403`). Los correos de otros miembros siguen ocultos (ADR-015: es `member`).
+- **Fallos indistinguibles:** token desconocido, caducado o revocado → `401 invalid_session`. La validez se consulta por petición; no hay caché.
+- **Límite:** `service_per_minute` (`ATENEA_CP_SERVICE_PER_MINUTE`, por defecto 120) por token, `429 rate_limited`, aplicado tras autenticar. Auditoría `service_token.use` como mucho una vez por token y hora, sin cuerpo ni cabeceras.

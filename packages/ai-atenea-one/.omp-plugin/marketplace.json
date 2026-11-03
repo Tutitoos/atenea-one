@@ -1,0 +1,22 @@
+{
+  "name": "atenea-one",
+  "owner": {
+    "name": "Tutitoos"
+  },
+  "metadata": {
+    "description": "Plugins OMP de Atenea One.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "ai-atenea-one",
+      "source": "./",
+      "description": "MCP de solo lectura y skill atenea-one: descubre redes, dispositivos y servidores de Atenea One y verifica su alcance.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Tutitoos"
+      },
+      "category": "development"
+    }
+  ]
+}

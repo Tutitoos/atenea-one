@@ -1,4 +1,8 @@
 packages:
   - apps/desktop
   - apps/web
+  - packages/ai-atenea-one
   - packages/api-client
+overrides:
+  # El SDK MCP admite ^1.19.9 || ^2.0.5; la 1.x vulnerable no tiene parche (GHSA-rmxm-3fg6-px4f).
+  '@hono/node-server': 2.1.6

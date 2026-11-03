@@ -307,6 +307,7 @@ pub async fn events(
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let (user, _) = crate::networks::access(&s, &h, net, false).await?;
+    crate::auth::browser_only(&h)?;
     let origin = reqwest::Url::parse(&s.config.public_url)
         .map_err(|_| ApiError::internal())?
         .origin()

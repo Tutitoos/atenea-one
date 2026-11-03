@@ -1,0 +1,29 @@
+{
+  "name": "ai-atenea-one",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "description": "Plugin de IA de solo lectura para Atenea One: MCP stdio (búsqueda, consulta y sondas) y skill atenea-one.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "mcp": "node mcp/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  },
+  "omp": {
+    "name": "ai-atenea-one",
+    "description": "MCP de solo lectura y skill para consultar redes, dispositivos y servidores de Atenea One."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "atenea-one": {
+      "command": "node",
+      "args": ["scripts/launch-codex-mcp.ts", "mcp/server.ts"],
+      "cwd": "."
+    }
+  }
+}

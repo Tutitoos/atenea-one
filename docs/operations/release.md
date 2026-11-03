@@ -270,3 +270,7 @@ Publicada con autorización expresa del responsable: CI manual y ensayo manual d
 ### Publicación real de `v0.1.11` (2026-11-03)
 
 Publicada con autorización expresa del responsable: CI manual y ensayo manual del workflow (solo construye) en verde sobre `cfefd3a`, tag firmado `v0.1.11` sobre ese commit, **36 ficheros** y cuatro imágenes `amd64` por digest, a la primera. `verify.sh` terminó con 0 con la clave pública de confianza y los cuatro manifiestos de GHCR se leen sin credenciales con el digest de `images.json`. Único cambio funcional: el comando para un CLI anterior del formulario del token usa el STUN real del servidor ([v0.1.11](v0.1.11.md)). Desplegada después en el piloto solo con la imagen `control-plane` (ver [v0.1.11](v0.1.11.md) §6).
+
+### Publicación real de `v0.1.12` (2026-11-03)
+
+Publicada con autorización expresa del responsable: ensayo de retroceso a `0.1.11` sobre la migración `0009` en laboratorio (68/68, [v0.1.12](v0.1.12.md)), CI manual y ensayo manual del workflow (solo construye) en verde sobre `8279628`, tag firmado `v0.1.12` sobre `510fd1f`, **36 ficheros** y cuatro imágenes `amd64` por digest, a la primera, con la aprobación del entorno `release`. `verify.sh` terminó con 0 con la clave pública de confianza y los cuatro manifiestos de GHCR se leen sin credenciales con el digest de `images.json`. Contenido: tokens de servicio de solo lectura ([ADR-020](../architecture/ADR-020-token-de-servicio-de-solo-lectura.md)), primera migración desde la `0008`. **Sin desplegar** en el piloto.
