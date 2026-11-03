@@ -10,6 +10,7 @@ import { ActionForm, ConfirmDialog, Dialog, EmptyState, PageHeader, ShortId, Sta
 import { nameSchema, networkSchema } from './domain';
 import { CertificateStatus } from './server-status';
 import { RenameDialog } from './rename';
+import { ServiceTokens } from './service-tokens';
 
 export function Organizations({ org, choose }: { org?: Model<'Organization'>; choose: (net: string) => void }) {
   const cache = useQueryClient();
@@ -66,7 +67,7 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
     <Tabs.Root defaultValue="networks" key={current.id}>
       <Tabs.List className="tabs" aria-label="Organización">
         <Tabs.Trigger value="networks">Redes</Tabs.Trigger><Tabs.Trigger value="members">Miembros</Tabs.Trigger>
-        <Tabs.Trigger value="settings">Ajustes</Tabs.Trigger>
+        {owner && <Tabs.Trigger value="tokens">Tokens de IA</Tabs.Trigger>}<Tabs.Trigger value="settings">Ajustes</Tabs.Trigger>
       </Tabs.List>
       <Tabs.Content value="networks"><h2>Redes</h2>{networks.data?.length ? createNetwork : null}<Status query={networks}/>
         {networks.data?.length ? <ul className="cards">{networks.data.map(network => <li className="card" key={network.id}>
@@ -130,6 +131,7 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
               }}/>
           </>}</li>)}</ul>
       </Tabs.Content>
+      {owner && <Tabs.Content value="tokens"><ServiceTokens org={current.id}/></Tabs.Content>}
       <Tabs.Content value="settings"><h2>Ajustes</h2>{owner ? <>
         <RenameDialog kind="organización" name={current.name} rename={async name => {
           await api.PATCH('/api/v1/orgs/{org}', { params: { path: { org: current.id } }, body: { name } });
