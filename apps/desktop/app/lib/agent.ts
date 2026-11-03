@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './bridge';
 import { reply, type Reply } from './status';
 import { recordHistory, type History } from './history';
 
@@ -34,7 +34,7 @@ export async function readReply(network: string): Promise<Reply> {
   try {
     raw = await invoke<string>('status', { network });
   } catch (e) {
-    // Tauri rechaza con el texto devuelto por la orden, no con un Error.
+    // El puente rechaza con el texto devuelto por la operación, no con un Error.
     throw new Error(typeof e === 'string' ? e : 'No se pudo leer el estado del agente.', { cause: e });
   }
   const parsed = reply.safeParse(JSON.parse(raw));

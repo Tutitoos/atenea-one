@@ -52,5 +52,3 @@ test-results/
 .DS_Store
 .idea/
 .vscode/
-# Esquemas generados por tauri-build
-apps/desktop/gen/

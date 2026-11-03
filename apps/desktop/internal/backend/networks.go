@@ -1,0 +1,213 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+
+package backend
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+// CLIPath es el binario del CLI que instala el paquete. ATENEA_CLI lo sustituye (desarrollo y pruebas).
+func CLIPath() string {
+	if p := os.Getenv("ATENEA_CLI"); p != "" {
+		return p
+	}
+	if runtime.GOOS == "darwin" {
+		return "/Library/Atenea/bin/atenea"
+	}
+	return "/usr/bin/atenea"
+}
+
+// RunDir es el directorio de ejecución de los agentes: ATENEA_RUN_DIR o el del sistema.
+func RunDir() string {
+	if p := os.Getenv("ATENEA_RUN_DIR"); p != "" {
+		return p
+	}
+	if runtime.GOOS == "darwin" {
+		return "/var/run/atenea"
+	}
+	return "/run/atenea"
+}
+
+// NetworkSocket es el socket de estado de una red unida: <run>/<id8>/status.sock, el mismo que usa el CLI.
+func NetworkSocket(id string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", errors.New("las redes múltiples no están soportadas en Windows")
+	}
+	if !ValidUUID(id) {
+		return "", errors.New("identificador de red no válido")
+	}
+	return filepath.Join(RunDir(), ShortID(id), "status.sock"), nil
+}
+
+// List devuelve `atenea network list --json` (sin privilegios). Sin CLI, o en Windows, es una lista vacía. Rechaza
+// cualquier salida que no sea un array JSON antes de entregarla.
+func List() (string, error) {
+	if runtime.GOOS == "windows" {
+		return "[]", nil
+	}
+	cli := CLIPath()
+	if _, err := os.Stat(cli); err != nil {
+		return "[]", nil
+	}
+	text, err := Run(cli, "network", "list", "--json")
+	if err != nil {
+		return "", err
+	}
+	var v any
+	if json.Unmarshal([]byte(text), &v) == nil {
+		if _, ok := v.([]any); ok {
+			return text, nil
+		}
+	}
+	return "", errors.New("`atenea network list` devolvió una respuesta inesperada")
+}
+
+// Legacy devuelve `atenea network legacy --json`: {"present": bool}. Sin CLI (o en Windows) no hay instalación
+// heredada que importar.
+func Legacy() (string, error) {
+	cli := CLIPath()
+	if runtime.GOOS == "windows" {
+		return `{"present":false}`, nil
+	}
+	if _, err := os.Stat(cli); err != nil {
+		return `{"present":false}`, nil
+	}
+	text, err := Run(cli, "network", "legacy", "--json")
+	if err != nil {
+		return "", err
+	}
+	var v map[string]any
+	if json.Unmarshal([]byte(text), &v) == nil {
+		if _, ok := v["present"].(bool); ok {
+			return text, nil
+		}
+	}
+	return "", errors.New("`atenea network legacy` devolvió una respuesta inesperada")
+}
+
+// Inspect decodifica un código sin privilegios, sin disco y sin red (`atenea network inspect`).
+func Inspect(raw string) (string, error) {
+	code, err := NormalizeCode(raw)
+	if err != nil {
+		return "", err
+	}
+	text, err := Run(CLIPath(), "network", "inspect", code, "--json")
+	if err != nil {
+		return "", err
+	}
+	var v map[string]any
+	if json.Unmarshal([]byte(text), &v) == nil && v != nil {
+		return text, nil
+	}
+	return "", errors.New("`atenea network inspect` devolvió una respuesta inesperada")
+}
+
+// Elevate ejecuta la orden con el diálogo de autorización del sistema. Es una variable para que las pruebas la
+// sustituyan: ninguna prueba abre un diálogo real.
+var Elevate = func(script, prompt string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", errors.New("Unirse a redes todavía no está soportado en Windows")
+	}
+	program, args, err := ElevationCommand(runtime.GOOS, script, prompt)
+	if err != nil {
+		return "", err
+	}
+	return Run(program, args...)
+}
+
+func prompt(op Op) string {
+	switch op {
+	case OpJoin:
+		return "Atenea One quiere unir este equipo a una red."
+	case OpUp:
+		return "Atenea One quiere conectar este equipo a una red."
+	case OpDown:
+		return "Atenea One quiere desconectar este equipo de una red."
+	case OpLeave:
+		return "Atenea One quiere sacar este equipo de una red y borrar sus claves."
+	}
+	return "Atenea One quiere importar la instalación heredada como una red."
+}
+
+// Apply ejecuta una operación con el diálogo de autorización del sistema. En `join` el id de la red sale del
+// propio código (lo decodifica `inspect`), nunca del llamante: el `up` posterior no puede apuntar a otra red.
+func Apply(op, network, code, name string) (string, error) {
+	o, err := ParseOp(op)
+	if err != nil {
+		return "", err
+	}
+	var gid uint32
+	if o == OpJoin {
+		if code == "" {
+			return "", errors.New("falta el código")
+		}
+		text, err := Inspect(code)
+		if err != nil {
+			return "", err
+		}
+		var info map[string]any
+		if err := json.Unmarshal([]byte(text), &info); err != nil {
+			return "", err
+		}
+		id, _ := info["network_id"].(string)
+		if !ValidUUID(id) {
+			return "", errors.New("el código no trae un id de red válido")
+		}
+		network = id
+		gid = uint32(os.Getgid())
+	}
+	script, err := Script(CLIPath(), o, network, code, name, gid)
+	if err != nil {
+		return "", err
+	}
+	return Elevate(script, prompt(o))
+}
+
+// JoinedNetworks son las redes unidas y su estado persistido, actualizado por el CLI. Ante cualquier fallo, vacío.
+func JoinedNetworks() []map[string]any {
+	text, err := List()
+	if err != nil {
+		return nil
+	}
+	var list []any
+	if json.Unmarshal([]byte(text), &list) != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, item := range list {
+		if n, ok := item.(map[string]any); ok {
+			if id, _ := n["network_id"].(string); ValidUUID(id) {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
+}
+
+// JoinedNetwork busca una red unida por su id.
+func JoinedNetwork(network string) (map[string]any, error) {
+	if !ValidUUID(network) {
+		return nil, errors.New("identificador de red no válido")
+	}
+	text, err := List()
+	if err != nil {
+		return nil, err
+	}
+	var list []any
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		return nil, err
+	}
+	for _, item := range list {
+		if n, ok := item.(map[string]any); ok {
+			if id, _ := n["network_id"].(string); id == network {
+				return n, nil
+			}
+		}
+	}
+	return nil, errors.New("la red no está unida")
+}

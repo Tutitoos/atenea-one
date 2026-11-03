@@ -73,7 +73,7 @@ La columna «Riesgo» es un **juicio del autor (INFERIDO)** basado en exposició
 | [`apps/relay`](../../apps/relay) | 8 | 2319 | 1107 | 629 | 583 | 23 | Reenvío UDP/TLS opaco. | Alto: DoS, audiencia, TLS | `tests/relay.rs`, inline; fuzz solo del parser |
 | [`apps/cli`](../../apps/cli) | 6 | 4327 | 2973 | 0 | 1354 | 40 | Claves, emisión, enrolamiento y ciclo de vida multirred. | Alto: claves y servicios privilegiados | Inline; código de unión con fuzz en identity |
 | **Total Rust del workspace raíz** | 112 | 43312 | 23828 | 10098 | 9386 | 443 | | | |
-| [`apps/desktop`](../../apps/desktop) (**workspace propio**) | 8 | 1982 | 1355 | 0 | 627 | 26 | Tauri 2, estado IPC, elevación del CLI y autostart de usuario. | Alto: frontera frontend/CLI elevado | Inline y frontend Vitest; sin fuzz específico |
+| [`apps/desktop`](../../apps/desktop) (**módulo Go propio**, Wails v3; no es Rust) | — | — | — | — | — | — | Servicio vinculado de once métodos, estado por socket, elevación del CLI y autostart de usuario ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)). Recuento Go SIN COMPROBAR. | Alto: frontera frontend/CLI elevado | `go test` por paquete y frontend Vitest; humo con la interfaz embebida |
 | [`fuzz`](../../fuzz) (fuera del workspace raíz) | 14 | 727 | 727 | 0 | 0 | 0 | 14 objetivos `cargo-fuzz` | — | Semillas; ejecución SIN COMPROBAR |
 | [`deploy/images/healthcheck.rs`](../../deploy/images/healthcheck.rs) | 1 | 119 | 71 | 0 | 48 | 2 | Sonda de salud de imágenes | Bajo | Inline |
 
@@ -84,7 +84,7 @@ Notas:
 | Componente | Ficheros / extensiones contadas | LOC | Responsabilidad | Riesgo (INFERIDO) | Tests asociados |
 | --- | --- | ---: | --- | --- | --- |
 | [Panel web](../../apps/web) | 16 `.ts` + 29 `.tsx` | **609 + 2843 = 3452** | Administración y sesión/CSRF; rediseño bloques A/B | Alto: operaciones administrativas en navegador | Vitest en `app/`; [Playwright](../../tests/e2e-panel/run.sh) |
-| [Escritorio frontend](../../apps/desktop) | 16 `.ts` + 15 `.tsx` | **501 + 1485 = 1986** | React/Router, redes, estado y acciones Tauri | Alto: entrada a órdenes elevadas | Vitest; no acredita elevación real |
+| [Escritorio frontend](../../apps/desktop/app) | 16 `.ts` + 15 `.tsx` | **501 + 1485 = 1986** (recuento previo al cambio de puente) | React/Router, redes, estado y acciones por el puente de Wails | Alto: entrada a órdenes elevadas | Vitest; no acredita elevación real |
 | [API cliente](../../packages/api-client) | 2 `.ts` | **58** | Peticiones del panel al control plane | Medio-alto: autorización/errores | [client.test.ts](../../packages/api-client/src/client.test.ts) |
 | [Laboratorios](../../tests) | 40 `.py`, 47 `.sh`, 5 `.ps1` | **5930 / 4896 / 364** respectivamente | Integración y reproducción; 168 ficheros versionados de todas las clases | Alto al ejecutarlos | [Guía](como-reproducir.md#6-laboratorios-docker-y-privilegios) |
 | [Empaquetado](../../packaging) | 19 ficheros, todas las extensiones | **745** | `.deb`, `.pkg`, ZIP, postinstall y servicios por red | Alto: instalación/migración privilegiada | `tests/packaging`, `tests/macos`, `tests/windows` |
@@ -104,7 +104,6 @@ Notas:
 | [`apps/coordinator/tests/api.rs`](../../apps/coordinator/tests/api.rs) | 1030 |
 | [`crates/windows/src/security.rs`](../../crates/windows/src/security.rs) | 930 |
 | [`apps/control-plane/tests/integration.rs`](../../apps/control-plane/tests/integration.rs) | 904 |
-| [`apps/desktop/src/main.rs`](../../apps/desktop/src/main.rs) | 761 |
 | [`apps/agent/src/sync.rs`](../../apps/agent/src/sync.rs) | 703 |
 | [`apps/control-plane/tests/device_names.rs`](../../apps/control-plane/tests/device_names.rs) | 667 |
 
@@ -118,7 +117,7 @@ Notas:
 | Coordinator | [`apps/coordinator/src/main.rs`](../../apps/coordinator/src/main.rs); rutas en [`lib.rs`](../../apps/coordinator/src/lib.rs) | STUN en [`stun.rs`](../../apps/coordinator/src/stun.rs). |
 | Relay | [`apps/relay/src/main.rs`](../../apps/relay/src/main.rs); UDP/TLS en [`lib.rs`](../../apps/relay/src/lib.rs), [`tcp.rs`](../../apps/relay/src/tcp.rs), lógica en [`state.rs`](../../apps/relay/src/state.rs) | Máquina de estados separada de los sockets. |
 | Herramientas de prueba | [`crates/testpeer/src`](../../crates/testpeer/src) (`atenea-ipc-probe`, `atenea-load-sign`) | No forman parte del producto. |
-| `atenea-desktop` | [`apps/desktop/src/main.rs`](../../apps/desktop/src/main.rs); frontend [`app/`](../../apps/desktop/app) | Workspace Rust propio y React; lectura de estado sin privilegios, cambios mediante CLI elevado. |
+| `atenea-desktop` | [`apps/desktop/service.go`](../../apps/desktop/service.go), [`internal/`](../../apps/desktop/internal); frontend [`app/`](../../apps/desktop/app) | Módulo Go (Wails v3) y React; lectura de estado sin privilegios, cambios mediante CLI elevado. |
 
 ### Superficie nueva desde a0f8ac7 (VERIFICADO — lectura)
 
@@ -127,7 +126,7 @@ Historia y delta comprobados con `git log --oneline a0f8ac7..HEAD -- apps packag
 - CLI: `network.rs` administra identidad/configuración/estado por red y migración heredada; `network_service.rs` escribe/controla systemd y launchd. Revisar rutas confiables, permisos, bloqueo de unión y limpieza. `leave` revoca en servidor salvo limpieza `--offline`.
 - Agente: [`names.rs`](../../apps/agent/src/names.rs) valida nombres recibidos y limpia el nombre local; [`netconf.rs`](../../apps/agent/src/netconf.rs) y [`netconf_policy_tests.rs`](../../apps/agent/src/netconf_policy_tests.rs) cubren conflictos/solapamiento. `run.rs`/`engine.rs` amplían estado con `peers[].role`, `peers[].probe` y `server`, caminos bajo demanda (`none`) y recuperación de rutas. Rol de presentación no equivale a autorización.
 - Control plane: [`orgs.rs`](../../apps/control-plane/src/orgs.rs), miembros con nombre/correo, alta por correo y renombrado; [`devices.rs`](../../apps/control-plane/src/devices.rs), nombres, unión pública sin token con límites/caducidad, salida con revocación y rol `device|server`; [`issue.rs`](../../apps/control-plane/src/issue.rs), emisión y metadatos servidor/certificado; [`panel.rs`](../../apps/control-plane/src/panel.rs), estado y activos. [`policies.rs`](../../apps/control-plane/src/policies.rs), `access_policies` y la compilación inversa son superficies relevantes **ya existentes en a0f8ac7**: el diff de `policies.rs` solo añade copyright; el ensayo TCP/UDP de la regla inversa es nuevo. [`migrations/`](../../apps/control-plane/migrations) añade 0005–0008; `build.rs` declara su dependencia de reconstrucción.
-- Escritorio: [`networks.rs`](../../apps/desktop/src/networks.rs) valida argumentos y eleva el CLI con `osascript … with administrator privileges` en macOS o `pkexec` en Linux. [`autostart.rs`](../../apps/desktop/src/autostart.rs) escribe arranque del usuario, no servicio privilegiado. Notificaciones, ping, bandeja y abrir panel tienen módulos propios. Windows no soporta redes múltiples. Riesgo **INFERIDO**: entradas frontend convertidas en órdenes elevadas y lectura del IPC.
+- Escritorio: [`internal/backend`](../../apps/desktop/internal/backend) valida argumentos y eleva el CLI con `osascript … with administrator privileges` en macOS o `pkexec` en Linux. [`internal/autostart`](../../apps/desktop/internal/autostart) escribe arranque del usuario, no servicio privilegiado. Notificaciones, ping, bandeja y abrir panel tienen paquetes propios. Windows no soporta redes múltiples. Riesgo **INFERIDO**: entradas frontend convertidas en órdenes elevadas y lectura del IPC.
 - Empaquetado y pruebas: servicios por red, postinstall/launchd y migración en `packaging/`; nuevos recorridos `tests/network-lab/run-two-networks.sh`, `run-e2e.sh`, `tests/stack/rollback-0008.sh`, `tests/infra/rehearsal-images.sh`, `tests/e2e-panel/run.sh`, `tests/ci/changes.sh`. Existencia no implica ejecución: comandos y prerrequisitos en la [guía](como-reproducir.md).
 
 ## 4. Fuzzing y su alcance

@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './bridge';
 import { z } from 'zod';
 import type { Tone } from './format';
 
@@ -42,7 +42,7 @@ export const stateText: Record<NetState, string> = {
 };
 export const stateTone: Record<NetState, Tone> = { detenida: 'off', iniciada_sin_configuracion: 'warn', conectada: 'ok', conflicto: 'bad', desconocida: 'off' };
 
-/** Tauri rechaza con el texto devuelto por la orden, no con un Error. */
+/** El puente rechaza con el texto devuelto por la operación, no con un Error. */
 async function call<T = string>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(cmd, args);

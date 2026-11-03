@@ -36,7 +36,6 @@ Equivalente expandido (de `check.sh`):
 python3 scripts/check-headers.py
 sh tests/ci/changes.sh
 cargo fmt --all --check
-cargo fmt --manifest-path apps/desktop/Cargo.toml --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 pnpm install --frozen-lockfile
@@ -55,9 +54,9 @@ apps/control-plane/tests/run.sh
 
 Estos comandos pueden **descargar dependencias** (cargo/pnpm) la primera vez. Los clientes macOS/Windows en CI usan subconjuntos de paquetes (`atenea-tunnel atenea-agent atenea-cli atenea-testpeer`, más `atenea-windows`); ver [ci.yml](../../.github/workflows/ci.yml).
 
-### 2.1 Escritorio Tauri 2: workspace Rust separado
+### 2.1 Escritorio Wails v3 (Go): módulo separado
 
-**VERIFICADO — lectura:** [`apps/desktop/Cargo.toml`](../../apps/desktop/Cargo.toml), [`package.json`](../../apps/desktop/package.json), [`ci.yml`](../../.github/workflows/ci.yml). `cargo … --workspace` de la raíz **no incluye** desktop. Requiere Rust fijado, Node 24/pnpm fijado, dependencias pnpm instaladas y la interfaz compilada antes de compilar Tauri. En Linux se requieren dependencias nativas de Tauri/WebKitGTK; CI construye el Rust de escritorio en macOS y prueba también Windows. Windows no soporta operaciones de redes múltiples.
+**VERIFICADO — lectura:** [`apps/desktop/go.mod`](../../apps/desktop/go.mod), [`package.json`](../../apps/desktop/package.json), [`ci.yml`](../../.github/workflows/ci.yml), [ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md). `cargo … --workspace` de la raíz **no incluye** desktop: es un módulo Go. Requiere Go fijado en `go.mod`, Node 24/pnpm fijado, dependencias pnpm instaladas y la interfaz compilada antes de compilar el binario (se embebe). En Linux se requieren WebKitGTK y GTK 4 (`libwebkitgtk-6.0-dev`); la CI lo prueba en Linux, macOS y Windows. Windows no soporta operaciones de redes múltiples.
 
 Desde la raíz, primero `pnpm install --frozen-lockfile`. Después, en `apps/desktop`:
 
@@ -66,12 +65,15 @@ pnpm run typecheck
 pnpm run lint
 pnpm run test
 pnpm run build
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --offline
+gofmt -l .
+go mod verify
+go vet ./...
+go test ./...
+go build -trimpath -o atenea-desktop .
+python3 scripts/smoke.py 120 ./atenea-desktop
 ```
 
-El comando offline es una **variante INFERIDA** del `cargo test --locked` del workflow, solicitada para reproducción sin red: exige la caché Cargo de **este workspace y su Cargo.lock** ya poblada (por ejemplo `cargo fetch --locked` con red desde `apps/desktop`). El build frontend también debe estar disponible. No implica que las dependencias nativas puedan instalarse sin red. **Todos estos comandos: SIN COMPROBAR aquí.** Fmt, clippy y tests de lógica no demuestran diálogos de elevación, notificaciones, autostart real ni conectividad del sistema.
+En Linux sin pantalla, el humo se lanza con `xvfb-run -a dbus-run-session -- ./atenea-desktop`. `go mod verify` y la descarga de módulos necesitan red la primera vez. **Todos estos comandos: SIN COMPROBAR aquí.** El humo solo demuestra que la interfaz embebida carga bajo la CSP y el filtro y llama a un método vinculado; no demuestra diálogos de elevación, notificaciones, autostart real ni conectividad del sistema.
 
 ## 3. Alternativa sin red, macOS (`--offline --locked`, `CARGO_BUILD_JOBS=2`)
 
