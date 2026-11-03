@@ -20,6 +20,8 @@ type SpikeService struct {
 	app        *application.App
 	reportPath string
 	tray       *trayState
+	filter     *runtimeFilter
+	hold       time.Duration
 	once       sync.Once
 }
 
@@ -69,6 +71,10 @@ func (s *SpikeService) finish(payload, reason string) {
 		if s.tray != nil {
 			report["tray"] = s.tray.snapshot()
 		}
+		report["filter"] = map[string]any{"enabled": s.filter != nil}
+		if s.filter != nil {
+			report["filter"] = map[string]any{"enabled": true, "denied": s.filter.snapshot()}
+		}
 		data, _ := json.MarshalIndent(report, "", "  ")
 		if s.reportPath != "" {
 			if err := os.WriteFile(s.reportPath, data, 0o600); err != nil {
@@ -78,7 +84,8 @@ func (s *SpikeService) finish(payload, reason string) {
 			fmt.Println(string(data))
 		}
 		go func() {
-			time.Sleep(300 * time.Millisecond)
+			// SPIKE_HOLD_SECONDS mantiene la aplicación viva tras informar para poder medir sus sockets.
+			time.Sleep(300*time.Millisecond + s.hold)
 			s.app.Quit()
 		}()
 	})

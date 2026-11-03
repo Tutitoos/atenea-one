@@ -90,6 +90,7 @@ jobs:
           SPIKE_AUTORUN: '1'
           SPIKE_REPORT: ${{ github.workspace }}/spikes/wails/report/gui.json
           SPIKE_LOG: ${{ github.workspace }}/spikes/wails/report/gui.log
+          SPIKE_HOLD_SECONDS: '30'
           GDK_BACKEND: x11
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -97,9 +98,18 @@ jobs:
         run: |
           PY=python3; command -v python3 >/dev/null || PY=python
           ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
-          snap() { case "$RUNNER_OS" in Linux) ss -ltn ;; macOS) lsof -nP -iTCP -sTCP:LISTEN ;; Windows) netstat -ano -p tcp ;; esac; }
-          snap > report/listen-before.txt 2>&1 || true
-          ( sleep 15; snap > report/listen-during.txt 2>&1 || true ) &
+          # Sockets de red del propio proceso con la aplicación viva (la pausa de 30 s lo permite).
+          own() {
+            case "$RUNNER_OS" in
+              Linux) ss -ltunp 2>/dev/null | awk '/spike/ || NR==1' ;;
+              macOS) lsof -nP -a -c spike -i 2>/dev/null ;;
+              Windows)
+                pid=$(tasklist //FI "IMAGENAME eq spike.exe" //FO CSV //NH | awk -F'","' 'NR==1 {gsub(/"/,"",$2); print $2}')
+                echo "pid=$pid"
+                netstat -ano | awk -v p="$pid" '$NF==p' ;;
+            esac
+          }
+          ( sleep 12; { echo "--- a los 12 s"; own; } > report/sockets-propios.txt 2>&1 || true ) &
           if [ "$RUNNER_OS" = Linux ]; then
             $PY tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- "bin/spike$ext" | tee report/gui-exit.txt
           else
@@ -107,6 +117,26 @@ jobs:
           fi
           wait
           ls -la report
+      - name: Ejecutar con el filtro de objetos del runtime (S2c)
+        id: guifilter
+        continue-on-error: true
+        env:
+          SPIKE_AUTORUN: '1'
+          SPIKE_FILTER: '1'
+          SPIKE_REPORT: ${{ github.workspace }}/spikes/wails/report/gui-filter.json
+          SPIKE_LOG: ${{ github.workspace }}/spikes/wails/report/gui-filter.log
+          GDK_BACKEND: x11
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          PY=python3; command -v python3 >/dev/null || PY=python
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          if [ "$RUNNER_OS" = Linux ]; then
+            $PY tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- "bin/spike$ext" | tee report/gui-filter-exit.txt
+          else
+            $PY tools/run_timeout.py 120 "bin/spike$ext" | tee report/gui-filter-exit.txt
+          fi
       - name: SBOM, vendor, verificación, vulnerabilidades y licencias (S5 y S6)
         id: supply
         continue-on-error: true
@@ -186,11 +216,12 @@ jobs:
           NO_AT_BRIDGE: '1'
         run: |
           mkdir -p report
+          echo "gtk3 en $(lsb_release -ds 2>/dev/null)" | tee report/versions.txt
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           export PATH="$(go env GOPATH)/bin:$PATH"
           go get "github.com/wailsapp/wails/v3@${WAILS_VERSION}"
           go mod tidy
-          go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
+          go install -tags gtk3 "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
           (cd frontend && wails3 generate runtime)
           go build -tags "production gtk3" -trimpath -o bin/spike . 2>&1 | tee report/build.txt
           python3 tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- bin/spike | tee report/gui-exit.txt

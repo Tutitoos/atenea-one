@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -30,12 +31,21 @@ func main() {
 		panic(err)
 	}
 	svc := &SpikeService{reportPath: os.Getenv("SPIKE_REPORT")}
+	if os.Getenv("SPIKE_FILTER") == "1" {
+		svc.filter = newRuntimeFilter()
+	}
+	if n, err := strconv.Atoi(os.Getenv("SPIKE_HOLD_SECONDS")); err == nil && n > 0 {
+		svc.hold = time.Duration(n) * time.Second
+	}
 	app := application.New(application.Options{
 		Name:     "AteneaSpike",
 		Services: []application.Service{application.NewService(svc)},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 			Middleware: func(next http.Handler) http.Handler {
+				if svc.filter != nil {
+					next = svc.filter.wrap(next)
+				}
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Security-Policy", csp)
 					// Camino de respaldo del informe si el puente fallase: no forma parte de la aplicación real.
