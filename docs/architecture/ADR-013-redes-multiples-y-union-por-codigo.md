@@ -60,7 +60,7 @@ Unirse, salir, conectar y desconectar **cambian el sistema** (claves root, inter
 ### 3.5 Interfaz
 
 - **Redes:** sección nueva con la lista de redes unidas (nombre, servidor, estado, interruptor de conexión) y «Unirse a una red…».
-- **Dispositivos:** un selector de red; dentro de cada red siguen «Local», «Servidor» y «Pares».
+- **Dispositivos:** una lista de redes anidada bajo la entrada «Dispositivos» (antes, un selector en la cabecera); dentro de cada red siguen «Local», «Servidor» y «Pares».
 - **Bandeja:** una línea por red con su punto de estado.
 - Nombre de la red: el que viaja en el código; alias local editable.
 - La aplicación pasa de solo lectura a poder **pedir** operaciones: se revisa ADR-011 (la lectura de estado sigue sin privilegios y sin órdenes de control).
@@ -119,7 +119,7 @@ Aceptación privilegiada de macOS **superada en la CI desechable** (commit `b81a
 
 ## 9. Estado de la fase 4 (aplicación)
 
-**Implementada**, con la opción A de privilegios. La sección «Redes» lista las redes unidas (estado, servidor, motivo de un conflicto), conecta y desconecta cada una, sale de una red con confirmación y permite **unirse pegando un código en dos pasos**: «Revisar código» muestra nombre, servidor, id, huella de la raíz y tipo de código sin cambiar nada, y solo «Unirme a esta red» pide la autorización del sistema. En la cabecera hay un selector de red (la lista de dispositivos y el diagnóstico muestran la elegida; sin elección guardada y con la predeterminada caída se enseña la primera red) y la bandeja muestra una línea por red que responde. ADR-011 §2 queda revisado: la app deja de ser de solo lectura; sus cuatro órdenes nuevas están acotadas y validadas en Rust.
+**Implementada**, con la opción A de privilegios. La sección «Redes» lista las redes unidas (estado, servidor, motivo de un conflicto), conecta y desconecta cada una, sale de una red con confirmación y permite **unirse pegando un código en dos pasos**: «Revisar código» muestra nombre, servidor, id, huella de la raíz y tipo de código sin cambiar nada, y solo «Unirme a esta red» pide la autorización del sistema. Bajo «Dispositivos» hay una lista de redes, visible mientras esa sección está abierta (la lista de dispositivos y el diagnóstico muestran la elegida; sin elección guardada y con la predeterminada caída se enseña la primera red), y la bandeja muestra una línea por red que responde. ADR-011 §2 queda revisado: la app deja de ser de solo lectura; sus cuatro órdenes nuevas están acotadas y validadas en Rust.
 
 Dos piezas nuevas del CLI sostienen la app: `atenea network inspect <código> [--json]` (decodifica sin root, sin disco y sin red; nunca imprime el token) y `join --status-gid <gid>` (el socket de estado de la red nueva es legible por ese grupo; sin él, `list` sin root muestra `desconocida`). La app une con el grupo primario del usuario.
 

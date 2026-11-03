@@ -175,7 +175,7 @@ it('sin redes unidas no hay selector ni estado: Dispositivos y Diagnóstico ense
   expect(await screen.findByText(/Sin redes\. Únete a una red desde/)).toBeInTheDocument();
   expect(within(screen.getByRole('main')).getByRole('link', { name: 'Redes' })).toHaveAttribute('href', '/networks');
   expect(screen.getByRole('status')).toHaveTextContent('Sin redes');
-  expect(screen.queryByRole('combobox', { name: 'Red' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Elegir red' })).not.toBeInTheDocument();
   expect(calls('status')).toHaveLength(0);
   unmount();
   app('/diagnostics');
@@ -183,28 +183,41 @@ it('sin redes unidas no hay selector ni estado: Dispositivos y Diagnóstico ense
   expect(calls('status')).toHaveLength(0);
 });
 
-it('el selector solo ofrece redes reales: abre con la primera y pide el estado de la elegida', async () => {
+it('las redes cuelgan de Dispositivos: solo reales, abre con la primera y pide el estado de la elegida', async () => {
   serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })]);
   app();
-  const select = await screen.findByRole('combobox', { name: 'Red' });
-  expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['casa', 'trabajo']);
-  expect(select).toHaveValue(NET_ID);
+  const nets = within(await screen.findByRole('group', { name: 'Elegir red' }));
+  expect(nets.getAllByRole('button').map((b) => b.textContent)).toEqual(['casa', 'trabajo']);
+  expect(nets.getByRole('button', { name: 'casa' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('combobox', { name: 'Red' })).not.toBeInTheDocument();
   await waitFor(() => expect(calls('status')[0][1]).toEqual({ network: NET_ID }));
-  await userEvent.selectOptions(select, 'trabajo');
+  await userEvent.click(nets.getByRole('button', { name: 'trabajo' }));
   await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: OTHER_ID }));
+  expect(nets.getByRole('button', { name: 'trabajo' })).toHaveAttribute('aria-pressed', 'true');
   expect(localStorage.getItem('atenea.network')).toBe(OTHER_ID);
+});
+
+it('la lista de redes solo se ve dentro de Dispositivos y se despliega al abrirlo', async () => {
+  serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })]);
+  app('/servers');
+  await screen.findByRole('navigation', { name: 'Secciones' });
+  expect(screen.queryByRole('group', { name: 'Elegir red' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: 'Dispositivos' }));
+  expect(await screen.findByRole('group', { name: 'Elegir red' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: 'Redes' }));
+  expect(screen.queryByRole('group', { name: 'Elegir red' })).not.toBeInTheDocument();
 });
 
 it('la red guardada se respeta y, si desaparece, se pasa a la primera', async () => {
   localStorage.setItem('atenea.network', OTHER_ID);
   serve(agent(), [net(), net({ network_id: OTHER_ID, name: 'trabajo' })]);
   const { unmount } = app();
-  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  expect(await within(await screen.findByRole('group', { name: 'Elegir red' })).findByRole('button', { name: 'trabajo' })).toHaveAttribute('aria-pressed', 'true');
   unmount();
   vi.mocked(invoke).mockReset();
   serve(agent(), [net()]);
   app();
-  expect(await screen.findByRole('combobox', { name: 'Red' })).toHaveValue(NET_ID);
+  expect(await within(await screen.findByRole('group', { name: 'Elegir red' })).findByRole('button', { name: 'casa' })).toHaveAttribute('aria-pressed', 'true');
   await waitFor(() => expect(calls('status').at(-1)![1]).toEqual({ network: NET_ID }));
 });
 
@@ -357,17 +370,18 @@ it('las pantallas no tienen violaciones de accesibilidad detectables', async () 
   }
 });
 
-it('agrupa las redes por host exacto también en el selector', async () => {
+it('agrupa las redes por host exacto también en la lista de Dispositivos', async () => {
   serve(agent(), [net({ url: 'HTTPS://CONTROL.EXAMPLE.TEST:443/api' }), net({ network_id: OTHER_ID, name: 'trabajo' }), net({ network_id: '0199ab12-3456-7def-8abc-0123456789ef', name: 'otra', url: 'https://otro.example.test' })]);
   app('/servers');
   const main = within(screen.getByRole('main'));
   expect(await main.findByRole('link', { name: /control.example.test 2 redes/ })).toBeInTheDocument();
   expect(main.getByRole('link', { name: /otro.example.test 1 red/ })).toBeInTheDocument();
   expect(main.getAllByRole('link')).toHaveLength(2);
-  const select = screen.getByRole('combobox', { name: 'Red' });
-  const groups = within(select).getAllByRole('group');
-  expect(groups.map((g) => g.getAttribute('label'))).toEqual(['control.example.test', 'otro.example.test']);
-  expect(within(groups[0]).getAllByRole('option')).toHaveLength(2);
+  await userEvent.click(screen.getByRole('link', { name: 'Dispositivos' }));
+  const nets = within(await screen.findByRole('group', { name: 'Elegir red' }));
+  const control = nets.getByRole('group', { name: 'control.example.test' });
+  expect(within(control).getAllByRole('button')).toHaveLength(2);
+  expect(within(nets.getByRole('group', { name: 'otro.example.test' })).getAllByRole('button')).toHaveLength(1);
 });
 
 it('el servidor prueba otra red conectada si la primera no responde y no usa redes ajenas', async () => {
@@ -390,7 +404,7 @@ it('sin una red que responda no inventa servicios; permite conectar y ver dispos
   await waitFor(() => expect(calls('network_apply').at(-1)).toEqual(['network_apply', { op: 'up', network: OTHER_ID }]));
   await userEvent.click(trabajo.getByRole('link', { name: 'Ver dispositivos' }));
   expect(await screen.findByRole('heading', { level: 1, name: 'Dispositivos' })).toBeInTheDocument();
-  expect(screen.getByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  expect(within(screen.getByRole('group', { name: 'Elegir red' })).getByRole('button', { name: 'trabajo' })).toHaveAttribute('aria-pressed', 'true');
   expect(localStorage.getItem('atenea.network')).toBe(OTHER_ID);
 });
 
@@ -455,7 +469,7 @@ it('muestra dispositivos del servidor de todas sus redes legibles y selecciona s
   const link = await screen.findByRole('link', { name: /servidor-trabajo.*10.78.0.3.*Inactivo.*trabajo/ });
   expect(screen.getByRole('link', { name: /servidor-casa.*10.77.0.3.*Inactivo.*casa/ })).toBeInTheDocument();
   await userEvent.click(link);
-  expect(screen.getByRole('combobox', { name: 'Red' })).toHaveValue(OTHER_ID);
+  expect(within(await screen.findByRole('group', { name: 'Elegir red' })).getByRole('button', { name: 'trabajo' })).toHaveAttribute('aria-pressed', 'true');
   expect(await screen.findByTitle('Cambiar nombre local')).toHaveTextContent('servidor-trabajo');
 });
 
