@@ -160,6 +160,29 @@ it('el token para un CLI anterior se pide con ?conectividad=0 y su comando no ll
  expect(screen.queryByText(/no anuncia conectividad/)).not.toBeInTheDocument();
  expect(screen.getByText(/network up/)).toBeVisible();
 });
+it('el token para un CLI anterior usa el STUN real del servidor en lugar de HOST',async()=>{
+ const get=vi.spyOn(api,'GET').mockResolvedValue({data:{...info,connectivity:conn},response:new Response()});
+ vi.spyOn(api,'POST').mockResolvedValue({data:{token:'secreto-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:info.url,token:'secreto-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)},code:LEGACY,connectivity:null,root_anchor_fingerprint:info.root_anchor_fingerprint},response:new Response()});
+ const user=userEvent.setup(); const copy=vi.spyOn(navigator.clipboard,'writeText').mockResolvedValue();
+ wrap(<Enrollment net="red"/>);
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ await waitFor(()=>expect(get).toHaveBeenCalledWith('/api/v1/networks/{net}/join-code',{params:{path:{net:'red'}}}));
+ await user.click(screen.getByRole('button',{name:'Crear token'}));
+ const command=`sudo atenea network join '${LEGACY}' --stun-host relay.example.test`;
+ expect(await screen.findByText(command)).toBeVisible();
+ expect(screen.queryByText(/HOST/)).not.toBeInTheDocument();
+ await user.click(screen.getByRole('button',{name:'Copiar comando de unión (CLI anterior)'}));
+ expect(copy).toHaveBeenCalledWith(command);
+});
+it('si no se conoce el STUN, el comando para un CLI anterior avisa de que hay que sustituir HOST',async()=>{
+ vi.spyOn(api,'GET').mockRejectedValue(new ApiError(500,{error:{code:'internal',message:'x'}}));
+ vi.spyOn(api,'POST').mockResolvedValue({data:{token:'secreto-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:info.url,token:'secreto-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)},code:LEGACY,connectivity:null,root_anchor_fingerprint:info.root_anchor_fingerprint},response:new Response()});
+ const user=userEvent.setup();wrap(<Enrollment net="red"/>);
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ await user.click(screen.getByRole('button',{name:'Crear token'}));
+ expect(await screen.findByText(`sudo atenea network join '${LEGACY}' --stun-host HOST`)).toBeVisible();
+ expect(screen.getByText(/Sustituye HOST por el STUN del servidor/)).toBeVisible();
+});
 it('marca solo solicitudes pendientes',()=>{
  const {rerender}=render(<Devices devices={[{...device,join_origin:'request'}]} accessRole="member" net="red" elapsed={0} refresh={async()=>{}}/>);
  expect(screen.getByText('Solicitud de unión')).toBeVisible();

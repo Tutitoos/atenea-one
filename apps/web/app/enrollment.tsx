@@ -1,6 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api, result, type Model } from '@atenea/api-client';
 import { Button, Card, CopyButton, Field } from './ui';
 import { shellQuote, tokenSchema } from './domain';
@@ -13,6 +14,9 @@ export function Enrollment({ net }: { net: string }) {
   const [auto, setAuto] = useState(false);
   const [legacy, setLegacy] = useState(false);
   const [issuedLegacy, setIssuedLegacy] = useState(false);
+  // Misma consulta (y misma caché) que la tarjeta «Código de la red»: de ahí sale el STUN del servidor para el comando de un CLI anterior.
+  const join = useQuery({ queryKey: ['network', net, 'join-code'], enabled: legacy, retry: false,
+    queryFn: () => result(api.GET('/api/v1/networks/{net}/join-code', { params: { path: { net } } })) });
   const [error, setError] = useState('');
   const [ttlError, setTtlError] = useState('');
   const [pending, setPending] = useState(false);
@@ -28,7 +32,7 @@ export function Enrollment({ net }: { net: string }) {
       {token.code ? <>
         <p>Este código contiene el token y se muestra una sola vez. Guárdalo ahora y compártelo solo por un canal seguro.</p>
         <CopyCode code={token.code} label="Código con token"/>
-        <JoinCommand code={token.code} connectivity={token.connectivity} legacy={issuedLegacy} url={token.join.url}/>
+        <JoinCommand code={token.code} connectivity={token.connectivity} legacy={issuedLegacy} stun={join.data?.connectivity?.stun_host} url={token.join.url}/>
       </> : <p>El nombre de la red o la URL pública no caben en el formato del código. Puedes usar el flujo anterior con el documento join.</p>}
       <p>Huella de la raíz: <code>{token.root_anchor_fingerprint}</code>
         {token.root_anchor_fingerprint && <CopyButton value={token.root_anchor_fingerprint} label="Copiar huella de la raíz"/>}</p>

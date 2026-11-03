@@ -29,6 +29,7 @@ export function JoinCommand({ code, connectivity, legacy = false, stun, url }: {
     return <div>
       <p>En un equipo con CLI 0.1.8 o anterior (no admite el código con conectividad ni <code>--up</code>):</p>
       <pre>{old}</pre>
+      {!stun && <p className="warning">Sustituye HOST por el STUN del servidor (el que anuncia el código de red de esta misma pestaña): no se ha podido obtener aquí.</p>}
       <CopyButton value={old} label="Copiar comando de unión (CLI anterior)"/>
       <p>Si el relay usa una CA propia, añade <code>--relay-ca RUTA</code> con la CA que publica el servidor{url ? ` en ${url}/api/v1/relay-ca` : ''}; compara su SHA-256 con el del código de red.</p>
       <p>Después, <code>sudo atenea network up</code> con el nombre o el id de la red, y un administrador aprueba su huella.</p>
