@@ -320,12 +320,83 @@ pub async fn callback(
     Ok(response)
 }
 
+/// `Authorization: Bearer atsvc_<43 base64url>` (ADR-020); un único encabezado con esa forma exacta.
+fn service_token(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let token = values.next()?.to_str().ok()?.strip_prefix("Bearer ")?;
+    (values.next().is_none() && token.len() == 49 && token.starts_with("atsvc_")).then_some(token)
+}
+
+/// ¿Intenta la petición autenticarse con un token de servicio, aunque esté mal formado?
+pub fn bearer_service(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::AUTHORIZATION)
+        .iter()
+        .any(|value| value.as_bytes().starts_with(b"Bearer atsvc_"))
+}
+
+/// Solo la cookie del navegador: rechaza al usuario interno de un token de servicio (eventos, sesión).
+pub fn browser_only(headers: &HeaderMap) -> Result<(), ApiError> {
+    cookie(headers, "atenea_session")
+        .map(|_| ())
+        .ok_or_else(|| ApiError::forbidden("forbidden"))
+}
+
+/// Token válido, no caducado ni revocado; la consulta por petición hace inmediata la revocación.
+/// CSRF vacío: el token solo sirve para lecturas. Registra `service_token.use` como mucho una vez por hora.
+async fn service_authenticated(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(Uuid, String), ApiError> {
+    let token = service_token(headers).ok_or_else(|| unauthorized("invalid_session"))?;
+    let mut tx = state.pool.begin().await?;
+    let row = sqlx::query(
+        "WITH old AS (SELECT id, last_used_at FROM service_tokens \
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now() FOR UPDATE) \
+         UPDATE service_tokens t SET last_used_at = now() FROM old WHERE t.id = old.id \
+         RETURNING t.id, t.user_id, t.org_id, \
+         (old.last_used_at IS NULL OR old.last_used_at < now() - interval '1 hour') AS audit",
+    )
+    .bind(hash(token).as_slice())
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| unauthorized("invalid_session"))?;
+    // Tras autenticar: las claves del límite son solo tokens válidos.
+    crate::take(
+        &state.session_rate,
+        (hash(token), "service"),
+        state.config.service_per_minute,
+    )?;
+    let user_id: Uuid = row.try_get("user_id")?;
+    if row.try_get("audit")? {
+        crate::audit::record(
+            &mut tx,
+            "user",
+            user_id,
+            Some(row.try_get("org_id")?),
+            None,
+            "service_token.use",
+            row.try_get("id")?,
+            json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok((user_id, String::new()))
+}
+
 async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
     write: bool,
 ) -> Result<(Uuid, String), ApiError> {
-    let token = cookie(headers, "atenea_session").ok_or_else(|| unauthorized("invalid_session"))?;
+    // Sesión y token a la vez: gana la cookie. Un token nunca autoriza escrituras (`api::read_only_token` las corta antes).
+    let Some(token) = cookie(headers, "atenea_session") else {
+        if write && bearer_service(headers) {
+            return Err(ApiError::forbidden("service_token_read_only"));
+        }
+        return service_authenticated(state, headers).await;
+    };
     let mut tx = state.pool.begin().await?;
     // El bloqueo de UPDATE serializa renovaciones y logout; un CSRF inválido revierte la renovación.
     let row = sqlx::query(
@@ -367,7 +438,9 @@ pub fn limit_session(
     operation: &'static str,
     per_minute: u32,
 ) -> Result<(), ApiError> {
-    let token = cookie(headers, "atenea_session").ok_or_else(|| unauthorized("invalid_session"))?;
+    let token = cookie(headers, "atenea_session")
+        .or_else(|| service_token(headers))
+        .ok_or_else(|| unauthorized("invalid_session"))?;
     crate::take(&state.session_rate, (hash(token), operation), per_minute)
 }
 
@@ -395,6 +468,9 @@ pub async fn get_session(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let (user_id, csrf_token) = authenticated(&state, &headers, false).await?;
+    if csrf_token.is_empty() {
+        return Err(ApiError::forbidden("forbidden"));
+    }
     let user = sqlx::query("SELECT id, email, display_name FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(&state.pool)

@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-use crate::{AppState, auth, devices, issue, networks, orgs, policies};
+use crate::{AppState, auth, devices, issue, networks, orgs, policies, service_tokens};
 use axum::{
     Json, Router,
     http::StatusCode,
@@ -70,6 +70,14 @@ pub fn router(s: AppState) -> Router {
         .route(
             "/api/v1/orgs/{org}/members/{user}",
             put(orgs::set_member).delete(orgs::remove_member),
+        )
+        .route(
+            "/api/v1/orgs/{org}/service-tokens",
+            get(service_tokens::list).post(service_tokens::create),
+        )
+        .route(
+            "/api/v1/orgs/{org}/service-tokens/{id}",
+            delete(service_tokens::revoke),
         )
         .route(
             "/api/v1/orgs/{org}/networks",
@@ -159,6 +167,7 @@ pub fn router(s: AppState) -> Router {
             s.clone(),
             crate::panel::changed,
         ))
+        .layer(axum::middleware::from_fn(read_only_token))
         .layer(axum::middleware::from_fn(uniform_errors))
         .layer(axum::middleware::from_fn_with_state(
             s.metrics.clone(),
@@ -200,6 +209,14 @@ async fn server(
 }
 pub fn openapi() -> utoipa::openapi::OpenApi {
     crate::openapi::document()
+}
+/// ADR-020: un token de servicio solo lee. Cualquier método de escritura, también `/device/*` y
+/// `/enroll`, se rechaza antes de tocar la base.
+async fn read_only_token(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if !req.method().is_safe() && auth::bearer_service(req.headers()) {
+        return ApiError::forbidden("service_token_read_only").into_response();
+    }
+    next.run(req).await
 }
 async fn uniform_errors(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
     let report = req.uri().path() == "/api/v1/device/status";

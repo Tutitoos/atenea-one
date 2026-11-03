@@ -27,6 +27,8 @@ pub struct Config {
     pub login_per_minute: u32,
     /// Peticiones firmadas por minuto y dispositivo (config, estado, rutas).
     pub device_per_minute: u32,
+    /// Peticiones por minuto y token de servicio de solo lectura (ADR-020).
+    pub service_per_minute: u32,
     /// Redes de los proxies inversos cuyo `X-Real-IP` se acepta; vacío = no se confía en cabeceras.
     pub trusted_proxies: Vec<ipnet::IpNet>,
     pub application_role: Option<String>,
@@ -58,6 +60,7 @@ impl Default for Config {
             config_validity_secs: 300,
             dev_insecure_cookies: false,
             enroll_per_minute: 10,
+            service_per_minute: 120,
             max_pending_join_requests: 20,
             join_request_ttl_secs: 7 * 86400,
             login_per_minute: 20,

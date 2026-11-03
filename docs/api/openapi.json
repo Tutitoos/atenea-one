@@ -760,6 +760,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -1075,6 +1078,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -1175,6 +1181,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -1604,6 +1613,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -2496,6 +2508,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -2596,6 +2611,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -2903,6 +2921,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -3202,6 +3223,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -3596,6 +3620,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -3723,7 +3750,7 @@
           "orgs"
         ],
         "summary": "Añade un usuario registrado o cambia su rol; requiere owner",
-        "description": "Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email.",
+        "description": "Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 403 forbidden si el usuario es el interno de un token de servicio; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email.",
         "operationId": "setMember",
         "parameters": [
           {
@@ -4037,6 +4064,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       },
@@ -4078,6 +4108,325 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/service-tokens": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Lista los tokens de servicio de la organización, sin secretos; solo owner",
+        "description": "Solo owner (ADR-020); un token de servicio no puede gestionar tokens (403). create: CSRF, ttl_secs 3600..=7776000 (400 invalid_ttl), name como los demás nombres (400 invalid_name); el valor `token` se devuelve una sola vez y solo se guarda su SHA-256. 429 rate_limited. revoke: efecto inmediato; 404 si no existe, es de otra organización o ya está revocado.",
+        "operationId": "listServiceTokens",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceToken"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Crea un token de servicio de solo lectura; requiere owner",
+        "description": "Solo owner (ADR-020); un token de servicio no puede gestionar tokens (403). create: CSRF, ttl_secs 3600..=7776000 (400 invalid_ttl), name como los demás nombres (400 invalid_name); el valor `token` se devuelve una sola vez y solo se guarda su SHA-256. 429 rate_limited. revoke: efecto inmediato; 404 si no existe, es de otra organización o ya está revocado.",
+        "operationId": "createServiceToken",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewServiceToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceTokenCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/service-tokens/{id}": {
+      "delete": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Revoca un token de servicio; requiere owner",
+        "description": "Solo owner (ADR-020); un token de servicio no puede gestionar tokens (403). create: CSRF, ttl_secs 3600..=7776000 (400 invalid_ttl), name como los demás nombres (400 invalid_name); el valor `token` se devuelve una sola vez y solo se guarda su SHA-256. 429 rate_limited. revoke: efecto inmediato; 404 si no existe, es de otra organización o ya está revocado.",
+        "operationId": "revokeServiceToken",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
           },
           "400": {
             "description": "Petición inválida",
@@ -4310,6 +4659,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -5813,6 +6165,26 @@
           }
         }
       },
+      "NewServiceToken": {
+        "type": "object",
+        "required": [
+          "name",
+          "ttl_secs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "ttl_secs": {
+            "type": "integer",
+            "maximum": 7776000,
+            "minimum": 3600
+          }
+        }
+      },
       "OpenApiDocument": {
         "type": "object",
         "required": [
@@ -6101,6 +6473,69 @@
           }
         }
       },
+      "ServiceToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ServiceTokenCreated": {
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "ServiceVersion": {
         "type": "object",
         "required": [
@@ -6193,6 +6628,10 @@
         "in": "header",
         "name": "Authorization",
         "description": "AtDevice v1 device=<hex16>, ts=<unix s>, nonce=<hex16>, sig=<hex64>. Firma Ed25519 sobre método, PATH_Y_QUERY, ts, nonce y BLAKE2s-256 del cuerpo con dominio atenea-one/api-auth/v1\\0. Ventana 60 s; nonce único durante 120 s."
+      },
+      "serviceToken": {
+        "type": "http",
+        "scheme": "bearer"
       },
       "session": {
         "type": "apiKey",

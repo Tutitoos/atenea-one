@@ -16,6 +16,7 @@ pub mod orgs;
 pub mod panel;
 pub mod policies;
 pub mod routes;
+pub mod service_tokens;
 use axum::http::{HeaderMap, StatusCode};
 use std::{
     collections::HashMap,

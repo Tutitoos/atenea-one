@@ -8,7 +8,7 @@ use utoipa::openapi::{
     request_body::RequestBodyBuilder,
     response::ResponseBuilder,
     schema::{ArrayBuilder, ObjectBuilder, SchemaFormat, SchemaType, Type},
-    security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme},
+    security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityRequirement, SecurityScheme},
 };
 
 fn text() -> RefOr<Schema> {
@@ -134,6 +134,9 @@ fn schemas() -> ComponentsBuilder {
         ("Member", complete(&[("user_id", uuid()), ("role", named("Role")), ("display_name", nullable_text()), ("email", nullable_text())])),
         ("AddMember", complete(&[("email", text()), ("role", named("Role"))])),
         ("SetMember", complete(&[("role", named("Role"))])),
+        ("NewServiceToken", complete(&[("name", name.clone()), ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(3600)).maximum(Some(7_776_000)).into())])),
+        ("ServiceTokenCreated", complete(&[("id", uuid()), ("token", text()), ("expires_at", timestamp())])),
+        ("ServiceToken", complete(&[("id", uuid()), ("name", text()), ("created_at", timestamp()), ("expires_at", timestamp()), ("last_used_at", nullable_timestamp()), ("revoked_at", nullable_timestamp())])),
         ("Empty", complete(&[])),
         ("User", complete(&[("id", uuid()), ("email", nullable_text()), ("display_name", nullable_text())])),
         ("Membership", complete(&[("org_id", uuid()), ("role", named("Role"))])),
@@ -199,6 +202,7 @@ fn schemas() -> ComponentsBuilder {
     .security_scheme("device", SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
         "Authorization", "AtDevice v1 device=<hex16>, ts=<unix s>, nonce=<hex16>, sig=<hex64>. Firma Ed25519 sobre método, PATH_Y_QUERY, ts, nonce y BLAKE2s-256 del cuerpo con dominio atenea-one/api-auth/v1\\0. Ventana 60 s; nonce único durante 120 s.",
     ))))
+    .security_scheme("serviceToken", SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)))
 }
 
 /// Fuente única del contrato servido por HTTP y exportado con `--openapi`.
@@ -680,6 +684,36 @@ pub fn document() -> OpenApi {
         ),
         (
             Get,
+            "/api/v1/orgs/{org}/service-tokens",
+            "listServiceTokens",
+            "Lista los tokens de servicio de la organización, sin secretos; solo owner",
+            "read",
+            "200",
+            "",
+            "[]ServiceToken",
+        ),
+        (
+            Post,
+            "/api/v1/orgs/{org}/service-tokens",
+            "createServiceToken",
+            "Crea un token de servicio de solo lectura; requiere owner",
+            "write",
+            "201",
+            "NewServiceToken",
+            "ServiceTokenCreated",
+        ),
+        (
+            Delete,
+            "/api/v1/orgs/{org}/service-tokens/{id}",
+            "revokeServiceToken",
+            "Revoca un token de servicio; requiere owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
             "/api/openapi.json",
             "getOpenApi",
             "Obtiene este contrato OpenAPI",
@@ -717,6 +751,17 @@ pub fn document() -> OpenApi {
                 SecurityRequirement::new("session", Vec::<String>::new())
             };
             operation = operation.security(security);
+            if access == "read"
+                && !matches!(
+                    id,
+                    "getSession" | "networkEvents" | "listServiceTokens" | "getJoinCode"
+                )
+            {
+                operation = operation.security(SecurityRequirement::new(
+                    "serviceToken",
+                    Vec::<String>::new(),
+                ));
+            }
         } else if access == "device" {
             operation =
                 operation.security(SecurityRequirement::new("device", Vec::<String>::new()));
@@ -916,6 +961,7 @@ pub fn document() -> OpenApi {
                 | "getDevicePeers"
                 | "leaveDeviceNetwork"
                 | "addMemberByEmail"
+                | "createServiceToken"
                 | "getServer"
         ) {
             operation = operation.response(
@@ -979,8 +1025,14 @@ pub fn document() -> OpenApi {
         if id == "listMembers" {
             operation = operation.description(Some("display_name: string|null visible a todos los miembros. email: string|null visible a owner/admin; para member siempre null. 404 not_found si no pertenece a la organización."));
         }
+        if matches!(
+            id,
+            "createServiceToken" | "listServiceTokens" | "revokeServiceToken"
+        ) {
+            operation = operation.description(Some("Solo owner (ADR-020); un token de servicio no puede gestionar tokens (403). create: CSRF, ttl_secs 3600..=7776000 (400 invalid_ttl), name como los demás nombres (400 invalid_name); el valor `token` se devuelve una sola vez y solo se guarda su SHA-256. 429 rate_limited. revoke: efecto inmediato; 404 si no existe, es de otra organización o ya está revocado."));
+        }
         if id == "setMember" || id == "addMemberByEmail" {
-            operation = operation.description(Some("Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email."));
+            operation = operation.description(Some("Solo owner. 400 invalid_role; 404 not_found si el usuario no existe o la organización es ajena; 403 forbidden si el usuario es el interno de un token de servicio; 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}; previous_role=null al añadir. Responde Member con display_name y email."));
         }
         if id == "addMemberByEmail" {
             operation = operation.description(Some("Solo owner y CSRF. Correo completo exacto sin distinguir mayúsculas; no recorta ni busca por fragmentos. El usuario debe haber iniciado sesión. 400 invalid_role; 404 not_found uniforme para usuario inexistente u organización ajena; 409 conflict si varias identidades tienen ese correo, 409 last_owner al degradar al último owner. Auditoría member.set con {previous_role: string|null, role: string}. Ráfaga 10, reposición 10/minuto por sesión (incluidos intentos fallidos), 429 rate_limited. Riesgo residual: un owner puede averiguar qué correos han iniciado sesión; múltiples sesiones y reinicios renuevan el cupo."));
@@ -1011,7 +1063,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 39);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 41);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());
