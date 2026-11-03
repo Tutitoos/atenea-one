@@ -197,12 +197,15 @@ async fn write_member(
             .execute(&mut *tx)
             .await?;
     }
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)")
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM users WHERE id=$1")
         .bind(user)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-    if !exists {
-        return Err(ApiError::not_found());
+    match kind.as_deref() {
+        None => return Err(ApiError::not_found()),
+        // El usuario interno de un token no puede ascender ni cambiar de rol: seguiría siendo solo lectura.
+        Some("service") => return Err(ApiError::forbidden("forbidden")),
+        _ => {}
     }
     let previous_role: Option<String> =
         sqlx::query_scalar("SELECT role FROM memberships WHERE org_id=$1 AND user_id=$2")
