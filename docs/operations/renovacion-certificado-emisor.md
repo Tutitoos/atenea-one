@@ -8,7 +8,7 @@ Los valores `<…>` se sustituyen con el inventario privado del operador. No cop
 
 ## Reglas que no se pueden saltar
 
-1. **El serial debe ser estrictamente mayor que el vigente.** Los agentes rechazan cualquier serial menor que el mayor que han visto (`issuer_rollback`). **El control plane 0.1.6 y los anteriores no lo comprueban**: aceptan un certificado válido de serial menor y entonces la red se corta (ver «Qué pasa si te equivocas»). Las versiones posteriores a la 0.1.6 (cambio en `main`, sin publicar a 2026-11-02) lo rechazan con `409 serial_rollback`. **Comprueba la versión del servidor antes de fiarte de esa protección.**
+1. **El serial debe ser estrictamente mayor que el vigente.** Los agentes rechazan cualquier serial menor que el mayor que han visto (`issuer_rollback`). **El control plane 0.1.6 y los anteriores no lo comprueban**: aceptan un certificado válido de serial menor y entonces la red se corta (ver «Qué pasa si te equivocas»). **Desde la 0.1.7 el servidor lo rechaza con `409 serial_rollback`** (el piloto corre una versión posterior, que lo incluye). Aun así, comprueba la versión del servidor antes de fiarte de esa protección y calcula siempre el serial desde la auditoría.
 2. **Validez de 90 días como máximo.** Según el contrato, el agente rechaza ventanas mayores (no ensayado aquí).
 3. **La raíz solo se usa en la estación de administración**, nunca en el VPS ni en un host expuesto (ADR-005).
 4. **La clave de emisor descifrada es temporal:** fichero con permisos 0600, sin imprimirla ni pegarla en ningún sitio, y borrada al terminar. Una shell persistente no ejecuta un `trap … EXIT`: la limpieza se hace explícitamente y se comprueba.
@@ -82,6 +82,12 @@ Ensayado el 2026-11-02 (`tests/network-lab/issuer-renewal.sh`, que se ejecuta co
 
 Ensayado también el mismo día **con las claves reales** (raíz offline y clave de emisor de la custodia) sobre una red de prueba desechable en el servidor real, ya borrada: serial 1 de 7 días y renovación a serial 2 de 90 días, aceptados por el servidor, con la caducidad y los eventos de auditoría esperados. Sin agentes en esa red.
 
+Ensayado el 2026-11-03 el **procedimiento completo con un script privado del operador** (calcula el serial siguiente desde la auditoría, exige confirmar escribiendo el nombre de la red, descifra raíz y clave de emisor a un directorio 0700 que borra siempre y comprueba, sube solo el certificado público y verifica caducidad y auditoría), sobre una red desechable con **un dispositivo real** unido y aprobado, con las claves reales de emisor y una raíz desechable:
+
+- Renovación del serial 1 al 2 (10 días) y, después, al 3: caducidad esperada, evento de auditoría con el serial nuevo y ningún directorio temporal restante. El dispositivo mantuvo `lease_active`, su `config.version` avanzó y el emisor que informa pasó a la caducidad nueva en unos 100 s, sin `sync.last_error`.
+- Abortos sin cambiar nada en el servidor: confirmación incorrecta o ausente, serial igual o menor que el vigente, validez de más de 90 días, red desconocida, y con la raíz tomada de una **copia cifrada** (de pruebas): passphrase incorrecta, suma de la copia que no coincide y miembro inexistente.
+- **Límites:** no se ejecutó sobre las redes reales ni con la copia cifrada y la passphrase reales (se usó una copia de pruebas con la misma cifra y formato), y el script no comprueba por sí mismo los equipos (lease y `config.version`): esa comprobación sigue siendo manual.
+
 Límites, sin comprobar:
 
 - El laboratorio usa validez de configuración de 40 s y un solo agente; los plazos de producción son 300 s más 30 s de tolerancia.
@@ -96,8 +102,8 @@ Límites, sin comprobar:
 | --- | --- | --- | --- |
 | 2026-11-02 | piloto | serial 1 a 2, 90 días (caduca el 2027-01-31) | Subido por la API, el mismo endpoint que usa el botón del panel (el botón no se manejó). El servidor informó la caducidad nueva y la auditoría registró `serial: 2`. Los tres equipos recibieron configuraciones emitidas tras la subida: el lease no cayó en ningún momento observado (el Mac se muestreó cada unos 25 s durante 3 minutos y recibió tres configuraciones seguidas; el CT y el VPS se comprobaron al cabo de unos 4 minutos), sin `sync.last_error` ni errores de configuración, con 0 errores en el control plane, 9 de 9 servicios sanos y 11 de 11 comprobaciones de tráfico. No se leyó el estado persistido de los agentes (es de root): que aceptan el serial 2 se deduce de que siguen recibiendo y aplicando configuraciones firmadas con el certificado nuevo. |
 
-Próxima renovación del piloto: **antes del 2027-01-17** (14 días antes de la caducidad), con serial **3**.
+Próximas renovaciones, por red (el serial siguiente se lee siempre de la auditoría, no se supone): la red del piloto, **antes del 2027-01-17**, con serial **3**; la segunda red, **antes del 2027-01-17**, con serial **2** (su primer certificado fue serial 1); la tercera red caduca un día después, **antes del 2027-01-18**, y su serial vigente hay que leerlo de su auditoría antes de renovar. Renovar antes de enero casi no gana nada, porque la validez máxima es de 90 días desde la emisión.
 
-## Rechazo del serial menor: hecho en `main`, sin desplegar
+## Rechazo del serial menor: desde la 0.1.7
 
-El control plane rechaza con `409 serial_rollback` un certificado de serial menor que el instalado (el mismo serial se sigue aceptando). Un certificado almacenado ilegible no lo impide, para poder repararlo. Está en `main` desde 2026-11-02, con una prueba de integración contra PostgreSQL y el ensayo de laboratorio anterior, pero **no está en ninguna versión publicada**: el piloto corre la 0.1.6, que no lo tiene, y por eso las reglas de arriba siguen valiendo tal cual hasta que se publique y despliegue una versión posterior. No hay que esperar a ella para renovar.
+El control plane rechaza con `409 serial_rollback` un certificado de serial menor que el instalado (el mismo serial se sigue aceptando). Un certificado almacenado ilegible no lo impide, para poder repararlo. Está publicado desde la 0.1.7, con una prueba de integración contra PostgreSQL, el ensayo de laboratorio anterior y la comprobación en el piloto del 2026-11-02 (ver «Límites, sin comprobar»); el piloto corre hoy una versión posterior que lo incluye. Con un servidor 0.1.6 o anterior siguen valiendo las reglas de arriba sobre el serial menor.
