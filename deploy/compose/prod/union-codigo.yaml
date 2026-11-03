@@ -1,0 +1,24 @@
+# ADR-018: unirse con solo el código. Overlay OPCIONAL (como backup.yaml): sin él el stack se comporta como la 0.1.8.
+#  - El control plane anuncia en el código el host STUN y el SHA-256 de la CA del relay y sirve esa CA.
+#  - El control plane abre un listener INTERNO (8082, sin `ports:`, solo red `backend`) con las raíces de las
+#    redes; el coordinator las lee con un secreto Bearer. Caddy no lo proxifica: solo conoce control-plane:8080.
+# Requisitos: secreto `anchors-token` en ${ATENEA_RUNTIME_DIR}/secrets (>= 16 caracteres imprimibles, 0400, UID de
+# los servicios), `ATENEA_STUN_HOST` (nombre o IPv4 sin puerto) y la CA del relay en certs/ca.pem. En el
+# `coordinator.toml` de la fuente de configuración hay que añadir además (ver apps/coordinator/README.md):
+#   [anchors_source]
+#   url = "http://control-plane:8082/internal/v1/root-anchors"
+#   secret_file = "/run/secrets/anchors-token"
+services:
+  control-plane:
+    environment:
+      ATENEA_CP_STUN_HOST: ${ATENEA_STUN_HOST:?nombre o IPv4 del STUN, sin puerto}
+      ATENEA_CP_RELAY_CA_FILE: /etc/atenea/relay-ca.pem
+      ATENEA_CP_INTERNAL_LISTEN: 0.0.0.0:8082
+      ATENEA_CP_INTERNAL_SECRET_FILE: /run/secrets/anchors-token
+    secrets: [anchors-token]
+    volumes:
+      - '${ATENEA_RUNTIME_DIR:?}/certs/ca.pem:/etc/atenea/relay-ca.pem:ro'
+  coordinator:
+    secrets: [anchors-token]
+secrets:
+  anchors-token: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/anchors-token'}

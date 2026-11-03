@@ -204,6 +204,66 @@ PY
   echo 'PASS N+1: panel HTTPS tras el upgrade'
   echo 'PASS ensayo N -> fallo tras migrar 0008 -> rescue a N -> N+1 con coordinator y relay reales'
 fi
+# ADR-018 § 3.4: overlay opcional `union-codigo.yaml` con Ansible y Compose reales. Con él el control plane abre un
+# listener interno de raíces que el coordinator consulta; NO debe alcanzarse por Caddy ni publicarse en el nodo.
+stack() { docker compose --project-directory /opt/atenea "$@"; }
+python3 - <<'PY'
+import json, subprocess, yaml
+from pathlib import Path
+plain = json.loads(Path('/lab/plain.yaml').read_text())
+plain['files']['anchors-token'] = 'token-interno-de-ensayo-0123456789abcdef'
+Path('/lab/union-plain.yaml').write_text(json.dumps(plain))
+inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
+v = inv['all']['vars']
+next_images = Path('/tmp/infra-next-images')
+if next_images.exists():  # ensayo entre revisiones: el overlay solo existe en la revisión nueva
+    v['atenea_stack_images'].update(dict(line.split() for line in next_images.read_text().splitlines()))
+v['atenea_secrets_source'] = '/lab/union-secrets.sops.yaml'
+v['atenea_backup_verified'] = True
+v['atenea_env'].update({
+    'ATENEA_STUN_HOST': 'relay.stack.test',
+    'COMPOSE_FILE': '/opt/atenea/compose.yaml:/opt/atenea/compose.override.yaml:/opt/atenea/union-codigo.yaml',
+})
+Path('/lab/union.yml').write_text(yaml.safe_dump(inv))
+PY
+sops encrypt --age "$recipient" --input-type yaml --output-type yaml /lab/union-plain.yaml > /lab/union-secrets.sops.yaml
+docker run --rm --pull never --network none --user 0 -v /lab:/lab "$(image tools)" root-init --out /lab/second-root.key > /lab/second-root.pub
+second_root=$(tr -d '[:space:]' < /lab/second-root.pub)
+printf '\n[anchors_source]\nurl = "http://control-plane:8082/internal/v1/root-anchors"\nsecret_file = "/run/secrets/anchors-token"\ninterval_secs = 5\n' >> /lab/public/config/coordinator.toml
+ansible-playbook -i /lab/union.yml site.yml
+python3 /src/tests/infra/check.py principal
+echo 'PASS overlay union-codigo: ocho servicios sanos, solo los puertos esperados publicados, secreto 0400/UID'
+# Una red con una raíz que el coordinator NO tiene en su configuración estática.
+stack exec -T postgres psql -U postgres -d atenea -At -c "INSERT INTO organizations(id,name) VALUES ('00000000-0000-0000-0000-0000000000a1','org ensayo union'); INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor) VALUES ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000a1','red ensayo union','10.99.0.0/24','fd99::/64',decode('$second_root','hex'))" >/dev/null
+sleep 12
+cp_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "atenea_backend").IPAddress}}' "$(stack ps -q control-plane)")
+python3 - "$cp_ip" "$second_root" <<'PY'
+import json, sys, urllib.error, urllib.request
+ip, root = sys.argv[1:]
+url = f'http://{ip}:8082/internal/v1/root-anchors'
+def get(token):
+    req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'} if token else {})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+status, body = get('token-interno-de-ensayo-0123456789abcdef')
+assert status == 200 and root in json.loads(body)['anchors'], (status, body)
+for bad in (None, 'otro-token-distinto-0123456789'):
+    status, body = get(bad)
+    assert status == 401 and 'anchors' not in body, (bad, status, body)
+print('PASS listener interno: 200 con el secreto, 401 sin él o con otro, desde la red backend')
+PY
+# Por el camino público (HAProxy/Caddy) la ruta interna no existe, ni siquiera con el secreto correcto.
+public=$(curl --silent --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 -H 'Authorization: Bearer token-interno-de-ensayo-0123456789abcdef' -w '\n%{http_code}' https://panel.stack.test/internal/v1/root-anchors)
+if grep -q anchors <<<"$public" || grep -q "$second_root" <<<"$public"; then echo "ERROR: la ruta interna se sirve por el camino público: $public" >&2; exit 1; fi
+echo 'PASS /internal/v1/root-anchors no responde por HAProxy/Caddy (probado con el secreto correcto)'
+# El coordinator la consultó y no avisó de fallos.
+logs=$(stack logs --no-log-prefix coordinator 2>&1)
+grep -q 'anclas remotas actualizadas' <<<"$logs" || { echo "ERROR: el coordinator no actualizó las anclas: $logs" >&2; exit 1; }
+if grep -q 'se conserva la última lista' <<<"$logs"; then echo "ERROR: el coordinator avisó de fallos: $logs" >&2; exit 1; fi
+echo 'PASS el coordinator lee las raíces del control plane sin avisos'
 systemctl disable --now atenea-stack.service
 docker compose --project-directory /opt/atenea down -v
 # Mismo nodo desechable, sin representar otro proveedor; reutiliza solo certificado/clave relay.

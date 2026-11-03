@@ -38,6 +38,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Una configuración de conectividad a medias o ilegible impide arrancar (ADR-018): nunca se anuncia algo que
     // no se puede cumplir.
     let connectivity = atenea_control_plane::connectivity::Connectivity::load(&config)?;
+    // Igual: o el listener interno y su secreto están completos, o no arranca.
+    let internal = atenea_control_plane::internal::Access::load(&config)?;
     if connectivity.is_some() {
         tracing::info!(
             "Conectividad del código de unión activada (STUN y, si se configuró, hash de la CA)"
@@ -75,8 +77,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
     }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
+    let internal_listener = match &internal {
+        Some(a) => Some(tokio::net::TcpListener::bind(&a.listen).await?),
+        None => None,
+    };
     let state = AppState::new(pool, config, atenea_identity::signing_key(bytes))
         .with_connectivity(connectivity);
+    let internal_task = internal_listener.zip(internal).map(|(listener, access)| {
+        tracing::info!("listener interno de raíces activado");
+        use std::future::IntoFuture;
+        tokio::spawn(
+            axum::serve(
+                listener,
+                atenea_control_plane::internal::router(state.clone(), &access.secret),
+            )
+            .into_future(),
+        )
+    });
     let metrics_state = state.clone();
     let metrics_task = atenea_observability::serve(
         &state.config.metrics_listen,
@@ -103,6 +120,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _ = stop_tx.send(true);
     sampler.await?;
     metrics_task.abort();
+    if let Some(task) = internal_task {
+        task.abort();
+    }
     Ok(())
 }
 

@@ -8,6 +8,7 @@ pub mod connectivity;
 pub mod db;
 pub mod devices;
 pub mod dns;
+pub mod internal;
 pub mod issue;
 pub mod networks;
 mod openapi;

@@ -180,12 +180,18 @@ impl Coordinator {
             return;
         };
         let mut interval = tokio::time::interval(Duration::from_secs(source.interval_secs));
+        let mut last = None;
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     let me = Arc::clone(&self);
                     match tokio::task::spawn_blocking(move || me.refresh_anchors()).await {
-                        Ok(Ok(_)) => {}
+                        Ok(Ok(n)) => {
+                            if last != Some(n) {
+                                tracing::info!(anclas_remotas = n, "anclas remotas actualizadas");
+                                last = Some(n);
+                            }
+                        }
                         Ok(Err(e)) => tracing::warn!(error = e, "anclas remotas: se conserva la última lista"),
                         Err(_) => tracing::warn!("anclas remotas: tarea abortada"),
                     }

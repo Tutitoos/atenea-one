@@ -382,6 +382,17 @@ paquetes o herramientas; Docker anidado estuvo `--network none`. No se alteraron
 tags protegidos del host. El detalle frío antes/después y las limitaciones están
 en [Caídas y leases](caidas-y-leases.md#ampliación-reinicio-del-motor-docker).
 
+## Unirse con solo el código: overlay opcional (ADR-018, fase 5)
+
+`deploy/compose/prod/union-codigo.yaml` es un overlay **opcional** (como `backup.yaml`; `site.yml` copia el fichero pero solo se aplica si el inventario lo añade a `COMPOSE_FILE`, con rutas absolutas y en último lugar). Sin él el stack es el de la 0.1.8. Con él:
+
+- El control plane anuncia en el código de unión `ATENEA_STUN_HOST` y el SHA-256 de la CA del relay (`certs/ca.pem`, montada de solo lectura) y sirve esa CA en `GET /api/v1/relay-ca`.
+- El control plane abre un listener **interno** en el 8082 (sin `ports:`, solo red `backend`) con `GET /internal/v1/root-anchors`, protegido por un secreto Bearer.
+
+Pasos del operador: (1) añadir al fichero SOPS el secreto **`anchors-token`** (≥ 16 caracteres imprimibles, aleatorio; el rol lo instala 0400 con el UID de los servicios); (2) en `atenea_env`: `ATENEA_STUN_HOST` y `COMPOSE_FILE`; (3) añadir a `coordinator.toml` **de la fuente de configuración** (no solo al servidor) `[anchors_source]` con `url = "http://control-plane:8082/internal/v1/root-anchors"` y `secret_file = "/run/secrets/anchors-token"`; (4) `site.yml`. Lo activa quien confía en el control plane para decidir qué redes usan rendezvous y relay (ADR-018 § 4): solo con creación de redes restringida. **Retroceso:** quitar `anchors_source`, el overlay de `COMPOSE_FILE` y converger; el CLI y los códigos sin bloque siguen funcionando.
+
+**Ensayo (2026-11-03, `bash tests/infra/run.sh`, imágenes locales de esta revisión, 645 s, código 0):** además de lo anterior, converge con el overlay (`site.yml` real, ocho servicios sanos, conjunto exacto de puertos publicados sin cambios, secreto 0400 y UID correcto), siembra una red con una raíz que el coordinator no tiene estática y comprueba que desde la red `backend` el listener responde `200` con el secreto y `401` sin él o con otro, que **por HAProxy/Caddy la ruta no responde ni con el secreto correcto**, y que el coordinator registra «anclas remotas actualizadas» sin avisos. **No probado:** el ensayo de subida 0.1.8 → 0.1.9 con rescue (necesita las imágenes de la 0.1.8), que un dispositivo de una red nueva se acepte de extremo a extremo (fase 7), ni el overlay en el piloto real.
+
 ## Despliegue del piloto (2026-10-27)
 
 Un único VPS Debian 13 (6 vCPU, 11,7 GiB de RAM), desplegado con este rol desde un contenedor de herramientas, con `v0.1.0` (imágenes por digest `linux/amd64`). Los nombres, direcciones, inventario y secretos reales viven en un inventario privado fuera del repositorio.

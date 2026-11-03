@@ -162,3 +162,9 @@ Las solicitudes se coalescen, con una en vuelo por par y backoff HTTP de
 intentos por par y diez por dispositivo en 60 s. No se relajan las cuotas del
 servidor ni la autorización mutua; sin renovación, manda el deadline vigente.
 
+
+## 11. Anclas remotas opcionales (ADR-018 § 3.4)
+
+Con `anchors_source` en el TOML (apagado por defecto), el coordinator consulta cada `interval_secs` (5–3600; 60 por defecto) `GET <url>` con `Authorization: Bearer <secreto>` y valida los anuncios contra la **unión** de `anchors` y las raíces devueltas. La respuesta es `{"anchors":["<hex de 32 bytes>", …]}` (≤ 4096 entradas, ≤ 512 KiB, sin campos adicionales). **Una sola entrada inválida (hex, longitud, clave nula o débil) descarta la respuesta entera.** Ante cualquier fallo (red, estado ≠ 200, JSON, secreto ilegible) conserva la última lista buena; las estáticas (≥ 1) nunca se pierden y una red que deja de aparecer en la respuesta deja de aceptarse en la siguiente consulta correcta. Registra «anclas remotas actualizadas» cuando cambia el número y un aviso por cada consulta fallida.
+
+La `url` es `http://` (red interna, nunca publicada) y `secret_file` un fichero 0400/0600 de ≥ 16 caracteres imprimibles, releído en cada consulta. El punto de lectura lo sirve el control plane en un listener interno ([control plane v1 § 18](../api/control-plane-v1.md)). Activarlo equivale a confiar en el control plane para decidir qué redes usan rendezvous y relay: ADR-018 § 4.

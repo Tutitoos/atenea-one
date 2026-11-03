@@ -392,3 +392,13 @@ El servidor **no arranca** con una configuración a medias o ilegible: nunca anu
 - **Longitud:** con el bloque el texto puede superar los 512 caracteres. `GET …/join-code` devuelve entonces `409 code_too_long` (con `?conectividad=0` sigue siendo válido); `POST …/enrollment-tokens` crea el token igualmente y devuelve `code: null` y `connectivity: null`, como ya ocurría con un nombre o URL que no caben. El renombrado de red valida el nombre **sin** el bloque.
 
 Un cliente nuevo frente a un servidor sin configurar recibe un código sin bloque y `connectivity: null`. Un servidor nuevo frente a clientes anteriores no cambia nada si no se configura; configurado, los clientes anteriores deben pedir `?conectividad=0`. Sin migraciones de base de datos.
+
+## 18. Lectura interna de raíces para el coordinator (ADR-018, fase 5)
+
+Con **`internal_listen`** e **`internal_secret_file`** (variables `ATENEA_CP_INTERNAL_LISTEN` y `ATENEA_CP_INTERNAL_SECRET_FILE`) el control plane abre un **segundo listener**, distinto del público, con una sola ruta: **`GET /internal/v1/root-anchors`** → `200 {"anchors":["<hex de 32 bytes>", …]}` (raíces **distintas** de todas las redes, ordenadas; `Cache-Control: no-store`). `Authorization: Bearer <secreto>` obligatorio; cualquier otra cosa (sin cabecera, otro secreto, otro esquema) → `401 unauthorized` sin datos. El secreto se compara por hash SHA-256.
+
+Las dos opciones van **juntas o ninguna**: una mitad, una dirección inválida, un fichero que no sea 0400/0600 o un secreto de menos de 16 caracteres imprimibles impiden arrancar. Sin ellas no existe ni el listener ni la ruta.
+
+- **No está en el router público:** el listener público responde `404` a esa ruta aunque se envíe el secreto correcto (probado).
+- **No se publica:** el overlay `deploy/compose/prod/union-codigo.yaml` abre el 8082 solo dentro de la red `backend` (sin `ports:`); Caddy solo conoce `control-plane:8080`. El ensayo de infraestructura comprueba que la ruta no responde por HAProxy/Caddy y que el conjunto de puertos publicados no cambia.
+- No expone nada que la base no tenga ya de forma pública (raíces públicas); su riesgo es dar al coordinator la lista de redes que usan rendezvous y relay (ADR-018 § 4). Sin migraciones.

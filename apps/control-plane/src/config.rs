@@ -37,6 +37,11 @@ pub struct Config {
     /// PEM con la CA del relay (un único certificado): su SHA-256 viaja en el código y se sirve en
     /// `GET /api/v1/relay-ca`. Exige `stun_host`; sin ella el relay se considera de CA pública.
     pub relay_ca_file: Option<std::path::PathBuf>,
+    /// Listener interno (no publicado) con la lectura de raíces para el coordinator (ADR-018 § 3.4). Va junto a
+    /// `internal_secret_file`; sin ambos no existe.
+    pub internal_listen: Option<String>,
+    /// Secreto Bearer (fichero 0400/0600) compartido solo con el coordinator.
+    pub internal_secret_file: Option<std::path::PathBuf>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -62,6 +67,8 @@ impl Default for Config {
             web_dir: None,
             stun_host: None,
             relay_ca_file: None,
+            internal_listen: None,
+            internal_secret_file: None,
         }
     }
 }
