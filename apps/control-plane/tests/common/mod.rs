@@ -2,7 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 
-use atenea_control_plane::{AppState, config::Config, router};
+use atenea_control_plane::{AppState, config::Config, connectivity::Connectivity, router};
 use atenea_identity::{DeviceBundle, SigningKey, generate_seed, signing_key};
 use axum::{
     Router,
@@ -37,6 +37,15 @@ impl TestApp {
     }
 
     pub async fn configured(config: Config) -> Option<Self> {
+        Self::build(config, None).await
+    }
+
+    /// Control plane con el bloque de conectividad del código de unión activado (ADR-018).
+    pub async fn with_connectivity(config: Config, connectivity: Connectivity) -> Option<Self> {
+        Self::build(config, Some(connectivity)).await
+    }
+
+    async fn build(config: Config, connectivity: Option<Connectivity>) -> Option<Self> {
         let Ok(url) = std::env::var("ATENEA_TEST_DATABASE_URL") else {
             eprintln!(
                 "OMITIDA integración PostgreSQL: falta ATENEA_TEST_DATABASE_URL; ejecute apps/control-plane/tests/run.sh para exigir una base real."
@@ -59,7 +68,9 @@ impl TestApp {
             .await
             .unwrap();
         let issuer = signing_key(generate_seed());
-        let app = router(AppState::new(pool.clone(), config, issuer.clone()));
+        let app = router(
+            AppState::new(pool.clone(), config, issuer.clone()).with_connectivity(connectivity),
+        );
         Some(Self {
             app,
             pool,

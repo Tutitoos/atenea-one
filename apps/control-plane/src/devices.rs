@@ -3,7 +3,7 @@
 use crate::{AppState, api::ApiError, audit, networks};
 use axum::{
     Json,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -46,9 +46,11 @@ pub struct Token {
 pub async fn token(
     State(s): State<AppState>,
     Path(net): Path<Uuid>,
+    Query(q): Query<networks::CodeQuery>,
     h: HeaderMap,
     Json(b): Json<Token>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let with_connectivity = q.wants_connectivity()?;
     let (u, org) = networks::access(&s, &h, net, true).await?;
     let role = b.role.as_ref().map(role).transpose()?.unwrap_or("device");
     if !(60..=86400).contains(&b.ttl_secs) {
@@ -63,8 +65,14 @@ pub async fn token(
         .fetch_one(&mut *tx)
         .await?;
     let (root, net_name): (Vec<u8>, String) = (r.get("root_anchor"), r.get("name"));
-    // Un nombre o URL que no caben en el código no impiden crear el token: `code` es null.
-    let code = networks::join_code(&s, net, &net_name, &root, Some(&raw)).ok();
+    // Un nombre o URL que no caben en el código (con el bloque de conectividad incluido) no impiden crear el
+    // token: `code` es null y el operador puede pedirlo con `?conectividad=0`.
+    let code = networks::join_code(&s, net, &net_name, &root, Some(&raw), with_connectivity).ok();
+    let connectivity = if code.is_some() {
+        networks::connectivity_json(&s, with_connectivity)
+    } else {
+        Value::Null
+    };
     let anchor: [u8; 32] = root
         .as_slice()
         .try_into()
@@ -90,7 +98,7 @@ pub async fn token(
             ("x-content-type-options", "nosniff"),
         ],
         Json(
-            json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)},"code":code,"root_anchor_fingerprint":fingerprint}),
+            json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)},"code":code,"root_anchor_fingerprint":fingerprint,"connectivity":connectivity}),
         ),
     ))
 }

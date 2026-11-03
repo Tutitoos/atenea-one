@@ -4,7 +4,7 @@ use crate::{AppState, api::ApiError, audit, auth, orgs};
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
 use ipnet::IpNet;
@@ -61,28 +61,66 @@ fn value(r: &PgRow) -> Result<Value, ApiError> {
 }
 const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,issuer_cert,join_policy FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
+/// Con `with_connectivity` y el servidor configurado (ADR-018) lleva además el STUN y el hash de la CA del relay;
+/// si con eso el texto supera 512 caracteres, `409 code_too_long` (con `?conectividad=0` sigue siendo válido).
 pub fn join_code(
     s: &AppState,
     net: Uuid,
     name: &str,
     root: &[u8],
     token: Option<&str>,
+    with_connectivity: bool,
 ) -> Result<String, ApiError> {
-    use atenea_identity::join_code::{JoinCode, JoinCodeError};
+    use atenea_identity::join_code::{Connectivity, JoinCode, JoinCodeError};
+    let connectivity = s
+        .connectivity
+        .as_ref()
+        .filter(|_| with_connectivity)
+        .map(|c| Connectivity {
+            stun_host: c.stun_host.clone(),
+            relay_ca_sha256: c.relay_ca.as_ref().map(|ca| ca.sha256),
+        });
     JoinCode {
         url: s.config.public_url.clone(),
         network_id: net.into_bytes(),
         root_anchor: root.try_into().map_err(|_| ApiError::internal())?,
         name: name.to_owned(),
         token: token.map(str::to_owned),
-        connectivity: None,
+        connectivity,
     }
     .encode()
     .map_err(|e| match e {
         JoinCodeError::InvalidName => ApiError::conflict("invalid_network_name_for_code"),
         JoinCodeError::InvalidUrl => ApiError::conflict("invalid_public_url_for_code"),
+        JoinCodeError::TooLong => ApiError::conflict("code_too_long"),
         _ => ApiError::internal(),
     })
+}
+
+/// `?conectividad=0` pide el código **sin** bloque (clientes anteriores a la v0.1.9); `1` o ausente, el de siempre.
+#[derive(Deserialize)]
+pub struct CodeQuery {
+    conectividad: Option<String>,
+}
+impl CodeQuery {
+    pub fn wants_connectivity(&self) -> Result<bool, ApiError> {
+        match self.conectividad.as_deref() {
+            None | Some("1") => Ok(true),
+            Some("0") => Ok(false),
+            _ => Err(ApiError::bad("invalid_request")),
+        }
+    }
+}
+
+/// Lo que lleva el código, para mostrarlo sin decodificarlo: `null` si no lleva bloque.
+pub fn connectivity_json(s: &AppState, with_connectivity: bool) -> Value {
+    match s.connectivity.as_ref().filter(|_| with_connectivity) {
+        Some(c) => json!({
+            "stun_host": c.stun_host,
+            "relay_ca_sha256": c.relay_ca.as_ref().map(|ca| hex::encode(ca.sha256)),
+        }),
+        None => Value::Null,
+    }
 }
 pub async fn set_join_policy(
     State(s): State<AppState>,
@@ -120,8 +158,10 @@ pub async fn set_join_policy(
 pub async fn join_code_get(
     State(s): State<AppState>,
     Path(net): Path<Uuid>,
+    Query(q): Query<CodeQuery>,
     h: HeaderMap,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let with_connectivity = q.wants_connectivity()?;
     access_as(&s, &h, net, false, "admin").await?;
     let r = sqlx::query("SELECT name,root_anchor,join_policy FROM networks WHERE id=$1")
         .bind(net)
@@ -131,12 +171,12 @@ pub async fn join_code_get(
         r.get::<String, _>("name"),
         r.get::<Vec<u8>, _>("root_anchor"),
     );
-    let code = join_code(&s, net, &name, &root, None)?;
+    let code = join_code(&s, net, &name, &root, None, with_connectivity)?;
     let anchor: [u8; 32] = root.try_into().map_err(|_| ApiError::internal())?;
     Ok((
         [("cache-control", "no-store")],
         Json(
-            json!({"code":code,"root_anchor_fingerprint":atenea_identity::anchor_fingerprint(&anchor),"join_policy":r.get::<String,_>("join_policy"),"name":name,"url":s.config.public_url}),
+            json!({"code":code,"root_anchor_fingerprint":atenea_identity::anchor_fingerprint(&anchor),"join_policy":r.get::<String,_>("join_policy"),"name":name,"url":s.config.public_url,"connectivity":connectivity_json(&s, with_connectivity)}),
         ),
     ))
 }
@@ -258,6 +298,9 @@ pub async fn rename(
         &body.name,
         &old.get::<Vec<u8>, _>("root_anchor"),
         None,
+        // El nombre solo debe caber en el formato; si con la conectividad no cupiera, el código sigue
+        // disponible con `?conectividad=0` y el `409 code_too_long` lo avisa al pedirlo.
+        false,
     )?;
     sqlx::query("UPDATE networks SET name=$2 WHERE id=$1")
         .bind(net)

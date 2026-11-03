@@ -372,3 +372,23 @@ El nombre viaja en el código: uno ya emitido conserva el nombre anterior **solo
 `control_plane.version: string` es `CARGO_PKG_VERSION`; `control_plane.commit: string` es `ATENEA_BUILD_COMMIT` incrustado al compilar o `unknown`; `server_time: string(date-time)` es la hora UTC del control plane. `401 invalid_session` sin sesión válida; `403 forbidden` sin membresías; cubo por sesión independiente del alta por correo, ráfaga 60 y reposición 60/minuto (`429 rate_limited`).
 
 **Límite real:** no devuelve versiones de coordinator ni relay: el control plane no tiene canal para conocerlas. No se inventan a partir de la versión propia. `/api/v1/server/info` conserva su contrato y autenticación firmada de dispositivo (§15).
+
+## 17. Conectividad en el código de unión (ADR-018, fase 2)
+
+Con **`stun_host`** configurado, el control plane anuncia en el código de unión el servidor STUN y, si se configuró **`relay_ca_file`**, el SHA-256 de la CA del relay (formato: [código de red v1](../protocol/join-code-v1.md)). Sin `stun_host` nada cambia: el código es el de la v0.1.8 y `GET /api/v1/relay-ca` responde `404 not_found`.
+
+**Ajustes** (variables `ATENEA_CP_STUN_HOST` y `ATENEA_CP_RELAY_CA_FILE`, o el mismo nombre en el TOML de `ATENEA_CP_CONFIG`):
+
+| Ajuste | Regla |
+| --- | --- |
+| `stun_host` | Nombre o IPv4 **sin puerto**, 1..=100 caracteres `A–Z a–z 0–9 . -` (la misma regla que `--stun-host` del CLI; el agente usa los puertos 3478 y 3479). Un valor inválido impide arrancar. |
+| `relay_ca_file` | Ruta a un PEM con **un único** certificado. Exige `stun_host` (el hash solo viaja con el bloque). Un fichero ilegible, con 0 o varios certificados, base64 inválido o un DER no íntegro impide arrancar. Sin ella, el relay se considera de CA pública: el código no lleva hash y no se sirve ninguna CA. |
+
+El servidor **no arranca** con una configuración a medias o ilegible: nunca anuncia algo que no puede cumplir.
+
+- **`GET /api/v1/relay-ca`** (público, sin sesión): `200 application/x-pem-file` con el certificado en PEM canónico (se reemite a partir del DER, de modo que el PEM servido y el hash del código describen los mismos bytes) y `Cache-Control: public, max-age=300`. `404 not_found` si el servidor no tiene configurada la CA. La CA es pública y no es una credencial; el cliente solo la acepta si el SHA-256 de su DER coincide con `relay_ca_sha256` del código.
+- **`GET …/join-code`** y **`POST …/enrollment-tokens`** admiten `?conectividad=0|1`. `0` emite el código **sin** bloque (para clientes anteriores a la v0.1.9, que rechazan un código con bloque con «el código usa indicadores reservados»); `1` o ausente, con el bloque si el servidor lo tiene. Otro valor: `400 invalid_request`.
+- Ambas respuestas añaden `connectivity`: `{"stun_host": string, "relay_ca_sha256": string(hex de 32 bytes)|null}` o `null` si el código no lleva bloque. Ejemplo sintético: `{"stun_host":"relay.example.test","relay_ca_sha256":null}`.
+- **Longitud:** con el bloque el texto puede superar los 512 caracteres. `GET …/join-code` devuelve entonces `409 code_too_long` (con `?conectividad=0` sigue siendo válido); `POST …/enrollment-tokens` crea el token igualmente y devuelve `code: null` y `connectivity: null`, como ya ocurría con un nombre o URL que no caben. El renombrado de red valida el nombre **sin** el bloque.
+
+Un cliente nuevo frente a un servidor sin configurar recibe un código sin bloque y `connectivity: null`. Un servidor nuevo frente a clientes anteriores no cambia nada si no se configura; configurado, los clientes anteriores deben pedir `?conectividad=0`. Sin migraciones de base de datos.

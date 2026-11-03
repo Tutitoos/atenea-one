@@ -128,6 +128,7 @@ pub fn router(s: AppState) -> Router {
         .route("/api/v1/device/peers", get(issue::peers))
         .route("/api/v1/server/info", get(issue::server_info))
         .route("/api/v1/server", get(server))
+        .route("/api/v1/relay-ca", get(crate::connectivity::relay_ca))
         .route(
             "/api/v1/device/leave",
             post(devices::leave).layer(axum::extract::DefaultBodyLimit::max(1024)),

@@ -4,6 +4,7 @@ pub mod api;
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod connectivity;
 pub mod db;
 pub mod devices;
 pub mod dns;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub session_rate: Rates<([u8; 32], &'static str)>,
     pub panel: Arc<panel::Live>,
     pub metrics: atenea_observability::Metrics,
+    /// Conectividad que anuncia el código de unión (ADR-018); `None` = como la v0.1.8.
+    pub connectivity: Option<Arc<connectivity::Connectivity>>,
 }
 impl AppState {
     pub fn new(
@@ -57,7 +60,14 @@ impl AppState {
             session_rate: Default::default(),
             panel: Arc::new(panel::Live::default()),
             metrics: Default::default(),
+            connectivity: None,
         }
+    }
+
+    /// Activa la conectividad del código de unión. Lo llama `main` tras validar la configuración.
+    pub fn with_connectivity(mut self, connectivity: Option<connectivity::Connectivity>) -> Self {
+        self.connectivity = connectivity.map(Arc::new);
+        self
     }
 }
 pub use api::{openapi, router};

@@ -35,6 +35,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         return Err("Validez o límite de tasa inválidos".into());
     }
+    // Una configuración de conectividad a medias o ilegible impide arrancar (ADR-018): nunca se anuncia algo que
+    // no se puede cumplir.
+    let connectivity = atenea_control_plane::connectivity::Connectivity::load(&config)?;
+    if connectivity.is_some() {
+        tracing::info!(
+            "Conectividad del código de unión activada (STUN y, si se configuró, hash de la CA)"
+        );
+    }
     if config.dev_insecure_cookies {
         tracing::warn!("Cookies sin Secure: modo de desarrollo explícito");
     }
@@ -67,7 +75,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
     }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
-    let state = AppState::new(pool, config, atenea_identity::signing_key(bytes));
+    let state = AppState::new(pool, config, atenea_identity::signing_key(bytes))
+        .with_connectivity(connectivity);
     let metrics_state = state.clone();
     let metrics_task = atenea_observability::serve(
         &state.config.metrics_listen,

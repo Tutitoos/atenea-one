@@ -1713,7 +1713,7 @@
           "devices"
         ],
         "summary": "Crea un token de 256 bits, visible una sola vez; requiere admin u owner",
-        "description": "code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código.",
+        "description": "code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código, o si con el bloque de conectividad el texto supera 512 caracteres (?conectividad=0 lo emite sin bloque). connectivity resume el bloque que lleva el código y es null si no lo lleva.",
         "operationId": "createEnrollmentToken",
         "parameters": [
           {
@@ -1723,6 +1723,19 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "conectividad",
+            "in": "query",
+            "description": "0: código sin bloque de conectividad (clientes anteriores a la v0.1.9); 1 u omitido: con el bloque si el servidor lo tiene configurado. Cualquier otro valor: 400 invalid_request.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
             }
           }
         ],
@@ -2030,7 +2043,7 @@
           "networks"
         ],
         "summary": "Código de red sin token y huella de la raíz; requiere admin u owner",
-        "description": "code no lleva token. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles) o 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final). Cache-Control: no-store.",
+        "description": "code no lleva token. Si el servidor tiene configurado el host STUN (ADR-018), lleva además el bloque de conectividad (STUN y, si se configuró, el SHA-256 de la CA del relay) y connectivity lo resume; connectivity es null si el código no lo lleva. ?conectividad=0 devuelve el código sin bloque. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles), 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final) o 409 code_too_long si con el bloque el texto supera 512 caracteres. Cache-Control: no-store.",
         "operationId": "getJoinCode",
         "parameters": [
           {
@@ -2040,6 +2053,19 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "conectividad",
+            "in": "query",
+            "description": "0: código sin bloque de conectividad (clientes anteriores a la v0.1.9); 1 u omitido: con el bloque si el servidor lo tiene configurado. Cualquier otro valor: 400 invalid_request.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
             }
           }
         ],
@@ -4122,6 +4148,65 @@
         ]
       }
     },
+    "/api/v1/relay-ca": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "CA pública del relay (PEM) cuyo SHA-256 anuncia el código de unión; sin autenticación",
+        "description": "Sin autenticación: la CA es pública y solo se usa para validar el TLS del relay. El cliente la descarga al unirse y la acepta únicamente si su SHA-256 (del DER) coincide con relay_ca_sha256 del código de unión. 404 not_found si el servidor no tiene configurada la CA. PEM canónico de un único certificado. Cache-Control: public, max-age=300.",
+        "operationId": "getRelayCa",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/x-pem-file": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: el servidor no tiene configurada la CA del relay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/server": {
       "get": {
         "tags": [
@@ -5244,13 +5329,24 @@
           "expires_at",
           "join",
           "code",
-          "root_anchor_fingerprint"
+          "root_anchor_fingerprint",
+          "connectivity"
         ],
         "properties": {
           "code": {
             "type": [
               "string",
               "null"
+            ]
+          },
+          "connectivity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/JoinConnectivity"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "expires_at": {
@@ -5342,11 +5438,22 @@
           "root_anchor_fingerprint",
           "join_policy",
           "name",
-          "url"
+          "url",
+          "connectivity"
         ],
         "properties": {
           "code": {
             "type": "string"
+          },
+          "connectivity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/JoinConnectivity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "join_policy": {
             "$ref": "#/components/schemas/JoinPolicy"
@@ -5358,6 +5465,31 @@
             "type": "string"
           },
           "url": {
+            "type": "string"
+          }
+        }
+      },
+      "JoinConnectivity": {
+        "type": "object",
+        "required": [
+          "stun_host",
+          "relay_ca_sha256"
+        ],
+        "properties": {
+          "relay_ca_sha256": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-fA-F]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stun_host": {
             "type": "string"
           }
         }

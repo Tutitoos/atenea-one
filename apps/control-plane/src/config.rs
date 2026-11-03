@@ -31,6 +31,12 @@ pub struct Config {
     pub trusted_proxies: Vec<ipnet::IpNet>,
     pub application_role: Option<String>,
     pub web_dir: Option<std::path::PathBuf>,
+    /// Host STUN (nombre o IPv4, **sin puerto**) que anuncia el código de unión (ADR-018); sin él, el código no
+    /// lleva conectividad y el servidor se comporta como la v0.1.8.
+    pub stun_host: Option<String>,
+    /// PEM con la CA del relay (un único certificado): su SHA-256 viaja en el código y se sirve en
+    /// `GET /api/v1/relay-ca`. Exige `stun_host`; sin ella el relay se considera de CA pública.
+    pub relay_ca_file: Option<std::path::PathBuf>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -54,6 +60,8 @@ impl Default for Config {
             trusted_proxies: Vec::new(),
             application_role: None,
             web_dir: None,
+            stun_host: None,
+            relay_ca_file: None,
         }
     }
 }

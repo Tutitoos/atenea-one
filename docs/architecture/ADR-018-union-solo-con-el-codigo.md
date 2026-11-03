@@ -37,7 +37,7 @@ Lo que **no** es un hueco y se conserva: la aprobación del dispositivo por huel
 
 ### 3.2 CA del relay
 
-- Nuevo endpoint público de solo lectura `GET /api/v1/relay-ca` (PEM, `Cache-Control` corto). El control plane lo sirve desde un fichero de configuración; si no está configurado, el servidor **no** emite el bloque de conectividad (código idéntico al de la 0.1.8).
+- Nuevo endpoint público de solo lectura `GET /api/v1/relay-ca` (PEM canónico de un único certificado, `Cache-Control: public, max-age=300`). El control plane lo sirve desde un fichero (`relay_ca_file`). **El interruptor del bloque es `stun_host`**: sin él, el servidor **no** emite el bloque (código idéntico al de la 0.1.8); con él y sin `relay_ca_file`, el bloque lleva solo el STUN (relay con CA pública) y `relay-ca` responde `404`. `relay_ca_file` sin `stun_host` es un error de configuración, y **el servidor no arranca** con una configuración a medias o ilegible. Implementado en la fase 2 (v0.1.9); detalle en [control-plane-v1 §17](../api/control-plane-v1.md#17-conectividad-en-el-código-de-unión-adr-018-fase-2).
 - El agente descarga la CA **por HTTPS al servidor del código**, calcula `SHA-256` del certificado en DER y **solo la acepta si coincide con el hash del código**; si no, `join` falla antes de escribir nada. Así la confianza sigue anclada en el canal del código, como la raíz (sin TOFU) y no en el servidor.
 - Se guarda en `<red>/device/relay-ca.pem` (0644, propiedad de root) y `relay_ca_file` apunta a ella: una CA por red, sin ficheros compartidos entre redes.
 - **Alternativa de despliegue sin esta pieza:** si el relay usara un certificado de una CA pública, no haría falta CA ni hash (el bloque llevaría solo el STUN).

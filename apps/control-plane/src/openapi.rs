@@ -141,7 +141,8 @@ fn schemas() -> ComponentsBuilder {
         ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
-        ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text())])),
+        ("JoinConnectivity", complete(&[("stun_host", text()), ("relay_ca_sha256", utoipa::openapi::schema::OneOfBuilder::new().item(hex(32)).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
@@ -149,7 +150,7 @@ fn schemas() -> ComponentsBuilder {
             ("role", named("DeviceRole")),
         ], &["ttl_secs"])),
         ("Join", complete(&[("url", text()), ("token", text()), ("network_id", uuid()), ("root_anchor", hex(32))])),
-        ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join")), ("code", nullable_text()), ("root_anchor_fingerprint", text())])),
+        ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join")), ("code", nullable_text()), ("root_anchor_fingerprint", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
         ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
@@ -306,6 +307,16 @@ pub fn document() -> OpenApi {
             "200",
             "",
             "Server",
+        ),
+        (
+            Get,
+            "/api/v1/relay-ca",
+            "getRelayCa",
+            "CA pública del relay (PEM) cuyo SHA-256 anuncia el código de unión; sin autenticación",
+            "public",
+            "200",
+            "",
+            "",
         ),
         (
             Delete,
@@ -724,6 +735,16 @@ pub fn document() -> OpenApi {
                 );
             }
         }
+        if matches!(id, "getJoinCode" | "createEnrollmentToken") {
+            operation = operation.parameter(
+                ParameterBuilder::new()
+                    .name("conectividad")
+                    .parameter_in(ParameterIn::Query)
+                    .required(Required::False)
+                    .schema(Some(choices(&["0", "1"])))
+                    .description(Some("0: código sin bloque de conectividad (clientes anteriores a la v0.1.9); 1 u omitido: con el bloque si el servidor lo tiene configurado. Cualquier otro valor: 400 invalid_request.")),
+            );
+        }
         if id == "oidcCallback" {
             for (name, required) in [("state", true), ("code", false), ("error", false)] {
                 operation = operation.parameter(
@@ -807,6 +828,11 @@ pub fn document() -> OpenApi {
                 Content::new(Some(named(result))),
             );
         }
+        if id == "getRelayCa" {
+            response = response
+                .content("application/x-pem-file", Content::new(Some(text())))
+                .header("Cache-Control", Header::new(text()));
+        }
         if id == "oidcLogin" || id == "oidcCallback" {
             response = response
                 .header("Location", Header::new(text()))
@@ -872,6 +898,14 @@ pub fn document() -> OpenApi {
                 );
             }
         }
+        if id == "getRelayCa" {
+            operation = operation.response(
+                "404",
+                ResponseBuilder::new()
+                    .description("not_found: el servidor no tiene configurada la CA del relay")
+                    .content("application/json", Content::new(Some(named("Error")))),
+            );
+        }
         if matches!(
             id,
             "enrollDevice"
@@ -925,10 +959,13 @@ pub fn document() -> OpenApi {
             operation = operation.description(Some("policy: cerrada | con_solicitud; cualquier otro valor: 400 invalid_request. Queda auditado (network.join_policy)."));
         }
         if id == "getJoinCode" {
-            operation = operation.description(Some("code no lleva token. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles) o 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final). Cache-Control: no-store."));
+            operation = operation.description(Some("code no lleva token. Si el servidor tiene configurado el host STUN (ADR-018), lleva además el bloque de conectividad (STUN y, si se configuró, el SHA-256 de la CA del relay) y connectivity lo resume; connectivity es null si el código no lo lleva. ?conectividad=0 devuelve el código sin bloque. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles), 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final) o 409 code_too_long si con el bloque el texto supera 512 caracteres. Cache-Control: no-store."));
         }
         if id == "createEnrollmentToken" {
-            operation = operation.description(Some("code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código."));
+            operation = operation.description(Some("code incluye el token (visible una sola vez) y root_anchor_fingerprint la huella de la raíz; code es null si el nombre de la red o public_url no caben en el formato del código, o si con el bloque de conectividad el texto supera 512 caracteres (?conectividad=0 lo emite sin bloque). connectivity resume el bloque que lleva el código y es null si no lo lleva."));
+        }
+        if id == "getRelayCa" {
+            operation = operation.description(Some("Sin autenticación: la CA es pública y solo se usa para validar el TLS del relay. El cliente la descarga al unirse y la acepta únicamente si su SHA-256 (del DER) coincide con relay_ca_sha256 del código de unión. 404 not_found si el servidor no tiene configurada la CA. PEM canónico de un único certificado. Cache-Control: public, max-age=300."));
         }
         if id == "reportDeviceStatus" {
             operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo."));
@@ -974,7 +1011,29 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 38);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 39);
+        let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
+        assert!(relay_ca.get("security").is_none());
+        assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());
+        assert!(relay_ca["responses"]["404"].is_object());
+        for path in [
+            "/api/v1/networks/{net}/join-code",
+            "/api/v1/networks/{net}/enrollment-tokens",
+        ] {
+            let method = if path.ends_with("join-code") {
+                "get"
+            } else {
+                "post"
+            };
+            let params = document["paths"][path][method]["parameters"]
+                .as_array()
+                .unwrap();
+            assert!(
+                params
+                    .iter()
+                    .any(|p| p["name"] == "conectividad" && p["in"] == "query")
+            );
+        }
         let leave = &document["paths"]["/api/v1/device/leave"]["post"];
         assert!(leave["security"][0].get("device").is_some());
         assert!(leave.get("requestBody").is_none());
