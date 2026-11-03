@@ -1,0 +1,15 @@
+{
+  "name": "atenea-one",
+  "owner": {
+    "name": "Tutitoos"
+  },
+  "description": "Plugins de Atenea One para Claude Code.",
+  "plugins": [
+    {
+      "name": "ai-atenea-one",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "MCP de solo lectura y skill atenea-one: descubre redes, dispositivos y servidores de Atenea One y verifica su alcance."
+    }
+  ]
+}
