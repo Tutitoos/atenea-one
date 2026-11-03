@@ -63,7 +63,10 @@ paquete al SBOM Go de su sistema (no al de Rust) y comprueba la identidad del `.
 que produce nfpm, además de `control.tar.xz`). `tests/release/test_desktop_manifest.py` (en `scripts/check.sh`) cubre
 ese contrato con artefactos sintéticos. **Sin firma de desarrollador ni notarización.** El `.deb` y el `.rpm` salen
 reproducibles byte a byte con `SOURCE_DATE_EPOCH` en una prueba local; el DMG y el instalador de Windows **no** se
-afirman reproducibles. Sin AppImage (ver la guía).
+afirman reproducibles. Sin AppImage (ver la guía). El job `assemble` descarga solo los artefactos de release (no la interfaz
+intermedia `desktop-ui`, que una primera ejecución del workflow mezcló en `dist/` y habría roto la firma) y **ensaya el
+manifiesto** con una clave efímera sobre una copia de `dist/` (crear y verificar), de modo que un `workflow_dispatch`
+detecta antes de un tag lo que haría fallar a `publish`. Ese ensayo no firma nada real.
 
 El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
 y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de

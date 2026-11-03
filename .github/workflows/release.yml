@@ -251,12 +251,38 @@ jobs:
   assemble:
     needs: [linux, native, desktop]
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions:
+      contents: read
     steps:
+      # Solo los artefactos de release: `desktop-ui` (la interfaz compilada, intermedia) no debe mezclarse en dist/.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
+          pattern: "{linux,macOS,Windows,desktop-Linux,desktop-macOS,desktop-Windows}"
           merge-multiple: true
+      - name: Comprobar que dist/ solo contiene ficheros
+        run: |
+          set -euo pipefail
+          if find dist -mindepth 1 -type d | grep -q .; then echo 'dist/ contiene directorios: se mezcló un artefacto intermedio' >&2; exit 1; fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: repo
+      # Ensayo del manifiesto con una clave efímera sobre una COPIA de dist/: ata cada artefacto a su SBOM, comprueba
+      # identidades y exige que no sobre ni falte ningún fichero. No firma nada real ni toca lo que se sube.
+      - name: Ensayar manifiesto y verificación (clave efímera, sin publicar)
+        run: |
+          set -euo pipefail
+          umask 077
+          dry="$RUNNER_TEMP/dry"
+          cp -R dist "$dry"
+          openssl genpkey -algorithm ED25519 -out "$RUNNER_TEMP/dry.key"
+          openssl pkey -in "$RUNNER_TEMP/dry.key" -pubout -out "$RUNNER_TEMP/dry.pub"
+          commit=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["commit"])')
+          version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
+          export SOURCE_DATE_EPOCH=$(date +%s)
+          python3 repo/scripts/release/manifest.py create "$dry" "$RUNNER_TEMP/dry.key" "$commit" "$version"
+          bash repo/scripts/release/verify.sh "$dry" "$RUNNER_TEMP/dry.pub" "$commit" "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-unsigned
