@@ -16,7 +16,7 @@ git config user.name t
 git config commit.gpgsign false
 
 for f in docs/a.md apps/web/app/x.tsx apps/control-plane/src/x.rs apps/agent/src/x.rs apps/cli/src/x.rs \
-    apps/desktop/src/x.rs crates/tunnel/src/x.rs crates/windows/src/x.rs packaging/macos/x tests/macos/x.py \
+    apps/desktop/src/x.rs packaging/desktop/x crates/tunnel/src/x.rs crates/windows/src/x.rs packaging/macos/x tests/macos/x.py \
     tests/windows/x.ps1 tests/network-lab/x.sh Cargo.lock rust-toolchain.toml .github/workflows/ci.yml \
     .github/workflows/release.yml; do
     mkdir -p "$(dirname "$f")"
@@ -48,6 +48,7 @@ for case in \
     "apps/agent/src/x.rs|true false" "apps/cli/src/x.rs|true false" "crates/tunnel/src/x.rs|true false" \
     "packaging/macos/x|true false" "tests/macos/x.py|true false" "tests/windows/x.ps1|true false" \
     "Cargo.lock|true false" "apps/desktop/src/x.rs|false true" "crates/windows/src/x.rs|true true" \
+    "packaging/desktop/x|true true" \
     "rust-toolchain.toml|true true" ".github/workflows/ci.yml|true true"; do
     file=${case%%|*}
     touch_commit "$file"

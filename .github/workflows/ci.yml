@@ -178,6 +178,30 @@ jobs:
           else
             python3 scripts/smoke.py 120 ./atenea-desktop*
           fi
+      - name: "Instalar wails3 a la versión de go.mod (solo Linux, para .deb y .rpm)"
+        if: runner.os == 'Linux'
+        run: |
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@$(awk '/wailsapp\/wails\/v3 v/ {print $NF; exit}' go.mod)"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Instalar NSIS a versión fija (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Paquete sin firmar (construir, instalar, arrancar y desinstalar)
+        env:
+          ATENEA_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          export ATENEA_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("../cli/Cargo.toml","rb"))["package"]["version"])')
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          dist="$RUNNER_TEMP/desktop-dist"
+          ../../packaging/desktop/build.sh "$dist"
+          ../../packaging/desktop/check-package.sh "$dist"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-package-${{ runner.os }}
+          path: ${{ runner.temp }}/desktop-dist/*
+          if-no-files-found: error
+          retention-days: 7
   # Dependencias de producción: licencias, advisories y fuentes (deny.toml) y npm.
   supply-chain:
     runs-on: ubuntu-latest

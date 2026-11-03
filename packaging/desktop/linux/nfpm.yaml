@@ -1,0 +1,40 @@
+# Copyright 2026 Tutitoos
+# SPDX-License-Identifier: Apache-2.0
+# Configuración de `wails3 tool package` (nfpm) para el .deb y el .rpm de la aplicación de escritorio.
+# build.sh fija las variables y ejecuta `wails3` desde el directorio de preparación: nfpm no expande variables en
+# `src`, así que las rutas de origen son relativas a ese directorio.
+name: atenea-desktop
+arch: ${ATENEA_ARCH}
+platform: linux
+version: ${ATENEA_VERSION}
+section: net
+priority: optional
+maintainer: Equipo Atenea One <maintainers@example.invalid>
+description: Aplicación de escritorio de Atenea One (bandeja y ventana de estado; sin privilegios).
+homepage: https://github.com/Tutitoos/atenea-one
+license: Apache-2.0
+contents:
+  - src: ./atenea-desktop
+    dst: /usr/bin/atenea-desktop
+    file_info:
+      mode: 0755
+  - src: ./atenea-desktop.desktop
+    dst: /usr/share/applications/atenea-desktop.desktop
+    file_info:
+      mode: 0644
+  - src: ./atenea-desktop.png
+    dst: /usr/share/icons/hicolor/256x256/apps/atenea-desktop.png
+    file_info:
+      mode: 0644
+# GTK 4 y WebKitGTK 6.0: Debian 13 y Ubuntu 24.04 o posterior (ADR-019).
+depends:
+  - libgtk-4-1
+  - libwebkitgtk-6.0-4
+overrides:
+  rpm:
+    depends:
+      - gtk4
+      - webkitgtk6.0
+deb:
+  fields:
+    X-Atenea-Commit: ${ATENEA_BUILD_COMMIT}

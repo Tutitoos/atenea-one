@@ -76,7 +76,7 @@ def check(dist, manifest, commit, version):
                     size = int(header[48:58])
                     content = archive.read(size)
                     assert len(content) == size
-                    if header[:16].decode().strip().rstrip('/') == 'control.tar.xz':
+                    if header[:16].decode().strip().rstrip('/') in ('control.tar.xz', 'control.tar.gz'):
                         control = content
                     if size % 2:
                         archive.read(1)
@@ -112,7 +112,11 @@ def create(dist, key, version, commit):
                 'sboms': [e for e in entries if e['name'].endswith('.cdx.json')]}
     for entry in manifest['artifacts']:
         name = entry['name']
-        if name.endswith(('.pkg', '-macOS')):
+        if name.startswith('atenea-desktop'):
+            # Aplicación de escritorio (Go): un inventario por sistema operativo, sin el de Rust.
+            system = 'Linux' if name.endswith(('.deb', '.rpm')) else 'macOS' if name.endswith('.dmg') else 'Windows'
+            entry['sboms'] = [f'go-desktop-{system}.cdx.json']
+        elif name.endswith(('.pkg', '-macOS')):
             entry['sboms'] = ['rust-macOS.cdx.json']
         elif name.endswith(('.zip', '.exe')):
             entry['sboms'] = ['rust-Windows.cdx.json']

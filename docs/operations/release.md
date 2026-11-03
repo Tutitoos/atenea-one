@@ -55,6 +55,16 @@ metadatos y SBOM de cada plataforma. Es posible aportar esos ficheros a `dist/`
 antes de generar el manifiesto. No copiar paquetes de otro commit ni añadir
 ficheros después de firmar.
 
+**Paquetes de escritorio** (`packaging/desktop/`, ver [instalacion-escritorio.md](instalacion-escritorio.md)): el job
+`desktop` del workflow de release construye en cada sistema el binario de producción, lo prueba con la prueba de humo,
+genera `atenea-desktop_<v>_<arq>.deb`, `atenea-desktop-<v>.<arq>.rpm`, `atenea-desktop-<v>-macOS-<arq>.dmg` y
+`atenea-desktop-<v>-Windows-<arq>.exe`, los instala, los arranca y los desinstala, y los ateste. `manifest.py` ata cada
+paquete al SBOM Go de su sistema (no al de Rust) y comprueba la identidad del `.deb` (acepta `control.tar.gz`, que es lo
+que produce nfpm, además de `control.tar.xz`). `tests/release/test_desktop_manifest.py` (en `scripts/check.sh`) cubre
+ese contrato con artefactos sintéticos. **Sin firma de desarrollador ni notarización.** El `.deb` y el `.rpm` salen
+reproducibles byte a byte con `SOURCE_DATE_EPOCH` en una prueba local; el DMG y el instalador de Windows **no** se
+afirman reproducibles. Sin AppImage (ver la guía).
+
 El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
 y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de
 BuildKit; no ejecuta prune ni toca recursos de otros ensayos. Las claves efímeras
@@ -78,6 +88,12 @@ obligatorios, identidades únicas, hashes y referencias de dependencias:
   verifica al instalar) y el de Linux las **dependencias de ejecución del `.deb`**
   (`--deb-depends`, de `packaging/deb/build.sh`; sin versión resuelta: son
   restricciones). La cadena de herramientas queda en `BUILD-INFO.json`.
+- Go (aplicación de escritorio): `go list -deps -tags production` del módulo `apps/desktop`, ejecutado **en cada runner**,
+  da los módulos que se enlazan en ese binario para ese sistema operativo (por eso hay **un SBOM por sistema**,
+  `go-desktop-<Linux|macOS|Windows>.cdx.json`, con `atenea:target` = `GOOS/GOARCH`). Cada componente lleva su
+  `purl` y el hash de `go.sum` (`go:sum`, que es el `h1:` de Go, no un SHA-256 hexadecimal) y se rechaza un módulo que no
+  esté en `go.sum`. No incluye la biblioteca estándar ni las bibliotecas nativas (GTK, WebKit, WebView2, Cocoa), que no
+  son módulos Go; el compilador queda fuera del SBOM. No inventa licencias.
 - Panel: parser propio del lock pnpm v9, sin ejecutar pnpm; incluye versiones,
   integridades SHA-512/SHA-256 y dependencias/optionalDependencies de snapshots.
   No inventa licencias ausentes del lock; se consulta el inventario de licencias

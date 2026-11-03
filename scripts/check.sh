@@ -8,6 +8,8 @@ cd "$(dirname "$0")/.."
 python3 scripts/check-headers.py
 # Las reglas que deciden qué jobs de plataforma corre la CI: si fallan, se saltan comprobaciones en silencio.
 sh tests/ci/changes.sh
+# Manifiesto, SBOM y entorno de release (sin Docker ni red): protegen la cadena de publicación.
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/release -p 'test_*.py'
 
 # Cargo falla en un workspace virtual sin miembros (fase 1); se omite hasta que exista el primero.
 if cargo metadata --no-deps --format-version 1 --locked | grep -q '"packages":\[\]'; then
