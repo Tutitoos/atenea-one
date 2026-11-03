@@ -266,3 +266,7 @@ Publicada con autorización expresa del responsable: CI manual y ensayo manual d
 ### Publicación real de `v0.1.10` (2026-11-03)
 
 Publicada con autorización expresa del responsable: CI manual y ensayo manual del workflow (solo construye) en verde sobre `f12e91e`, tag firmado `v0.1.10` sobre ese commit, **36 ficheros** y cuatro imágenes `amd64` por digest, a la primera. `verify.sh` terminó con 0 con la clave pública de confianza y los cuatro manifiestos de GHCR se leen sin credenciales con el digest de `images.json`. Único cambio funcional: la casilla del código sin conectividad en el panel ([v0.1.10](v0.1.10.md)). Desplegada después en el piloto solo con la imagen `control-plane` (ver [v0.1.10](v0.1.10.md) §6).
+
+### Publicación real de `v0.1.11` (2026-11-03)
+
+Publicada con autorización expresa del responsable: CI manual y ensayo manual del workflow (solo construye) en verde sobre `cfefd3a`, tag firmado `v0.1.11` sobre ese commit, **36 ficheros** y cuatro imágenes `amd64` por digest, a la primera. `verify.sh` terminó con 0 con la clave pública de confianza y los cuatro manifiestos de GHCR se leen sin credenciales con el digest de `images.json`. Único cambio funcional: el comando para un CLI anterior del formulario del token usa el STUN real del servidor ([v0.1.11](v0.1.11.md)). Desplegada después en el piloto solo con la imagen `control-plane` (ver [v0.1.11](v0.1.11.md) §6).
