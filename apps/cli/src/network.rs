@@ -28,6 +28,13 @@ pub enum NetworkCmd {
         /// Solo laboratorio: usa `http://` en lugar del `https://` del código.
         #[arg(long)]
         insecure_http: bool,
+        /// Servidor STUN (nombre o IPv4, sin puerto; usa 3478 y 3479). Con esta opción se escribe `[coordinator]`
+        /// en el `agent.toml` (URL del código): sin él no hay rendezvous ni relay, solo sincronización.
+        #[arg(long)]
+        stun_host: Option<String>,
+        /// CA (ruta absoluta) con la que el agente valida el TLS del relay; solo si el relay usa una CA propia.
+        #[arg(long, requires = "stun_host")]
+        relay_ca: Option<PathBuf>,
     },
     /// Lista las redes unidas y su estado (no requiere root).
     List {
@@ -96,6 +103,8 @@ pub fn run(
             status_gid,
             yes,
             insecure_http,
+            stun_host,
+            relay_ca,
         } => imp::join(
             &ctx,
             &imp::JoinOpts {
@@ -104,6 +113,8 @@ pub fn run(
                 status_gid,
                 yes,
                 insecure_http,
+                stun_host,
+                relay_ca,
             },
             &mut input,
             interactive,
@@ -398,6 +409,8 @@ mod imp {
         pub status_gid: Option<u32>,
         pub yes: bool,
         pub insecure_http: bool,
+        pub stun_host: Option<String>,
+        pub relay_ca: Option<PathBuf>,
     }
 
     fn now() -> u64 {
@@ -415,6 +428,7 @@ mod imp {
         url: &str,
         opts: &JoinOpts,
         (interface, port): (String, u16),
+        coordinator: Option<&enroll::Coordinator>,
     ) -> Result<Meta, enroll::RegisterError> {
         let fail = |message: String| enroll::RegisterError {
             message,
@@ -436,6 +450,7 @@ mod imp {
             &run.join("status.sock"),
             opts.status_gid,
             opts.insecure_http,
+            coordinator,
         )
         .map_err(fail)?;
         let (path, token) = match &code.token {
@@ -613,6 +628,12 @@ mod imp {
         } else {
             code.url.clone()
         };
+        // Antes de confirmar y de tocar el disco: una opción inválida no deja nada.
+        let coordinator = opts
+            .stun_host
+            .as_deref()
+            .map(|host| enroll::Coordinator::new(host, opts.relay_ca.clone()))
+            .transpose()?;
         write_code_info(&info, &mut std::io::stdout().lock())?;
         let id = info.network_id;
         println!(
@@ -655,7 +676,7 @@ mod imp {
                 return Err(e);
             }
         };
-        match provision(ctx, &code, &id, &url, opts, alloc) {
+        match provision(ctx, &code, &id, &url, opts, alloc, coordinator.as_ref()) {
             Ok(meta) => {
                 println!(
                     "red={id}\ndispositivo={}\nhuella_dispositivo={}",
@@ -670,6 +691,11 @@ mod imp {
                         "pendiente de aprobación"
                     }
                 );
+                if coordinator.is_none() {
+                    println!(
+                        "AVISO: sin --stun-host no se escribe [coordinator]: este equipo se sincronizará pero no hará rendezvous ni usará el relay (sin camino directo)."
+                    );
+                }
                 println!("Siguiente paso: sudo atenea network up {}", short(&id));
                 Ok(())
             }
@@ -1557,6 +1583,8 @@ mod imp {
                 yes,
                 status_gid: None,
                 insecure_http: true,
+                stun_host: None,
+                relay_ca: None,
             }
         }
 
@@ -1724,6 +1752,110 @@ mod imp {
                 assert_eq!(table.contains_key("status_gid"), gid.is_some());
                 std::fs::remove_dir_all(d).unwrap();
             }
+        }
+
+        #[test]
+        fn join_writes_coordinator_only_when_stun_host_is_given() {
+            for host in [None, Some("stun.example.test")] {
+                let d = temp("coordinator");
+                let c = ctx(&d);
+                let id = uuid(&[1; 16]);
+                let (port, server) = serve(201, created(1));
+                let mut options = opts(code_text(port, None, 1), true);
+                options.stun_host = host.map(String::from);
+                join(&c, &options, &mut Cursor::new(""), false).unwrap();
+                server.join().unwrap();
+                let text = std::fs::read_to_string(c.device_dir(&id).join("agent.toml")).unwrap();
+                // El contrato del agente valida la sección (dos puertos del mismo servidor, URL permitida).
+                let config = enroll::agent_config_contract::Config::parse(&text).unwrap();
+                let table: toml::Table = toml::from_str(&text).unwrap();
+                match host {
+                    None => {
+                        assert!(config.coordinator.is_none());
+                        assert!(!table.contains_key("coordinator"));
+                    }
+                    Some(h) => {
+                        assert!(config.coordinator.is_some());
+                        let section = table["coordinator"].as_table().unwrap();
+                        assert_eq!(
+                            section["stun"].as_array().unwrap(),
+                            &[format!("{h}:3478").into(), format!("{h}:3479").into()]
+                        );
+                        // La URL es la del código (la misma de [sync]); nunca otra que ponga el servidor.
+                        assert_eq!(section["url"], table["sync"]["url"]);
+                        assert!(!section.contains_key("relay_ca_file"));
+                    }
+                }
+                std::fs::remove_dir_all(d).unwrap();
+            }
+        }
+
+        #[test]
+        fn join_rejects_invalid_coordinator_options_before_touching_disk() {
+            let d = temp("coordinator-invalid");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let cases = [
+                (String::from("host con espacios"), None),
+                ("stun.test:3478".into(), None),
+                (String::new(), None),
+                ("stun.test".into(), Some(PathBuf::from("relay-ca.pem"))),
+                ("stun.test".into(), Some(d.join("no-existe.pem"))),
+            ];
+            for (host, ca) in cases {
+                let mut options = opts(code_text(1, None, 1), true);
+                options.stun_host = Some(host);
+                options.relay_ca = ca;
+                assert!(join(&c, &options, &mut Cursor::new(""), false).is_err());
+                assert!(!c.net_dir(&id).exists());
+            }
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn join_writes_relay_ca_path_when_given() {
+            let d = temp("coordinator-ca");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let ca = d.join("relay-ca.pem");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(&ca, "pem").unwrap();
+            let (port, server) = serve(201, created(1));
+            let mut options = opts(code_text(port, None, 1), true);
+            options.stun_host = Some("stun.example.test".into());
+            options.relay_ca = Some(ca.clone());
+            join(&c, &options, &mut Cursor::new(""), false).unwrap();
+            server.join().unwrap();
+            let text = std::fs::read_to_string(c.device_dir(&id).join("agent.toml")).unwrap();
+            let table: toml::Table = toml::from_str(&text).unwrap();
+            assert_eq!(table["coordinator"]["relay_ca_file"].as_str(), ca.to_str());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn relay_ca_requires_stun_host_on_the_command_line() {
+            use clap::Parser;
+            #[derive(Parser)]
+            struct Args {
+                #[command(subcommand)]
+                command: crate::network::NetworkCmd,
+            }
+            assert!(
+                Args::try_parse_from(["network", "join", "ATENEA1-…", "--relay-ca", "/ca.pem"])
+                    .is_err()
+            );
+            assert!(
+                Args::try_parse_from([
+                    "network",
+                    "join",
+                    "ATENEA1-…",
+                    "--stun-host",
+                    "stun.example.test",
+                    "--relay-ca",
+                    "/ca.pem",
+                ])
+                .is_ok()
+            );
         }
 
         #[test]

@@ -220,6 +220,44 @@ pub fn enroll(
     Ok(())
 }
 
+/// `[coordinator]` del `agent.toml` que genera `network join`. El código de unión no lleva el STUN ni la CA
+/// del relay: los fija quien ejecuta el comando (nunca el servidor). La URL es la del propio código.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub struct Coordinator {
+    stun: [String; 2],
+    relay_ca: Option<PathBuf>,
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+impl Coordinator {
+    /// `stun_host`: nombre o IPv4 sin puerto; el agente exige los dos puertos del mismo servidor (3478 y 3479).
+    pub fn new(stun_host: &str, relay_ca: Option<PathBuf>) -> Result<Self, String> {
+        let host_ok = !stun_host.is_empty()
+            && stun_host.len() <= 253
+            && stun_host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        if !host_ok {
+            return Err("--stun-host: se espera un nombre o una IPv4 sin puerto".into());
+        }
+        if let Some(ca) = &relay_ca {
+            if !ca.is_absolute() {
+                return Err(
+                    "--relay-ca: debe ser una ruta absoluta (el servicio no hereda tu directorio)"
+                        .into(),
+                );
+            }
+            if !ca.is_file() {
+                return Err(format!("--relay-ca: {} no es un fichero", ca.display()));
+            }
+        }
+        Ok(Self {
+            stun: [format!("{stun_host}:3478"), format!("{stun_host}:3479")],
+            relay_ca,
+        })
+    }
+}
+
 /// Genera el `agent.toml` de una red con la raíz fijada por quien llama (nunca por el servidor).
 /// Solo la usa `network join`, que existe únicamente en Unix.
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -236,6 +274,7 @@ pub fn pinned_config(
     status_socket: &Path,
     status_gid: Option<u32>,
     insecure_http: bool,
+    coordinator: Option<&Coordinator>,
 ) -> Result<(), String> {
     let join = Join {
         url: url.into(),
@@ -262,6 +301,24 @@ pub fn pinned_config(
     let net = network_id.replace('-', "");
     hex::decode::<16>(&net).ok_or("network_id inválido")?;
     table.insert("resolver_owner".into(), net[24..].into());
+    if let Some(c) = coordinator {
+        let mut section = toml::Table::new();
+        section.insert("url".into(), url.into());
+        section.insert(
+            "stun".into(),
+            toml::Value::Array(c.stun.iter().cloned().map(toml::Value::String).collect()),
+        );
+        if let Some(ca) = &c.relay_ca {
+            section.insert(
+                "relay_ca_file".into(),
+                ca.to_str().ok_or("ruta no UTF-8")?.into(),
+            );
+        }
+        if insecure_http {
+            section.insert("insecure_http".into(), true.into());
+        }
+        table.insert("coordinator".into(), toml::Value::Table(section));
+    }
     crate::issue::write_secret(out, &toml::to_string(&table).map_err(|e| e.to_string())?)
 }
 
