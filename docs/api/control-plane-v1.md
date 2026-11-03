@@ -400,5 +400,5 @@ Con **`internal_listen`** e **`internal_secret_file`** (variables `ATENEA_CP_INT
 Las dos opciones van **juntas o ninguna**: una mitad, una dirección inválida, un fichero que no sea 0400/0600 o un secreto de menos de 16 caracteres imprimibles impiden arrancar. Sin ellas no existe ni el listener ni la ruta.
 
 - **No está en el router público:** el listener público responde `404` a esa ruta aunque se envíe el secreto correcto (probado).
-- **No se publica:** el overlay `deploy/compose/prod/union-codigo.yaml` abre el 8082 solo dentro de la red `backend` (sin `ports:`); Caddy solo conoce `control-plane:8080`. El ensayo de infraestructura comprueba que la ruta no responde por HAProxy/Caddy y que el conjunto de puertos publicados no cambia.
+- **No se publica:** el overlay `deploy/compose/prod/anclas-remotas.yaml` abre el 8082 solo dentro de la red `backend` (sin `ports:`); Caddy solo conoce `control-plane:8080`. El ensayo de infraestructura comprueba que la ruta no responde por HAProxy/Caddy, que sin ese overlay el 8082 está cerrado y que el conjunto de puertos publicados no cambia.
 - No expone nada que la base no tenga ya de forma pública (raíces públicas); su riesgo es dar al coordinator la lista de redes que usan rendezvous y relay (ADR-018 § 4). Sin migraciones.

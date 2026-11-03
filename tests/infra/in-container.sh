@@ -204,8 +204,10 @@ PY
   echo 'PASS N+1: panel HTTPS tras el upgrade'
   echo 'PASS ensayo N -> fallo tras migrar 0008 -> rescue a N -> N+1 con coordinator y relay reales'
 fi
-# ADR-018 § 3.4: overlay opcional `union-codigo.yaml` con Ansible y Compose reales. Con él el control plane abre un
-# listener interno de raíces que el coordinator consulta; NO debe alcanzarse por Caddy ni publicarse en el nodo.
+# ADR-018: overlays opcionales con Ansible y Compose reales, en dos etapas independientes.
+#  1) union-codigo.yaml: solo la conectividad del código (STUN y CA pública). No abre ningún listener interno.
+#  2) anclas-remotas.yaml: además, el listener interno de raíces que el coordinator consulta; NO debe alcanzarse
+#     por Caddy ni publicarse en el nodo.
 stack() { docker compose --project-directory /opt/atenea "$@"; }
 python3 - <<'PY'
 import json, subprocess, yaml
@@ -216,23 +218,42 @@ Path('/lab/union-plain.yaml').write_text(json.dumps(plain))
 inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
 v = inv['all']['vars']
 next_images = Path('/tmp/infra-next-images')
-if next_images.exists():  # ensayo entre revisiones: el overlay solo existe en la revisión nueva
+if next_images.exists():  # ensayo entre revisiones: los overlays solo existen en la revisión nueva
     v['atenea_stack_images'].update(dict(line.split() for line in next_images.read_text().splitlines()))
-v['atenea_secrets_source'] = '/lab/union-secrets.sops.yaml'
 v['atenea_backup_verified'] = True
-v['atenea_env'].update({
-    'ATENEA_STUN_HOST': 'relay.stack.test',
-    'COMPOSE_FILE': '/opt/atenea/compose.yaml:/opt/atenea/compose.override.yaml:/opt/atenea/union-codigo.yaml',
-})
+base = '/opt/atenea/compose.yaml:/opt/atenea/compose.override.yaml'
+v['atenea_env'].update({'ATENEA_STUN_HOST': 'relay.stack.test', 'COMPOSE_FILE': f'{base}:/opt/atenea/union-codigo.yaml'})
 Path('/lab/union.yml').write_text(yaml.safe_dump(inv))
+v['atenea_secrets_source'] = '/lab/union-secrets.sops.yaml'
+v['atenea_env']['COMPOSE_FILE'] = f'{base}:/opt/atenea/union-codigo.yaml:/opt/atenea/anclas-remotas.yaml'
+Path('/lab/anclas.yml').write_text(yaml.safe_dump(inv))
 PY
 sops encrypt --age "$recipient" --input-type yaml --output-type yaml /lab/union-plain.yaml > /lab/union-secrets.sops.yaml
 docker run --rm --pull never --network none --user 0 -v /lab:/lab "$(image tools)" root-init --out /lab/second-root.key > /lab/second-root.pub
 second_root=$(tr -d '[:space:]' < /lab/second-root.pub)
-printf '\n[anchors_source]\nurl = "http://control-plane:8082/internal/v1/root-anchors"\nsecret_file = "/run/secrets/anchors-token"\ninterval_secs = 5\n' >> /lab/public/config/coordinator.toml
+# Etapa 1: solo la conectividad. El secreto y `anchors_source` NO existen todavía.
 ansible-playbook -i /lab/union.yml site.yml
 python3 /src/tests/infra/check.py principal
-echo 'PASS overlay union-codigo: ocho servicios sanos, solo los puertos esperados publicados, secreto 0400/UID'
+echo 'PASS overlay union-codigo: ocho servicios sanos y los puertos publicados no cambian'
+cp_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "atenea_backend").IPAddress}}' "$(stack ps -q control-plane)")
+python3 - "$cp_ip" <<'PY'
+import socket, sys
+try:
+    socket.create_connection((sys.argv[1], 8082), timeout=3).close()
+except OSError:
+    print('PASS solo conectividad: no hay listener interno (8082 cerrado en la red backend)')
+else:
+    sys.exit('ERROR: el 8082 responde sin el overlay de anclas remotas')
+PY
+curl --fail --silent --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 https://panel.stack.test/api/v1/relay-ca > /lab/relay-ca-served.pem
+expect_ca=$(openssl x509 -in /opt/atenea/certs/ca.pem -outform DER | sha256sum | cut -c1-64)
+[ "$(openssl x509 -in /lab/relay-ca-served.pem -outform DER | sha256sum | cut -c1-64)" = "$expect_ca" ] || { echo 'ERROR: la CA servida no es la del relay' >&2; exit 1; }
+echo 'PASS GET /api/v1/relay-ca por HAProxy/Caddy sirve la CA del relay (mismo SHA-256, sin sesión)'
+# Etapa 2: además, las anclas remotas (secreto + anchors_source en la fuente de configuración).
+printf '\n[anchors_source]\nurl = "http://control-plane:8082/internal/v1/root-anchors"\nsecret_file = "/run/secrets/anchors-token"\ninterval_secs = 5\n' >> /lab/public/config/coordinator.toml
+ansible-playbook -i /lab/anclas.yml site.yml
+python3 /src/tests/infra/check.py principal
+echo 'PASS overlays union-codigo + anclas-remotas: ocho servicios sanos, solo los puertos esperados publicados, secreto 0400/UID'
 # Una red con una raíz que el coordinator NO tiene en su configuración estática.
 stack exec -T postgres psql -U postgres -d atenea -At -c "INSERT INTO organizations(id,name) VALUES ('00000000-0000-0000-0000-0000000000a1','org ensayo union'); INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor) VALUES ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000a1','red ensayo union','10.99.0.0/24','fd99::/64',decode('$second_root','hex'))" >/dev/null
 sleep 12
