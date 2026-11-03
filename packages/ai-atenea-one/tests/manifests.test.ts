@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const raw = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const json = (p: string) => JSON.parse(raw(p));
-const PATHS = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".omp-plugin/marketplace.json", ".mcp.json", "package.json"];
+const PATHS = [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".codex-plugin/plugin.json", ".agents/plugins/marketplace.json", ".omp-plugin/marketplace.json", ".mcp.json", "package.json"];
 
 describe("manifiestos del plugin", () => {
   const pkg = json("package.json");
@@ -16,9 +16,9 @@ describe("manifiestos del plugin", () => {
 
   it("declaran el mismo servidor MCP", () => {
     const server = mcp.mcpServers["atenea-one"];
-    expect(server).toEqual({ command: "node", args: ["mcp/server.ts"], cwd: "." });
-    // Codex lo lanza vía launcher: mismo objetivo y cwd.
-    expect(codex.mcpServers["atenea-one"]).toMatchObject({ command: "node", cwd: ".", args: ["scripts/launch-codex-mcp.ts", ...server.args] });
+    // Claude (copia el plugin sin los enlaces de pnpm) y Codex lo lanzan vía launcher.
+    expect(server).toEqual({ command: "node", args: ["scripts/launch-codex-mcp.ts", "mcp/server.ts"], cwd: "." });
+    expect(codex.mcpServers["atenea-one"]).toEqual(server);
     expect(Object.keys(mcp.mcpServers)).toEqual(["atenea-one"]);
   });
 
