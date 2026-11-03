@@ -12,7 +12,7 @@
 | [008](ADR-008-clientes-windows-macos.md) | Clientes macOS y Windows (solo cliente; excepción Wintun) | Aceptado |
 | [009](ADR-009-operacion-y-releases.md) | Operación, disponibilidad, secretos y releases | Aceptado |
 | [010](ADR-010-l2-ethernet.md) | L2 Ethernet opt-in por red (fase 10): viabilidad por SO, modelo y trama | Aceptado (implementación en pausa hasta la auditoría) |
-| [011](ADR-011-aplicacion-de-escritorio.md) | Aplicación de escritorio (Tauri 2): estado de las redes y operaciones con autorización del sistema | Aceptado (revisado por ADR-013) |
+| [011](ADR-011-aplicacion-de-escritorio.md) | Aplicación de escritorio (Tauri 2): estado de las redes y operaciones con autorización del sistema | Aceptado (revisado por ADR-013; §1, §4 y §5 sustituidos por ADR-019) |
 | [012](ADR-012-nombres-de-dispositivo.md) | Nombres de dispositivo: metadatos de presentación sin firmar | Aceptado |
 | [013](ADR-013-redes-multiples-y-union-por-codigo.md) | Varias redes por dispositivo y unión por código | Aceptado (fases 1–4 implementadas; Windows pendiente) |
 | [014](ADR-014-servidores-roles-y-redes-por-servidor.md) | Servidores con varias redes, rol de servidor y pulido de la aplicación | Aceptado (rol, información del servidor y estado desplegados con la v0.1.6; falta una segunda red real con pares reales) |
@@ -20,6 +20,7 @@
 | [016](ADR-016-politicas-de-acceso-minimas.md) | Políticas de acceso mínimas para el piloto y para redes con terceros | Aceptado (aplicado en el piloto el 2026-11-01) |
 | [017](ADR-017-redes-por-instancia-en-windows.md) | Redes por instancia en Windows (servicio, adaptador y tubería por red; UAC desde la app) | Aceptado (sin implementar) |
 | [018](ADR-018-union-solo-con-el-codigo.md) | Unirse con solo el código: conectividad en el código, anclas automáticas en el coordinator y `join --up` | Aceptado el 2026-11-03 (plan de la v0.1.9; sin implementar) |
+| [019](ADR-019-aplicacion-de-escritorio-wails.md) | Aplicación de escritorio con Wails v3 (sustituye a Tauri 2) | Decidido el 2026-11-03 (sin implementar; condicionado a los spikes S1–S6) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 

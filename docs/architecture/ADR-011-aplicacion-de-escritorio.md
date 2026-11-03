@@ -1,6 +1,7 @@
 # ADR-011: Aplicación de escritorio (Tauri 2)
 
 - **Estado:** **Aceptado** por el responsable el 2026-10-27 (elección de Tauri 2 frente a Wails v3). Implementada la lectura de estado en macOS; Windows y Linux compilados o sin comprobar según se indica en «Límites». Revisado el 2026-10-28 por ADR-013 fase 4: la app ya puede pedir operaciones sobre redes (§2).
+- **Sustituido en parte el 2026-11-03 por [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md):** §1 (Tauri 2), §4 (workspace de Cargo) y §5 (licencia MPL-2.0) dejan de aplicar cuando se implemente Wails. Todo lo demás de este ADR (§2 y §3, y los límites) **sigue vigente como lista de requisitos** de la aplicación. Mientras ADR-019 no se implemente, la aplicación que existe sigue siendo la de Tauri.
 - **Relacionados:** ADR-007 (privilegios), ADR-008 (clientes macOS/Windows).
 
 ## Contexto
