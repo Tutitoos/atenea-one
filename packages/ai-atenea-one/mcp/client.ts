@@ -7,7 +7,7 @@ const ErrorBody = z.object({ error: z.object({ code: z.string().regex(/^\w{1,64}
 
 /**
  * GET de docs/api/openapi.json que un token de servicio puede leer: todos los `get` bajo
- * /api/v1/ salvo join-code, events, session, device/* y service-tokens (ADR-020).
+ * /api/v1/ salvo join-code, events, session, device/*, service-tokens y members (ADR-020).
  * tests/tools.test.ts comprueba que sigue siendo idéntica a la derivada del OpenAPI.
  */
 export const ALLOWED_TEMPLATES = [
@@ -19,7 +19,6 @@ export const ALLOWED_TEMPLATES = [
   "/api/v1/networks/{net}/policies",
   "/api/v1/networks/{net}/routes",
   "/api/v1/orgs",
-  "/api/v1/orgs/{org}/members",
   "/api/v1/orgs/{org}/networks",
   "/api/v1/relay-ca",
   "/api/v1/server",

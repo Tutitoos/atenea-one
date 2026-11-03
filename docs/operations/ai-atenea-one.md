@@ -17,15 +17,17 @@ Plugin de solo lectura (`packages/ai-atenea-one`, [ADR-020](../architecture/ADR-
 - `atenea_probe` rechaza destinos fuera del inventario (IP válida no inventariada, nombre inexistente, metacaracteres).
 - `atenea_api_get` no puede alcanzar `service-tokens`, `join-code` ni `device/*`; el servidor falso solo recibió `GET` con `Authorization: Bearer`.
 
-## Humo contra el control plane real (PENDIENTE: depende de la Task 1)
+## Humo contra el control plane real (hecho, 2026-11-03)
 
-Todavía **no se ha ejecutado**: necesita el servidor con tokens de servicio (Task 1 del [plan](../superpowers/plans/2026-11-03-ai-atenea-one.md)). Cuando exista:
+Control plane real (binario `atenea-control-plane`) con PostgreSQL 17 y rol de aplicación restringido, una organización, una red `10.77.0.0/24` y dos dispositivos creados por el flujo real (`atenea device-init` + `POST /enroll` con token `auto_approve`, uno con `role: server`). Token de servicio creado con `POST /orgs/{org}/service-tokens` (owner + CSRF). El MCP se ejecutó por stdio con un cliente del SDK:
 
-1. Arrancar el control plane del laboratorio (`tests/network-lab`) con 2 redes y 3 dispositivos sintéticos.
-2. Crear un token con `POST /api/v1/orgs/{org}/service-tokens` (sesión de `owner` + CSRF) y guardarlo según el [README](../../packages/ai-atenea-one/README.md).
-3. Por stdio (cliente SDK o `@modelcontextprotocol/inspector --cli`) ejecutar `atenea_search "servidor"`, `atenea_get` del resultado y `atenea_probe ping` a un dispositivo del laboratorio.
-4. Confirmar que una escritura vía `atenea_api_get` es imposible y que el control plane responde `403 service_token_read_only` a un `POST` con el mismo token.
-5. Registrar aquí el resultado (sin IP, alias ni inventarios reales).
+- `tools/list`: las 4 tools.
+- `atenea_search "servidor"` devuelve el dispositivo `role: server` con `ipv4`/`ipv6` y `declared`; `atenea_get` devuelve el recurso completo.
+- `atenea_probe ping` ejecutó el `ping` real y respondió `ok:false, "sin respuesta"` (no había túnel, resultado esperado); un nombre inexistente se rechazó antes de lanzar nada.
+- `atenea_api_get /api/v1/orgs` funciona; `/orgs/{org}/service-tokens` → `path_not_allowed`.
+- El mismo token en `PATCH /networks/{net}` → `403 service_token_read_only`.
+
+No cubierto: `tcp`, `ssh-banner` y `dns` reales, `report` de un agente real y una segunda red. Entorno temporal eliminado después.
 
 ## Instalación local en omp, Claude Code y Codex
 
