@@ -1,0 +1,6 @@
+/bin/
+/vendor/
+/report/
+/frontend/runtime.js
+/frontend/runtime-debug.js
+go.sum

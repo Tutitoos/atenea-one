@@ -1,0 +1,142 @@
+name: Spike Wails (ADR-019)
+
+# Spike de ADR-019 (rama spike/wails): construye y ejecuta con un webview real un programa mínimo de Wails v3 en
+# Linux, macOS y Windows, y deja un informe por sistema (CSP, superficie del puente, bandeja, backend,
+# empaquetado, SBOM y licencias). Solo se dispara al empujar a esa rama; no toca main ni las imágenes de producción.
+on:
+  push:
+    branches: [spike/wails]
+    paths:
+      - 'spikes/wails/**'
+      - '.github/workflows/spike-wails.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-wails
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: spikes/wails
+
+jobs:
+  spike:
+    name: spike (${{ matrix.os }}, wails ${{ matrix.wails }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        wails: [v3.0.0, v3.1.0]
+    env:
+      WAILS_VERSION: ${{ matrix.wails }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Dependencias de Linux (las que usa la CI de Wails)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev \
+            build-essential pkg-config xvfb x11-xserver-utils at-spi2-core xdg-desktop-portal-gtk dbus-x11
+      - name: Resolver Wails y su CLI
+        run: |
+          mkdir -p report
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          { echo "runner: $RUNNER_OS $RUNNER_ARCH"; go version; } | tee report/versions.txt
+          go get "github.com/wailsapp/wails/v3@${WAILS_VERSION}"
+          go mod tidy
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
+          wails3 version 2>&1 | tee -a report/versions.txt
+          (cd frontend && wails3 generate runtime)
+          ls -la frontend | tee -a report/versions.txt
+      - name: Pruebas de Go (S4 backend y guardia de superficie de S2)
+        id: tests
+        continue-on-error: true
+        run: go test -count=1 -v ./... 2>&1 | tee report/go-test.txt
+      - name: Compilar la aplicación
+        id: build
+        run: |
+          PY=python3; command -v python3 >/dev/null || PY=python
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          go build -tags production -trimpath -o "bin/spike$ext" . 2>&1 | tee report/build.txt
+          $PY tools/lsbin.py bin | tee -a report/build.txt
+      - name: Ejecutar con webview real (S1 CSP, S2 puente, S3 bandeja)
+        id: gui
+        continue-on-error: true
+        env:
+          SPIKE_AUTORUN: '1'
+          SPIKE_REPORT: ${{ github.workspace }}/spikes/wails/report/gui.json
+          SPIKE_LOG: ${{ github.workspace }}/spikes/wails/report/gui.log
+          GDK_BACKEND: x11
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          PY=python3; command -v python3 >/dev/null || PY=python
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          if [ "$RUNNER_OS" = Linux ]; then
+            $PY tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- "bin/spike$ext" | tee report/gui-exit.txt
+          else
+            $PY tools/run_timeout.py 120 "bin/spike$ext" | tee report/gui-exit.txt
+          fi
+          ls -la report
+      - name: SBOM, vendor, verificación, vulnerabilidades y licencias (S5 y S6)
+        id: supply
+        continue-on-error: true
+        run: |
+          PY=python3; command -v python3 >/dev/null || PY=python
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+          cyclonedx-gomod app -json -main . -output report/sbom.cdx.json 2>&1 | tee report/sbom.txt
+          go mod vendor
+          go mod verify 2>&1 | tee report/mod-verify.txt
+          go build -mod=vendor -tags production -o bin/vendor-check . 2>&1 | tee report/vendor-build.txt || true
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... 2>&1 | tee report/govulncheck.txt || true
+          $PY tools/license_report.py vendor report 2>&1 | tee report/licenses-summary.txt
+      - name: Empaquetado con Wails (S5), sobre la plantilla oficial
+        id: package
+        continue-on-error: true
+        run: |
+          PY=python3; command -v python3 >/dev/null || PY=python
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          REPORT="$GITHUB_WORKSPACE/spikes/wails/report"
+          if [ "$RUNNER_OS" = Windows ]; then choco install nsis -y --no-progress; fi
+          mkdir -p "$RUNNER_TEMP/pack"
+          cd "$RUNNER_TEMP/pack"
+          wails3 init -n packspike -t vanilla 2>&1 | tee "$REPORT/package.txt"
+          cd packspike
+          wails3 package 2>&1 | tee -a "$REPORT/package.txt"
+          if [ "$RUNNER_OS" = macOS ]; then wails3 task darwin:package:dmg 2>&1 | tee -a "$REPORT/package.txt"; fi
+          echo "--- bin/" | tee -a "$REPORT/package.txt"
+          $PY "$GITHUB_WORKSPACE/spikes/wails/tools/lsbin.py" bin | tee -a "$REPORT/package.txt"
+      - name: Resultado de cada paso
+        if: always()
+        run: |
+          {
+            echo "tests=${{ steps.tests.outcome }}"
+            echo "build=${{ steps.build.outcome }}"
+            echo "gui=${{ steps.gui.outcome }}"
+            echo "supply=${{ steps.supply.outcome }}"
+            echo "package=${{ steps.package.outcome }}"
+          } | tee report/outcomes.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: spike-${{ matrix.os }}-${{ matrix.wails }}
+          path: spikes/wails/report
+          if-no-files-found: warn
