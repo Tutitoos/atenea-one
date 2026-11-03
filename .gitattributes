@@ -1,0 +1,4 @@
+# gofmt exige LF: sin esto, el checkout de Windows (autocrlf) hace que `gofmt -l` liste todo.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
