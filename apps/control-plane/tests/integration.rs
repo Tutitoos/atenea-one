@@ -523,7 +523,7 @@ async fn emision_verificada_politicas_inversas_revocacion_y_autenticacion() {
     t.config(a, ts, nonce)
         .await
         .error(StatusCode::UNAUTHORIZED, "invalid_signature");
-    for ts in [now() - 61, now() + 61] {
+    for ts in [now() - 65, now() + 65] {
         t.config(a, ts, *Uuid::new_v4().as_bytes())
             .await
             .error(StatusCode::UNAUTHORIZED, "invalid_signature");

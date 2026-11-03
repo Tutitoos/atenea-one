@@ -478,7 +478,8 @@ async fn salida_firmada_revoca_solo_al_propietario_y_es_idempotente() {
         .unwrap();
     assert_eq!(status, "approved");
     sqlx::query("INSERT INTO device_routes(id,network_id,device_id,prefix,status,snat) VALUES($1,$2,$3,'192.168.50.0/24','approved',true)").bind(Uuid::new_v4()).bind(net).bind(d.id).execute(&t.pool).await.unwrap();
-    for timestamp in [now() - 61, now() + 61] {
+    // ±65 s: fuera de la ventana de 60 s aunque el reloj avance un par de segundos entre esta lectura y la del servidor.
+    for timestamp in [now() - 65, now() + 65] {
         let auth = atenea_identity::api_auth::sign_request(
             &d.key,
             *d.id.as_bytes(),

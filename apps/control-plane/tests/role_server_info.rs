@@ -377,7 +377,9 @@ async fn server_info_firma_aprobacion_replay_y_ventana_temporal() {
             .await
             .error(StatusCode::UNAUTHORIZED, "invalid_signature");
     }
-    for timestamp in [now() - 61, now() + 61] {
+    // La ventana del servidor es de 60 s: se prueba con 5 s de margen a cada lado para que un salto de segundo del
+    // reloj entre esta lectura y la del servidor no mueva el caso al otro lado del límite.
+    for timestamp in [now() - 65, now() + 65] {
         t.send(request(
             &active,
             INFO,
@@ -388,7 +390,7 @@ async fn server_info_firma_aprobacion_replay_y_ventana_temporal() {
         .await
         .error(StatusCode::UNAUTHORIZED, "invalid_signature");
     }
-    for timestamp in [now() - 59, now() + 59] {
+    for timestamp in [now() - 55, now() + 55] {
         let accepted = t
             .send(request(
                 &active,
