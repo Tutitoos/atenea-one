@@ -220,8 +220,9 @@ pub fn enroll(
     Ok(())
 }
 
-/// `[coordinator]` del `agent.toml` que genera `network join`. El código de unión no lleva el STUN ni la CA
-/// del relay: los fija quien ejecuta el comando (nunca el servidor). La URL es la del propio código.
+/// `[coordinator]` del `agent.toml` que genera `network join`. Su origen es el bloque de conectividad del código de
+/// unión (ADR-018) o, con prioridad, `--stun-host`/`--relay-ca`: quien ejecuta el comando manda, nunca el servidor.
+/// La URL es la del propio código.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub struct Coordinator {
     stun: [String; 2],
@@ -232,12 +233,8 @@ pub struct Coordinator {
 impl Coordinator {
     /// `stun_host`: nombre o IPv4 sin puerto; el agente exige los dos puertos del mismo servidor (3478 y 3479).
     pub fn new(stun_host: &str, relay_ca: Option<PathBuf>) -> Result<Self, String> {
-        let host_ok = !stun_host.is_empty()
-            && stun_host.len() <= 253
-            && stun_host
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
-        if !host_ok {
+        // Misma regla que el bloque del código de unión: no pueden divergir.
+        if !atenea_identity::join_code::valid_stun_host(stun_host) {
             return Err("--stun-host: se espera un nombre o una IPv4 sin puerto".into());
         }
         if let Some(ca) = &relay_ca {
@@ -256,6 +253,122 @@ impl Coordinator {
             relay_ca,
         })
     }
+
+    /// Desde el bloque del código de unión (ADR-018). El host ya lo validó el formato del código.
+    pub fn from_code(c: &atenea_identity::join_code::Connectivity) -> Self {
+        Self {
+            stun: [
+                format!("{}:3478", c.stun_host),
+                format!("{}:3479", c.stun_host),
+            ],
+            relay_ca: None,
+        }
+    }
+
+    /// Fija la CA ya descargada y verificada: el código lleva su hash, nunca una ruta.
+    pub fn with_relay_ca(mut self, path: PathBuf) -> Self {
+        self.relay_ca = Some(path);
+        self
+    }
+}
+
+/// Un único certificado PEM → (PEM canónico, SHA-256 del DER). El PEM se re-emite a partir del DER, de modo que lo que
+/// se escribe en disco es exactamente lo que se hasheó. Es la misma lógica que `RelayCa::from_pem` del control plane.
+///
+/// shortcut: solo se comprueba que el DER sea una secuencia íntegra, no que sea un X.509 válido (el agente lo valida
+/// al cargarlo como raíz del relay); subir si el CLI llegara a usar la CA para algo más que fijar su ruta.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub fn relay_ca_from_pem(text: &str) -> Result<(String, [u8; 32]), &'static str> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha2::{Digest, Sha256};
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    const ONE: &str = "debe contener exactamente un certificado PEM";
+    if text.matches(BEGIN).count() != 1 || text.matches(END).count() != 1 {
+        return Err(ONE);
+    }
+    let (_, rest) = text.split_once(BEGIN).ok_or(ONE)?;
+    let (body, _) = rest.split_once(END).ok_or(ONE)?;
+    let body: String = body.split_whitespace().collect();
+    let der = STANDARD.decode(body).map_err(|_| "no es base64 válido")?;
+    if !der_sequence(&der) {
+        return Err("no es un certificado DER íntegro");
+    }
+    let mut pem = format!("{BEGIN}\n");
+    for line in STANDARD.encode(&der).as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(line).expect("base64 es ASCII"));
+        pem.push('\n');
+    }
+    pem.push_str(END);
+    pem.push('\n');
+    Ok((pem, Sha256::digest(&der).into()))
+}
+
+/// `SEQUENCE` DER con la longitud declarada igual a los bytes que hay (forma corta o larga de hasta 4 bytes).
+#[cfg_attr(not(unix), allow(dead_code))]
+fn der_sequence(der: &[u8]) -> bool {
+    let [0x30, first, rest @ ..] = der else {
+        return false;
+    };
+    let (len, header) = if *first < 0x80 {
+        (usize::from(*first), 2)
+    } else {
+        let n = usize::from(first & 0x7f);
+        if n == 0 || n > 4 || rest.len() < n {
+            return false;
+        }
+        (
+            rest[..n]
+                .iter()
+                .fold(0usize, |a, b| (a << 8) | usize::from(*b)),
+            2 + n,
+        )
+    };
+    len > 0 && der.len() == header + len
+}
+
+/// Descarga la CA del relay de `GET {url}/api/v1/relay-ca` y **solo la acepta si su SHA-256 (del DER) coincide con el
+/// del código de unión**: la confianza sigue anclada en el canal del código, no en lo que el servidor sirva después.
+/// Devuelve el PEM canónico; no escribe nada.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub fn fetch_relay_ca(
+    url: &str,
+    expected: &[u8; 32],
+    insecure_http: bool,
+) -> Result<String, String> {
+    let url = format!("{}/api/v1/relay-ca", base_url(url, insecure_http)?);
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut response = agent
+        .get(&url)
+        .call()
+        .map_err(|_| "no se pudo contactar con el control plane para descargar la CA del relay")?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        return Err(format!(
+            "el servidor no sirve la CA del relay (HTTP {status}); no se une a la red"
+        ));
+    }
+    let text = response
+        .body_mut()
+        .with_config()
+        .limit(16384)
+        .read_to_string()
+        .map_err(|_| "la CA del relay es ilegible o demasiado grande")?;
+    let (pem, hash) =
+        relay_ca_from_pem(&text).map_err(|e| format!("la CA del relay no es válida: {e}"))?;
+    if &hash != expected {
+        return Err(
+            "la CA que sirve el servidor no coincide con el hash (SHA-256) del código: no se une a la red"
+                .into(),
+        );
+    }
+    Ok(pem)
 }
 
 /// Genera el `agent.toml` de una red con la raíz fijada por quien llama (nunca por el servidor).
@@ -556,5 +669,88 @@ mod tests {
             assert!(!http_error(status, "SECRET").contains("SECRET"));
         }
         assert!(http_error(409, "{}").contains("conflicto"));
+    }
+}
+
+#[cfg(test)]
+mod relay_ca_tests {
+    use super::*;
+    use atenea_identity::join_code::Connectivity;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha2::{Digest, Sha256};
+
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+
+    /// DER SINTÉTICO (no es X.509): se exige una secuencia íntegra y se calcula su SHA-256.
+    fn der() -> Vec<u8> {
+        let mut d = vec![0x30, 10, 0x02, 0x01, 0x01, 0x04, 0x05];
+        d.extend_from_slice(b"ca-ok");
+        d
+    }
+    fn pem(der: &[u8]) -> String {
+        format!("{BEGIN}\n{}\n{END}\n", STANDARD.encode(der))
+    }
+
+    #[test]
+    fn el_pem_se_reemite_canonico_y_el_hash_es_el_del_der() {
+        let (a, hash) = relay_ca_from_pem(&pem(&der())).unwrap();
+        assert_eq!(hash, <[u8; 32]>::from(Sha256::digest(der())));
+        // Texto antes y después, CRLF y líneas partidas: mismo hash y mismo PEM canónico.
+        let b64 = STANDARD.encode(der());
+        let sucio = format!(
+            "# comentario\r\n{BEGIN}\r\n{}\r\n{}\r\n{END}\r\n\r\nresto\r\n",
+            &b64[..4],
+            &b64[4..]
+        );
+        let (b, hash_b) = relay_ca_from_pem(&sucio).unwrap();
+        assert_eq!((a.as_str(), hash), (b.as_str(), hash_b));
+        assert!(a.starts_with(BEGIN) && a.ends_with(&format!("{END}\n")));
+        // Un DER largo se parte en líneas de 64 caracteres como mucho.
+        let mut grande = vec![0x30, 0x82, 0x01, 0x00];
+        grande.extend(std::iter::repeat_n(7u8, 256));
+        let (c, _) = relay_ca_from_pem(&pem(&grande)).unwrap();
+        assert!(c.lines().all(|l| l.len() <= 64));
+    }
+
+    #[test]
+    fn rechaza_lo_que_no_es_un_unico_certificado_integro() {
+        let ok = pem(&der());
+        for malo in [
+            String::new(),
+            "sin pem".to_owned(),
+            format!("{ok}{ok}"),
+            format!("{BEGIN}\nno es base64 !!\n{END}\n"),
+            format!("{BEGIN}\n{END}\n"),
+            format!("{END}\n{BEGIN}\nAAAA\n"),
+            pem(&[0x31, 3, 1, 2, 3]),
+            pem(&[0x30, 5, 1, 2, 3]),
+            pem(&[0x30, 2, 1, 2, 3]),
+            pem(&[0x30, 0]),
+            pem(&[0x30, 0x80, 1, 2]),
+            pem(&[0x30, 0x85, 0, 0, 0, 0, 1]),
+            pem(&[0x30]),
+        ] {
+            assert!(relay_ca_from_pem(&malo).is_err(), "{malo:?}");
+        }
+    }
+
+    #[test]
+    fn el_stun_del_codigo_se_convierte_en_los_dos_puertos_y_la_ca_se_fija_aparte() {
+        let c = Coordinator::from_code(&Connectivity {
+            stun_host: "stun.example.test".into(),
+            relay_ca_sha256: Some([9; 32]),
+        });
+        assert_eq!(
+            c.stun,
+            [
+                "stun.example.test:3478".to_string(),
+                "stun.example.test:3479".to_string()
+            ]
+        );
+        // El hash del código no es una ruta: la CA solo se fija cuando ya se descargó y verificó.
+        assert_eq!(c.relay_ca, None);
+        let c = c.with_relay_ca(PathBuf::from("/var/lib/atenea/ca.pem"));
+        assert_eq!(c.relay_ca, Some(PathBuf::from("/var/lib/atenea/ca.pem")));
     }
 }

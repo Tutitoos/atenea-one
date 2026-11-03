@@ -44,9 +44,9 @@ Requisitos directos de `apps/control-plane/Cargo.toml` (versiones exactas resuel
 | `uuid` | 1 | MIT OR Apache-2.0 | Identificadores UUID |
 | `chrono` | 0.4 | MIT OR Apache-2.0 | Tiempos UTC |
 | `ipnet` | 2 | MIT OR Apache-2.0 | Validación de prefijos e IPAM |
-| `sha2` | 0.10 | MIT OR Apache-2.0 | Hash de tokens de sesión y enrolamiento |
+| `sha2` | 0.10 | MIT OR Apache-2.0 | Hash de tokens de sesión y enrolamiento (control plane); SHA-256 de la CA del relay al unirse con un código (CLI) |
 | `hex` | 0.4 | MIT OR Apache-2.0 | Codificación pública y fichero de emisor |
-| `base64` | 0.22 | MIT OR Apache-2.0 | Tokens base64url |
+| `base64` | 0.22 | MIT OR Apache-2.0 | Tokens base64url (control plane); decodificar el PEM de la CA del relay (CLI) |
 | `tower` | 0.5 | MIT | Router en memoria (pruebas) |
 | `http-body-util` | 0.1 | MIT | Lectura de respuestas (pruebas) |
 | `jsonwebtoken` | 10 | MIT | Proveedor OIDC falso (solo pruebas) |

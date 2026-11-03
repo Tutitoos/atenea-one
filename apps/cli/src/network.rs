@@ -35,6 +35,9 @@ pub enum NetworkCmd {
         /// CA (ruta absoluta) con la que el agente valida el TLS del relay; solo si el relay usa una CA propia.
         #[arg(long, requires = "stun_host")]
         relay_ca: Option<PathBuf>,
+        /// Arranca la red al terminar (`network up`). No espera a la aprobación del dispositivo.
+        #[arg(long)]
+        up: bool,
     },
     /// Lista las redes unidas y su estado (no requiere root).
     List {
@@ -105,6 +108,7 @@ pub fn run(
             insecure_http,
             stun_host,
             relay_ca,
+            up,
         } => imp::join(
             &ctx,
             &imp::JoinOpts {
@@ -115,6 +119,7 @@ pub fn run(
                 insecure_http,
                 stun_host,
                 relay_ca,
+                up,
             },
             &mut input,
             interactive,
@@ -411,6 +416,14 @@ mod imp {
         pub insecure_http: bool,
         pub stun_host: Option<String>,
         pub relay_ca: Option<PathBuf>,
+        pub up: bool,
+    }
+
+    /// Lo que `join` escribirá en `[coordinator]`: el bloque (del código o de las opciones) y, si el código llevaba
+    /// el hash de la CA, el PEM ya descargado y verificado contra ese hash.
+    struct ConnectivityPlan {
+        coordinator: enroll::Coordinator,
+        relay_ca_pem: Option<String>,
     }
 
     fn now() -> u64 {
@@ -428,7 +441,7 @@ mod imp {
         url: &str,
         opts: &JoinOpts,
         (interface, port): (String, u16),
-        coordinator: Option<&enroll::Coordinator>,
+        plan: Option<ConnectivityPlan>,
     ) -> Result<Meta, enroll::RegisterError> {
         let fail = |message: String| enroll::RegisterError {
             message,
@@ -436,6 +449,19 @@ mod imp {
         };
         let device = ctx.device_dir(id);
         mkdir(&device, 0o700, false).map_err(fail)?;
+        // La CA verificada se guarda junto a las claves de esta red (una CA por red, sin ficheros compartidos).
+        let coordinator = match plan {
+            Some(ConnectivityPlan {
+                coordinator,
+                relay_ca_pem: Some(pem),
+            }) => {
+                let path = device.join("relay-ca.pem");
+                write_file(&path, 0o644, pem.as_bytes()).map_err(fail)?;
+                Some(coordinator.with_relay_ca(path))
+            }
+            Some(ConnectivityPlan { coordinator, .. }) => Some(coordinator),
+            None => None,
+        };
         let (_, _, fingerprint) = issue::device_create(&device).map_err(fail)?;
         let run = ctx.run_dir(id);
         enroll::pinned_config(
@@ -450,7 +476,7 @@ mod imp {
             &run.join("status.sock"),
             opts.status_gid,
             opts.insecure_http,
-            coordinator,
+            coordinator.as_ref(),
         )
         .map_err(fail)?;
         let (path, token) = match &code.token {
@@ -507,12 +533,20 @@ mod imp {
     }
 
     #[derive(Serialize)]
+    struct ConnectivityInfo {
+        stun_host: String,
+        relay_ca_sha256: Option<String>,
+    }
+
+    #[derive(Serialize)]
     struct CodeInfo<'a> {
         name: &'a str,
         server: String,
         network_id: String,
         root_fingerprint: String,
         has_token: bool,
+        /// Lo que el código anuncia para llegar al STUN y al relay (ADR-018); `null` si no lleva bloque.
+        connectivity: Option<ConnectivityInfo>,
     }
 
     fn code_info(code: &JoinCode) -> CodeInfo<'_> {
@@ -522,6 +556,10 @@ mod imp {
             network_id: uuid(&code.network_id),
             root_fingerprint: anchor_fingerprint(&code.root_anchor),
             has_token: code.token.is_some(),
+            connectivity: code.connectivity.as_ref().map(|c| ConnectivityInfo {
+                stun_host: c.stun_host.clone(),
+                relay_ca_sha256: c.relay_ca_sha256.as_ref().map(|h| hex::encode(h)),
+            }),
         }
     }
 
@@ -531,7 +569,20 @@ mod imp {
             "Red:            {}\nServidor:       {}\nId de la red:   {}\nHuella de la raíz: {}",
             info.name, info.server, info.network_id, info.root_fingerprint
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        if let Some(c) = &info.connectivity {
+            let ca = match &c.relay_ca_sha256 {
+                Some(h) => format!("SHA-256 {}…", &h[..16]),
+                None => "pública (el código no lleva hash)".into(),
+            };
+            writeln!(
+                output,
+                "Conectividad:   STUN {} (puertos 3478 y 3479); CA del relay: {ca}",
+                c.stun_host
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn inspect(text: &str, json: bool, output: &mut dyn Write) -> Result<(), String> {
@@ -628,13 +679,22 @@ mod imp {
         } else {
             code.url.clone()
         };
-        // Antes de confirmar y de tocar el disco: una opción inválida no deja nada.
-        let coordinator = opts
-            .stun_host
-            .as_deref()
-            .map(|host| enroll::Coordinator::new(host, opts.relay_ca.clone()))
-            .transpose()?;
+        // Antes de confirmar y de tocar el disco: una opción inválida no deja nada. Las opciones explícitas
+        // (`--stun-host`, `--relay-ca`) mandan sobre el bloque de conectividad del código (ADR-018).
+        let (coordinator, ca_hash) = match (&opts.stun_host, &code.connectivity) {
+            (Some(host), _) => (
+                Some(enroll::Coordinator::new(host, opts.relay_ca.clone())?),
+                None,
+            ),
+            (None, Some(c)) => (Some(enroll::Coordinator::from_code(c)), c.relay_ca_sha256),
+            (None, None) => (None, None),
+        };
         write_code_info(&info, &mut std::io::stdout().lock())?;
+        if opts.stun_host.is_some() && code.connectivity.is_some() {
+            println!(
+                "Conectividad:   se usan --stun-host/--relay-ca; se ignora la que lleva el código."
+            );
+        }
         let id = info.network_id;
         println!(
             "Código:         {}",
@@ -648,6 +708,16 @@ mod imp {
             "AVISO: una red puede instalar rutas privadas y DNS para dominios concretos en este equipo; confirma que el código te lo dio alguien de confianza y compara la huella por otro canal."
         );
         confirm("¿Unirte a esta red?", opts.yes, interactive, input)?;
+        // La CA se pide DESPUÉS de confirmar y ANTES de tocar el disco o registrar nada: si su hash no coincide con
+        // el del código, la unión se aborta sin dejar rastro ni en el servidor ni aquí.
+        let relay_ca_pem = ca_hash
+            .map(|hash| enroll::fetch_relay_ca(&url, &hash, opts.insecure_http))
+            .transpose()?;
+        let has_coordinator = coordinator.is_some();
+        let plan = coordinator.map(|coordinator| ConnectivityPlan {
+            coordinator,
+            relay_ca_pem,
+        });
         if !ctx.root.exists() {
             mkdir(&ctx.root, 0o755, true)?;
         }
@@ -676,7 +746,7 @@ mod imp {
                 return Err(e);
             }
         };
-        match provision(ctx, &code, &id, &url, opts, alloc, coordinator.as_ref()) {
+        match provision(ctx, &code, &id, &url, opts, alloc, plan) {
             Ok(meta) => {
                 println!(
                     "red={id}\ndispositivo={}\nhuella_dispositivo={}",
@@ -691,12 +761,25 @@ mod imp {
                         "pendiente de aprobación"
                     }
                 );
-                if coordinator.is_none() {
+                if !has_coordinator {
                     println!(
-                        "AVISO: sin --stun-host no se escribe [coordinator]: este equipo se sincronizará pero no hará rendezvous ni usará el relay (sin camino directo)."
+                        "AVISO: ni el código ni --stun-host llevan conectividad: no se escribe [coordinator]; este equipo se sincronizará pero no hará rendezvous ni usará el relay (sin camino directo)."
                     );
                 }
-                println!("Siguiente paso: sudo atenea network up {}", short(&id));
+                if opts.up {
+                    up_locked(ctx, short(&id)).map_err(|e| {
+                        format!(
+                            "unido a la red (el servidor ya aceptó la solicitud), pero no se pudo arrancar: {e}. \
+                             Arráncala con `sudo atenea network up {}`",
+                            short(&id)
+                        )
+                    })?;
+                    println!(
+                        "Si el dispositivo está pendiente de aprobación, la red se conectará cuando un administrador apruebe su huella."
+                    );
+                } else {
+                    println!("Siguiente paso: sudo atenea network up {}", short(&id));
+                }
                 Ok(())
             }
             Err(e) if !e.accepted => {
@@ -1586,6 +1669,7 @@ mod imp {
                 insecure_http: true,
                 stun_host: None,
                 relay_ca: None,
+                up: false,
             }
         }
 
@@ -1595,6 +1679,104 @@ mod imp {
                 hex::encode(&[net; 16]),
                 hex::encode(&SERVER_ANCHOR)
             )
+        }
+
+        /// DER SINTÉTICO (no es X.509): el CLI solo exige una secuencia íntegra y calcula su SHA-256.
+        fn fake_ca_der(tag: u8) -> Vec<u8> {
+            let mut der = vec![0x30, 10, 0x02, 0x01, 0x01, 0x04, 0x05];
+            der.extend_from_slice(&[b'c', b'a', b'-', b'o', tag]);
+            der
+        }
+
+        fn pem_of(der: &[u8]) -> String {
+            use base64::{Engine, engine::general_purpose::STANDARD};
+            format!(
+                "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                STANDARD.encode(der)
+            )
+        }
+
+        fn sha(bytes: &[u8]) -> [u8; 32] {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(bytes).into()
+        }
+
+        fn conn(stun: &str, ca: Option<&[u8]>) -> atenea_identity::join_code::Connectivity {
+            atenea_identity::join_code::Connectivity {
+                stun_host: stun.into(),
+                relay_ca_sha256: ca.map(sha),
+            }
+        }
+
+        fn code_with(
+            port: u16,
+            token: Option<&str>,
+            net: u8,
+            connectivity: Option<atenea_identity::join_code::Connectivity>,
+        ) -> String {
+            JoinCode {
+                url: format!("https://127.0.0.1:{port}"),
+                network_id: [net; 16],
+                root_anchor: [7; 32],
+                name: "Red de ejemplo".into(),
+                token: token.map(str::to_string),
+                connectivity,
+            }
+            .encode()
+            .unwrap()
+        }
+
+        fn read_http(s: &mut std::net::TcpStream) -> String {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = s.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf).into_owned();
+                if let Some(i) = text.find("\r\n\r\n") {
+                    let len = text[..i]
+                        .to_lowercase()
+                        .lines()
+                        .find_map(|l| {
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= i + 4 + len || n == 0 {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+
+        /// Como `serve`, pero atiende varias peticiones en orden, cada una con su respuesta; devuelve las peticiones.
+        fn serve_seq(responses: Vec<(u16, String)>) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            let h = std::thread::spawn(move || {
+                let mut seen = Vec::new();
+                for (status, body) in responses {
+                    let (mut s, _) = l.accept().unwrap();
+                    seen.push(read_http(&mut s));
+                    write!(
+                        s,
+                        "HTTP/1.1 {status} X\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .unwrap();
+                }
+                seen
+            });
+            (port, h)
+        }
+
+        fn agent_toml(c: &Ctx, id: &str) -> toml::Table {
+            toml::from_str(&std::fs::read_to_string(c.device_dir(id).join("agent.toml")).unwrap())
+                .unwrap()
         }
 
         fn files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1655,6 +1837,7 @@ mod imp {
                                 "network_id": "01010101-0101-0101-0101-010101010101",
                                 "root_fingerprint": anchor_fingerprint(&[7; 32]),
                                 "has_token": token.is_some(),
+                                "connectivity": null,
                             })
                         );
                     } else {
@@ -1676,6 +1859,271 @@ mod imp {
             }
             assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
             std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn inspect_muestra_la_conectividad_que_lleva_el_codigo() {
+            let der = fake_ca_der(b'i');
+            for (connectivity, ca_hex) in [
+                (
+                    conn("stun.example.test", Some(&der)),
+                    Some(hex::encode(&sha(&der))),
+                ),
+                (conn("stun.example.test", None), None),
+            ] {
+                let code = code_with(443, None, 1, Some(connectivity));
+                let mut json = Vec::new();
+                inspect(&code, true, &mut json).unwrap();
+                let v: serde_json::Value = serde_json::from_slice(&json).unwrap();
+                assert_eq!(
+                    v["connectivity"],
+                    serde_json::json!({"stun_host": "stun.example.test", "relay_ca_sha256": ca_hex})
+                );
+                let mut text = Vec::new();
+                inspect(&code, false, &mut text).unwrap();
+                let text = String::from_utf8(text).unwrap();
+                assert!(text.contains("stun.example.test"), "{text}");
+                match &ca_hex {
+                    Some(h) => assert!(text.contains(&h[..16]), "{text}"),
+                    None => assert!(text.contains("pública"), "{text}"),
+                }
+            }
+            // Sin bloque no se imprime ninguna línea de conectividad.
+            let mut text = Vec::new();
+            inspect(&code_text(443, None, 1), false, &mut text).unwrap();
+            assert!(!String::from_utf8(text).unwrap().contains("Conectividad"));
+        }
+
+        #[test]
+        fn join_usa_la_conectividad_del_codigo_y_verifica_la_ca() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp("conn-codigo");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let der = fake_ca_der(b'k');
+            let (port, server) = serve_seq(vec![(200, pem_of(&der)), (201, created(1))]);
+            let code = code_with(port, None, 1, Some(conn("stun.example.test", Some(&der))));
+            join(&c, &opts(code, true), &mut Cursor::new(""), false).unwrap();
+            let requests = server.join().unwrap();
+            // La CA se pide ANTES de registrar el dispositivo.
+            assert!(
+                requests[0].starts_with("GET /api/v1/relay-ca "),
+                "{}",
+                requests[0]
+            );
+            assert!(
+                requests[1].starts_with(&format!("POST /api/v1/networks/{id}/join-requests ")),
+                "{}",
+                requests[1]
+            );
+            let table = agent_toml(&c, &id);
+            let section = table["coordinator"].as_table().unwrap();
+            assert_eq!(
+                section["stun"].as_array().unwrap(),
+                &[
+                    "stun.example.test:3478".into(),
+                    "stun.example.test:3479".into()
+                ]
+            );
+            assert_eq!(section["url"], table["sync"]["url"]);
+            let device = c.device_dir(&id);
+            let ca_path = device.join("relay-ca.pem");
+            assert_eq!(section["relay_ca_file"].as_str(), ca_path.to_str());
+            assert_eq!(std::fs::read_to_string(&ca_path).unwrap(), pem_of(&der));
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&ca_path), 0o644);
+            assert_eq!(mode(&device), 0o700);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn una_ca_con_otro_hash_aborta_sin_dejar_nada() {
+            let d = temp("conn-hash");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let (port, server) = serve_seq(vec![(200, pem_of(&fake_ca_der(b'b')))]);
+            let code = code_with(
+                port,
+                None,
+                1,
+                Some(conn("stun.example.test", Some(&fake_ca_der(b'a')))),
+            );
+            let e = join(&c, &opts(code, true), &mut Cursor::new(""), false).unwrap_err();
+            assert!(e.contains("no coincide"), "{e}");
+            // Solo se pidió la CA: no se llegó a registrar nada en el servidor ni en el disco.
+            assert_eq!(server.join().unwrap().len(), 1);
+            assert!(!c.net_dir(&id).exists());
+            assert!(!c.root.exists() || std::fs::read_dir(&c.root).unwrap().count() == 0);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn una_ca_ausente_o_ilegible_aborta_sin_dejar_nada() {
+            let ok = pem_of(&fake_ca_der(b'a'));
+            for (status, body, esperado) in [
+                (
+                    404,
+                    r#"{"error":{"code":"not_found"}}"#.to_string(),
+                    "HTTP 404",
+                ),
+                (500, String::new(), "HTTP 500"),
+                (200, "esto no es un PEM".to_string(), "no es válida"),
+                (200, format!("{ok}{ok}"), "no es válida"),
+                (200, String::new(), "no es válida"),
+            ] {
+                let d = temp("conn-mala");
+                let c = ctx(&d);
+                let id = uuid(&[1; 16]);
+                let (port, server) = serve_seq(vec![(status, body)]);
+                let code = code_with(
+                    port,
+                    None,
+                    1,
+                    Some(conn("stun.example.test", Some(&fake_ca_der(b'a')))),
+                );
+                let e = join(&c, &opts(code, true), &mut Cursor::new(""), false).unwrap_err();
+                assert!(e.contains(esperado), "{esperado}: {e}");
+                assert_eq!(server.join().unwrap().len(), 1);
+                assert!(!c.net_dir(&id).exists(), "{esperado}");
+                std::fs::remove_dir_all(d).unwrap();
+            }
+        }
+
+        #[test]
+        fn solo_stun_en_el_codigo_no_descarga_ninguna_ca() {
+            let d = temp("conn-solo-stun");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let (port, server) = serve_seq(vec![(201, created(1))]);
+            let code = code_with(port, None, 1, Some(conn("stun.example.test", None)));
+            join(&c, &opts(code, true), &mut Cursor::new(""), false).unwrap();
+            let requests = server.join().unwrap();
+            assert!(requests[0].starts_with("POST "), "{}", requests[0]);
+            let table = agent_toml(&c, &id);
+            let section = table["coordinator"].as_table().unwrap();
+            assert_eq!(section["stun"].as_array().unwrap().len(), 2);
+            assert!(!section.contains_key("relay_ca_file"));
+            assert!(!c.device_dir(&id).join("relay-ca.pem").exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn las_opciones_explicitas_ganan_sobre_el_codigo() {
+            // `--stun-host` sustituye el bloque del código entero (también su CA): no se descarga nada.
+            let d = temp("conn-explicita");
+            let c = ctx(&d);
+            let id = uuid(&[1; 16]);
+            let (port, server) = serve_seq(vec![(201, created(1))]);
+            let code = code_with(
+                port,
+                None,
+                1,
+                Some(conn("stun.example.test", Some(&fake_ca_der(b'a')))),
+            );
+            let mut options = opts(code, true);
+            options.stun_host = Some("otro.example.test".into());
+            join(&c, &options, &mut Cursor::new(""), false).unwrap();
+            assert!(server.join().unwrap()[0].starts_with("POST "));
+            let table = agent_toml(&c, &id);
+            let section = table["coordinator"].as_table().unwrap();
+            assert_eq!(
+                section["stun"].as_array().unwrap(),
+                &[
+                    "otro.example.test:3478".into(),
+                    "otro.example.test:3479".into()
+                ]
+            );
+            assert!(!section.contains_key("relay_ca_file"));
+            assert!(!c.device_dir(&id).join("relay-ca.pem").exists());
+            std::fs::remove_dir_all(d).unwrap();
+
+            // Con `--relay-ca` explícita se usa esa ruta y tampoco se descarga nada.
+            let d = temp("conn-explicita-ca");
+            let c = ctx(&d);
+            let mi_ca = d.join("mi-ca.pem");
+            std::fs::write(&mi_ca, "pem").unwrap();
+            let (port, server) = serve_seq(vec![(201, created(1))]);
+            let code = code_with(
+                port,
+                None,
+                1,
+                Some(conn("stun.example.test", Some(&fake_ca_der(b'a')))),
+            );
+            let mut options = opts(code, true);
+            options.stun_host = Some("otro.example.test".into());
+            options.relay_ca = Some(mi_ca.clone());
+            join(&c, &options, &mut Cursor::new(""), false).unwrap();
+            assert!(server.join().unwrap()[0].starts_with("POST "));
+            let table = agent_toml(&c, &id);
+            assert_eq!(
+                table["coordinator"]["relay_ca_file"].as_str(),
+                mi_ca.to_str()
+            );
+            assert!(!c.device_dir(&id).join("relay-ca.pem").exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn join_con_up_arranca_la_red_y_sin_up_no() {
+            use std::os::unix::fs::PermissionsExt;
+            for up in [false, true] {
+                let d = temp("conn-up");
+                let mut c = ctx(&d);
+                let id = uuid(&[1; 16]);
+                // Agente falso que sigue vivo mientras `up` comprueba el socket IPC, y ese socket ya escuchando.
+                let agent = d.join("agente-falso.sh");
+                std::fs::write(&agent, "#!/bin/sh\nsleep 2\n").unwrap();
+                std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+                c.agent = Some(agent);
+                std::fs::create_dir_all(c.run_dir(&id)).unwrap();
+                let _listener =
+                    std::os::unix::net::UnixListener::bind(c.run_dir(&id).join("control.sock"))
+                        .unwrap();
+                let (port, server) = serve_seq(vec![(201, created(1))]);
+                let mut options = opts(code_text(port, None, 1), true);
+                options.up = up;
+                join(&c, &options, &mut Cursor::new(""), false).unwrap();
+                server.join().unwrap();
+                // `up` en modo proceso crea el log del agente; sin `--up` no se arranca nada.
+                assert_eq!(c.device_dir(&id).join("agent.log").exists(), up);
+                std::fs::remove_dir_all(d).unwrap();
+            }
+        }
+
+        #[test]
+        fn si_up_falla_la_union_se_conserva_y_el_error_lo_explica() {
+            let d = temp("conn-up-falla");
+            let mut c = ctx(&d);
+            c.agent = Some(PathBuf::from("/no/existe/atenea-agent"));
+            let id = uuid(&[1; 16]);
+            let (port, server) = serve_seq(vec![(201, created(1))]);
+            let mut options = opts(code_text(port, None, 1), true);
+            options.up = true;
+            let e = join(&c, &options, &mut Cursor::new(""), false).unwrap_err();
+            server.join().unwrap();
+            // El servidor ya aceptó la solicitud: no se deshace nada y se dice qué hacer.
+            assert!(e.contains("unido") && e.contains("network up"), "{e}");
+            assert!(c.net_dir(&id).join("network.json").exists());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn up_es_una_opcion_de_join_y_por_defecto_esta_apagada() {
+            use clap::Parser;
+            #[derive(Parser)]
+            struct Args {
+                #[command(subcommand)]
+                command: crate::network::NetworkCmd,
+            }
+            for (flags, expected) in [(vec![], false), (vec!["--up"], true)] {
+                let parsed =
+                    Args::try_parse_from(["network", "join", "ATENEA1-…"].into_iter().chain(flags))
+                        .unwrap();
+                let crate::network::NetworkCmd::Join { up, .. } = parsed.command else {
+                    panic!("se esperaba join");
+                };
+                assert_eq!(up, expected);
+            }
         }
 
         #[test]

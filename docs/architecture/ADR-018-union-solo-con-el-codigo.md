@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-018: Unirse con solo el código (conectividad en el código, ancla automática y `--up`)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-03 con las tres recomendaciones de § 8. Sin código todavía: el plan de implementación de § 7 es el de la v0.1.9 y cada fase espera su orden.
+- **Estado:** **Aceptado** por el responsable el 2026-11-03 con las tres recomendaciones de § 8. Implementadas las fases 1 (formato), 2 (control plane) y 3 (CLI); el resto del plan de § 7 es el de la v0.1.9 y cada fase espera su orden.
 - **Relacionados:** ADR-013 (redes múltiples y unión por código; §12 añadió `--stun-host`/`--relay-ca`), ADR-005 (custodia de la raíz), ADR-009 (operación), ADR-016 (políticas mínimas), [código de red v1](../protocol/join-code-v1.md), [coordinator v1](../protocol/coordinator-v1.md).
 
 ## 1. Contexto
@@ -113,4 +113,4 @@ Aprobación automática, cambios en el relay o en el protocolo de datos, Windows
 
 ## 10. Estado de la decisión
 
-**Aceptado** el 2026-11-03 (§ 8). Pendiente de implementar: ninguna fase tiene código; no se publica nada sin la autorización expresa del responsable.
+**Aceptado** el 2026-11-03 (§ 8). Fases 1–3 implementadas (formato, control plane, CLI); fases 4–8 pendientes. No se publica nada sin la autorización expresa del responsable.
