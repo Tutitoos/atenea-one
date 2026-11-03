@@ -1,0 +1,30 @@
+{
+  "name": "ai-atenea-one",
+  "version": "0.1.0",
+  "description": "Read-only Atenea One plugin: MCP tools to search networks, devices and servers, plus the atenea-one skill.",
+  "author": {
+    "name": "Tutitoos"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["atenea-one", "mcp", "vpn", "inventory"],
+  "skills": "./skills/",
+  "mcpServers": {
+    "atenea-one": {
+      "command": "node",
+      "args": ["scripts/launch-codex-mcp.ts", "mcp/server.ts"],
+      "cwd": "."
+    }
+  },
+  "interface": {
+    "displayName": "Atenea One",
+    "shortDescription": "Look up Atenea One networks, devices and servers (read-only).",
+    "longDescription": "Read-only access to an Atenea One control plane through a service token: search the inventory, read resources and verify reachability with ping, TCP, SSH banner and DNS probes against inventory devices only.",
+    "developerName": "Tutitoos",
+    "category": "Development",
+    "capabilities": ["MCP", "Skills"],
+    "defaultPrompt": [
+      "Which servers are online in my Atenea One networks?",
+      "Find the device with a given name or IP and check that it answers."
+    ]
+  }
+}

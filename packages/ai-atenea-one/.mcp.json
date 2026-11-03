@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "atenea-one": {
+      "command": "node",
+      "args": ["mcp/server.ts"],
+      "cwd": "."
+    }
+  }
+}

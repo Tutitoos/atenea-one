@@ -62,7 +62,10 @@ export const data: Record<string, unknown> = {
 /** Cliente falso de solo GET; `overrides` sustituye respuestas sin tocar el conjunto base. */
 export class FakeClient {
   calls: string[] = [];
-  constructor(private overrides: Record<string, unknown> = {}) {}
+  private overrides: Record<string, unknown>;
+  constructor(overrides: Record<string, unknown> = {}) {
+    this.overrides = overrides;
+  }
   async get(path: string): Promise<unknown> {
     this.calls.push(path);
     const all = { ...data, ...this.overrides };

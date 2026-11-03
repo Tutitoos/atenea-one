@@ -1,0 +1,6 @@
+{
+  "name": "ai-atenea-one",
+  "version": "0.1.0",
+  "description": "Atenea One para IA: MCP de solo lectura (atenea_search, atenea_get, atenea_api_get, atenea_probe) y skill atenea-one para descubrir redes, dispositivos y servidores y verificar su alcance.",
+  "skills": "./skills/"
+}
