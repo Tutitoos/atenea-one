@@ -75,6 +75,42 @@ it.each(['ATENEA1-TOKEN-SINTETICO',null])('token conserva join y explica el cód
  expect(screen.queryByLabelText('Código con token')).not.toBeInTheDocument();
  expect(screen.queryByText(/secreto-sintetico/)).not.toBeInTheDocument();
 });
+const HASH='ab'.repeat(32);
+it.each([
+ ['con CA',{stun_host:'relay.example.test',relay_ca_sha256:HASH},/relay\.example\.test.*abababababababab/],
+ ['sin hash (CA pública)',{stun_host:'relay.example.test',relay_ca_sha256:null},/relay\.example\.test.*pública/],
+])('el código de red enseña el comando de unión y lo que anuncia (%s)',async(_,connectivity,text)=>{
+ vi.spyOn(api,'GET').mockResolvedValue({data:{...info,connectivity},response:new Response()});
+ const user=userEvent.setup(); const copy=vi.spyOn(navigator.clipboard,'writeText').mockResolvedValue();
+ wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ const command=`sudo atenea network join '${info.code}' --up`;
+ expect(await screen.findByText(command)).toBeVisible();
+ expect(screen.getByText(text)).toBeVisible();
+ expect(screen.queryByText(/--stun-host/)).not.toBeInTheDocument();
+ await user.click(screen.getByRole('button',{name:'Copiar comando de unión'}));
+ expect(copy).toHaveBeenCalledWith(command);
+});
+it('si el servidor no anuncia conectividad, el panel avisa de que hacen falta --stun-host/--relay-ca',async()=>{
+ vi.spyOn(api,'GET').mockResolvedValue({data:{...info,connectivity:null},response:new Response()});
+ wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ expect(await screen.findByText("sudo atenea network join 'ATENEA1-CODIGO-SINTETICO' --up")).toBeVisible();
+ expect(screen.getByText(/no anuncia conectividad/)).toBeVisible();
+ expect(screen.getByText(/--stun-host/)).toBeVisible();
+});
+it('el comando escapa un código con comillas',async()=>{
+ vi.spyOn(api,'GET').mockResolvedValue({data:{...info,code:"AB'C",connectivity:null},response:new Response()});
+ wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ expect(await screen.findByText("sudo atenea network join 'AB'\\''C' --up")).toBeVisible();
+});
+it('el código con token también enseña el comando de unión',async()=>{
+ vi.spyOn(api,'POST').mockResolvedValue({data:{token:'secreto-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:info.url,token:'secreto-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)},code:'ATENEA1-TOKEN-SINTETICO',connectivity:{stun_host:'relay.example.test',relay_ca_sha256:HASH},root_anchor_fingerprint:info.root_anchor_fingerprint},response:new Response()});
+ const user=userEvent.setup();wrap(<Enrollment net="red"/>);
+ await user.click(screen.getByRole('button',{name:'Crear token'}));
+ expect(await screen.findByText("sudo atenea network join 'ATENEA1-TOKEN-SINTETICO' --up")).toBeVisible();
+ expect(screen.getByText(/relay\.example\.test/)).toBeVisible();
+ await user.click(screen.getByRole('button',{name:/Ya lo guardé/}));
+ expect(screen.queryByText(/ATENEA1-TOKEN-SINTETICO/)).not.toBeInTheDocument();
+});
 it('marca solo solicitudes pendientes',()=>{
  const {rerender}=render(<Devices devices={[{...device,join_origin:'request'}]} accessRole="member" net="red" elapsed={0} refresh={async()=>{}}/>);
  expect(screen.getByText('Solicitud de unión')).toBeVisible();

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { api, result, type Model } from '@atenea/api-client';
 import { Button, Card, CopyButton, Field } from './ui';
 import { shellQuote, tokenSchema } from './domain';
-import { CopyCode } from './join-network';
+import { CopyCode, JoinCommand } from './join-network';
 
 export function Enrollment({ net }: { net: string }) {
   const [token, setToken] = useState<Model<'EnrollmentToken'> | null>(null);
@@ -26,6 +26,7 @@ export function Enrollment({ net }: { net: string }) {
       {token.code ? <>
         <p>Este código contiene el token y se muestra una sola vez. Guárdalo ahora y compártelo solo por un canal seguro.</p>
         <CopyCode code={token.code} label="Código con token"/>
+        <JoinCommand code={token.code} connectivity={token.connectivity}/>
       </> : <p>El nombre de la red o la URL pública no caben en el formato del código. Puedes usar el flujo anterior con el documento join.</p>}
       <p>Huella de la raíz: <code>{token.root_anchor_fingerprint}</code>
         {token.root_anchor_fingerprint && <CopyButton value={token.root_anchor_fingerprint} label="Copiar huella de la raíz"/>}</p>

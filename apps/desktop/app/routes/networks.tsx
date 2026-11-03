@@ -101,6 +101,7 @@ function Join({ onDone }: { onDone: () => void }) {
           <Row label="Id de la red">{info.network_id}</Row>
           <Row label="Huella de la raíz">{info.root_fingerprint}<CopyButton value={info.root_fingerprint} label="huella de la raíz" /></Row>
           <Row label="Tipo de código">{info.has_token ? 'Con token de un solo uso' : 'De solicitud: un administrador debe aprobar este equipo'}</Row>
+          {info.connectivity && <Row label="Conectividad">{`STUN ${info.connectivity.stun_host}; CA del relay: ${info.connectivity.relay_ca_sha256 ? `SHA-256 ${info.connectivity.relay_ca_sha256.slice(0, 16)}…` : 'pública (el código no lleva hash)'}`}</Row>}
         </Card>
         <p className="mt-3 text-sm">Compara el nombre, el servidor y la huella con los que te dio quien te pasó el código, <strong>por otro canal</strong>. Una red puede instalar rutas privadas y DNS para dominios concretos en este equipo.</p>
         <div className="mt-3 flex items-center gap-2">

@@ -4,6 +4,7 @@ import { useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
 import { Button, Card, CopyButton, Dialog, Field, RunButton } from './ui';
+import { shellQuote } from './domain';
 
 export function CopyCode({ code, label }: { code: string; label: string }) {
   const [message, setMessage] = useState('');
@@ -14,6 +15,23 @@ export function CopyCode({ code, label }: { code: string; label: string }) {
       catch { setMessage('No se pudo copiar. Selecciona y copia el código del campo.'); }
     }}>Copiar {label.toLocaleLowerCase('es')}</Button>
     <p role="status">{message}</p>
+  </div>;
+}
+
+/** ADR-018: lo que anuncia el código (el panel lo recibe del servidor; el CLI lo verifica con el hash). */
+type Connectivity = { stun_host: string; relay_ca_sha256?: string | null } | null | undefined;
+
+/** Unirse con solo el código: un comando y la aprobación. Sin conectividad en el código hacen falta las opciones. */
+export function JoinCommand({ code, connectivity }: { code: string; connectivity: Connectivity }) {
+  const command = `sudo atenea network join ${shellQuote(code)} --up`;
+  return <div>
+    <p>En el equipo que se une (CLI 0.1.9 o posterior), después de instalar el paquete:</p>
+    <pre>{command}</pre>
+    <CopyButton value={command} label="Copiar comando de unión"/>
+    {connectivity ? <p>{`El código anuncia el STUN ${connectivity.stun_host} y ${connectivity.relay_ca_sha256 ?
+      `la CA del relay con SHA-256 ${connectivity.relay_ca_sha256.slice(0, 16)}…` :
+      'un relay con CA pública (sin hash)'}: el equipo no necesita más opciones. Después, un administrador aprueba su huella.`}</p> :
+      <p className="warning">Este servidor no anuncia conectividad en el código: añade <code>--stun-host HOST</code> (y <code>--relay-ca RUTA</code> si el relay usa una CA propia) o el equipo no tendrá camino directo.</p>}
   </div>;
 }
 const labels = { cerrada: 'Cerrada (solo con token)', con_solicitud: 'Con solicitud (un administrador aprueba)' };
@@ -52,6 +70,7 @@ export function JoinNetwork({ net, canEdit, policy }: { net: string; canEdit: bo
         {query.isPending ? <p role="status">Cargando código de red…</p> : query.isError ?
           <p role="alert">{error}</p> : query.data && <>
             <CopyCode code={query.data.code} label="Código de red"/>
+            <JoinCommand code={query.data.code} connectivity={query.data.connectivity}/>
             <p>Huella de la raíz: <code>{query.data.root_anchor_fingerprint}</code>
               <CopyButton value={query.data.root_anchor_fingerprint} label="Copiar huella de la raíz"/></p>
             <p className="warning">Compara esta huella por otro canal de confianza antes de usar el código.</p>

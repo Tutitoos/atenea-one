@@ -28,6 +28,8 @@ export const codeInfo = z.object({
   network_id: z.string(),
   root_fingerprint: z.string(),
   has_token: z.boolean(),
+  /** ADR-018: lo que anuncia el código. Ausente con un CLI anterior a la 0.1.9. */
+  connectivity: z.object({ stun_host: z.string(), relay_ca_sha256: z.string().nullable() }).nullish(),
 });
 export type CodeInfo = z.infer<typeof codeInfo>;
 
