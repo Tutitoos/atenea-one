@@ -1531,6 +1531,7 @@ mod imp {
                 root_anchor: [7; 32],
                 name: "Red de ejemplo".into(),
                 token: token.map(str::to_string),
+                connectivity: None,
             }
             .encode()
             .unwrap()
@@ -2107,6 +2108,7 @@ mod imp {
                 root_anchor: [7; 32],
                 name: "otra".into(),
                 token: None,
+                connectivity: None,
             };
             let e = join(
                 &c,

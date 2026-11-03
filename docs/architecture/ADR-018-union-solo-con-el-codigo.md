@@ -29,10 +29,11 @@ Lo que **no** es un hueco y se conserva: la aprobación del dispositivo por huel
 
 ### 3.1 Código de unión (formato)
 
-- Mismo prefijo `ATENEA1` y `version = 1`. Se define el **bit 1 de `flags`** («lleva conectividad»); hoy el decodificador rechaza cualquier bit reservado (`ReservedFlags`), así que **un CLI antiguo rechaza un código nuevo con un error claro** en lugar de interpretarlo mal.
-- Si el bit está activo, tras el nombre y antes del token: `len_stun(1) stun_host | relay_ca_sha256(32)`. `stun_host`: 1..=100 ASCII visible, sin puerto (los puertos son 3478 y 3479, como exige el agente). El checksum sigue cubriendo todo el payload.
-- Presupuesto: ≤ +160 caracteres en el peor caso; el máximo de 512 se mantiene y se comprueba en `encode`.
-- El vector de prueba del contrato, la semilla del fuzz (`fuzz/seeds/join_code_parse`) y el documento `join-code-v1.md` se actualizan (se añade «extensión de conectividad»).
+- Mismo prefijo `ATENEA1` y `version = 1`. Se definen **dos bits de `flags`**: el **bit 1** («lleva el bloque de conectividad») y el **bit 2** («el bloque lleva además el hash de la CA»). Hoy el decodificador rechaza cualquier bit reservado (`ReservedFlags`), así que **un CLI antiguo rechaza un código nuevo con un error claro** en lugar de interpretarlo mal. El bit 2 sin el bit 1 es inválido.
+- Si el bit 1 está activo, tras el nombre y antes del token: `len_stun(1) stun_host [| relay_ca_sha256(32)]` (el hash solo con el bit 2: así un relay con CA pública no lo necesita). `stun_host`: 1..=100 bytes de `A–Z a–z 0–9 . -` (nombre o IPv4, sin puerto; los puertos son 3478 y 3479, como exige el agente), **la misma regla que `--stun-host` del CLI**. El checksum sigue cubriendo todo el payload.
+- Longitud: se mantiene el máximo de **512 caracteres** del texto canónico (con guiones). Con el bloque el peor caso no cabe, así que `encode` devuelve `TooLong` en lugar de emitir un código que el decodificador rechazaría, y **`decode` rechaza también lo que `encode` no emitiría** (invariante del fuzz: lo aceptado se re-emite y vuelve igual). Medido: el vector completo (URL de 28 bytes, nombre de 14, STUN de 18, token de 22 y hash de la CA) ocupa 343 caracteres; solo STUN, 227.
+- **Compatibilidad:** un código sin los bits nuevos es byte a byte idéntico al de la v0.1.8 (los vectores existentes no cambian).
+- El contrato `join-code-v1.md`, los vectores de prueba y las semillas del fuzz (`fuzz/seeds/join_code_parse`) se actualizan con la fase 1.
 
 ### 3.2 CA del relay
 

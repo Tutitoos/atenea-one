@@ -75,6 +75,7 @@ pub fn join_code(
         root_anchor: root.try_into().map_err(|_| ApiError::internal())?,
         name: name.to_owned(),
         token: token.map(str::to_owned),
+        connectivity: None,
     }
     .encode()
     .map_err(|e| match e {
