@@ -882,13 +882,16 @@ async fn renovar_el_certificado_no_admite_un_serial_menor() {
     let org = t.org(&s).await;
     let root = signing_key(generate_seed());
     let net = t.network(&s, org, &root, "10.31.0.0/24", "fd31::/64").await;
+    // El reloj se lee una sola vez: si no, `cert(n)` cambia de bytes al cruzar un segundo y las comparaciones
+    // con lo almacenado fallan de forma intermitente.
+    let base = now();
     let cert = |serial: u64| {
         atenea_identity::IssuerCert::issue(
             &root,
             *net.as_bytes(),
             serial,
-            now() - 60,
-            now() + 3600 + serial * 100,
+            base - 60,
+            base + 3600 + serial * 100,
             t.issuer.verifying_key().to_bytes(),
             None,
         )
