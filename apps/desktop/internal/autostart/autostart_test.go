@@ -8,9 +8,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// Las rutas de estas pruebas son POSIX (las del arranque de darwin y linux); Windows no admite el inicio con la sesión.
+func skipWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("rutas POSIX: Windows no admite el inicio con la sesión")
+	}
+}
 
 func want(t *testing.T, goos, home string, on bool) {
 	t.Helper()
@@ -21,6 +30,7 @@ func want(t *testing.T, goos, home string, on bool) {
 }
 
 func TestEnableDisableRoundTripsAndIsIdempotent(t *testing.T) {
+	skipWindows(t)
 	exe := "/Applications/Atenea One.app/Contents/MacOS/atenea-desktop"
 	for _, goos := range []string{"darwin", "linux"} {
 		h := t.TempDir()
@@ -64,6 +74,7 @@ func TestEnableDisableRoundTripsAndIsIdempotent(t *testing.T) {
 }
 
 func TestEnablingReplacesAStaleEntryWithTheCurrentExecutable(t *testing.T) {
+	skipWindows(t)
 	for _, goos := range []string{"darwin", "linux"} {
 		h := t.TempDir()
 		path := entryPath(goos, h, "")
@@ -82,6 +93,7 @@ func TestEnablingReplacesAStaleEntryWithTheCurrentExecutable(t *testing.T) {
 }
 
 func TestExecutablePathMustBeAbsoluteAndFreeOfSyntaxCharacters(t *testing.T) {
+	skipWindows(t)
 	for _, bad := range []string{"relativa/atenea", "", "/a\"b", "/a\\b", "/a%u", "/a$HOME", "/a`id`", "/a\nb", "/a<b", "/a&b", "/a'b", "/a\xffb"} {
 		if _, err := checkedExe(bad); err == nil {
 			t.Errorf("%q debía rechazarse", bad)
@@ -106,6 +118,7 @@ func TestExecutablePathMustBeAbsoluteAndFreeOfSyntaxCharacters(t *testing.T) {
 }
 
 func TestPathsPerOSAndXDGConfigHomeOnlyWhenAbsolute(t *testing.T) {
+	skipWindows(t)
 	h := t.TempDir()
 	if got := entryPath("darwin", h, ""); got != filepath.Join(h, "Library/LaunchAgents/one.atenea.desktop.plist") {
 		t.Errorf("darwin: %s", got)

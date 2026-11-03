@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory() as scratch:
             proc.wait()
             code = "plazo agotado"
     text = open(log, "rb").read().decode("utf-8", "replace")
-print(text if len(text) <= 6000 else text[:2000] + "\n[...]\n" + text[-4000:])
+print(text)
 print(f"salida del proceso: {code}")
 ok = "SMOKE-OK" in text
 print("PRUEBA DE HUMO:", "OK" if ok else "FALLO")
