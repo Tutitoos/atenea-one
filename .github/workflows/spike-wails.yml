@@ -51,6 +51,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev \
             build-essential pkg-config xvfb x11-xserver-utils at-spi2-core xdg-desktop-portal-gtk dbus-x11
+      - name: Permitir el sandbox de WebKit (Ubuntu 24.04 restringe los espacios de nombres de usuario)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p report
+          echo "apparmor_restrict_unprivileged_userns antes: $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>&1)" | tee report/sandbox.txt
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>&1 | tee -a report/sandbox.txt || true
       - name: Resolver Wails y su CLI
         run: |
           mkdir -p report
@@ -74,6 +80,9 @@ jobs:
           ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
           go build -tags production -trimpath -o "bin/spike$ext" . 2>&1 | tee report/build.txt
           $PY tools/lsbin.py bin | tee -a report/build.txt
+          go build -tags production -trimpath -o "bin/spike-b$ext" .
+          $PY -c "import hashlib; h=lambda p: hashlib.sha256(open(p,'rb').read()).hexdigest(); a=h('bin/spike$ext'); b=h('bin/spike-b$ext'); print('reproducible:', a==b); print(a); print(b)" | tee report/reproducible.txt
+          rm -f "bin/spike-b$ext"
       - name: Ejecutar con webview real (S1 CSP, S2 puente, S3 bandeja)
         id: gui
         continue-on-error: true
@@ -88,11 +97,15 @@ jobs:
         run: |
           PY=python3; command -v python3 >/dev/null || PY=python
           ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          snap() { case "$RUNNER_OS" in Linux) ss -ltn ;; macOS) lsof -nP -iTCP -sTCP:LISTEN ;; Windows) netstat -ano -p tcp ;; esac; }
+          snap > report/listen-before.txt 2>&1 || true
+          ( sleep 15; snap > report/listen-during.txt 2>&1 || true ) &
           if [ "$RUNNER_OS" = Linux ]; then
             $PY tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- "bin/spike$ext" | tee report/gui-exit.txt
           else
             $PY tools/run_timeout.py 120 "bin/spike$ext" | tee report/gui-exit.txt
           fi
+          wait
           ls -la report
       - name: SBOM, vendor, verificación, vulnerabilidades y licencias (S5 y S6)
         id: supply
@@ -115,7 +128,7 @@ jobs:
           PY=python3; command -v python3 >/dev/null || PY=python
           export PATH="$(go env GOPATH)/bin:$PATH"
           REPORT="$GITHUB_WORKSPACE/spikes/wails/report"
-          if [ "$RUNNER_OS" = Windows ]; then choco install nsis -y --no-progress; fi
+          if [ "$RUNNER_OS" = Windows ]; then choco install nsis -y --no-progress; export PATH="/c/Program Files (x86)/NSIS:$PATH"; fi
           mkdir -p "$RUNNER_TEMP/pack"
           cd "$RUNNER_TEMP/pack"
           wails3 init -n packspike -t vanilla 2>&1 | tee "$REPORT/package.txt"
@@ -138,5 +151,52 @@ jobs:
         if: always()
         with:
           name: spike-${{ matrix.os }}-${{ matrix.wails }}
+          path: spikes/wails/report
+          if-no-files-found: warn
+
+  gtk3:
+    name: spike (ubuntu-22.04, wails v3.0.0, GTK3)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      WAILS_VERSION: v3.0.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Dependencias de GTK3 (Debian 12 y Ubuntu 22.04 no tienen WebKitGTK 6.0)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev build-essential pkg-config \
+            xvfb x11-xserver-utils at-spi2-core xdg-desktop-portal-gtk dbus-x11
+      - name: Resolver, compilar con -tags gtk3 y ejecutar con webview real
+        id: gtk3
+        continue-on-error: true
+        env:
+          SPIKE_AUTORUN: '1'
+          SPIKE_REPORT: ${{ github.workspace }}/spikes/wails/report/gui.json
+          SPIKE_LOG: ${{ github.workspace }}/spikes/wails/report/gui.log
+          GDK_BACKEND: x11
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          mkdir -p report
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          go get "github.com/wailsapp/wails/v3@${WAILS_VERSION}"
+          go mod tidy
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
+          (cd frontend && wails3 generate runtime)
+          go build -tags "production gtk3" -trimpath -o bin/spike . 2>&1 | tee report/build.txt
+          python3 tools/run_timeout.py 120 xvfb-run -a dbus-run-session -- bin/spike | tee report/gui-exit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: spike-ubuntu-22.04-gtk3
           path: spikes/wails/report
           if-no-files-found: warn

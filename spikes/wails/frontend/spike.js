@@ -5,7 +5,7 @@
 // S2: qué globales inyecta el runtime y qué métodos Go puede invocar la página.
 import * as rt from './runtime.js';
 
-const out = { env: { userAgent: navigator.userAgent, href: location.href }, s1: {}, s2: {} };
+const out = { env: { userAgent: navigator.userAgent, href: location.href }, s1: {}, s2: {}, s2b: {} };
 const violations = [];
 document.addEventListener('securitypolicyviolation', (e) => {
   violations.push(`${e.violatedDirective} ${String(e.blockedURI).slice(0, 80)}`);
@@ -109,8 +109,31 @@ async function s2() {
   }
 }
 
+// S2b: el runtime exporta módulos propios (Browser, Clipboard, Dialogs, Window, Application…) además de los
+// métodos Go del servicio. Mide qué ofrecen y cuáles responden desde la página (sin acciones destructivas).
+async function s2b() {
+  const r = out.s2b;
+  r.modules = {};
+  for (const m of ['Application', 'Browser', 'Clipboard', 'Dialogs', 'Events', 'Screens', 'System', 'Window', 'Call']) {
+    const mod = rt[m];
+    r.modules[m] = mod && typeof mod === 'object' ? Object.keys(mod).slice(0, 80) : typeof mod;
+  }
+  const t = async (name, fn) => {
+    try { const v = await fn(); r[name] = { ok: true, value: String(JSON.stringify(v)).slice(0, 80) }; }
+    catch (e) { r[name] = { ok: false, error: String(e).slice(0, 140) }; }
+  };
+  await t('systemIsDarkMode', () => rt.System.IsDarkMode());
+  await t('systemEnvironment', () => rt.System.Environment());
+  await t('screensGetAll', () => rt.Screens.GetAll());
+  await t('clipboardSet', () => rt.Clipboard.SetText('spike-s2b'));
+  await t('clipboardGet', () => rt.Clipboard.Text());
+  await t('windowSetTitle', () => rt.Window.SetTitle('spike-s2b'));
+  await t('openUrlFile', () => rt.Browser.OpenURL('file:///etc/hosts'));
+  await t('openUrlJavascript', () => rt.Browser.OpenURL('javascript:alert(1)'));
+}
+
 async function main() {
-  for (const [name, fn] of [['s1', s1], ['s2', s2]]) {
+  for (const [name, fn] of [['s1', s1], ['s2', s2], ['s2b', s2b]]) {
     try { await fn(); } catch (e) { out[name].fatal = String(e).slice(0, 200); }
   }
   const payload = JSON.stringify(out);
