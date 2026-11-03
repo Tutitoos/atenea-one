@@ -101,8 +101,8 @@ jobs:
           # Sockets de red del propio proceso con la aplicación viva (la pausa de 30 s lo permite).
           own() {
             case "$RUNNER_OS" in
-              Linux) ss -ltunp 2>/dev/null | awk '/spike/ || NR==1' ;;
-              macOS) lsof -nP -a -c spike -i 2>/dev/null ;;
+              Linux) echo "vivo: $(pgrep -x spike | tr '\n' ' ')"; ss -ltunp 2>/dev/null | awk '/spike/ || NR==1' ;;
+              macOS) echo "vivo: $(pgrep -x spike | tr '\n' ' ')"; lsof -nP -a -c spike -i 2>/dev/null ;;
               Windows)
                 pid=$(tasklist //FI "IMAGENAME eq spike.exe" //FO CSV //NH | awk -F'","' 'NR==1 {gsub(/"/,"",$2); print $2}')
                 echo "pid=$pid"
@@ -186,11 +186,15 @@ jobs:
           if-no-files-found: warn
 
   gtk3:
-    name: spike (ubuntu-22.04, wails v3.0.0, GTK3)
+    name: spike (ubuntu-22.04, wails ${{ matrix.wails }}, GTK3)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        wails: [v3.0.0, v3.1.0]
     env:
-      WAILS_VERSION: v3.0.0
+      WAILS_VERSION: ${{ matrix.wails }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,6 +233,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: spike-ubuntu-22.04-gtk3
+          name: spike-ubuntu-22.04-gtk3-${{ matrix.wails }}
           path: spikes/wails/report
           if-no-files-found: warn

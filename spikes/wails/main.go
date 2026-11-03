@@ -63,7 +63,7 @@ func main() {
 	svc.app = app
 	svc.tray = setupTray(app)
 	app.Window.NewWithOptions(application.WebviewWindowOptions{Title: "Atenea spike", Width: 800, Height: 600, URL: "/"})
-	time.AfterFunc(2*time.Second, svc.tray.update)
+	time.AfterFunc(500*time.Millisecond, svc.tray.update)
 	time.AfterFunc(90*time.Second, func() { svc.finish("", "timeout") })
 	if err := app.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
