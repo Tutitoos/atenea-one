@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.18"
+  },
   "description": "Plugin de IA de solo lectura para Atenea One: MCP stdio (búsqueda, consulta y sondas) y skill atenea-one.",
   "scripts": {
     "test": "vitest run",
