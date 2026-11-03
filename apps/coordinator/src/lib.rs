@@ -1,6 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 //! Presencia y rendezvous sin estado duradero; las pistas nunca autentican una ruta.
+mod anchors;
 mod auth;
 pub mod config;
 mod presence;
@@ -24,7 +25,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{Semaphore, watch};
@@ -74,6 +75,7 @@ struct Memory {
 pub struct Coordinator {
     config: Config,
     anchors: Vec<PublicKey>,
+    remote_anchors: RwLock<Vec<PublicKey>>,
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     memory: Mutex<Memory>,
     polls: Semaphore,
@@ -138,6 +140,7 @@ impl Coordinator {
             polls: Semaphore::new(config.max_long_polls),
             config,
             anchors,
+            remote_anchors: Default::default(),
             clock,
             relay_signer,
             metrics: Default::default(),
@@ -148,6 +151,48 @@ impl Coordinator {
             &mut self.memory.lock().expect("memoria de presencia").presences,
             (self.clock)(),
         );
+    }
+    /// Estáticas ∪ remotas (ADR-018 § 3.4).
+    fn all_anchors(&self) -> Vec<PublicKey> {
+        let mut all = self.anchors.clone();
+        for k in self.remote_anchors.read().expect("anclas remotas").iter() {
+            if !all.contains(k) {
+                all.push(*k);
+            }
+        }
+        all
+    }
+    /// Una consulta al control plane. `Ok(n)`: anclas remotas ahora vigentes. Si falla, no cambia nada.
+    pub fn refresh_anchors(&self) -> Result<usize, &'static str> {
+        let source = self
+            .config
+            .anchors_source
+            .as_ref()
+            .ok_or("anchors_source no configurado")?;
+        let list = anchors::fetch(source)?;
+        let n = list.len();
+        *self.remote_anchors.write().expect("anclas remotas") = list;
+        Ok(n)
+    }
+    /// Sondeo periódico; sin `anchors_source` termina de inmediato. Falla estática: ante error conserva la lista.
+    pub async fn run_anchors(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
+        let Some(source) = &self.config.anchors_source else {
+            return;
+        };
+        let mut interval = tokio::time::interval(Duration::from_secs(source.interval_secs));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let me = Arc::clone(&self);
+                    match tokio::task::spawn_blocking(move || me.refresh_anchors()).await {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => tracing::warn!(error = e, "anclas remotas: se conserva la última lista"),
+                        Err(_) => tracing::warn!("anclas remotas: tarea abortada"),
+                    }
+                }
+                changed = stop.changed() => { if changed.is_err() || *stop.borrow() { break; } }
+            }
+        }
     }
     pub async fn run_sweeper(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -221,8 +266,8 @@ async fn announce(
     let file = STANDARD
         .decode(data.config)
         .map_err(|_| ApiError::invalid())?;
-    let (_, config) =
-        atenea_identity::inspect_config(&file, &s.anchors, now).map_err(|_| ApiError::invalid())?;
+    let (_, config) = atenea_identity::inspect_config(&file, &s.all_anchors(), now)
+        .map_err(|_| ApiError::invalid())?;
     if config.device_id != req.device_id {
         return Err(ApiError::auth());
     }

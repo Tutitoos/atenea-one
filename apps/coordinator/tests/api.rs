@@ -1028,3 +1028,161 @@ fn relay_config_validation_key_permissions_and_print_command() {
     std::fs::write(&key.0, "abcd").unwrap();
     assert!(config.relay_signing_key().is_err());
 }
+
+/// Servidor HTTP: una respuesta por conexión; devuelve las peticiones recibidas.
+fn serve_anchors(replies: Vec<(u16, String)>) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let h = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for (status, body) in replies {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap();
+            seen.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+            write!(
+                s,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+        seen
+    });
+    (port, h)
+}
+
+fn anchors_lab(port: u16, secret: &str) -> (Lab, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("atenea-anchors-{port}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("secret");
+    std::fs::write(&file, secret).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let config = Config {
+        anchors_source: Some(atenea_coordinator::config::AnchorsSource {
+            url: format!("http://127.0.0.1:{port}/internal/v1/root-anchors"),
+            secret_file: file,
+            interval_secs: 60,
+        }),
+        ..Config::default()
+    };
+    (Lab::new(config), dir)
+}
+
+fn root_hex(seed: u8) -> String {
+    hex::encode(signing_key([seed; 32]).verifying_key().to_bytes())
+}
+
+async fn announce_with_root(l: &Lab, root: u8) -> StatusCode {
+    // El anuncio tiene límite de tasa por dispositivo: se avanza el reloj entre llamadas.
+    l.now.fetch_add(5, Ordering::SeqCst);
+    l.request(
+        "POST",
+        "/v1/announce",
+        announcement(6, &[], root, 9, 1200, "192.0.2.1:1"),
+        6,
+    )
+    .await
+    .0
+}
+
+#[tokio::test]
+async fn anchors_source_accepts_new_network_without_restart_and_sends_secret() {
+    let secret = "s3creto-de-prueba-0123456789";
+    let (port, server) = serve_anchors(vec![(200, json!({"anchors":[root_hex(5)]}).to_string())]);
+    let (l, dir) = anchors_lab(port, secret);
+    assert_eq!(announce_with_root(&l, 5).await, StatusCode::FORBIDDEN);
+    assert_eq!(l.state.refresh_anchors(), Ok(1));
+    assert_eq!(announce_with_root(&l, 5).await, StatusCode::OK);
+    // La estática sigue valiendo y una raíz no listada sigue rechazada.
+    assert_eq!(announce_with_root(&l, 1).await, StatusCode::OK);
+    assert_eq!(announce_with_root(&l, 7).await, StatusCode::FORBIDDEN);
+    let req = server.join().unwrap().remove(0);
+    assert!(req.starts_with("GET /internal/v1/root-anchors "), "{req}");
+    assert!(
+        req.to_lowercase()
+            .contains(&format!("authorization: bearer {secret}")),
+        "{req}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn anchors_source_failures_keep_last_good_list() {
+    let (port, server) = serve_anchors(vec![
+        (200, json!({"anchors":[root_hex(5)]}).to_string()),
+        (500, String::new()),
+        (401, "{}".into()),
+        (200, "no es json".into()),
+        // Una sola ancla inválida invalida la respuesta entera, aunque la otra sea buena.
+        (200, json!({"anchors":[root_hex(8), "zz"]}).to_string()),
+        (200, json!({"anchors":[hex::encode([0u8; 32])]}).to_string()),
+        (200, json!({"anchors":[], "extra":1}).to_string()),
+    ]);
+    let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
+    assert_eq!(l.state.refresh_anchors(), Ok(1));
+    for _ in 0..6 {
+        assert!(l.state.refresh_anchors().is_err());
+        assert_eq!(announce_with_root(&l, 5).await, StatusCode::OK);
+        assert_eq!(announce_with_root(&l, 8).await, StatusCode::FORBIDDEN);
+    }
+    server.join().unwrap();
+    // Con el servidor caído tampoco se pierde nada.
+    assert!(l.state.refresh_anchors().is_err());
+    assert_eq!(announce_with_root(&l, 5).await, StatusCode::OK);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn anchors_source_drops_networks_no_longer_listed_but_never_static() {
+    let (port, server) = serve_anchors(vec![
+        (200, json!({"anchors":[root_hex(5)]}).to_string()),
+        (200, json!({"anchors":[]}).to_string()),
+    ]);
+    let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
+    l.state.refresh_anchors().unwrap();
+    l.state.refresh_anchors().unwrap();
+    server.join().unwrap();
+    assert_eq!(announce_with_root(&l, 5).await, StatusCode::FORBIDDEN);
+    assert_eq!(announce_with_root(&l, 1).await, StatusCode::OK);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn anchors_source_config_is_validated_and_off_by_default() {
+    use std::os::unix::fs::PermissionsExt;
+    assert!(Config::default().anchors_source.is_none());
+    let (l, dir) = anchors_lab(1, "s3creto-de-prueba-0123456789");
+    drop(l);
+    let file = dir.join("secret");
+    let check = |url: &str, interval: u64, file: &std::path::Path| {
+        Config {
+            anchors: vec![root_hex(1)],
+            anchors_source: Some(atenea_coordinator::config::AnchorsSource {
+                url: url.into(),
+                secret_file: file.to_path_buf(),
+                interval_secs: interval,
+            }),
+            ..Config::default()
+        }
+        .validate()
+        .map(|_| ())
+    };
+    let ok = "http://127.0.0.1:9/internal/v1/root-anchors";
+    assert!(check(ok, 60, &file).is_ok());
+    assert!(check("https://x/y", 60, &file).is_err());
+    assert!(check("ftp://x", 60, &file).is_err());
+    assert!(check(ok, 4, &file).is_err());
+    assert!(check(ok, 3601, &file).is_err());
+    assert!(check(ok, 60, &dir.join("no-existe")).is_err());
+    for mode in [0o644, 0o640, 0o700] {
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert!(check(ok, 60, &file).is_err(), "{mode:o}");
+    }
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&file, "corto").unwrap();
+    assert!(check(ok, 60, &file).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}

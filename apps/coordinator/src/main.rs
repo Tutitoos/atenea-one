@@ -39,6 +39,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     .await?;
     let (stop, rx) = watch::channel(false);
     let sweeper = tokio::spawn(Arc::clone(&state).run_sweeper(rx.clone()));
+    let anchors_task = tokio::spawn(Arc::clone(&state).run_anchors(rx.clone()));
     let udp_task = tokio::spawn(stun::serve(udp, config, rx));
     tracing::info!("coordinator preparado");
     let shutdown = async {
@@ -52,6 +53,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     .await;
     let _ = stop.send(true);
     sweeper.await?;
+    anchors_task.await?;
     udp_task.await??;
     metrics_task.abort();
     result?;

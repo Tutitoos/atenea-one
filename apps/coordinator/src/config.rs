@@ -43,6 +43,69 @@ fn valid_endpoint(endpoint: &str) -> bool {
     host_valid && port.parse::<u16>().is_ok_and(|p| p != 0)
 }
 
+/// Punto de lectura interno del control plane para las anclas (ADR-018 § 3.4).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorsSource {
+    /// `http://host:puerto/internal/v1/root-anchors`: red interna, sin TLS (no se publica).
+    pub url: String,
+    /// Fichero 0400/0600 con el secreto Bearer compartido con el control plane.
+    pub secret_file: PathBuf,
+    #[serde(default = "default_interval")]
+    pub interval_secs: u64,
+}
+
+fn default_interval() -> u64 {
+    60
+}
+
+impl AnchorsSource {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.url.starts_with("http://") || self.url.len() > 512 {
+            return Err("anchors_source.url debe ser http:// (red interna)");
+        }
+        if !(5..=3600).contains(&self.interval_secs) {
+            return Err("anchors_source.interval_secs debe estar entre 5 y 3600");
+        }
+        self.secret().map(|_| ())
+    }
+
+    /// Se lee en cada consulta: rotar el secreto no exige reiniciar.
+    pub fn secret(&self) -> Result<String, &'static str> {
+        let file = std::fs::File::open(&self.secret_file)
+            .map_err(|_| "no se puede abrir anchors_source.secret_file")?;
+        let meta = file
+            .metadata()
+            .map_err(|_| "no se puede inspeccionar anchors_source.secret_file")?;
+        if !meta.is_file() || !matches!(meta.permissions().mode() & 0o777, 0o400 | 0o600) {
+            return Err("anchors_source.secret_file requiere fichero regular 0400 o 0600");
+        }
+        let text = std::io::read_to_string(file)
+            .map_err(|_| "no se puede leer anchors_source.secret_file")?;
+        let secret = text.trim();
+        if secret.len() < 16 || !secret.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(
+                "anchors_source.secret_file: secreto de al menos 16 caracteres imprimibles",
+            );
+        }
+        Ok(secret.to_string())
+    }
+}
+
+/// Ancla hex → clave pública válida (no nula ni débil).
+pub fn parse_anchor(s: &str) -> Result<PublicKey, &'static str> {
+    let key: PublicKey = hex::decode(s)
+        .map_err(|_| "ancla hexadecimal inválida")?
+        .try_into()
+        .map_err(|_| "ancla de longitud inválida")?;
+    if key == [0; 32]
+        || atenea_identity::VerifyingKey::from_bytes(&key).map_or(true, |k| k.is_weak())
+    {
+        return Err("ancla inválida");
+    }
+    Ok(key)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub listen: String,
@@ -64,6 +127,9 @@ pub struct Config {
     pub relay_signing_key_file: Option<PathBuf>,
     pub relays: Vec<Relay>,
     pub relay_token_ttl_secs: u64,
+    /// Opt-in (ADR-018): raíces de las redes leídas del control plane, además de `anchors`.
+    #[serde(default)]
+    pub anchors_source: Option<AnchorsSource>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -87,6 +153,7 @@ impl Default for Config {
             relay_signing_key_file: None,
             relays: vec![],
             relay_token_ttl_secs: 300,
+            anchors_source: None,
         }
     }
 }
@@ -171,24 +238,13 @@ impl Config {
         self.stun_bind
             .parse::<std::net::IpAddr>()
             .map_err(|_| "stun_bind inválido")?;
+        if let Some(source) = &self.anchors_source {
+            source.validate()?;
+        }
         if self.anchors.is_empty() {
             return Err("se requiere al menos un ancla");
         }
-        self.anchors
-            .iter()
-            .map(|s| {
-                let key: PublicKey = hex::decode(s)
-                    .map_err(|_| "ancla hexadecimal inválida")?
-                    .try_into()
-                    .map_err(|_| "ancla de longitud inválida")?;
-                if key == [0; 32]
-                    || atenea_identity::VerifyingKey::from_bytes(&key).map_or(true, |k| k.is_weak())
-                {
-                    return Err("ancla inválida");
-                }
-                Ok(key)
-            })
-            .collect()
+        self.anchors.iter().map(|s| parse_anchor(s)).collect()
     }
     pub fn relay_signing_key(&self) -> Result<Option<atenea_identity::SigningKey>, &'static str> {
         let Some(path) = &self.relay_signing_key_file else {

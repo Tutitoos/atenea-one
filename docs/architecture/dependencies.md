@@ -22,6 +22,7 @@
 | `ureq` | 3.5.0 (requisito `3.1`) | MIT OR Apache-2.0 | Sincronización del agente y enrolamiento CLI | `default-features = false`, solo `rustls`; sin OpenSSL, compresión ni redirecciones |
 | `ureq-proto`, `http`, `httparse` | 0.6.5, 1.5.0, 1.10.1 | MIT OR Apache-2.0 | Transporte HTTP de ureq | Licencias leídas en los manifiestos descargados por Cargo |
 | `utf8-zero`, `base64`, `percent-encoding` | 0.8.1, 0.23.1, 2.3.2 | MIT OR Apache-2.0 | Codificación de ureq | |
+| `ureq` (coordinator) | 3.1, sin TLS | MIT OR Apache-2.0 | Consulta HTTP plana, interna, de las anclas remotas (ADR-018 § 3.4); el mismo crate ya usado por el CLI |
 | `rustls-pki-types`, `rustls-webpki` | 1.x, 0.103.x | MIT OR Apache-2.0; ISC, respectivamente | Tipos y validación TLS | `rustls` 0.23.46: Apache-2.0 OR ISC OR MIT; reutiliza `ring` ya aceptado abajo |
 | `webpki-roots` | 1.0.11 | CDLA-Permissive-2.0 | Anclas públicas TLS | Licencia permisiva de datos; no sustituye el pinning de la raíz de Atenea |
 
