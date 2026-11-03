@@ -1,6 +1,6 @@
 [package]
 name = "atenea-cli"
-version = "0.1.8"
+version = "0.1.9"
 publish = false
 edition.workspace = true
 license.workspace = true
