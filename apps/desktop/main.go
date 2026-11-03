@@ -18,11 +18,14 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/runtimefilter"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/secure"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/trayaction"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/traymenu"
 )
 
-// La interfaz se compila antes (`pnpm run build:wails`) y se embebe en el binario: no hay servidor ni puerto.
+// La interfaz se compila antes (`pnpm run build`) y se embebe en el binario: no hay servidor ni puerto.
 //
 //go:embed all:build/client
 var assets embed.FS
@@ -76,7 +79,14 @@ func main() {
 		quitting.Store(true)
 		wails.Quit()
 	}
-	startTray(wails, core, trayPNG, show, quit)
+	handler := &traymenu.Handler{
+		Apply: func(op, network string) error { _, err := backend.Apply(op, network, "", ""); return err },
+		Copy:  trayaction.Copy,
+		Show:  show,
+		Quit:  quit,
+		Log:   core.Log,
+	}
+	startTray(wails, core, handler, trayPNG)
 
 	if smoke {
 		// Prueba de humo: la interfaz embebida carga bajo la CSP y el filtro y llama a un método vinculado.

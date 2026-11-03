@@ -1,6 +1,6 @@
 # ADR-019: Aplicación de escritorio con Wails v3 (sustituye a Tauri 2)
 
-- **Estado:** **Decidido por el responsable el 2026-11-03** («cambiemos Tauri por Wails»). **Sin implementar.** Los spikes S1–S6 se ejecutaron el mismo día en la rama `spike/wails` y se cumplen (ver «Resultado de los spikes»). El código Rust de `apps/desktop` no se borra hasta que haya paridad (Plan, fase 3).
+- **Estado:** **Decidido por el responsable el 2026-11-03** («cambiemos Tauri por Wails»). **Implementado** (fases 2 y 3 del plan; ver «Límites» para lo que no se ha comprobado). Los spikes S1–S6 se ejecutaron el mismo día en la rama `spike/wails` y se cumplen (ver «Resultado de los spikes»). El código Rust de `apps/desktop` se retiró con el esqueleto.
 - **Sustituye a:** [ADR-011](ADR-011-aplicacion-de-escritorio.md) **§1 (Tauri 2), §4 (workspace de Cargo) y §5 (licencia MPL-2.0 acotada)**. Lo demás de ADR-011 (§2 lectura sin privilegios y mínima superficie, §3 sin privilegios) **sigue vigente como lista de requisitos**: ya no describe una tecnología, describe lo que la nueva aplicación debe cumplir con las mismas pruebas.
 - **Relacionados:** ADR-007 (privilegios), ADR-008 (clientes macOS/Windows), ADR-013 (redes múltiples), ADR-014 (servidores), ADR-017 (Windows por instancia), ADR-018 (unión solo con el código).
 
@@ -80,8 +80,8 @@ Ejecutados en la rama `spike/wails` (programa mínimo en `spikes/wails/` y workf
 ## Plan por fases
 
 1. **ADR-019 aceptado** y los spikes S1–S6 (sin tocar `apps/desktop`): **hechos el 2026-11-03** (ver «Resultado de los spikes»).
-2. **Esqueleto Wails** con el servicio de once métodos, el frontend conectado y la bandeja; pruebas de paridad del backend, el **filtro de objetos del runtime** (decisión 10) con su prueba y la **prueba de superficie** del servicio; CSP aplicada por el middleware del servidor de recursos.
-3. **Paridad completa** (notificaciones, inicio con la sesión, ping, abrir panel, operaciones elevadas) y **retirada de Tauri** (código Rust, `Cargo.lock`, `deny.toml`, jobs de CI).
+2. **Esqueleto Wails** con el servicio de once métodos, el frontend conectado y la bandeja; pruebas de paridad del backend, el **filtro de objetos del runtime** (decisión 10) con su prueba y la **prueba de superficie** del servicio; CSP aplicada por el middleware del servidor de recursos. **Hecha** (PR #25), con la retirada de Tauri (código Rust, `Cargo.lock`, `deny.toml`, jobs de CI).
+3. **Paridad de la bandeja y los avisos:** acciones por red (Conectar o Desconectar, Copiar mi IP), avisos del sistema y pruebas de clics. **Hecha en código y pruebas**; los límites de la sección «Límites» siguen abiertos.
 4. **Empaquetado** por sistema operativo y entrada en el manifiesto firmado.
 5. **Asistente de primera ejecución** (ADR propio de privilegios) y guías «Empezar» por sistema.
 6. **Firma y notarización** cuando existan los certificados; **Windows** cuando se desaparque.
@@ -90,4 +90,9 @@ Cada publicación sigue siendo una entrega separada con autorización expresa.
 
 ## Límites
 
-Los spikes son evidencia de CI en runners de GitHub, con un programa mínimo y la plantilla oficial de Wails; **no** hay una aplicación implementada. Sin comprobar: bandeja visible y con clics en escritorios reales, el arranque en un Ubuntu 24.04 de escritorio, diálogos de elevación reales, el estado por tubería de Windows, compilación sin red en contenedor, firma y notarización, memoria y rendimiento en uso prolongado, y los residuales de S2 (mensajes nativos crudos, navegación y eventos Go→JS con el filtro activo).
+La aplicación está implementada en `apps/desktop` (Go) con paridad funcional respecto a la de Tauri, y su CI (Linux, macOS y Windows) pasa con una prueba de humo que carga la interfaz embebida bajo la CSP y el filtro y llama a un método vinculado. El humo de Linux corre con el sandbox de WebKitGTK desactivado (no arranca en el runner de GitHub). **Sin comprobar:**
+
+- **Bandeja visible y clics reales.** Los clics se prueban hasta el manejador (`internal/traymenu`: cada identificador de entrada produce exactamente una llamada al sistema, solo `up` y `down` alcanzan una operación elevada, un segundo clic con el diálogo abierto se ignora) y se comprueba que el menú nativo refleja los elementos y su estado habilitado. Wails v3.0.0 no ofrece una API pública para disparar el clic de una entrada, y automatizar el menú de la barra del sistema exige permisos de accesibilidad que un runner no tiene; **que el sistema entregue el clic a esa entrada no se ha probado**, ni en macOS ni en Windows ni en Linux (allí sin anfitrión de bandeja).
+- **Avisos del sistema.** La decisión (`internal/notify`, mismas secuencias de prueba que el Rust) y la orden que se lanza por sistema operativo están probadas; en macOS se ejecutó una entrega real y `osascript` terminó sin error, pero **que el aviso se vea** (permisos de notificaciones del sistema incluidos) no se ha comprobado. En Windows no hay entrega.
+- El portapapeles real (`pbcopy`, `wl-copy`, `xclip`) solo se prueba con ejecución inyectada.
+- El arranque en un Ubuntu 24.04 de escritorio, los diálogos de elevación reales, el estado por tubería de Windows, la compilación sin red en contenedor, la firma y notarización, la memoria y el rendimiento en uso prolongado, y los residuales de S2 (mensajes nativos crudos, navegación y eventos Go→JS con el filtro activo).

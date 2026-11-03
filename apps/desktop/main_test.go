@@ -7,7 +7,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/surface"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/traymenu"
 )
 
 // Guardia de ADR-019 §2 y decisión 10: la superficie que la página puede invocar es exactamente esta. Añadir un
@@ -17,5 +20,24 @@ func TestServiceSurfaceIsExactlyTheElevenOperations(t *testing.T) {
 		"NetworkList", "NotificationsGet", "NotificationsSet", "OpenPanel", "Status"}
 	if got := surface.Exported(&AteneaService{}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("superficie del servicio = %v\nesperada             = %v", got, want)
+	}
+}
+
+func TestNativeMenuMirrorsTheItemsWithTheirEnabledState(t *testing.T) {
+	items := []traymenu.Item{
+		{ID: "state:x", Text: "casa: Conectado"},
+		{ID: "down:0199ab12-3456-7def-8abc-0123456789ab", Text: "Desconectar casa", Enabled: true},
+		{ID: traymenu.IDQuit, Text: "Salir", Enabled: true},
+	}
+	menu := application.NewMenu()
+	fillMenu(menu, items, func(string) {})
+	for _, item := range items {
+		entry := menu.FindByLabel(item.Text)
+		if entry == nil {
+			t.Fatalf("falta la entrada %q", item.Text)
+		}
+		if entry.Enabled() != item.Enabled {
+			t.Errorf("%q: habilitada = %v, esperada %v", item.Text, entry.Enabled(), item.Enabled)
+		}
 	}
 }
