@@ -31,21 +31,24 @@ const ALLOWED = ALLOWED_TEMPLATES.map((t) => new RegExp(`^${t.replace(/\{\w+\}/g
 
 /** Error HTTP o de red ya saneado: nunca incluye cabeceras, cuerpo ni token. */
 export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-  ) {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string) {
     super(`${status} ${code}`);
+    this.status = status;
+    this.code = code;
   }
 }
 
 export type Getter = { get(path: string): Promise<unknown> };
 
 export class Client implements Getter {
-  constructor(
-    private cfg: Config,
-    private fetchImpl: typeof fetch = fetch,
-  ) {}
+  private cfg: Config;
+  private fetchImpl: typeof fetch;
+  constructor(cfg: Config, fetchImpl: typeof fetch = fetch) {
+    this.cfg = cfg;
+    this.fetchImpl = fetchImpl;
+  }
 
   async get(path: string): Promise<unknown> {
     const [pathname, query = ""] = path.split("?", 2);
