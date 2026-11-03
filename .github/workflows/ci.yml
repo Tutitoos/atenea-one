@@ -65,7 +65,7 @@ jobs:
       - run: pnpm -r run typecheck
       - run: pnpm -r run test
       - run: pnpm -r run build
-      # Tauri embebe estos ficheros al compilar: macOS y Windows no necesitan Node ni pnpm.
+      # El binario de Go embebe estos ficheros al compilar: los jobs de escritorio no necesitan Node ni pnpm.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-ui
@@ -128,57 +128,56 @@ jobs:
       - name: Aceptación elevada en VM desechable
         timeout-minutes: 12
         run: tests/windows/run.ps1
-  # Aplicación de escritorio (Tauri, workspace propio): solo si cambia ella o crates/windows.
-  desktop-macos:
+  # Aplicación de escritorio (Go + Wails v3, módulo propio): solo si cambia ella o crates/windows.
+  desktop:
     needs: [changes, panel]
     if: needs.changes.outputs.desktop == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Preparar Rust (versión de rust-toolchain.toml)
-        run: rustup toolchain install --profile minimal && rustc --version
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: desktop-ui
-          path: apps/desktop/build/client
-      - name: Aplicación de escritorio (Tauri, workspace propio)
-        working-directory: apps/desktop
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-          cargo build --locked
-  desktop-windows:
-    needs: [changes, panel]
-    if: needs.changes.outputs.desktop == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     defaults:
       run:
-        shell: pwsh
+        shell: bash
+        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Preparar Rust (versión de rust-toolchain.toml)
-        run: |
-          rustup toolchain install --profile minimal
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          rustc --version
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: apps/desktop/go.mod
+          cache-dependency-path: apps/desktop/go.sum
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: desktop-ui
           path: apps/desktop/build/client
-      - name: Aplicación de escritorio (Tauri, workspace propio)
-        working-directory: apps/desktop
+      - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
+        if: runner.os == 'Linux'
         run: |
-          cargo clippy --locked --all-targets -- -D warnings
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev \
+            build-essential pkg-config xvfb x11-xserver-utils at-spi2-core xdg-desktop-portal-gtk dbus-x11
+      - name: Formato, vet y pruebas
+        run: |
+          test -z "$(gofmt -l .)"
+          go mod verify
+          go vet ./...
+          go test ./...
+      - name: Compilar
+        run: go build -trimpath -o atenea-desktop${{ runner.os == 'Windows' && '.exe' || '' }} .
+      - name: Prueba de humo (interfaz embebida, CSP, filtro y puente)
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            # El sandbox de WebKitGTK (bubblewrap + xdg-dbus-proxy) no arranca en el runner: «Failed to fully launch
+            # dbus-proxy». Se desactiva solo en esta prueba de humo; no afecta a lo que se distribuye.
+            WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1 \
+              python3 scripts/smoke.py 120 xvfb-run -a dbus-run-session -- ./atenea-desktop
+          else
+            python3 scripts/smoke.py 120 ./atenea-desktop*
+          fi
   # Dependencias de producción: licencias, advisories y fuentes (deny.toml) y npm.
   supply-chain:
     runs-on: ubuntu-latest
@@ -200,16 +199,6 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.audit-toolchain.outputs.version }}
         with:
           rust-version: ${{ steps.audit-toolchain.outputs.version }}
-          command: check
-          arguments: --all-features
-          command-arguments: advisories bans licenses sources
-      # La aplicación de escritorio tiene workspace y Cargo.lock propios: mismo deny.toml.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        env:
-          RUSTUP_TOOLCHAIN: ${{ steps.audit-toolchain.outputs.version }}
-        with:
-          rust-version: ${{ steps.audit-toolchain.outputs.version }}
-          manifest-path: apps/desktop/Cargo.toml
           command: check
           arguments: --all-features
           command-arguments: advisories bans licenses sources

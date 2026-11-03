@@ -1,0 +1,232 @@
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+
+// Package app reúne la lógica de las once operaciones que la aplicación expone al frontend y el sondeo de la
+// bandeja (ADR-019). No depende de Wails: el servicio vinculado de `main` solo delega aquí, de modo que todo lo
+// que decide algo se puede probar sin ventana.
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/autostart"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/health"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notifyprefs"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/panel"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/ping"
+)
+
+// App son las operaciones de la aplicación y las dependencias del entorno que las pruebas sustituyen.
+type App struct {
+	// Ask pregunta `status` al socket de un agente (respuesta ya validada).
+	Ask func(socket string) (string, error)
+	// ConfigDir es la carpeta de configuración de la aplicación (preferencias).
+	ConfigDir func() (string, error)
+	HomeDir   func() (string, error)
+	// Exe es la ruta del ejecutable propio, para el fichero de arranque con la sesión.
+	Exe    func() (string, error)
+	Getenv func(string) string
+}
+
+// New devuelve la aplicación con el entorno real. La carpeta de configuración es la misma que usaba la versión
+// de Tauri (`one.atenea.desktop` dentro de la carpeta de configuración del usuario), para conservar las preferencias.
+func New() *App {
+	return &App{
+		Ask: func(socket string) (string, error) {
+			return backend.Ask(socket, backend.MaxStatusBytes, 5*time.Second)
+		},
+		ConfigDir: func() (string, error) {
+			dir, err := os.UserConfigDir()
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(dir, "one.atenea.desktop"), nil
+		},
+		HomeDir: os.UserHomeDir,
+		Exe:     os.Executable,
+		Getenv:  os.Getenv,
+	}
+}
+
+// decode lee el JSON del agente conservando los números tal cual llegan (contadores de bytes sin pasar por
+// float64) para reenviarlo al frontend sin alterarlo.
+func decode(text string) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader([]byte(text)))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// readStatus pregunta al agente de una red unida y devuelve su estado como objeto (vacío si no lo es).
+func (a *App) readStatus(network string) (any, map[string]any, error) {
+	socket, err := backend.NetworkSocket(network)
+	if err != nil {
+		return nil, nil, err
+	}
+	text, err := a.Ask(socket)
+	if err != nil {
+		return nil, nil, err
+	}
+	value, err := decode(text)
+	if err != nil {
+		return nil, nil, err
+	}
+	obj, _ := value.(map[string]any)
+	return value, obj, nil
+}
+
+// Status es el estado de una red unida con `atenea network join` más su salud, que se calcula aquí una sola vez
+// y comparten la bandeja y la ventana: el frontend no repite el criterio. No hay instancia «predeterminada».
+func (a *App) Status(network string) (string, error) {
+	value, obj, err := a.readStatus(network)
+	if err != nil {
+		return "", err
+	}
+	assessment := health.Assess(obj)
+	reasons := assessment.Reasons
+	if reasons == nil {
+		reasons = []string{}
+	}
+	out, err := json.Marshal(map[string]any{
+		"status": value,
+		"health": map[string]any{"level": assessment.Level(), "text": assessment.Text, "reasons": reasons},
+	})
+	return string(out), err
+}
+
+// NetworkList son las redes unidas (`atenea network list --json`, sin privilegios).
+func (a *App) NetworkList() (string, error) { return backend.List() }
+
+// NetworkLegacy informa de si queda una instalación heredada pendiente de importar.
+func (a *App) NetworkLegacy() (string, error) { return backend.Legacy() }
+
+// NetworkInspect decodifica un código pegado para la confirmación previa; no toca disco ni red.
+func (a *App) NetworkInspect(code string) (string, error) { return backend.Inspect(code) }
+
+// NetworkApply ejecuta unirse, conectar, desconectar, salir o importar la instalación heredada. El sistema
+// operativo pide la autorización en cada operación.
+func (a *App) NetworkApply(op, network, code, name string) (string, error) {
+	return backend.Apply(op, network, code, name)
+}
+
+// DevicePing prueba la conexión con un par. La dirección debe ser la de un par del estado de ESA red unida: se
+// comprueba antes de lanzar nada, y la red debe estar unida antes de preguntar a su agente.
+func (a *App) DevicePing(network, address string) (string, error) {
+	if _, err := backend.JoinedNetwork(network); err != nil {
+		return "", err
+	}
+	_, obj, err := a.readStatus(network)
+	if err != nil {
+		return "", err
+	}
+	ip, err := ping.Validate(address, obj)
+	if err != nil {
+		return "", err
+	}
+	return ping.Run(ip)
+}
+
+// OpenPanel abre el panel web del servidor de una red unida en el navegador del sistema.
+func (a *App) OpenPanel(network, deviceID string) error {
+	joined, err := backend.JoinedNetwork(network)
+	if err != nil {
+		return err
+	}
+	base, ok := joined["url"].(string)
+	if !ok {
+		return errors.New("falta la URL del servidor")
+	}
+	url, err := panel.URL(base, network, deviceID)
+	if err != nil {
+		return err
+	}
+	return panel.Open(url)
+}
+
+func (a *App) notificationsPath() (string, error) {
+	dir, err := a.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "notifications.json"), nil
+}
+
+// NotificationsGet lee la preferencia de avisos del sistema (activada por defecto).
+func (a *App) NotificationsGet() (bool, error) {
+	path, err := a.notificationsPath()
+	if err != nil {
+		return false, err
+	}
+	return notifyprefs.Get(path)
+}
+
+// NotificationsSet guarda la preferencia de avisos del sistema.
+func (a *App) NotificationsSet(on bool) error {
+	path, err := a.notificationsPath()
+	if err != nil {
+		return err
+	}
+	return notifyprefs.Set(path, on)
+}
+
+// AutostartGet dice si la aplicación se abre al iniciar sesión; `nil` si el sistema no lo admite.
+func (a *App) AutostartGet() (*bool, error) {
+	home, err := a.HomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return autostart.Get(home, a.Getenv("XDG_CONFIG_HOME"))
+}
+
+// AutostartSet activa o desactiva la apertura al iniciar sesión (un fichero de arranque del propio usuario).
+func (a *App) AutostartSet(on bool) error {
+	home, err := a.HomeDir()
+	if err != nil {
+		return err
+	}
+	exe, err := a.Exe()
+	if err != nil {
+		return err
+	}
+	return autostart.Set(home, a.Getenv("XDG_CONFIG_HOME"), exe, on)
+}
+
+// TrayState es lo que recuerda el sondeo de la bandeja entre lecturas.
+type TrayState struct {
+	nets []map[string]any
+	tick int
+}
+
+// Poll lee el estado de las redes unidas y devuelve el icono, el texto y las líneas del menú de la bandeja. La
+// lista de redes se consulta con el CLI cada 5 lecturas (~10 s), no en cada una. Una red que no responde (parada a
+// propósito o sin acceso al estado) no cuenta: no tiene que poner rojo el icono de las que sí están conectadas.
+func (a *App) Poll(state *TrayState) (health.Health, string, []health.Line) {
+	if state.tick%5 == 0 {
+		state.nets = backend.JoinedNetworks()
+	}
+	state.tick++
+	var sources []health.Source
+	for _, net := range state.nets {
+		id, _ := net["network_id"].(string)
+		name, ok := net["name"].(string)
+		if !ok {
+			name = "Red"
+		}
+		_, obj, err := a.readStatus(id)
+		if err != nil || obj == nil {
+			continue
+		}
+		assessment := health.Assess(obj)
+		sources = append(sources, health.Source{Label: name, Health: assessment.Health, Text: assessment.Text})
+	}
+	return health.Summarize(len(state.nets), sources)
+}

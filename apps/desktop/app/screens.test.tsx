@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { axe } from 'vitest-axe';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './lib/bridge';
 import Device from './routes/device';
 import Devices from './routes/devices';
 import DevicesIndex from './routes/devices-index';
@@ -18,7 +18,7 @@ import Server from './routes/server';
 import type { Peer } from './lib/status';
 import { TrafficHistory } from './device-history';
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('./lib/bridge', () => ({ invoke: vi.fn() }));
 
 const peer = (key: string, addr: string, path: string, name?: string) => ({
   public_key: key, addrs: [addr], name, endpoint: '192.0.2.7:51820', session: 'activa 5s', last_handshake_secs_ago: 5,

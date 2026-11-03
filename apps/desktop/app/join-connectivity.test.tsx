@@ -7,10 +7,10 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './lib/bridge';
 import Networks from './routes/networks';
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('./lib/bridge', () => ({ invoke: vi.fn() }));
 
 const NET_ID = '0199ab12-3456-7def-8abc-0123456789ab';
 const base = { name: 'casa', server: 'control.example.test', network_id: NET_ID, root_fingerprint: '6c4b-fd0b-2585-9aae', has_token: false };
