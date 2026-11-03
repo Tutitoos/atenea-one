@@ -11,6 +11,8 @@ export function Enrollment({ net }: { net: string }) {
   const [role, setRole] = useState('Dispositivo');
   const [ttl, setTtl] = useState('3600');
   const [auto, setAuto] = useState(false);
+  const [legacy, setLegacy] = useState(false);
+  const [issuedLegacy, setIssuedLegacy] = useState(false);
   const [error, setError] = useState('');
   const [ttlError, setTtlError] = useState('');
   const [pending, setPending] = useState(false);
@@ -26,7 +28,7 @@ export function Enrollment({ net }: { net: string }) {
       {token.code ? <>
         <p>Este código contiene el token y se muestra una sola vez. Guárdalo ahora y compártelo solo por un canal seguro.</p>
         <CopyCode code={token.code} label="Código con token"/>
-        <JoinCommand code={token.code} connectivity={token.connectivity}/>
+        <JoinCommand code={token.code} connectivity={token.connectivity} legacy={issuedLegacy} url={token.join.url}/>
       </> : <p>El nombre de la red o la URL pública no caben en el formato del código. Puedes usar el flujo anterior con el documento join.</p>}
       <p>Huella de la raíz: <code>{token.root_anchor_fingerprint}</code>
         {token.root_anchor_fingerprint && <CopyButton value={token.root_anchor_fingerprint} label="Copiar huella de la raíz"/>}</p>
@@ -44,8 +46,10 @@ export function Enrollment({ net }: { net: string }) {
       setPending(true);
       try {
         setToken(await result(api.POST('/api/v1/networks/{net}/enrollment-tokens', {
-          params: { path: { net } }, body: { ...parsed.data, role: role === 'Servidor' ? 'server' : 'device' },
+          params: legacy ? { path: { net }, query: { conectividad: '0' } } : { path: { net } },
+          body: { ...parsed.data, role: role === 'Servidor' ? 'server' : 'device' },
         })));
+        setIssuedLegacy(legacy);
       } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el token.'); }
       finally { setPending(false); }
     }}>
@@ -60,6 +64,10 @@ export function Enrollment({ net }: { net: string }) {
       <Field label="Aprobar automáticamente (omite la revisión de huella)"
         help="Advertencia: quien tenga el token entrará sin aprobación manual. Actívalo solo si puedes verificar a quién se lo entregas.">{props =>
         <input {...props} type="checkbox" checked={auto} onChange={event => setAuto(event.target.checked)}/>}
+      </Field>
+      <Field label="Para un equipo con un CLI anterior a la 0.1.9 (código sin conectividad)"
+        help="Los CLI anteriores rechazan el código con conectividad. Con esto el código no lleva STUN ni CA: habrá que pasar --stun-host y, si hace falta, --relay-ca.">{props =>
+        <input {...props} type="checkbox" checked={legacy} onChange={event => setLegacy(event.target.checked)}/>}
       </Field>
       <Button type="submit" variant="primary" loading={pending}>Crear token</Button>
       {error && <p role="alert">{error}</p>}

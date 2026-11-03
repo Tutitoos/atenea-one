@@ -22,7 +22,18 @@ export function CopyCode({ code, label }: { code: string; label: string }) {
 type Connectivity = { stun_host: string; relay_ca_sha256?: string | null } | null | undefined;
 
 /** Unirse con solo el código: un comando y la aprobación. Sin conectividad en el código hacen falta las opciones. */
-export function JoinCommand({ code, connectivity }: { code: string; connectivity: Connectivity }) {
+export function JoinCommand({ code, connectivity, legacy = false, stun, url }: { code: string; connectivity: Connectivity; legacy?: boolean; stun?: string; url?: string }) {
+  if (legacy) {
+    // Un CLI 0.1.8 o anterior ni entiende el bloque del código ni tiene --up: las opciones y el arranque van aparte.
+    const old = `sudo atenea network join ${shellQuote(code)} --stun-host ${stun ?? 'HOST'}`;
+    return <div>
+      <p>En un equipo con CLI 0.1.8 o anterior (no admite el código con conectividad ni <code>--up</code>):</p>
+      <pre>{old}</pre>
+      <CopyButton value={old} label="Copiar comando de unión (CLI anterior)"/>
+      <p>Si el relay usa una CA propia, añade <code>--relay-ca RUTA</code> con la CA que publica el servidor{url ? ` en ${url}/api/v1/relay-ca` : ''}; compara su SHA-256 con el del código de red.</p>
+      <p>Después, <code>sudo atenea network up</code> con el nombre o el id de la red, y un administrador aprueba su huella.</p>
+    </div>;
+  }
   const command = `sudo atenea network join ${shellQuote(code)} --up`;
   return <div>
     <p>En el equipo que se une (CLI 0.1.9 o posterior), después de instalar el paquete:</p>
@@ -54,15 +65,23 @@ export function JoinNetwork({ net, canEdit, policy }: { net: string; canEdit: bo
     setMessage(`Política actualizada: ${labels[value.policy]}.`);
     policyInput.current?.focus();
   }
-  let error = query.error?.message;
-  if (query.error instanceof ApiError && query.error.status === 409) {
-    if (query.error.detail.error.code === 'invalid_network_name_for_code') {
-      error = 'El nombre de la red no es compatible con el código. Renombra la red en DNS y certificado con un nombre más corto.';
+  const explain = (e: Error | null) => {
+    let message = e?.message;
+    if (e instanceof ApiError && e.status === 409) {
+      if (e.detail.error.code === 'invalid_network_name_for_code') {
+        message = 'El nombre de la red no es compatible con el código. Renombra la red en DNS y certificado con un nombre más corto.';
+      }
+      if (e.detail.error.code === 'invalid_public_url_for_code') {
+        message = 'Corrige la URL pública del servidor: debe usar HTTPS, tener como máximo 100 bytes y no incluir barra final, credenciales, consulta ni fragmento.';
+      }
     }
-    if (query.error.detail.error.code === 'invalid_public_url_for_code') {
-      error = 'Corrige la URL pública del servidor: debe usar HTTPS, tener como máximo 100 bytes y no incluir barra final, credenciales, consulta ni fragmento.';
-    }
-  }
+    return message;
+  };
+  const error = explain(query.error);
+  // Código sin bloque para equipos con un CLI anterior a la 0.1.9 (que rechazan el bloque de conectividad).
+  const [legacy, setLegacy] = useState(false);
+  const legacyQuery = useQuery({ queryKey: [...key, 'sin-conectividad'], enabled: canEdit && legacy, retry: false,
+    queryFn: () => result(api.GET('/api/v1/networks/{net}/join-code', { params: { path: { net }, query: { conectividad: '0' } } })) });
   return <div className="incorporar-cards">
     <Card title="Código de la red">
       <p>Comparte este código sin token para identificar la red. El código no autentica.</p>
@@ -71,6 +90,15 @@ export function JoinNetwork({ net, canEdit, policy }: { net: string; canEdit: bo
           <p role="alert">{error}</p> : query.data && <>
             <CopyCode code={query.data.code} label="Código de red"/>
             <JoinCommand code={query.data.code} connectivity={query.data.connectivity}/>
+            {query.data.connectivity && <div>
+              <label><input type="checkbox" checked={legacy} onChange={event => setLegacy(event.target.checked)}/>
+                Código para un equipo con un CLI anterior a la 0.1.9 (sin conectividad)</label>
+              {legacy && (legacyQuery.isPending ? <p role="status">Cargando código sin conectividad…</p> : legacyQuery.isError ?
+                <p role="alert">{explain(legacyQuery.error)}</p> : legacyQuery.data && <>
+                  <CopyCode code={legacyQuery.data.code} label="Código sin conectividad"/>
+                  <JoinCommand code={legacyQuery.data.code} connectivity={null} legacy stun={query.data.connectivity.stun_host} url={query.data.url}/>
+                </>)}
+            </div>}
             <p>Huella de la raíz: <code>{query.data.root_anchor_fingerprint}</code>
               <CopyButton value={query.data.root_anchor_fingerprint} label="Copiar huella de la raíz"/></p>
             <p className="warning">Compara esta huella por otro canal de confianza antes de usar el código.</p>

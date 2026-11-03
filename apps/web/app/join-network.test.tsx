@@ -111,6 +111,55 @@ it('el código con token también enseña el comando de unión',async()=>{
  await user.click(screen.getByRole('button',{name:/Ya lo guardé/}));
  expect(screen.queryByText(/ATENEA1-TOKEN-SINTETICO/)).not.toBeInTheDocument();
 });
+const LEGACY='ATENEA1-ANTIGUO-SINTETICO';
+const conn={stun_host:'relay.example.test',relay_ca_sha256:HASH};
+it('con conectividad, ofrece el código sin bloque para un CLI anterior, con su comando sin --up',async()=>{
+ const get=vi.spyOn(api,'GET').mockImplementation((async(_:string,init?:{params?:{query?:{conectividad?:string}}})=>({data:init?.params?.query?.conectividad==='0'?{...info,code:LEGACY,connectivity:null}:{...info,connectivity:conn},response:new Response()})) as never);
+ const user=userEvent.setup(); const copy=vi.spyOn(navigator.clipboard,'writeText').mockResolvedValue();
+ wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ await screen.findByLabelText('Código de red');
+ expect(screen.queryByLabelText('Código sin conectividad')).not.toBeInTheDocument();
+ expect(get).toHaveBeenCalledTimes(1);
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ expect(await screen.findByLabelText('Código sin conectividad')).toHaveValue(LEGACY);
+ expect(get).toHaveBeenLastCalledWith('/api/v1/networks/{net}/join-code',{params:{path:{net:'red'},query:{conectividad:'0'}}});
+ // El CLI anterior no tiene --up: el comando lleva el STUN que anuncia el servidor y el siguiente paso aparte.
+ const command=`sudo atenea network join '${LEGACY}' --stun-host relay.example.test`;
+ expect(screen.getByText(command)).toBeVisible();
+ expect(screen.getByText(/--relay-ca RUTA/)).toBeVisible();
+ expect(screen.getByText(/network up/)).toBeVisible();
+ expect(screen.queryByText(new RegExp(`'${LEGACY}' --up`))).not.toBeInTheDocument();
+ await user.click(screen.getByRole('button',{name:'Copiar comando de unión (CLI anterior)'}));
+ expect(copy).toHaveBeenCalledWith(command);
+ // Desmarcar vuelve al código con conectividad y oculta el antiguo.
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ expect(screen.queryByLabelText('Código sin conectividad')).not.toBeInTheDocument();
+});
+it('sin conectividad en el código no ofrece el código para un CLI anterior (ya es compatible)',async()=>{
+ vi.spyOn(api,'GET').mockResolvedValue({data:{...info,connectivity:null},response:new Response()});
+ wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ await screen.findByLabelText('Código de red');
+ expect(screen.queryByRole('checkbox',{name:/CLI anterior/})).not.toBeInTheDocument();
+});
+it('el código sin bloque de un servidor que no lo admite muestra el error en el panel',async()=>{
+ vi.spyOn(api,'GET').mockImplementation((async(_:string,init?:{params?:{query?:{conectividad?:string}}})=>{
+  if(init?.params?.query?.conectividad==='0') throw new ApiError(409,{error:{code:'invalid_public_url_for_code',message:'x'}});
+  return {data:{...info,connectivity:conn},response:new Response()};}) as never);
+ const user=userEvent.setup(); wrap(<JoinNetwork net="red" canEdit policy="cerrada"/>);
+ await screen.findByLabelText('Código de red');
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ expect(await screen.findByText(/Corrige la URL pública del servidor/)).toBeVisible();
+});
+it('el token para un CLI anterior se pide con ?conectividad=0 y su comando no lleva --up',async()=>{
+ const post=vi.spyOn(api,'POST').mockResolvedValue({data:{token:'secreto-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:info.url,token:'secreto-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)},code:LEGACY,connectivity:null,root_anchor_fingerprint:info.root_anchor_fingerprint},response:new Response()});
+ const user=userEvent.setup();wrap(<Enrollment net="red"/>);
+ await user.click(screen.getByRole('checkbox',{name:/CLI anterior a la 0\.1\.9/}));
+ await user.click(screen.getByRole('button',{name:'Crear token'}));
+ expect(await screen.findByText(`sudo atenea network join '${LEGACY}' --stun-host HOST`)).toBeVisible();
+ expect(post).toHaveBeenCalledWith('/api/v1/networks/{net}/enrollment-tokens',{params:{path:{net:'red'},query:{conectividad:'0'}},body:{ttl_secs:3600,auto_approve:false,role:'device'}});
+ expect(screen.queryByText(/no anuncia conectividad/)).not.toBeInTheDocument();
+ expect(screen.getByText(/network up/)).toBeVisible();
+});
 it('marca solo solicitudes pendientes',()=>{
  const {rerender}=render(<Devices devices={[{...device,join_origin:'request'}]} accessRole="member" net="red" elapsed={0} refresh={async()=>{}}/>);
  expect(screen.getByText('Solicitud de unión')).toBeVisible();
@@ -157,6 +206,6 @@ it('asocia el error de duración al campo y explica la autoaprobación', async (
  expect(ttl).toHaveAttribute('aria-invalid', 'true');
  expect(ttl).toHaveAccessibleDescription(/número entero entre 60 y 86400/);
  expect(post).not.toHaveBeenCalled();
- expect(screen.getByRole('checkbox')).toHaveAccessibleDescription(/entrará sin aprobación manual/);
+ expect(screen.getByRole('checkbox', { name: /Aprobar automáticamente/ })).toHaveAccessibleDescription(/entrará sin aprobación manual/);
  expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
 });
