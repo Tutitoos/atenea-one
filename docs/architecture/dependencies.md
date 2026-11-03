@@ -229,7 +229,7 @@ Servidor MCP stdio de solo lectura (ADR-020). Versiones exactas en el manifiesto
 
 | Paquete | Versión fijada | Licencia | Motivo |
 | --- | --- | --- | --- |
-| `@modelcontextprotocol/sdk` | 1.29.0 | MIT | Servidor MCP y transporte stdio (única dependencia nueva del workspace) |
+| `@modelcontextprotocol/sdk` | 1.32.2 | MIT | Servidor MCP y transporte stdio (única dependencia nueva del workspace). Se sube desde 1.29.0: `pnpm audit --prod` la marcó con avisos corregidos desde 1.32.0 |
 | `zod` | 4.6.7 | MIT | Esquemas de entrada de las tools; ya usado por el panel |
 | `vitest`, `typescript`, `@types/node` | 5.0.5, 5.9.3, 26.6.5 | MIT, Apache-2.0, MIT | Los mismos del panel; sin dependencias de ejecución adicionales (`fetch`, `node:net`, `node:dns` y `node:child_process` son de Node ≥ 22) |
 
