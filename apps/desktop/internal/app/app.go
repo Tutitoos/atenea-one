@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,9 +18,11 @@ import (
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/autostart"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/health"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notify"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notifyprefs"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/panel"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/ping"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/trayaction"
 )
 
 // App son las operaciones de la aplicación y las dependencias del entorno que las pruebas sustituyen.
@@ -32,6 +35,14 @@ type App struct {
 	// Exe es la ruta del ejecutable propio, para el fichero de arranque con la sesión.
 	Exe    func() (string, error)
 	Getenv func(string) string
+	// Now es el reloj de los avisos.
+	Now func() time.Time
+	// Deliver muestra un aviso del sistema.
+	Deliver func(text string) error
+	// Clipboard dice si hay un programa de portapapeles (para ofrecer «Copiar mi IP»).
+	Clipboard func() bool
+	// Log recibe los errores que no tienen a quién devolverse (avisos, acciones de bandeja).
+	Log func(message string)
 }
 
 // New devuelve la aplicación con el entorno real. La carpeta de configuración es la misma que usaba la versión
@@ -48,9 +59,13 @@ func New() *App {
 			}
 			return filepath.Join(dir, "one.atenea.desktop"), nil
 		},
-		HomeDir: os.UserHomeDir,
-		Exe:     os.Executable,
-		Getenv:  os.Getenv,
+		HomeDir:   os.UserHomeDir,
+		Exe:       os.Executable,
+		Getenv:    os.Getenv,
+		Now:       time.Now,
+		Deliver:   notify.Deliver,
+		Clipboard: trayaction.Available,
+		Log:       func(message string) { fmt.Fprintln(os.Stderr, message) },
 	}
 }
 
@@ -202,31 +217,77 @@ func (a *App) AutostartSet(on bool) error {
 
 // TrayState es lo que recuerda el sondeo de la bandeja entre lecturas.
 type TrayState struct {
-	nets []map[string]any
-	tick int
+	nets   []map[string]any
+	tick   int
+	notify map[string]*notify.State
 }
 
-// Poll lee el estado de las redes unidas y devuelve el icono, el texto y las líneas del menú de la bandeja. La
-// lista de redes se consulta con el CLI cada 5 lecturas (~10 s), no en cada una. Una red que no responde (parada a
-// propósito o sin acceso al estado) no cuenta: no tiene que poner rojo el icono de las que sí están conectadas.
-func (a *App) Poll(state *TrayState) (health.Health, string, []health.Line) {
+// Tray es lo que pinta la bandeja tras una lectura.
+type Tray struct {
+	Health  health.Health
+	Text    string
+	Lines   []health.Line
+	Actions []trayaction.Entry
+}
+
+// Poll lee el estado de las redes unidas y devuelve el icono, el texto, las líneas y las acciones por red de la
+// bandeja. La lista de redes se consulta con el CLI cada 5 lecturas (~10 s), no en cada una. Una red que no
+// responde (parada a propósito o sin acceso al estado) no cuenta para la salud: no tiene que poner rojo el icono de
+// las que sí están conectadas, pero sí tiene su acción (Conectar) y su detector de avisos. Los avisos del sistema se
+// deciden siempre (para que el estado no se desfase) y solo se entregan si la preferencia está activada.
+func (a *App) Poll(state *TrayState) Tray {
 	if state.tick%5 == 0 {
 		state.nets = backend.JoinedNetworks()
 	}
 	state.tick++
+	enabled := false
+	if path, err := a.notificationsPath(); err == nil {
+		enabled, _ = notifyprefs.Get(path)
+	}
+	now := a.Now().Unix()
+	clipboard := a.Clipboard()
+	if state.notify == nil {
+		state.notify = map[string]*notify.State{}
+	}
+	live := map[string]bool{}
 	var sources []health.Source
+	var actions []trayaction.Entry
 	for _, net := range state.nets {
 		id, _ := net["network_id"].(string)
 		name, ok := net["name"].(string)
 		if !ok {
 			name = "Red"
 		}
+		live[id] = true
 		_, obj, err := a.readStatus(id)
 		if err != nil || obj == nil {
-			continue
+			obj = nil
+		} else {
+			assessment := health.Assess(obj)
+			sources = append(sources, health.Source{Label: name, Health: assessment.Health, Text: assessment.Text})
 		}
-		assessment := health.Assess(obj)
-		sources = append(sources, health.Source{Label: name, Health: assessment.Health, Text: assessment.Text})
+		actions = append(actions, trayaction.Entries(net, obj, clipboard)...)
+		if state.notify[id] == nil {
+			state.notify[id] = &notify.State{}
+		}
+		networkState, _ := net["state"].(string)
+		if networkState == "" {
+			networkState = "desconocida"
+		}
+		for _, message := range state.notify[id].Sample(networkState, obj, now) {
+			if !enabled {
+				continue
+			}
+			if err := a.Deliver(name + ": " + message); err != nil {
+				a.Log("aviso del sistema: " + err.Error())
+			}
+		}
 	}
-	return health.Summarize(len(state.nets), sources)
+	for id := range state.notify { // una red que ya no está unida no conserva su historial
+		if !live[id] {
+			delete(state.notify, id)
+		}
+	}
+	h, text, lines := health.Summarize(len(state.nets), sources)
+	return Tray{Health: h, Text: text, Lines: lines, Actions: actions}
 }
