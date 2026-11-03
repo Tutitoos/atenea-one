@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_TEMPLATES, ApiError, Client } from "../mcp/client.ts";
 import { loadConfig } from "../mcp/config.ts";
 import { apiGet, getResource, search } from "../mcp/tools.ts";
-import { D1, FakeClient, HOSTILE, NET1, dev } from "./fixtures.ts";
+import { D1, FakeClient, HOSTILE, NET1, NET2, dev } from "./fixtures.ts";
 
 const TOKEN = `atsvc_${"A".repeat(43)}`;
 
@@ -16,6 +16,19 @@ describe("atenea_search", () => {
     for (const q of ["servidor-ejemplo", "srv1", "10.77.0.2", "fd00:77::2", "SERVER"]) {
       const r = await search(new FakeClient(), { query: q });
       expect(r.map((x) => x.id), q).toContain(D1);
+    }
+  });
+
+  it("search_servidor_is_an_alias_of_role_server_even_when_the_name_has_no_such_word", async () => {
+    const c = new FakeClient({
+      [`/api/v1/networks/${NET1}/devices`]: [
+        dev("vps-1", { name: "vps-ejemplo", role: "server" }),
+        dev("pc-1", { name: "portatil-ejemplo", role: "device" }),
+      ],
+      [`/api/v1/networks/${NET2}/devices`]: [],
+    });
+    for (const q of ["servidor", "servidores", "Servers", "server"]) {
+      expect((await search(c, { query: q, kinds: ["device"] })).map((x) => x.id), q).toEqual(["vps-1"]);
     }
   });
 

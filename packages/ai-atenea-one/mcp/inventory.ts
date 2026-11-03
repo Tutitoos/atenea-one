@@ -55,7 +55,8 @@ async function build(client: Getter): Promise<InvRecord[]> {
           names.set(str(d.id), str(d.name));
           add({
             kind: "device", id: str(d.id), network: nid, name: str(d.name), declared: ["name", "hostname", "role", "report", "connection"], data: d,
-            text: [str(d.name), str(d.hostname), str(d.role), str(d.ipv4), str(d.ipv6), str(d.status), str(d.connection), nname],
+            // «servidor» es el rol `server` (valor declarado, no firmado): alias en español para la búsqueda.
+            text: [str(d.name), str(d.hostname), str(d.role), d.role === "server" ? "servidor servidores servers" : "", str(d.ipv4), str(d.ipv6), str(d.status), str(d.connection), nname],
           });
         }
         for (const r of rows(routes)) {

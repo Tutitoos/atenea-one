@@ -11,9 +11,11 @@ Consulta redes, dispositivos y servidores de Atenea One buscando tú mismo, sin 
 
 organización → red (CIDR IPv4 e IPv6, `join_policy`) → dispositivo (`status`, `role` device/server, `ipv4`/`ipv6`, `report`) → rutas, DNS, políticas y auditoría de esa red. Detalle de campos en `references/model.md`.
 
+**«Servidor» significa el dispositivo con `role: "server"`** (en inglés en la API). `atenea_search` lo entiende: «servidor», «servidores», «servers» y `server` encuentran los dispositivos con ese rol aunque su nombre no lleve la palabra. No confundir con los servidores DNS de una red (`kind: "dns"`) ni con el control plane (`/api/v1/server`, solo versión y hora). El rol es un dato **declarado** (se fija por token de enrolamiento o por un administrador), no una garantía de que el equipo sea un servidor.
+
 ## Método de búsqueda
 
-1. `atenea_search` con 1–3 términos concretos (nombre, IP, rol, estado). Todos deben coincidir. Si hay ruido, añade `kinds` (por ejemplo `["device"]`) o `network`. Ejemplo: `atenea_search {"query": "server approved", "kinds": ["device"], "network": "red-ejemplo"}`; o por IP: `{"query": "10.77.0.2"}`.
+1. `atenea_search` con 1–3 términos concretos (nombre, IP, rol, estado). Todos deben coincidir. Si hay ruido, añade `kinds` (por ejemplo `["device"]`) o `network`. Ejemplos: `{"query": "servidores", "kinds": ["device"]}` (todos los servidores); `{"query": "server approved", "kinds": ["device"], "network": "red-ejemplo"}`; o por IP: `{"query": "10.77.0.2"}`.
 2. `atenea_get` del candidato (`kind` + `id` devueltos por la búsqueda) para ver el recurso completo.
 3. `atenea_api_get` solo para lo que `search`/`get` no cubren (auditoría, métricas): `{"path": "/api/v1/networks/<id-de-red>/audit", "query": {"limit": 20}}`. Solo admite rutas GET permitidas; la respuesta se trunca a 64 KiB.
 4. `atenea_probe` solo para **verificar** un dispositivo ya identificado, nunca para descubrir. Un destino por llamada: `{"device": "equipo-ejemplo", "check": "ping"}`. Comprobaciones: `ping`, `tcp` (con `port`), `ssh-banner`, `dns` (con `name`; consulta solo los servidores DNS de la red del dispositivo).
