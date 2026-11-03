@@ -19,6 +19,7 @@
 | [015](ADR-015-bloque-b-miembros-y-renombrado.md) | Bloque B del panel: privacidad de miembros, renombrado e información del servidor | Aceptado (desplegado con la v0.1.6) |
 | [016](ADR-016-politicas-de-acceso-minimas.md) | Políticas de acceso mínimas para el piloto y para redes con terceros | Aceptado (aplicado en el piloto el 2026-11-01) |
 | [017](ADR-017-redes-por-instancia-en-windows.md) | Redes por instancia en Windows (servicio, adaptador y tubería por red; UAC desde la app) | Aceptado (sin implementar) |
+| [018](ADR-018-union-solo-con-el-codigo.md) | Unirse con solo el código: conectividad en el código, anclas automáticas en el coordinator y `join --up` | Aceptado el 2026-11-03 (plan de la v0.1.9; sin implementar) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
