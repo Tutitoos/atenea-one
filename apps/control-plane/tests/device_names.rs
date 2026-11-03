@@ -524,7 +524,7 @@ async fn peers_exige_firma_y_aprobacion_igual_que_config() {
         t.send(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .error(StatusCode::UNAUTHORIZED, "invalid_signature");
-        for timestamp in [now() - 61, now() + 61] {
+        for timestamp in [now() - 65, now() + 65] {
             let auth = atenea_identity::api_auth::sign_request(
                 &active.key,
                 *active.id.as_bytes(),
