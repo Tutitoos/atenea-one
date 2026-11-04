@@ -7,7 +7,6 @@ set -eu
 # 0711: atravesable (no listable) para que `atenea network list` y la app lean `networks/<uuid>/network.json`
 # sin root (ADR-013 fase 4). Las claves y el agent.toml conservan sus propios modos restrictivos.
 install -d -o root -g wheel -m 0711 '/Library/Application Support/Atenea'
-install -d -o root -g wheel -m 0700 /var/run/atenea
 # `bootout` es asíncrono: si el proceso anterior aún no ha salido, `bootstrap` falla con «5: Input/output error».
 reload() {
     launchctl bootout "system/$1" 2>/dev/null || :
@@ -29,6 +28,8 @@ for path in /Library /Library/Atenea /Library/Atenea/bin /Library/Atenea/bin/ate
     case "$1 $2" in '0 '?????-??-*) ;; *) exit 78 ;; esac
 done
 . /Library/Atenea/bin/atenea-network.sh
+# /var/run/atenea: solo se crea si falta; sus permisos los fijan los lanzadores (ver `ensure_run_dir`).
+ensure_run_dir /var/run/atenea
 for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
     [ -e "$plist" ] || continue
     if ! network_plist "$plist"; then
