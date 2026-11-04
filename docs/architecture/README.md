@@ -23,6 +23,7 @@
 | [019](ADR-019-aplicacion-de-escritorio-wails.md) | Aplicación de escritorio con Wails v3 (sustituye a Tauri 2) | Decidido el 2026-11-03; implementado en `main` (esqueleto, bandeja y avisos, empaquetado sin firma); asistente de primera ejecución en ADR-021 |
 | [020](ADR-020-token-de-servicio-de-solo-lectura.md) | Token de servicio de solo lectura para asistentes de IA (`ai-atenea-one`) | Aceptado e implementado el 2026-11-03 (sin desplegar) |
 | [021](ADR-021-asistente-de-primera-ejecucion.md) | Asistente de primera ejecución de la aplicación de escritorio (modelo de privilegios) | Aceptado el 2026-11-04 (implementación en curso) |
+| [022](ADR-022-instalar-el-cliente-con-la-aplicacion.md) | Que la aplicación de escritorio traiga el cliente (instalador integrado) | Aceptado el 2026-11-04, opción O2 (implementación en curso: instalador de macOS) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
