@@ -97,8 +97,7 @@ estado que dejó la 0.1.13**: sube de `0700` a `0755` únicamente si el director
 su lanzador es quien fija `0700` o `0750` a propósito) y existe al menos una red por instancia (`repair_run_dir`; pruebas:
 `tests/macos/test_run_dir.py`). No toca `0750` (`status_gid`) ni ningún otro modo. **Comprobado en un Mac real** (2026-11-04): con
 `/var/run/atenea` forzado a `0700`, las tres redes reales por instancia y sin `agent.toml`, `ensure_run_dir` lo dejó en `0700` y
-`repair_run_dir` lo subió a `0755`. **Sin comprobar:** el `.pkg` completo instalado sobre un Mac que ya esté en `0700`; la prueba
-privilegiada de CI (`tests/macos/run.sh`) ejecuta el `postinstall` completo, pero con un servicio heredado activo, y este recorre otro camino.
+`repair_run_dir` lo subió a `0755`. **Comprobado también con el `.pkg` único publicado de la v0.1.15** sobre ese mismo estado (`0700` con las tres redes reales): el instalador lo dejó en `0755` y las redes pasaron de `detenida` a `conectada` sin intervención. **Sin comprobar:** el caso con una instalación heredada activa; la prueba privilegiada de CI (`tests/macos/run.sh`) ejecuta el `postinstall` completo, pero con un servicio heredado activo, y este recorre otro camino.
 
 ## Desinstalación
 
