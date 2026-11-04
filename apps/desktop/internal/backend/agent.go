@@ -59,7 +59,8 @@ func Checked(line string) (string, error) {
 }
 
 // Run ejecuta un programa sin shell y con la entrada vacía. El usuario que cierra el diálogo de
-// administrador (macOS «User canceled», polkit 126/127) devuelve «Cancelado».
+// administrador devuelve «Cancelado»: en macOS `osascript` falla con el error (-128), cuyo texto sale traducido
+// («User canceled», «Cancelado por el usuario»…), así que se reconoce por el código y no por el texto; polkit usa 126/127.
 func Run(program string, args ...string) (string, error) {
 	cmd := exec.Command(program, args...)
 	var stdout, stderr bytes.Buffer
@@ -73,7 +74,7 @@ func Run(program string, args ...string) (string, error) {
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		code := exit.ExitCode()
-		if strings.Contains(errText, "User canceled") || code == 126 || code == 127 {
+		if strings.Contains(errText, "(-128)") || code == 126 || code == 127 {
 			return "", errors.New("Cancelado: no se ha cambiado nada")
 		}
 		if errText == "" {
