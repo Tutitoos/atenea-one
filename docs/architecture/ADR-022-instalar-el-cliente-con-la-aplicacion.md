@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-022: Que la aplicación de escritorio traiga el cliente (instalador integrado)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-04 (opción **O2**) e **implementado en `main`** (PR #35) para macOS (`.pkg` único) y Linux (`Depends: atenea (= versión)` en el `.deb` de escritorio); **sin publicar**. **Sin comprobar:** instalar el `.pkg` único en un Mac real (autorización, reinicio de servicios, ventana de primera ejecución). Complementa a [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (su decisión 2 se mantiene) y cumple la decisión 7 de [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md), que dejó el instalador integrado para «un ADR propio».
+- **Estado:** **Aceptado** por el responsable el 2026-11-04 (opción **O2**) e **implementado en `main`** (PR #35) para macOS (`.pkg` único) y Linux (`Depends: atenea (= versión)` en el `.deb` de escritorio); **publicado en la v0.1.15**, con el `.pkg` único instalado en un Mac real (redes conectadas) y los dos `.deb` instalados con `apt` en un Debian 13. **Sin comprobar:** la ventana de primera ejecución en un Mac recién instalado. Complementa a [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (su decisión 2 se mantiene) y cumple la decisión 7 de [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md), que dejó el instalador integrado para «un ADR propio».
 - **Relacionados:** ADR-019 (decisiones 7 y 9: sin *updater*), ADR-021 (asistente y privilegios), ADR-011 §2 (autoridad = sistema operativo, ruta fija del CLI), ADR-009 (releases firmados), ADR-017 (Windows).
 
 ## Contexto
