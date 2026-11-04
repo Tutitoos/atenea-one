@@ -83,7 +83,7 @@ Ejecutados en la rama `spike/wails` (programa mínimo en `spikes/wails/` y workf
 2. **Esqueleto Wails** con el servicio de once métodos, el frontend conectado y la bandeja; pruebas de paridad del backend, el **filtro de objetos del runtime** (decisión 10) con su prueba y la **prueba de superficie** del servicio; CSP aplicada por el middleware del servidor de recursos. **Hecha** (PR #25), con la retirada de Tauri (código Rust, `Cargo.lock`, `deny.toml`, jobs de CI).
 3. **Paridad de la bandeja y los avisos:** acciones por red (Conectar o Desconectar, Copiar mi IP), avisos del sistema y pruebas de clics. **Hecha en código y pruebas**; los límites de la sección «Límites» siguen abiertos.
 4. **Empaquetado** por sistema operativo y entrada en el manifiesto firmado. **Hecha en código y CI**, con las desviaciones y límites de la sección «Límites» (sin AppImage; sin arranque de WebView2 embebido).
-5. **Asistente de primera ejecución** (ADR propio de privilegios) y guías «Empezar» por sistema.
+5. **Asistente de primera ejecución:** diseño de privilegios en [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (aceptado; añade el método de solo lectura `ClientStatus`, así que el servicio pasa de once a doce métodos) y guías «Empezar» por sistema.
 6. **Firma y notarización** cuando existan los certificados; **Windows** cuando se desaparque.
 
 Cada publicación sigue siendo una entrega separada con autorización expresa.

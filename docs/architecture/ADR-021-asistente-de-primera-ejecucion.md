@@ -18,7 +18,7 @@ Hechos comprobados en el código (`main`, 2026-11-04):
 - **Windows no puede unirse** desde la app (ADR-017 sin implementar): `Elevate` devuelve «todavía no está soportado».
 - El servicio vinculado expone **exactamente 11 métodos** y una prueba por reflexión falla si crece (ADR-019, decisión 2 y 10).
 
-## Decisión propuesta
+## Decisión
 
 **El asistente es una guía sobre las operaciones que la aplicación ya tiene, no un camino nuevo hacia los privilegios.**
 
@@ -85,9 +85,9 @@ Aceptadas por el responsable el 2026-11-04, **las siete tal como se redactaron**
 
 Windows (ADR-017), instalar o actualizar el cliente desde la app, aprobación automática, un asistente en el panel web, i18n más allá del español actual, y la firma y notarización (ADR-019, fase 6).
 
-## Plan (tras aceptar)
+## Plan
 
-1. Backend: `ClientStatus`, `first-run.json`, texto del diálogo de `join`, con sus pruebas y la prueba de superficie.
+1. **Backend — hecho** (pruebas y mutaciones en `apps/desktop`): `ClientStatus`, `first-run.json` (`internal/firstrun`, reclamo exclusivo con `O_EXCL`) y texto del diálogo de `join` con el nombre de la red cuando es seguro; la prueba de superficie pasa a doce métodos. Comprobado con el binario real y un `HOME` temporal: la primera ejecución crea el fichero y la segunda no lo toca, y la prueba de humo no lo crea.
 2. Frontend: ruta del asistente (pasos 1 a 5) reutilizando `Join` y los componentes existentes; enlace desde «Sin redes».
 3. Documentación (`instalacion-escritorio.md`, guías de instalación) y límites en ADR-019.
 4. Comprobación manual de los diálogos de `osascript` y `pkexec` y de la apertura de la ventana en macOS y Linux.

@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app reúne la lógica de las once operaciones que la aplicación expone al frontend y el sondeo de la
+// Package app reúne la lógica de las doce operaciones que la aplicación expone al frontend y el sondeo de la
 // bandeja (ADR-019). No depende de Wails: el servicio vinculado de `main` solo delega aquí, de modo que todo lo
 // que decide algo se puede probar sin ventana.
 package app
@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/autostart"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/firstrun"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/health"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notify"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notifyprefs"
@@ -124,6 +125,10 @@ func (a *App) NetworkList() (string, error) { return backend.List() }
 // NetworkLegacy informa de si queda una instalación heredada pendiente de importar.
 func (a *App) NetworkLegacy() (string, error) { return backend.Legacy() }
 
+// ClientStatus es el sistema, si la aplicación puede gestionar redes en él y si el CLI está instalado (ADR-021). Solo
+// lectura: no ejecuta el CLI ni abre ningún socket, y no devuelve rutas ni versiones.
+func (a *App) ClientStatus() backend.ClientInfo { return backend.Client() }
+
 // NetworkInspect decodifica un código pegado para la confirmación previa; no toca disco ni red.
 func (a *App) NetworkInspect(code string) (string, error) { return backend.Inspect(code) }
 
@@ -165,6 +170,22 @@ func (a *App) OpenPanel(network, deviceID string) error {
 		return err
 	}
 	return panel.Open(url)
+}
+
+// ClaimFirstRun dice si esta es la primera vez que se abre la aplicación para este usuario y lo anota (ADR-021): true
+// solo una vez. Un fallo al leer la carpeta de configuración o escribir el fichero se registra y cuenta como «no es la
+// primera», para no abrir la ventana en cada arranque.
+func (a *App) ClaimFirstRun() bool {
+	dir, err := a.ConfigDir()
+	if err != nil {
+		a.Log("primera ejecución: " + err.Error())
+		return false
+	}
+	first, err := firstrun.Claim(dir)
+	if err != nil {
+		a.Log("primera ejecución: " + err.Error())
+	}
+	return first
 }
 
 func (a *App) notificationsPath() (string, error) {

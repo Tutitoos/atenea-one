@@ -3,12 +3,16 @@
 
 package main
 
-import "github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
+import (
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
+)
 
 // AteneaService es el servicio vinculado de Wails y la ÚNICA superficie que la página puede invocar (ADR-019 §2 y
 // decisión 10): todo método exportado de un servicio registrado es invocable desde JavaScript, así que este tipo
-// tiene exactamente estos once métodos y la lógica vive en `internal/app`, sin vincular. Añadir un método exportado
-// es un cambio de seguridad: rompe TestServiceSurface y exige revisión.
+// tiene exactamente estos doce métodos (el duodécimo, ClientStatus, es de solo lectura: ADR-021) y la lógica vive en
+// `internal/app`, sin vincular. Añadir un método exportado es un cambio de seguridad: rompe TestServiceSurface y
+// exige revisión.
 type AteneaService struct {
 	core *app.App
 	// onCall es la salida de la prueba de humo (ATENEA_SMOKE=1); en producción es nil.
@@ -38,6 +42,12 @@ func (s *AteneaService) NetworkList() (string, error) {
 func (s *AteneaService) NetworkLegacy() (string, error) {
 	s.seen("NetworkLegacy")
 	return s.core.NetworkLegacy()
+}
+
+// ClientStatus es el sistema, si la aplicación puede gestionar redes en él y si el CLI está instalado (solo lectura).
+func (s *AteneaService) ClientStatus() backend.ClientInfo {
+	s.seen("ClientStatus")
+	return s.core.ClientStatus()
 }
 
 // NetworkInspect decodifica un código de red sin tocar disco ni red.

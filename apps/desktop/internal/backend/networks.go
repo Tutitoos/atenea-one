@@ -33,6 +33,26 @@ func RunDir() string {
 	return "/run/atenea"
 }
 
+// ClientInfo es lo único que la interfaz sabe del cliente instalado (ADR-021): el sistema, si la aplicación puede
+// gestionar redes en él y si el CLI está. Sin rutas, versiones ni texto del sistema.
+type ClientInfo struct {
+	OS        string `json:"os"`
+	Supported bool   `json:"supported"`
+	Installed bool   `json:"installed"`
+}
+
+// Client comprueba, sin ejecutar nada ni abrir ningún socket, si el CLI está en su ruta fija.
+func Client() ClientInfo { return clientFor(runtime.GOOS, CLIPath()) }
+
+func clientFor(goos, cli string) ClientInfo {
+	info := ClientInfo{OS: goos, Supported: goos == "darwin" || goos == "linux"}
+	if info.Supported {
+		st, err := os.Stat(cli)
+		info.Installed = err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
+	}
+	return info
+}
+
 // NetworkSocket es el socket de estado de una red unida: <run>/<id8>/status.sock, el mismo que usa el CLI.
 func NetworkSocket(id string) (string, error) {
 	if runtime.GOOS == "windows" {
@@ -120,9 +140,30 @@ var Elevate = func(script, prompt string) (string, error) {
 	return Run(program, args...)
 }
 
-func prompt(op Op) string {
+// safePromptName admite el nombre de la red en el texto del diálogo solo si no puede romper su cita: el texto del diálogo
+// no puede contener `"` ni `\` (ElevationCommand los rechaza) y el nombre de un código admite más caracteres (hasta 48
+// bytes sin controles ni marcas bidi). Fuera de este alfabeto se usa el texto genérico.
+func safePromptName(name string) bool {
+	if name == "" || len(name) > 48 || name[0] == ' ' || name[len(name)-1] == ' ' {
+		return false
+	}
+	for i := range len(name) {
+		c := name[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == ' ' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// prompt es el texto del diálogo de autorización. Solo `join` nombra la red (la del código que el usuario acaba de
+// confirmar); cambia lo que lee el usuario, no la orden que se ejecuta.
+func prompt(op Op, network string) string {
 	switch op {
 	case OpJoin:
+		if safePromptName(network) {
+			return "Atenea One quiere unir este equipo a la red «" + network + "»."
+		}
 		return "Atenea One quiere unir este equipo a una red."
 	case OpUp:
 		return "Atenea One quiere conectar este equipo a una red."
@@ -141,6 +182,7 @@ func Apply(op, network, code, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var joinName string // nombre de la red que dice el código, solo para el texto del diálogo (no entra en la orden)
 	var gid uint32
 	if o == OpJoin {
 		if code == "" {
@@ -160,12 +202,13 @@ func Apply(op, network, code, name string) (string, error) {
 		}
 		network = id
 		gid = uint32(os.Getgid())
+		joinName, _ = info["name"].(string)
 	}
 	script, err := Script(CLIPath(), o, network, code, name, gid)
 	if err != nil {
 		return "", err
 	}
-	return Elevate(script, prompt(o))
+	return Elevate(script, prompt(o, joinName))
 }
 
 // JoinedNetworks son las redes unidas y su estado persistido, actualizado por el CLI. Ante cualquier fallo, vacío.

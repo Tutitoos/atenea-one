@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,28 @@ const (
 	id1 = "0199ab12-3456-7def-8abc-0123456789ab"
 	id2 = "0199ab12-3456-7def-8abc-0123456789ac"
 )
+
+func TestClaimFirstRunIsTrueOnceAndFailuresCountAsNotFirst(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "one.atenea.desktop")
+	var logs []string
+	a := &App{ConfigDir: func() (string, error) { return dir, nil }, Log: func(m string) { logs = append(logs, m) }}
+	if !a.ClaimFirstRun() {
+		t.Fatal("la primera vez debe ser true")
+	}
+	if a.ClaimFirstRun() || len(logs) != 0 {
+		t.Fatalf("la segunda no es la primera y no hay nada que avisar: %v", logs)
+	}
+	// Sin carpeta de configuración (o con un fichero donde debería haber una carpeta) no se abre la ventana, y se avisa.
+	broken := &App{ConfigDir: func() (string, error) { return "", errors.New("sin HOME") }, Log: func(m string) { logs = append(logs, m) }}
+	file := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notDir := &App{ConfigDir: func() (string, error) { return file, nil }, Log: func(m string) { logs = append(logs, m) }}
+	if broken.ClaimFirstRun() || notDir.ClaimFirstRun() || len(logs) != 2 {
+		t.Errorf("los fallos no abren la ventana y se registran: %v", logs)
+	}
+}
 
 func statusJSON(path string) string {
 	return `{"public_key":"k-` + path + `","config":{"lease_active":true,"last_error":null},"sync":{"last_error":null},` +
