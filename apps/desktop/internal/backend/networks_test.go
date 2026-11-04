@@ -203,6 +203,9 @@ func TestClientInfoSaysWhetherTheCLIIsThereWithoutRunningIt(t *testing.T) {
 		{"Windows no está soportado aunque exista", "windows", exe, ClientInfo{OS: "windows"}},
 		{"otro sistema no está soportado", "freebsd", exe, ClientInfo{OS: "freebsd"}},
 	} {
+		if runtime.GOOS == "windows" && tc.want.Supported {
+			continue // un anfitrión Windows no tiene bits de ejecución: el permiso 0o111 de Unix no se puede probar allí
+		}
 		if got := clientFor(tc.goos, tc.cli); got != tc.want {
 			t.Errorf("%s: %+v, esperaba %+v", tc.name, got, tc.want)
 		}

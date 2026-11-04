@@ -44,7 +44,10 @@ jobs:
           cargo metadata --offline --locked --format-version 1 --filter-platform "$host" > dist/cargo-metadata.json
           python3 scripts/release/build-info.py > dist/BUILD-INFO.json
           python3 -c 'import json, subprocess; p="dist/BUILD-INFO.json"; d=json.load(open(p)); d["toolchain"]=subprocess.check_output(["rustc","--version"],text=True).strip(); open(p,"w").write(json.dumps(d,sort_keys=True)+"\n")'
-          packaging/deb/build.sh target/release "$ATENEA_VERSION" "$(dpkg --print-architecture)" dist/atenea.deb
+          arch=$(dpkg --print-architecture)
+          packaging/deb/build.sh target/release "$ATENEA_VERSION" "$arch" "dist/atenea-cli-$ATENEA_VERSION-linux-$arch.deb"
+          # Alias: quien descargaba `atenea.deb` sigue recibiendo el mismo paquete (entra en manifiesto y atestación).
+          cp "dist/atenea-cli-$ATENEA_VERSION-linux-$arch.deb" dist/atenea.deb
           python3 scripts/release/sbom.py rust dist/cargo-metadata.json dist/rust.cdx.json --version "$ATENEA_VERSION" --commit "$ATENEA_BUILD_COMMIT" \
             --target "$host" --deb-depends packaging/deb/build.sh \
             --root atenea-cli --root atenea-agent --root atenea-control-plane --root atenea-coordinator --root atenea-relay
@@ -115,9 +118,13 @@ jobs:
           mkdir dist
           suffix=''
           if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
+          case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; x86_64 | AMD64) arch=amd64 ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
           for name in atenea atenea-agent; do
             test "$(target/release/$name$suffix --version | tr -d '\r')" = "$name $ATENEA_VERSION ($GITHUB_SHA)"
-            cp "target/release/$name$suffix" "dist/$name-$RUNNER_OS$suffix"
+            # Windows publica el binario tal cual, con el nombre estándar; los de macOS solo viajan dentro del .pkg.
+            dest="$name-$RUNNER_OS"
+            if [ "$RUNNER_OS" = Windows ]; then component=${name#atenea}; component=${component#-}; dest="atenea-${component:-cli}-$ATENEA_VERSION-windows-$arch"; fi
+            cp "target/release/$name$suffix" "dist/$dest$suffix"
           done
           host=$(rustc -vV | sed -n 's/^host: //p')
           cargo metadata --offline --locked --format-version 1 --filter-platform "$host" > "$RUNNER_TEMP/native-metadata.json"
@@ -130,7 +137,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           packaging/macos/build-pkg.sh
-          pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
+          pkgutil --payload-files target/macos-package/atenea-cli-*.pkg
           cp target/macos-package/*.pkg dist/
       - name: Construir ZIP sin firmar
         if: runner.os == 'Windows'
@@ -368,4 +375,5 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
           python3 scripts/release/manifest.py create dist "$key" "$GITHUB_SHA" "$version"
           bash scripts/release/verify.sh dist "$pub" "$GITHUB_SHA" "$version"
-          gh release create "v$version" dist/* --target "$GITHUB_SHA" --verify-tag --title "Atenea $version" --notes 'Manifiesto Ed25519; verifique con la clave pública del responsable por canal independiente. PKG, ZIP y paquetes de escritorio (DEB, RPM, DMG, EXE) sin firma de desarrollador ni notarización.'
+          # Se firma y verifica todo dist/, pero solo se publican los instaladores y la verificación (sha256sum -c --ignore-missing SHA256SUMS).
+          gh release create "v$version" dist/*.pkg dist/*.dmg dist/*.deb dist/*.rpm dist/*.exe dist/SHA256SUMS dist/release-manifest.json dist/release-manifest.json.sig --target "$GITHUB_SHA" --verify-tag --title "Atenea $version" --notes 'Manifiesto Ed25519; verifique con la clave pública del responsable por canal independiente. PKG y paquetes de escritorio (DEB, RPM, DMG, EXE) sin firma de desarrollador ni notarización.'

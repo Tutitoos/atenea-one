@@ -63,10 +63,10 @@ class DesktopManifest(unittest.TestCase):
         for system, target in (('Linux', 'linux/amd64'), ('macOS', 'darwin/arm64'), ('Windows', 'windows/amd64')):
             sbom.emit('go', str(listing), str(self.dist / f'go-desktop-{system}.cdx.json'), VERSION, COMMIT, target=target, gosum=str(gosum))
             (self.dist / f'desktop-{system}.build-info.json').write_text(identity)
-        (self.dist / f'atenea-desktop_{VERSION}_amd64.deb').write_bytes(deb(VERSION, COMMIT))
-        (self.dist / f'atenea-desktop-{VERSION}.x86_64.rpm').write_bytes(b'rpm')
-        (self.dist / f'atenea-desktop-{VERSION}-macOS-arm64.dmg').write_bytes(b'dmg')
-        (self.dist / f'atenea-desktop-{VERSION}-Windows-amd64.exe').write_bytes(b'exe')
+        (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.deb').write_bytes(deb(VERSION, COMMIT))
+        (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.rpm').write_bytes(b'rpm')
+        (self.dist / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'dmg')
+        (self.dist / f'atenea-desktop-{VERSION}-windows-amd64.exe').write_bytes(b'exe')
 
     def create(self):
         manifest.create(self.dist, str(self.key), VERSION, COMMIT)
@@ -74,31 +74,31 @@ class DesktopManifest(unittest.TestCase):
 
     def test_each_package_is_tied_to_the_go_sbom_of_its_operating_system(self):
         by_name = {a['name']: a.get('sboms') for a in self.create()['artifacts']}
-        self.assertEqual(by_name[f'atenea-desktop_{VERSION}_amd64.deb'], ['go-desktop-Linux.cdx.json'])
-        self.assertEqual(by_name[f'atenea-desktop-{VERSION}.x86_64.rpm'], ['go-desktop-Linux.cdx.json'])
-        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-macOS-arm64.dmg'], ['go-desktop-macOS.cdx.json'])
-        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-Windows-amd64.exe'], ['go-desktop-Windows.cdx.json'])
+        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-linux-amd64.deb'], ['go-desktop-Linux.cdx.json'])
+        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-linux-amd64.rpm'], ['go-desktop-Linux.cdx.json'])
+        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-macos-arm64.dmg'], ['go-desktop-macOS.cdx.json'])
+        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-windows-amd64.exe'], ['go-desktop-Windows.cdx.json'])
 
     def test_verification_passes_for_an_untouched_release(self):
         self.create()
         manifest.check(self.dist, json.loads((self.dist / 'release-manifest.json').read_text()), COMMIT, VERSION)
 
     def test_a_deb_built_for_another_commit_is_rejected(self):
-        (self.dist / f'atenea-desktop_{VERSION}_amd64.deb').write_bytes(deb(VERSION, 'f' * 40))
+        (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.deb').write_bytes(deb(VERSION, 'f' * 40))
         with self.assertRaisesRegex(AssertionError, 'Identidad no coincide'):
             self.create()
 
     def test_a_deb_without_a_control_member_is_rejected(self):
-        (self.dist / f'atenea-desktop_{VERSION}_amd64.deb').write_bytes(deb(VERSION, COMMIT, control_name='otro.tar.gz'))
+        (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.deb').write_bytes(deb(VERSION, COMMIT, control_name='otro.tar.gz'))
         with self.assertRaises(AssertionError):
             self.create()
 
     def test_a_modified_package_or_an_extra_file_breaks_verification(self):
         manifest_data = self.create()
-        (self.dist / f'atenea-desktop-{VERSION}-macOS-arm64.dmg').write_bytes(b'alterado')
+        (self.dist / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'alterado')
         with self.assertRaises(AssertionError):
             manifest.check(self.dist, manifest_data, COMMIT, VERSION)
-        (self.dist / f'atenea-desktop-{VERSION}-macOS-arm64.dmg').write_bytes(b'dmg')
+        (self.dist / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'dmg')
         manifest.check(self.dist, manifest_data, COMMIT, VERSION)
         (self.dist / 'intruso.exe').write_bytes(b'x')
         with self.assertRaises(AssertionError):

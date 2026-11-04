@@ -11,7 +11,7 @@ Desde ADR-013 fase 3, `sudo atenea network up <UUID>` genera un LaunchDaemon `on
 ```sh
 cargo build --release -p atenea-agent -p atenea-cli --bins
 packaging/macos/build-pkg.sh
-pkgutil --payload-files target/macos-package/atenea-client-unsigned.pkg
+pkgutil --payload-files target/macos-package/atenea-cli-*.pkg
 ```
 
 El script usa `pkgbuild --root` y `productbuild`, un directorio temporal y la salida `target/macos-package` (ignorada por git). **No instala ni ejecuta el servicio**, no usa sudo y no modifica la red. El paquete contiene CLI, agente, plist, lanzador y desinstalador, no claves ni configuraciones. Es específico de la arquitectura del binario compilado (arm64 o x86_64), no universal.
@@ -23,7 +23,7 @@ El `.pkg` no está firmado ni notarizado. La distribución fuera de pruebas requ
 Estos comandos **sí cambian el host**. No ejecutarlos para comprobar únicamente la construcción:
 
 ```sh
-sudo installer -pkg target/macos-package/atenea-client-unsigned.pkg -target /
+sudo installer -pkg target/macos-package/atenea-cli-*.pkg -target /
 ```
 
 Sin `/Library/Application Support/Atenea/agent.toml`, el postinstall no registra ni arranca el demonio. `RunAtLoad` es falso; `KeepAlive/PathState` solo mantiene el servicio cuando existe ese fichero. El lanzador vuelve a comprobarlo, crea `/var/run/atenea` (0700 root:wheel, o 0750 root:`status_gid` si la configuración define `status_gid`; ver más abajo) y limpia resolutores propios antes de ejecutar el agente. El plist ejecuta como root:wheel y conserva stdout/stderr en `/var/log/atenea-agent.log` (administrar rotación de logs con las herramientas del sistema). No sustituye una configuración firmada por valores de ejemplo.

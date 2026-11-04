@@ -24,7 +24,7 @@ try {
     $info = Join-Path $work 'BUILD-INFO.json'
     @{ commit = $commit; version = $Version } | ConvertTo-Json | Set-Content -Encoding utf8 $info
     # Sin «setup», «install» ni «update» en el nombre: Windows aplica a esos ejecutables heurísticas de compatibilidad.
-    $installer = Join-Path $out "atenea-desktop-$Version-Windows-$arch.exe"
+    $installer = Join-Path $out "atenea-desktop-$Version-windows-$arch.exe"
     # Chocolatey instala NSIS en Program Files (x86) y no actualiza el PATH de la sesión en curso.
     $found = Get-Command makensis -ErrorAction SilentlyContinue
     $makensis = if ($found) { $found.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }

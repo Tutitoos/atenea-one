@@ -53,7 +53,7 @@ python3 "$repo/scripts/release/build-info.py" > "$app/Contents/Resources/BUILD-I
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
 ln -s /Applications "$work/dmg/Applications"
-dmg="$out/atenea-desktop-$version-macOS-$arch.dmg"
+dmg="$out/atenea-desktop-$version-macos-$arch.dmg"
 rm -f "$dmg"
 hdiutil create -quiet -volname "Atenea One" -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$dmg"
 printf '%s\n' "$dmg"

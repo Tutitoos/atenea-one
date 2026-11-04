@@ -15,7 +15,7 @@ out=$4
 commit=${ATENEA_BUILD_COMMIT:-unknown}
 [ -x "$binary" ] || { echo "Falta el ejecutable $binary" >&2; exit 1; }
 [[ "$commit" =~ ^([0-9a-f]{40}|unknown)$ ]] || { echo 'Commit inválido' >&2; exit 2; }
-case "$arch" in amd64) rpm_arch=x86_64 ;; arm64) rpm_arch=aarch64 ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
+case "$arch" in amd64 | arm64) ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
 [[ "$version" =~ ^[0-9][a-zA-Z0-9.+~\-]*$ ]] || { echo 'Versión inválida' >&2; exit 2; }
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 want=$(awk '/wailsapp\/wails\/v3 v/ {print $NF; exit}' "$root/apps/desktop/go.mod")
@@ -32,6 +32,6 @@ export ATENEA_ARCH=$arch ATENEA_VERSION=$version ATENEA_BUILD_COMMIT=$commit
 for format in deb rpm; do
     (cd "$stage" && wails3 tool package -format "$format" -config "$root/packaging/desktop/linux/nfpm.yaml" -name atenea-desktop -out "$stage")
 done
-mv "$stage/atenea-desktop.deb" "$out/atenea-desktop_${version}_${arch}.deb"
-mv "$stage/atenea-desktop.rpm" "$out/atenea-desktop-${version}.${rpm_arch}.rpm"
-printf '%s\n' "$out/atenea-desktop_${version}_${arch}.deb" "$out/atenea-desktop-${version}.${rpm_arch}.rpm"
+mv "$stage/atenea-desktop.deb" "$out/atenea-desktop-${version}-linux-${arch}.deb"
+mv "$stage/atenea-desktop.rpm" "$out/atenea-desktop-${version}-linux-${arch}.rpm"
+printf '%s\n' "$out/atenea-desktop-${version}-linux-${arch}.deb" "$out/atenea-desktop-${version}-linux-${arch}.rpm"
