@@ -45,8 +45,8 @@ it('la unión recién hecha se busca por el id de la red, no por el nombre', () 
 });
 
 it('las órdenes de instalación son texto fijo por sistema y no hay para los no soportados', () => {
-  expect(installCommand('darwin')).toBe('sudo installer -pkg atenea-cli-*-macos-*.pkg -target /');
-  expect(installCommand('linux')).toBe('sudo apt install ./atenea-cli-*-linux-*.deb');
+  expect(installCommand('darwin')).toBe('sudo installer -pkg atenea-one-*-macos-*.pkg -target /');
+  expect(installCommand('linux')).toBe('sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb');
   expect(installCommand('windows')).toBeUndefined();
   expect(installCommand('freebsd')).toBeUndefined();
   expect(installCommand('')).toBeUndefined();

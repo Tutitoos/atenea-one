@@ -39,8 +39,8 @@ export function phaseOf(i: WizardInput): Phase {
 
 /** Orden de instalación del cliente por sistema, para copiar (nunca se ejecuta desde la aplicación). Sin enlaces ni descargas. */
 export function installCommand(os: string): string | undefined {
-  if (os === 'darwin') return 'sudo installer -pkg atenea-cli-*-macos-*.pkg -target /';
-  if (os === 'linux') return 'sudo apt install ./atenea-cli-*-linux-*.deb';
+  if (os === 'darwin') return 'sudo installer -pkg atenea-one-*-macos-*.pkg -target /';
+  if (os === 'linux') return 'sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb';
   return undefined;
 }
 

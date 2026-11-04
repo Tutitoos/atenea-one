@@ -80,8 +80,8 @@ it('un sistema no soportado no ofrece unirse ni consulta redes', async () => {
 });
 
 it.each([
-  ['linux', 'sudo apt install ./atenea-cli-*-linux-*.deb'],
-  ['darwin', 'sudo installer -pkg atenea-cli-*-macos-*.pkg -target /'],
+  ['linux', 'sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb'],
+  ['darwin', 'sudo installer -pkg atenea-one-*-macos-*.pkg -target /'],
 ])('sin cliente (%s) enseña la orden para copiar y no ofrece unirse', async (os, command) => {
   serve({ client: { os, supported: true, installed: false } });
   show();

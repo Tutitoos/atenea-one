@@ -2,15 +2,16 @@
 
 La aplicación de escritorio ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)) se empaqueta con
 `packaging/desktop/build.sh`, el mismo script en CI y en el release. **Los paquetes no llevan firma de desarrollador ni
-están notarizados.** Los `.deb`, `.rpm`, `.dmg` y `.exe` **no instalan el agente ni el CLI** (siguen en su `.deb`, `.pkg` y ZIP de
+están notarizados.** El `.dmg`, el `.rpm` y el `.exe` **no instalan el agente ni el CLI** (siguen en su `.deb`, `.pkg` y ZIP de
 [Linux](instalacion-linux.md), [macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)); en macOS el `.pkg` único
-`atenea-one-*` trae los dos (ADR-022). Sin cliente, la aplicación lo dice y no ofrece unirse.
+`atenea-one-*` trae los dos y el `.deb` de escritorio **exige** el `.deb` del cliente de su misma versión (ADR-022). Sin
+cliente, la aplicación lo dice y no ofrece unirse.
 
 ## Paquetes
 
 | Sistema | Paquete | Cómo se instala | Qué hace |
 | --- | --- | --- | --- |
-| Linux (Debian 13, Ubuntu 24.04 o posterior) | `atenea-desktop-<versión>-linux-<arq>.deb` | `sudo apt install ./atenea-desktop-*-linux-*.deb` | `/usr/bin/atenea-desktop`, entrada de menú e icono. Depende de `libgtk-4-1` y `libwebkitgtk-6.0-4`. |
+| Linux (Debian 13, Ubuntu 24.04 o posterior) | `atenea-desktop-<versión>-linux-<arq>.deb` | `sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb` | `/usr/bin/atenea-desktop`, entrada de menú e icono. Depende de `libgtk-4-1`, `libwebkitgtk-6.0-4` y de `atenea (= <misma versión>)` (el cliente, ADR-022): `apt` se niega a instalarlo sin el cliente o con otra versión. |
 | Linux (Fedora y derivadas) | `atenea-desktop-<versión>-linux-<arq>.rpm` | `sudo dnf install ./atenea-desktop-*-linux-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
 | macOS 11 o posterior | `atenea-one-<versión>-macos-<arq>.pkg` (**recomendado**: cliente y aplicación) | `sudo installer -pkg atenea-one-*-macos-*.pkg -target /` o doble clic | Instala el cliente (`/Library/Atenea/bin`) **y** `Atenea One.app` en `/Applications` como propiedad de root (ADR-022), con una sola autorización. Vive en la barra de menús (sin icono en el Dock). |
 | macOS (solo la aplicación) | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**; el cliente se instala aparte. |
@@ -25,7 +26,7 @@ La primera vez que se abre la aplicación (el fichero `first-run.json` de su car
 muestra la ventana con el asistente de **Primeros pasos** ([ADR-021](../architecture/ADR-021-asistente-de-primera-ejecucion.md)):
 
 1. **Sistema y cliente.** Si falta el cliente (`atenea`), el asistente enseña la orden de instalación para copiar
-   (`sudo apt install ./atenea-cli-*-linux-*.deb` o `sudo installer -pkg atenea-cli-*-macos-*.pkg -target /`) y «Comprobar de
+   (`sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb` o `sudo installer -pkg atenea-one-*-macos-*.pkg -target /`) y «Comprobar de
    nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows dice que todavía no está soportado.
 2. **Instalación heredada**, si la hay: ofrece importarla antes de unirse a otra red.
 3. **Unirse:** pegar el código, revisar a qué red te unes (nombre, servidor, huella de la raíz, conectividad) y confirmar; el
