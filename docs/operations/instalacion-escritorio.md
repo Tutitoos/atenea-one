@@ -74,3 +74,15 @@ construye y se inspecciona su cabecera). **Sin AppImage:** `wails3 generate appi
 móvil de GitHub sin comprobar ningún hash y el sandbox de Ubuntu 24.04 la afecta igual; queda pendiente de decidir cómo
 fijar esa cadena. Sin firma de desarrollador, sin
 notarización y sin actualizador (ADR-019, decisión 9).
+
+**Límite conocido: el diálogo de autorización de macOS no enseña el texto de la aplicación.** La aplicación pasa a
+`osascript` un texto propio («Atenea One quiere desconectar este equipo de una red.», «…unir este equipo a la red «nombre».»,
+etc.), pero en macOS 27 (comprobado el 2026-11-04, con el sistema en español) el diálogo solo dice «¿Permitir el acceso de
+administración de un script iniciado por Atenea One?», el aviso genérico de Apple y el campo de contraseña: **no aparece qué
+operación se autoriza ni sobre qué red**. La orden que se ejecuta es la correcta (el registro de un CLI simulado mostró
+`network join <código> --yes --status-gid <gid>` y `network up <id>` como root), pero quien autoriza no puede distinguir
+«unir» de «salir de la red y borrar sus claves» solo por el diálogo. La decisión 8 de
+[ADR-021](../architecture/ADR-021-asistente-de-primera-ejecucion.md) (nombrar la red) **no surte efecto en este sistema**. La
+aplicación sí enseña la operación y la red **antes** de abrir el diálogo (confirmación de «Unirme a esta red», «Importar» y
+«Salir de la red…»), así que conviene pulsar esos botones solo cuando se está viendo esa pantalla. Sin comprobar en otras
+versiones de macOS ni con `pkexec` en Linux.
