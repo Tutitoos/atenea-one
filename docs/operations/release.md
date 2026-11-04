@@ -77,8 +77,9 @@ detecta antes de un tag lo que haría fallar a `publish`. Ese ensayo no firma na
 `suite-macos` reempaqueta, sin recompilar, el `.pkg` del cliente y la aplicación ya probados (`packaging/macos/build-suite-pkg.sh`) en
 `atenea-one-<v>-macos-<arq>.pkg`, lo comprueba (`check-suite-pkg.sh`: `postinstall` idéntico al del repositorio, versiones,
 firma ad hoc de la aplicación, todo propiedad de root) y lo ateste. `manifest.py` lo ata al SBOM Rust **y** al Go de macOS.
-`tests/macos/test_suite_pkg.py` cubre el constructor. **Sin firma de desarrollador ni notarización.** **Sin comprobar hasta
-publicarlo:** instalar este `.pkg` en un Mac (autorización, reinicio de servicios, aplicación que abre la ventana de primera ejecución).
+`tests/macos/test_suite_pkg.py` cubre el constructor. **Sin firma de desarrollador ni notarización.** **Ensayado** el 2026-11-04 con
+`workflow_dispatch` sobre `main` (sin publicar): `suite-macos` y `assemble` (manifiesto de ensayo) pasaron y el `.pkg` descargado
+pasa `check-suite-pkg.sh` fuera de CI. **Sin comprobar:** instalar este `.pkg` en un Mac (autorización, reinicio de servicios, aplicación que abre la ventana de primera ejecución).
 
 El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
 y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de
