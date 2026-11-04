@@ -3,7 +3,9 @@
 La aplicación de escritorio ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)) se empaqueta con
 `packaging/desktop/build.sh`, el mismo script en CI y en el release. **Los paquetes no llevan firma de desarrollador ni
 están notarizados**, y no instalan el agente ni el CLI (siguen en su `.deb`, `.pkg` y ZIP de [Linux](instalacion-linux.md),
-[macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)): sin ellos la aplicación solo muestra «Sin redes».
+[macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)): sin ellos la aplicación lo dice y no ofrece unirse.
+
+## Paquetes
 
 | Sistema | Paquete | Cómo se instala | Qué hace |
 | --- | --- | --- | --- |
@@ -14,6 +16,23 @@ están notarizados**, y no instalan el agente ni el CLI (siguen en su `.deb`, `.
 
 La verificación de un release (firma Ed25519, SHA-256, SBOM) es la de [release.md](release.md): los paquetes entran en el
 mismo manifiesto, cada uno con el inventario Go de su sistema (`go-desktop-<Linux|macOS|Windows>.cdx.json`).
+
+## Primera ejecución
+
+La primera vez que se abre la aplicación (el fichero `first-run.json` de su carpeta de configuración marca que ya ocurrió) se
+muestra la ventana con el asistente de **Primeros pasos** ([ADR-021](../architecture/ADR-021-asistente-de-primera-ejecucion.md)):
+
+1. **Sistema y cliente.** Si falta el cliente (`atenea`), el asistente enseña la orden de instalación para copiar
+   (`sudo apt install ./atenea-cli-*-linux-*.deb` o `sudo installer -pkg atenea-cli-*-macos-*.pkg -target /`) y «Comprobar de
+   nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows dice que todavía no está soportado.
+2. **Instalación heredada**, si la hay: ofrece importarla antes de unirse a otra red.
+3. **Unirse:** pegar el código, revisar a qué red te unes (nombre, servidor, huella de la raíz, conectividad) y confirmar; el
+   sistema pide la autorización. Es la misma pantalla de «Redes».
+4. **Aprobación:** con un código de solicitud, enseña la huella del dispositivo para que el administrador la compare por otro
+   canal y se actualiza sola hasta que lo aprueba.
+5. **Listo:** opción de abrir la aplicación al iniciar sesión (apagada por defecto) y dónde queda el icono.
+
+Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el paso se deduce del estado del sistema.
 
 ## Avisos al primer arranque
 

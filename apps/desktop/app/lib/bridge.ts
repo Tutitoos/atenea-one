@@ -4,6 +4,7 @@ import { Call } from '@wailsio/runtime';
 
 /** Orden de la interfaz → método del servicio Go (`AteneaService`) y orden de sus argumentos. Es la única superficie que la página invoca. */
 const methods = {
+  client_status: ['ClientStatus', []],
   status: ['Status', ['network']],
   network_list: ['NetworkList', []],
   network_legacy: ['NetworkLegacy', []],

@@ -57,9 +57,12 @@ export function CopyButton({ value, label, icon = 'copy', text }: { value: strin
 
 export const Empty = ({ children }: { children: ReactNode }) => <p className="p-4 text-mut">{children}</p>;
 
+export const button = 'cursor-default rounded-md border border-line bg-card px-3 py-1 text-sm disabled:opacity-50';
+export const primary = 'cursor-default rounded-md bg-sel px-3 py-1 text-sm text-white disabled:opacity-50';
+
 /** Estado vacío de las pantallas que dependen de una red: sin redes unidas no hay nada que enseñar. */
 export const NoNetworks = () => (
   <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
-    <p className="text-mut">Sin redes. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link>.</p>
+    <p className="text-mut">Sin redes. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link> o sigue el <Link to="/welcome" className="text-sel underline">asistente</Link>.</p>
   </main>
 );
