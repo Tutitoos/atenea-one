@@ -89,11 +89,14 @@ Instalar un `.pkg` nuevo reinicia los servicios de las redes que estaban activas
 conecta las detenidas. **Problema conocido de la 0.1.13:** su `postinstall` fijaba `/var/run/atenea` a `0700` aunque ya existiera,
 y con eso un usuario sin privilegios dejaba de poder leer los sockets de estado: `atenea network list` y la aplicación
 enseñaban todas las redes como «detenida» aunque los agentes y los túneles siguieran en marcha. Si ocurre, se arregla con
-`sudo chmod 0755 /var/run/atenea` (o reiniciando el Mac). Desde la versión que lleva el arreglo, el instalador solo crea ese
-directorio si falta y nunca cambia los permisos de uno existente (`ensure_run_dir` en `atenea-network.sh`; prueba:
-`tests/macos/test_run_dir.py`). **Sin comprobar:** el `.pkg` corregido instalado sobre un Mac con redes en marcha; la prueba
-privilegiada de CI (`tests/macos/run.sh`) ejecuta el `postinstall` completo, pero con un servicio heredado activo, y este
-recorre otro camino que el de un Mac con solo redes por instancia.
+`sudo chmod 0755 /var/run/atenea` (o reiniciando el Mac). **Desde la versión que lleva el arreglo** el instalador solo crea ese
+directorio si falta y nunca baja los permisos de uno existente (`ensure_run_dir` en `atenea-network.sh`), y **repara el
+estado que dejó la 0.1.13**: sube de `0700` a `0755` únicamente si el directorio es de root, no hay instalación heredada (`agent.toml`;
+su lanzador es quien fija `0700` o `0750` a propósito) y existe al menos una red por instancia (`repair_run_dir`; pruebas:
+`tests/macos/test_run_dir.py`). No toca `0750` (`status_gid`) ni ningún otro modo. **Comprobado en un Mac real** (2026-11-04): con
+`/var/run/atenea` forzado a `0700`, las tres redes reales por instancia y sin `agent.toml`, `ensure_run_dir` lo dejó en `0700` y
+`repair_run_dir` lo subió a `0755`. **Sin comprobar:** el `.pkg` completo instalado sobre un Mac que ya esté en `0700`; la prueba
+privilegiada de CI (`tests/macos/run.sh`) ejecuta el `postinstall` completo, pero con un servicio heredado activo, y este recorre otro camino.
 
 ## Desinstalación
 
