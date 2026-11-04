@@ -8,9 +8,10 @@ overrides:
   '@hono/node-server': 2.1.6
   # minimatch < 11.0.1 tiene DoS por amplificación de globparts (GHSA-g3hv-75wg-m249). Solo entra por herramientas de
   # desarrollo (`pnpm audit --prod` está limpio). Se sube donde el dependiente usa la API con nombre `{ minimatch }`.
-  # NO se sube eslint-plugin-jsx-a11y (queda en minimatch 3.x, que sigue marcada): llama a la 3.x como función por
-  # defecto y un override global lo rompe en el lint (`TypeError: ... is not a function`). Quitar esta salvedad cuando
-  # jsx-a11y publique una versión que pida minimatch >= 11.0.1 o se sustituya el plugin.
+  # NO se sube eslint-plugin-jsx-a11y (queda en minimatch 3.x; el 2026-11-04 `pnpm audit` llegó a marcarla y después
+  # dejó de hacerlo, sin cambio nuestro): llama a la 3.x como función por defecto y un override global lo rompe en el
+  # lint (`TypeError: ... is not a function`). Revisar cuando jsx-a11y publique una versión que pida minimatch >= 11.0.1
+  # o se sustituya el plugin.
   '@eslint/config-array>minimatch': '>=11.0.1'
   'eslint>minimatch': '>=11.0.1'
   '@typescript-eslint/typescript-estree>minimatch': '>=11.0.1'
