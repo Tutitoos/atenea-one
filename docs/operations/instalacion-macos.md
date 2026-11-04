@@ -16,6 +16,8 @@ pkgutil --payload-files target/macos-package/atenea-cli-*.pkg
 
 El script usa `pkgbuild --root` y `productbuild`, un directorio temporal y la salida `target/macos-package` (ignorada por git). **No instala ni ejecuta el servicio**, no usa sudo y no modifica la red. El paquete contiene CLI, agente, plist, lanzador y desinstalador, no claves ni configuraciones. Es específico de la arquitectura del binario compilado (arm64 o x86_64), no universal.
 
+**Instalador único con la aplicación (ADR-022).** El release publica además `atenea-one-<v>-macos-<arq>.pkg`, que contiene este mismo paquete del cliente (con su `postinstall`) y `Atenea One.app` en `/Applications` como propiedad de root. Se construye con `packaging/macos/build-suite-pkg.sh CLIENTE.pkg APP|DMG VERSION SALIDA` y se comprueba con `check-suite-pkg.sh`; se instala igual que el del cliente (`sudo installer -pkg atenea-one-*-macos-*.pkg -target /`). Sin firma ni notarización, y **sin comprobar su instalación en un Mac real**.
+
 El `.pkg` no está firmado ni notarizado. La distribución fuera de pruebas requiere Apple Developer ID Application para firmar ejecutables y Developer ID Installer para el paquete, hardened runtime según el proceso de firma elegido, envío con `xcrun notarytool submit --wait`, `xcrun stapler staple` y validación con Gatekeeper. La cuenta, certificados, perfiles y política de distribución son **decisión pendiente del responsable**; no se simulan ni se incluyen credenciales en CI. No se debe eludir Gatekeeper como estrategia de distribución.
 
 ## Instalación y configuración (administrador, máquina de pruebas)
