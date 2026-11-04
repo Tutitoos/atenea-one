@@ -2,8 +2,9 @@
 
 La aplicación de escritorio ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)) se empaqueta con
 `packaging/desktop/build.sh`, el mismo script en CI y en el release. **Los paquetes no llevan firma de desarrollador ni
-están notarizados**, y no instalan el agente ni el CLI (siguen en su `.deb`, `.pkg` y ZIP de [Linux](instalacion-linux.md),
-[macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)): sin ellos la aplicación lo dice y no ofrece unirse.
+están notarizados.** Los `.deb`, `.rpm`, `.dmg` y `.exe` **no instalan el agente ni el CLI** (siguen en su `.deb`, `.pkg` y ZIP de
+[Linux](instalacion-linux.md), [macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)); en macOS el `.pkg` único
+`atenea-one-*` trae los dos (ADR-022). Sin cliente, la aplicación lo dice y no ofrece unirse.
 
 ## Paquetes
 
@@ -11,7 +12,8 @@ están notarizados**, y no instalan el agente ni el CLI (siguen en su `.deb`, `.
 | --- | --- | --- | --- |
 | Linux (Debian 13, Ubuntu 24.04 o posterior) | `atenea-desktop-<versión>-linux-<arq>.deb` | `sudo apt install ./atenea-desktop-*-linux-*.deb` | `/usr/bin/atenea-desktop`, entrada de menú e icono. Depende de `libgtk-4-1` y `libwebkitgtk-6.0-4`. |
 | Linux (Fedora y derivadas) | `atenea-desktop-<versión>-linux-<arq>.rpm` | `sudo dnf install ./atenea-desktop-*-linux-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
-| macOS 11 o posterior | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**. Vive en la barra de menús (sin icono en el Dock). |
+| macOS 11 o posterior | `atenea-one-<versión>-macos-<arq>.pkg` (**recomendado**: cliente y aplicación) | `sudo installer -pkg atenea-one-*-macos-*.pkg -target /` o doble clic | Instala el cliente (`/Library/Atenea/bin`) **y** `Atenea One.app` en `/Applications` como propiedad de root (ADR-022), con una sola autorización. Vive en la barra de menús (sin icono en el Dock). |
+| macOS (solo la aplicación) | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**; el cliente se instala aparte. |
 | Windows | `atenea-desktop-<versión>-windows-<arq>.exe` | Ejecutar; `/S` para instalación silenciosa | Instalación **por usuario** (`%LOCALAPPDATA%\Programs\Atenea One`), sin UAC; acceso directo en el menú Inicio y desinstalador. |
 
 La verificación de un release (firma Ed25519, SHA-256, SBOM) es la de [release.md](release.md): los paquetes entran en el

@@ -116,6 +116,9 @@ def create(dist, key, version, commit):
             # Aplicación de escritorio (Go): un inventario por sistema operativo, sin el de Rust.
             system = 'Linux' if name.endswith(('.deb', '.rpm')) else 'macOS' if name.endswith('.dmg') else 'Windows'
             entry['sboms'] = [f'go-desktop-{system}.cdx.json']
+        elif name.startswith('atenea-one-') and name.endswith('.pkg'):
+            # Instalador único de macOS (ADR-022): lleva el cliente (Rust) y la aplicación (Go).
+            entry['sboms'] = ['rust-macOS.cdx.json', 'go-desktop-macOS.cdx.json']
         elif name.endswith(('.pkg', '-macOS')):
             entry['sboms'] = ['rust-macOS.cdx.json']
         elif name.endswith(('.zip', '.exe')):

@@ -255,8 +255,45 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Instalador único de macOS (ADR-022): reempaqueta, sin recompilar, el `.pkg` del cliente y la aplicación ya probados
+  # por los jobs `native` y `desktop`. Sin firma de desarrollador ni notarización.
+  suite-macos:
+    needs: [native, desktop]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: parts
+          pattern: "{macOS,desktop-macOS}"
+          merge-multiple: true
+      - name: Construir y comprobar el instalador único
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("apps/cli/Cargo.toml","rb"))["package"]["version"])')
+          if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/}" ]; then test "${GITHUB_REF#refs/tags/v}" = "$version"; fi
+          mkdir -p dist
+          packaging/macos/build-suite-pkg.sh parts/atenea-cli-"$version"-macos-*.pkg parts/atenea-desktop-"$version"-macos-*.dmg "$version" dist
+          packaging/macos/check-suite-pkg.sh dist/atenea-one-"$version"-macos-*.pkg "$version"
+      - name: Atestar procedencia del instalador
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: suite-macOS
+          path: dist/*
+          if-no-files-found: error
+
   assemble:
-    needs: [linux, native, desktop]
+    needs: [linux, native, desktop, suite-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -265,7 +302,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
-          pattern: "{linux,macOS,Windows,desktop-Linux,desktop-macOS,desktop-Windows}"
+          pattern: "{linux,macOS,Windows,desktop-Linux,desktop-macOS,desktop-Windows,suite-macOS}"
           merge-multiple: true
       - name: Comprobar que dist/ solo contiene ficheros
         run: |

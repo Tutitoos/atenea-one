@@ -73,6 +73,13 @@ intermedia `desktop-ui`, que una primera ejecución del workflow mezcló en `dis
 manifiesto** con una clave efímera sobre una copia de `dist/` (crear y verificar), de modo que un `workflow_dispatch`
 detecta antes de un tag lo que haría fallar a `publish`. Ese ensayo no firma nada real.
 
+**Instalador único de macOS** ([ADR-022](../architecture/ADR-022-instalar-el-cliente-con-la-aplicacion.md)): el job
+`suite-macos` reempaqueta, sin recompilar, el `.pkg` del cliente y la aplicación ya probados (`packaging/macos/build-suite-pkg.sh`) en
+`atenea-one-<v>-macos-<arq>.pkg`, lo comprueba (`check-suite-pkg.sh`: `postinstall` idéntico al del repositorio, versiones,
+firma ad hoc de la aplicación, todo propiedad de root) y lo ateste. `manifest.py` lo ata al SBOM Rust **y** al Go de macOS.
+`tests/macos/test_suite_pkg.py` cubre el constructor. **Sin firma de desarrollador ni notarización.** **Sin comprobar hasta
+publicarlo:** instalar este `.pkg` en un Mac (autorización, reinicio de servicios, aplicación que abre la ventana de primera ejecución).
+
 El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
 y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de
 BuildKit; no ejecuta prune ni toca recursos de otros ensayos. Las claves efímeras
