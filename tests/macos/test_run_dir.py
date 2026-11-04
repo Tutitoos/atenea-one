@@ -75,5 +75,71 @@ class RunDir(unittest.TestCase):
         self.assertEqual(mode(target), 0o700)
 
 
+class RepairRunDir(unittest.TestCase):
+    """`repair_run_dir`: sube de 0700 a 0755 solo en el caso de la 0.1.13 (redes por instancia, sin instalación heredada)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.dir = root / "atenea"
+        self.legacy = root / "agent.toml"
+        self.plists = root / "LaunchDaemons"
+        self.plists.mkdir()
+
+    def network(self):
+        (self.plists / "one.atenea.network.0a1b2c3d.plist").write_text("x")
+
+    def repair(self, owner=None):
+        owner = os.getuid() if owner is None else owner
+        subprocess.run(["/bin/sh", "-c", f'. "{HELPER}" && repair_run_dir "{self.dir}" "{self.legacy}" "{self.plists}" "{owner}"'], check=True)
+
+    def make(self, wanted):
+        self.dir.mkdir()
+        self.dir.chmod(wanted)
+
+    def test_the_0_1_13_state_is_repaired(self):
+        self.make(0o700)
+        self.network()
+        self.repair()
+        self.assertEqual(mode(self.dir), 0o755)
+
+    def test_nothing_else_is_touched(self):
+        # 0750 es `status_gid`; 0711 y 0755 ya valen; 0770 no lo deja ningún lanzador. Sin red por instancia o con instalación heredada no se repara.
+        for wanted in (0o750, 0o711, 0o755, 0o770):
+            with self.subTest(modo=oct(wanted)):
+                self.make(wanted)
+                self.network()
+                self.repair()
+                self.assertEqual(mode(self.dir), wanted)
+                self.dir.rmdir()
+        self.make(0o700)
+        for stale in ("sin_red", "con_heredada"):
+            with self.subTest(caso=stale):
+                for plist in self.plists.iterdir():
+                    plist.unlink()
+                if stale == "con_heredada":
+                    self.network()
+                    self.legacy.write_text("x")
+                self.repair()
+                self.assertEqual(mode(self.dir), 0o700)
+
+    def test_a_directory_of_another_owner_or_a_symlink_is_not_repaired(self):
+        self.make(0o700)
+        self.network()
+        self.repair(owner=os.getuid() + 1)
+        self.assertEqual(mode(self.dir), 0o700)
+        link = Path(self.tmp.name) / "enlace"
+        link.symlink_to(self.dir)
+        self.dir = link
+        self.repair()
+        self.assertEqual(mode(self.dir.resolve()), 0o700)
+
+    def test_a_missing_directory_is_left_missing(self):
+        self.network()
+        self.repair()
+        self.assertFalse(self.dir.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

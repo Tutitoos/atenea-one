@@ -57,3 +57,22 @@ network_plist() {
 ensure_run_dir() {
     [ -d "$1" ] || install -d -o "${2:-root}" -g "${3:-wheel}" -m 0755 "$1"
 }
+# Repara el defecto de la 0.1.13: su `postinstall` dejó /var/run/atenea en 0700 aunque solo hubiera redes por instancia, y los
+# usuarios sin privilegios perdieron el acceso a todos los sockets de estado. Solo sube de 0700 a 0755 y solo si es
+# un directorio real de root, NO hay instalación heredada (su lanzador es quien fija 0700/0750 con `agent.toml`) y existe al
+# menos una red por instancia (cuyo padre debe ser atravesable). Nunca baja permisos ni toca 0750 (`status_gid`).
+# Argumentos solo para poder probarlo sin root: directorio, agent.toml heredado, directorio de plists y uid del propietario.
+repair_run_dir() {
+    dir=$1
+    legacy=${2:-'/Library/Application Support/Atenea/agent.toml'}
+    plists=${3:-/Library/LaunchDaemons}
+    owner=${4:-0}
+    [ -d "$dir" ] && [ ! -L "$dir" ] || return 0
+    [ "$(/usr/bin/stat -f '%u %Lp' "$dir")" = "$owner 700" ] || return 0
+    [ ! -e "$legacy" ] && [ ! -L "$legacy" ] || return 0
+    for plist in "$plists"/one.atenea.network.*.plist; do
+        [ -e "$plist" ] || continue
+        chmod 0755 "$dir"
+        return 0
+    done
+}

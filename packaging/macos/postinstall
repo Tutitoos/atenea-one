@@ -30,6 +30,8 @@ done
 . /Library/Atenea/bin/atenea-network.sh
 # /var/run/atenea: solo se crea si falta; sus permisos los fijan los lanzadores (ver `ensure_run_dir`).
 ensure_run_dir /var/run/atenea
+# Repara una 0.1.13 previa (dejó este directorio en 0700 con redes en marcha): ver `repair_run_dir`.
+repair_run_dir /var/run/atenea
 for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
     [ -e "$plist" ] || continue
     if ! network_plist "$plist"; then
