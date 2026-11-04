@@ -53,6 +53,9 @@ func main() {
 	})
 
 	smoke := os.Getenv("ATENEA_SMOKE") == "1"
+	// Primera ejecución del usuario (ADR-021): se abre la ventana una vez; en macOS, sin Dock, sería lo único que
+	// delata que la aplicación arrancó. El humo no toca la carpeta de configuración real.
+	first := !smoke && core.ClaimFirstRun()
 	window := wails.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "Atenea One",
@@ -61,7 +64,7 @@ func main() {
 		MinWidth:  760,
 		MinHeight: 460,
 		URL:       "/",
-		Hidden:    !smoke && !slices.Contains(os.Args[1:], "--open"),
+		Hidden:    !smoke && !first && !slices.Contains(os.Args[1:], "--open"),
 	})
 	// Cerrar la ventana la oculta; la aplicación sigue en la bandeja hasta «Salir».
 	var quitting atomic.Bool

@@ -4,9 +4,9 @@
 # Empaqueta la aplicación de escritorio para el sistema operativo donde se ejecuta y escribe en SALIDA los paquetes,
 # su inventario Go (SBOM CycloneDX) y su identidad (`desktop-<SO>.build-info.json`). Es el mismo script para CI y release.
 #
-#   Linux:   atenea-desktop_<versión>_<arq>.deb y atenea-desktop-<versión>.<arq>.rpm   (necesita `wails3` en el PATH)
-#   macOS:   atenea-desktop-<versión>-macOS-<arq>.dmg con «Atenea One.app» (firma ad hoc)
-#   Windows: atenea-desktop-<versión>-Windows-<arq>.exe (NSIS, por usuario; necesita `makensis` y `pwsh`)
+#   Linux:   atenea-desktop-<versión>-linux-<arq>.deb y .rpm   (necesita `wails3` en el PATH)
+#   macOS:   atenea-desktop-<versión>-macos-<arq>.dmg con «Atenea One.app» (firma ad hoc)
+#   Windows: atenea-desktop-<versión>-windows-<arq>.exe (NSIS, por usuario; necesita `makensis` y `pwsh`)
 #
 # Entorno: ATENEA_VERSION y ATENEA_BUILD_COMMIT (obligatorios). ATENEA_DESKTOP_BINARY usa un binario ya compilado
 # (y probado) en vez de compilar. La interfaz (`apps/desktop/build/client`) debe estar compilada antes.

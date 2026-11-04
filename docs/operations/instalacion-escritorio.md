@@ -7,10 +7,10 @@ están notarizados**, y no instalan el agente ni el CLI (siguen en su `.deb`, `.
 
 | Sistema | Paquete | Cómo se instala | Qué hace |
 | --- | --- | --- | --- |
-| Linux (Debian 13, Ubuntu 24.04 o posterior) | `atenea-desktop_<versión>_<arq>.deb` | `sudo apt install ./atenea-desktop_*.deb` | `/usr/bin/atenea-desktop`, entrada de menú e icono. Depende de `libgtk-4-1` y `libwebkitgtk-6.0-4`. |
-| Linux (Fedora y derivadas) | `atenea-desktop-<versión>.<arq>.rpm` | `sudo dnf install ./atenea-desktop-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
-| macOS 11 o posterior | `atenea-desktop-<versión>-macOS-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**. Vive en la barra de menús (sin icono en el Dock). |
-| Windows | `atenea-desktop-<versión>-Windows-<arq>.exe` | Ejecutar; `/S` para instalación silenciosa | Instalación **por usuario** (`%LOCALAPPDATA%\Programs\Atenea One`), sin UAC; acceso directo en el menú Inicio y desinstalador. |
+| Linux (Debian 13, Ubuntu 24.04 o posterior) | `atenea-desktop-<versión>-linux-<arq>.deb` | `sudo apt install ./atenea-desktop-*-linux-*.deb` | `/usr/bin/atenea-desktop`, entrada de menú e icono. Depende de `libgtk-4-1` y `libwebkitgtk-6.0-4`. |
+| Linux (Fedora y derivadas) | `atenea-desktop-<versión>-linux-<arq>.rpm` | `sudo dnf install ./atenea-desktop-*-linux-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
+| macOS 11 o posterior | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**. Vive en la barra de menús (sin icono en el Dock). |
+| Windows | `atenea-desktop-<versión>-windows-<arq>.exe` | Ejecutar; `/S` para instalación silenciosa | Instalación **por usuario** (`%LOCALAPPDATA%\Programs\Atenea One`), sin UAC; acceso directo en el menú Inicio y desinstalador. |
 
 La verificación de un release (firma Ed25519, SHA-256, SBOM) es la de [release.md](release.md): los paquetes entran en el
 mismo manifiesto, cada uno con el inventario Go de su sistema (`go-desktop-<Linux|macOS|Windows>.cdx.json`).

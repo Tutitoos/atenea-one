@@ -55,10 +55,15 @@ metadatos y SBOM de cada plataforma. Es posible aportar esos ficheros a `dist/`
 antes de generar el manifiesto. No copiar paquetes de otro commit ni añadir
 ficheros después de firmar.
 
+**Nombres de los artefactos publicados:** `atenea-<componente>-<versión>-<os>-<arq>.<ext>` con `os` en `linux`, `macos`
+o `windows` y `arq` en `amd64` o `arm64` (`atenea-cli-<v>-linux-<arq>.deb`, `atenea-cli-<v>-macos-<arq>.pkg`,
+`atenea-cli-<v>-windows-<arq>.exe`, `atenea-agent-<v>-windows-<arq>.exe`). `atenea.deb` se mantiene como alias del
+`.deb` del CLI para no romper descargas existentes; entra en el manifiesto y en la atestación como cualquier otro fichero.
+
 **Paquetes de escritorio** (`packaging/desktop/`, ver [instalacion-escritorio.md](instalacion-escritorio.md)): el job
 `desktop` del workflow de release construye en cada sistema el binario de producción, lo prueba con la prueba de humo,
-genera `atenea-desktop_<v>_<arq>.deb`, `atenea-desktop-<v>.<arq>.rpm`, `atenea-desktop-<v>-macOS-<arq>.dmg` y
-`atenea-desktop-<v>-Windows-<arq>.exe`, los instala, los arranca y los desinstala, y los ateste. `manifest.py` ata cada
+genera `atenea-desktop-<v>-linux-<arq>.deb`, `atenea-desktop-<v>-linux-<arq>.rpm`, `atenea-desktop-<v>-macos-<arq>.dmg` y
+`atenea-desktop-<v>-windows-<arq>.exe`, los instala, los arranca y los desinstala, y los ateste. `manifest.py` ata cada
 paquete al SBOM Go de su sistema (no al de Rust) y comprueba la identidad del `.deb` (acepta `control.tar.gz`, que es lo
 que produce nfpm, además de `control.tar.xz`). `tests/release/test_desktop_manifest.py` (en `scripts/check.sh`) cubre
 ese contrato con artefactos sintéticos. **Sin firma de desarrollador ni notarización.** El `.deb` y el `.rpm` salen

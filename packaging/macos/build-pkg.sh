@@ -25,6 +25,9 @@ install -m 0644 /dev/stdin "$root/private/etc/paths.d/atenea" <<'EOF'
 EOF
 mkdir -p "$root/usr/local/share/atenea"
 python3 "$repo/scripts/release/build-info.py" > "$root/usr/local/share/atenea/BUILD-INFO.json"
-pkgbuild --root "$root" --scripts "$work/scripts" --identifier one.atenea.client --version "${ATENEA_VERSION:-0.1.0}" --install-location / --ownership recommended "$work/component.pkg"
-productbuild --package "$work/component.pkg" "$out/atenea-client-unsigned.pkg"
-printf '%s\n' "$out/atenea-client-unsigned.pkg"
+version=${ATENEA_VERSION:-0.1.0}
+case "$(uname -m)" in arm64) arch=arm64 ;; x86_64) arch=amd64 ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
+pkg="$out/atenea-cli-$version-macos-$arch.pkg"
+pkgbuild --root "$root" --scripts "$work/scripts" --identifier one.atenea.client --version "$version" --install-location / --ownership recommended "$work/component.pkg"
+productbuild --package "$work/component.pkg" "$pkg"
+printf '%s\n' "$pkg"

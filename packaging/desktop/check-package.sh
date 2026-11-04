@@ -14,7 +14,7 @@ dir=$(cd "$1" && pwd)
 smoke="$root/apps/desktop/scripts/smoke.py"
 case "$(uname -s)" in
     Linux)
-        deb=$(ls "$dir"/atenea-desktop_*.deb)
+        deb=$(ls "$dir"/atenea-desktop-*-linux-*.deb)
         sudo apt-get install -y --no-install-recommends "$deb"
         for f in /usr/bin/atenea-desktop /usr/share/applications/atenea-desktop.desktop /usr/share/icons/hicolor/256x256/apps/atenea-desktop.png; do
             [ -f "$f" ] || { echo "Falta $f tras instalar" >&2; exit 1; }
@@ -27,7 +27,7 @@ case "$(uname -s)" in
         [ ! -e /usr/bin/atenea-desktop ] || { echo 'El binario sigue instalado tras desinstalar' >&2; exit 1; }
         ;;
     Darwin)
-        dmg=$(ls "$dir"/atenea-desktop-*-macOS-*.dmg)
+        dmg=$(ls "$dir"/atenea-desktop-*-macos-*.dmg)
         mount=$(mktemp -d)
         trap 'hdiutil detach -quiet "$mount" || true' EXIT
         hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" "$dmg"
@@ -37,7 +37,7 @@ case "$(uname -s)" in
         python3 "$smoke" 120 "$app/Contents/MacOS/atenea-desktop"
         ;;
     MINGW* | MSYS* | CYGWIN*)
-        pwsh -NoProfile -File "$root/packaging/desktop/windows/check-installer.ps1" -Installer "$(cygpath -w "$(ls "$dir"/atenea-desktop-*-Windows-*.exe)")"
+        pwsh -NoProfile -File "$root/packaging/desktop/windows/check-installer.ps1" -Installer "$(cygpath -w "$(ls "$dir"/atenea-desktop-*-windows-*.exe)")"
         ;;
     *) echo "Sistema no admitido: $(uname -s)" >&2; exit 2 ;;
 esac

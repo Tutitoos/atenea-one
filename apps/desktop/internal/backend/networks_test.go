@@ -4,6 +4,7 @@
 package backend
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -124,6 +125,113 @@ func TestApplyJoinTakesTheNetworkIDFromTheCodeNotFromTheCaller(t *testing.T) {
 	}
 	if strings.Contains((*calls)[0], other) {
 		t.Error("el id del llamante no debe aparecer en la orden")
+	}
+}
+
+func TestJoinDialogNamesTheNetworkOnlyWhenTheNameIsSafeAndTheCommandIsUntouched(t *testing.T) {
+	// El «CLI» imprime un JSON generado con json.Marshal desde un fichero: ningún nombre pasa por el shell.
+	cli := func(t *testing.T, name string) string {
+		b, err := json.Marshal(map[string]string{"network_id": testID, "name": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "info.json")
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return "cat '" + path + "'"
+	}
+	fakeCLI(t, cli(t, "Casa 1.0_a-b"))
+	calls := capture(t)
+	if _, err := Apply("join", "", "atenea1-abcd-ef23", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix((*calls)[0], " | Atenea One quiere unir este equipo a la red «Casa 1.0_a-b».") {
+		t.Errorf("con nombre seguro: %q", (*calls)[0])
+	}
+	command := strings.SplitN((*calls)[0], " | ", 2)[0]
+	cliPath := CLIPath()
+	want := cliPath + " network join ATENEA1-ABCD-EF23 --yes --status-gid " + strconv.Itoa(os.Getgid()) + " && " + cliPath + " network up " + testID
+	if command != want || strings.Contains(command, "Casa") {
+		t.Errorf("el nombre no debe entrar en la orden elevada: %q", command)
+	}
+	// Nombres que podrían romper la cita del diálogo o que el alfabeto no admite: texto genérico.
+	for _, bad := range []string{"a\"b", `a\b`, "ñandú", "a'b", " lead", "trail ", "a;id", "a\nb", "a\u202eb", strings.Repeat("a", 49)} {
+		fakeCLI(t, cli(t, bad))
+		*calls = nil
+		if _, err := Apply("join", "", "atenea1-abcd-ef23", ""); err != nil {
+			t.Fatalf("%q: %v", bad, err)
+		}
+		if !strings.HasSuffix((*calls)[0], " | Atenea One quiere unir este equipo a una red.") {
+			t.Errorf("%q debía dar el texto genérico: %q", bad, (*calls)[0])
+		}
+	}
+}
+
+func TestSafePromptNameBoundaries(t *testing.T) {
+	for name, want := range map[string]bool{
+		"": false, "a": true, strings.Repeat("a", 48): true, strings.Repeat("a", 49): false,
+		"a b": true, "a\"b": false, "a\\b": false, "a\nb": false, "a\u202eb": false, "é": false, " a": false, "a ": false,
+	} {
+		if got := safePromptName(name); got != want {
+			t.Errorf("safePromptName(%q) = %v, esperaba %v", name, got, want)
+		}
+	}
+}
+
+func TestClientInfoSaysWhetherTheCLIIsThereWithoutRunningIt(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "atenea")
+	notExe := filepath.Join(dir, "sin-permiso")
+	// Un «CLI» que, si se ejecutase, dejaría rastro: la comprobación no debe lanzarlo.
+	marker := filepath.Join(dir, "ejecutado")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notExe, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, goos, cli string
+		want            ClientInfo
+	}{
+		{"instalado en linux", "linux", exe, ClientInfo{OS: "linux", Supported: true, Installed: true}},
+		{"instalado en macOS", "darwin", exe, ClientInfo{OS: "darwin", Supported: true, Installed: true}},
+		{"ausente", "linux", filepath.Join(dir, "no-existe"), ClientInfo{OS: "linux", Supported: true}},
+		{"sin permiso de ejecución", "linux", notExe, ClientInfo{OS: "linux", Supported: true}},
+		{"un directorio no es el CLI", "darwin", dir, ClientInfo{OS: "darwin", Supported: true}},
+		{"Windows no está soportado aunque exista", "windows", exe, ClientInfo{OS: "windows"}},
+		{"otro sistema no está soportado", "freebsd", exe, ClientInfo{OS: "freebsd"}},
+	} {
+		if runtime.GOOS == "windows" && tc.want.Supported {
+			continue // un anfitrión Windows no tiene bits de ejecución: el permiso 0o111 de Unix no se puede probar allí
+		}
+		if got := clientFor(tc.goos, tc.cli); got != tc.want {
+			t.Errorf("%s: %+v, esperaba %+v", tc.name, got, tc.want)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("comprobar el cliente no debe ejecutarlo")
+	}
+}
+
+func TestClientInfoUsesTheFixedCLIPathAndExposesNoPath(t *testing.T) {
+	fakeCLI(t, "true")
+	got := Client()
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		if !got.Installed || !got.Supported || got.OS != runtime.GOOS {
+			t.Errorf("%+v", got)
+		}
+	}
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "/") || strings.Contains(string(b), "atenea") {
+		t.Errorf("ClientInfo no debe llevar rutas: %s", b)
+	}
+	if string(b) != `{"os":"`+runtime.GOOS+`","supported":`+strconv.FormatBool(got.Supported)+`,"installed":`+strconv.FormatBool(got.Installed)+`}` {
+		t.Errorf("forma JSON inesperada: %s", b)
 	}
 }
 
