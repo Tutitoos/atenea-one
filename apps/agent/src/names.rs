@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn accepts_human_names_and_rejects_anything_that_can_disguise_text() {
         for ok in [
-            "MacBook Air de Guillem",
+            "MacBook Air de Ana",
             "  portátil  ",
             "日本語のPC",
             "pc 💻",
