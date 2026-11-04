@@ -15,7 +15,7 @@ use blake2::{
 };
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
-    aead::{AeadInPlace, KeyInit},
+    aead::{AeadInOut, KeyInit},
 };
 use std::{
     net::{IpAddr, SocketAddr},
@@ -295,7 +295,7 @@ fn seal_with_nonce(
     let cipher = XChaCha20Poly1305::new((&reply_key(public, mac1)).into());
     packet[30..46].copy_from_slice(cookie);
     let tag = cipher
-        .encrypt_in_place_detached(XNonce::from_slice(nonce), &aad, &mut packet[30..46])
+        .encrypt_inout_detached(&XNonce::from(*nonce), &aad, (&mut packet[30..46]).into())
         .map_err(|_| CookieError::Authentication)?;
     packet[46..].copy_from_slice(&tag);
     Ok(packet)
@@ -323,15 +323,12 @@ pub fn open_reply(
     aad[..30].copy_from_slice(&packet[..30]);
     aad[30..].copy_from_slice(mac1);
     let cipher = XChaCha20Poly1305::new((&reply_key(public, mac1)).into());
+    let tag = chacha20poly1305::Tag::try_from(&encrypted_cookie[16..])
+        .map_err(|_| CookieError::InvalidPacket)?;
     let mut cookie = Zeroizing::new([0; 16]);
     cookie.copy_from_slice(&encrypted_cookie[..16]);
     cipher
-        .decrypt_in_place_detached(
-            XNonce::from_slice(nonce),
-            &aad,
-            cookie.as_mut(),
-            chacha20poly1305::Tag::from_slice(&encrypted_cookie[16..]),
-        )
+        .decrypt_inout_detached(&XNonce::from(*nonce), &aad, cookie.as_mut().into(), &tag)
         .map_err(|_| CookieError::Authentication)?;
     Ok(cookie)
 }
