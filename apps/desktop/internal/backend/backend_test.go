@@ -251,6 +251,14 @@ func TestHelperProcess(t *testing.T) {
 	case "usercancel":
 		os.Stderr.WriteString("execution error: User canceled. (-128)\n")
 		os.Exit(1)
+	case "usercancel_es":
+		// Texto real de macOS en español (probado en un Mac con el idioma del sistema en español).
+		os.Stderr.WriteString("0:182: execution error: Cancelado por el usuario. (-128)\n")
+		os.Exit(1)
+	case "other_error_128x":
+		// Un error ajeno cuyo número solo se parece: no es una cancelación.
+		os.Stderr.WriteString("execution error: algo falló. (-1280)\n")
+		os.Exit(1)
 	}
 	os.Exit(0)
 }
@@ -266,10 +274,13 @@ func TestRunMapsExitsAndCancellations(t *testing.T) {
 	if _, err := run("fail"); err == nil || err.Error() != "falló" {
 		t.Errorf("fail: %v", err)
 	}
-	for _, m := range []string{"cancel", "usercancel"} {
+	for _, m := range []string{"cancel", "usercancel", "usercancel_es"} {
 		if _, err := run(m); err == nil || !strings.HasPrefix(err.Error(), "Cancelado") {
 			t.Errorf("%s: %v", m, err)
 		}
+	}
+	if _, err := run("other_error_128x"); err == nil || strings.HasPrefix(err.Error(), "Cancelado") {
+		t.Errorf("un error ajeno no debe pasar por cancelación: %v", err)
 	}
 	if _, err := Run(filepath.Join(os.TempDir(), "no-existe-xyz")); err == nil {
 		t.Error("un programa inexistente debe fallar")
