@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-022: Que la aplicación de escritorio traiga el cliente (instalador integrado)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-04 (opción **O2**) e **implementado en `main`** (PR #35) para macOS (`.pkg` único) y Linux (`Depends: atenea (= versión)` en el `.deb` de escritorio); **publicado en la v0.1.15**, con el `.pkg` único instalado en un Mac real (redes conectadas) y los dos `.deb` instalados con `apt` en un Debian 13. **Sin comprobar:** la ventana de primera ejecución en un Mac recién instalado. Complementa a [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (su decisión 2 se mantiene) y cumple la decisión 7 de [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md), que dejó el instalador integrado para «un ADR propio».
+- **Estado:** **Aceptado** por el responsable el 2026-11-04 (opción **O2**) e **implementado en `main`** (PR #35) para macOS (`.pkg` único) y Linux (`Depends: atenea (= versión)` en el `.deb` de escritorio); **publicado en la v0.1.15**, con el `.pkg` único instalado en un Mac real (redes conectadas) y los dos `.deb` instalados con `apt` en un Debian 13 y un Ubuntu 24.04 (la aplicación pasa la prueba de humo en este último); la aplicación del `.pkg` abre su ventana de primera ejecución con un perfil vacío. **Sin comprobar:** el aspecto real de esa ventana. Complementa a [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (su decisión 2 se mantiene) y cumple la decisión 7 de [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md), que dejó el instalador integrado para «un ADR propio».
 - **Relacionados:** ADR-019 (decisiones 7 y 9: sin *updater*), ADR-021 (asistente y privilegios), ADR-011 §2 (autoridad = sistema operativo, ruta fija del CLI), ADR-009 (releases firmados), ADR-017 (Windows).
 
 ## Contexto
@@ -53,7 +53,7 @@ Si el `.pkg` va en `Atenea One.app/Contents/Resources` y **la propia aplicación
 
 - **Release:** `release.yml` gana un job que construye el `.pkg` de distribución (necesita el `.pkg` del cliente y el `.app` ya empaquetado, así que depende de los jobs `native` y `desktop`), entra en el manifiesto y en la atestación y lleva su propia prueba (`pkgutil --expand`, contenido, propietario del `.app` en `/Applications`, `postinstall` del cliente intacto). La CI de escritorio no cambia.
 - **El `postinstall` del cliente es el que ya existe** y sigue cubierto por `tests/macos/test_run_dir.py` y el humo privilegiado.
-- **Sin comprobar hasta construirlo:** que el `.pkg` de distribución mantiene el `postinstall` y los permisos del cliente; la apertura de la aplicación recién instalada y la ventana de primera ejecución.
+- **Comprobado al construirlo y publicarlo (v0.1.15):** el `.pkg` de distribución mantiene el `postinstall` y los permisos del cliente (`check-suite-pkg.sh`), la aplicación queda de root y arranca, y su ventana de primera ejecución se abre. Ver [v0.1.15](../operations/v0.1.15.md) §5.
 
 ## Decisión del responsable (2026-11-04)
 
