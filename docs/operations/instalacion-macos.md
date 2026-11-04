@@ -83,6 +83,18 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 - **Latencia:** el agente mide RTT por relay, no por directo; en directo sale vacía.
 - **Verificado:** compilación, pruebas y clippy; lectura de un agente real y ventana con tráfico en vivo. **Sin verificar:** el menú de la bandeja con clic, varios monitores, macOS anterior a 27, Windows y Linux en ejecución. Sin firma ni notarización (Gatekeeper pedirá permiso en otro Mac) y no arranca con la sesión.
 
+## Actualizar el `.pkg` con redes unidas
+
+Instalar un `.pkg` nuevo reinicia los servicios de las redes que estaban activas (los túneles se cortan unos segundos) y no
+conecta las detenidas. **Problema conocido de la 0.1.13:** su `postinstall` fijaba `/var/run/atenea` a `0700` aunque ya existiera,
+y con eso un usuario sin privilegios dejaba de poder leer los sockets de estado: `atenea network list` y la aplicación
+enseñaban todas las redes como «detenida» aunque los agentes y los túneles siguieran en marcha. Si ocurre, se arregla con
+`sudo chmod 0755 /var/run/atenea` (o reiniciando el Mac). Desde la versión que lleva el arreglo, el instalador solo crea ese
+directorio si falta y nunca cambia los permisos de uno existente (`ensure_run_dir` en `atenea-network.sh`; prueba:
+`tests/macos/test_run_dir.py`). **Sin comprobar:** el `.pkg` corregido instalado sobre un Mac con redes en marcha; la prueba
+privilegiada de CI (`tests/macos/run.sh`) ejecuta el `postinstall` completo, pero con un servicio heredado activo, y este
+recorre otro camino que el de un Mac con solo redes por instancia.
+
 ## Desinstalación
 
 ```sh
