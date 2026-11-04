@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -92,10 +93,19 @@ func main() {
 	startTray(wails, core, handler, trayPNG)
 
 	if smoke {
-		// Prueba de humo: la interfaz embebida carga bajo la CSP y el filtro y llama a un método vinculado.
+		// Prueba de humo: la interfaz embebida carga bajo la CSP y el filtro y llama a métodos vinculados. Sin redes ni
+		// cliente (el humo apunta ATENEA_CLI a una ruta inexistente) la pantalla de inicio abre el asistente (ADR-021),
+		// así que debe llegar a NetworkList y también a ClientStatus: comprueba el método nuevo de punta a punta.
+		var mu sync.Mutex
+		seen := map[string]bool{}
+		done := false
 		service.onCall = func(method string) {
 			fmt.Println("SMOKE-CALL", method)
-			if method == "NetworkList" {
+			mu.Lock()
+			defer mu.Unlock()
+			seen[method] = true
+			if !done && seen["NetworkList"] && seen["ClientStatus"] {
+				done = true
 				fmt.Println("SMOKE-OK")
 				time.AfterFunc(500*time.Millisecond, quit)
 			}

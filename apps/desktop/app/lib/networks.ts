@@ -108,3 +108,12 @@ export async function readAutostart(): Promise<boolean | null> {
 export async function setAutostart(on: boolean): Promise<void> {
   await call<void>('autostart_set', { on });
 }
+
+/** ADR-021: el sistema, si la aplicación puede gestionar redes en él y si el CLI está instalado. Sin rutas ni versiones. */
+export const clientInfo = z.object({ os: z.string(), supported: z.boolean(), installed: z.boolean() });
+export type ClientInfo = z.infer<typeof clientInfo>;
+export async function readClient(): Promise<ClientInfo> {
+  const parsed = clientInfo.safeParse(await call<unknown>('client_status'));
+  if (!parsed.success) throw new Error('La aplicación respondió con un formato inesperado.');
+  return parsed.data;
+}

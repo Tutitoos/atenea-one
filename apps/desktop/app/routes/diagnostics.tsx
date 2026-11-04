@@ -1,7 +1,8 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { readAutostart, readNotifications, setAutostart, setNotifications } from '../lib/networks';
+import { readNotifications, setNotifications } from '../lib/networks';
+import { Autostart } from '../preferences';
 import { bytes, num, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { Card, Empty, Heading, NoNetworks, Row } from '../ui';
@@ -17,22 +18,6 @@ function Notifications() {
     <Heading>Notificaciones</Heading>
     <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={preference.data ?? false} disabled={preference.isPending || !!preference.error || change.isPending} onChange={(event) => change.mutate(event.target.checked)} />Notificaciones del sistema</label>
     <p className="mt-1 text-sm text-mut">Avisa de conexión a relay prolongada, red caída o recuperada y certificado por caducar.</p>
-    {(change.error ?? preference.error) && <p role="alert" className="text-bad">{(change.error ?? preference.error)?.message}</p>}
-  </section>;
-}
-
-function Autostart() {
-  const client = useQueryClient();
-  const preference = useQuery({ queryKey: ['autostart'], queryFn: readAutostart });
-  const change = useMutation({
-    mutationFn: setAutostart,
-    onSuccess: (_, on) => client.setQueryData(['autostart'], on),
-  });
-  if (preference.data === null) return null;
-  return <section aria-label="Inicio">
-    <Heading>Inicio</Heading>
-    <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={preference.data ?? false} disabled={preference.isPending || !!preference.error || change.isPending} onChange={(event) => change.mutate(event.target.checked)} />Abrir al iniciar sesión</label>
-    <p className="mt-1 text-sm text-mut">Abre Atenea One en la bandeja al iniciar sesión, sin mostrar la ventana. No cambia la conexión de las redes: las gestiona el sistema.</p>
     {(change.error ?? preference.error) && <p role="alert" className="text-bad">{(change.error ?? preference.error)?.message}</p>}
   </section>;
 }
