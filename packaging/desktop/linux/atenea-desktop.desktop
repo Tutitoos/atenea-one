@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Atenea One
+Comment=Estado y gestión de las redes de Atenea One
+Exec=atenea-desktop --open
+Icon=atenea-desktop
+Terminal=false
+Categories=Network;
+StartupNotify=false

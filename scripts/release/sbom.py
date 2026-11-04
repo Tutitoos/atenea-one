@@ -177,10 +177,39 @@ def image(reference):
         subprocess.run(["docker", "rm", container], check=True, stdout=subprocess.DEVNULL)
 
 
-def emit(kind, source, output, version, commit, lock="Cargo.lock", roots=(), target=None, wintun_script=None, deb_script=None):
+def golang(listing, gosum):
+    """Módulos Go enlazados en el binario. `listing` es la salida de
+    `go list -deps -tags production -f '{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Version}}{{end}}{{end}}' .`
+    (una línea `ruta<TAB>versión` por paquete; se repiten por módulo). Sin dependencias de pruebas ni de otras plataformas."""
+    sums = {}
+    for line in Path(gosum).read_text().splitlines():
+        fields = line.split()
+        if len(fields) == 3 and not fields[1].endswith("/go.mod"):
+            sums[(fields[0], fields[1])] = fields[2]
+    modules = set()
+    for line in Path(listing).read_text().splitlines():
+        if line.strip():
+            path, version = line.split("\t")
+            modules.add((path, version))
+    assert modules, "Sin módulos: ¿se ejecutó `go list` en apps/desktop?"
+    components = []
+    for path, version in sorted(modules):
+        ref = f"golang:{path}@{version}"
+        c = component(path, version, ref, purl=f"pkg:golang/{path}@{version}")
+        assert (path, version) in sums, f"{path}@{version} no está en go.sum"
+        c["properties"] = [{"name": "go:sum", "value": sums[(path, version)]}]
+        components.append(c)
+    return components, [{"ref": c["bom-ref"], "dependsOn": []} for c in components]
+
+
+def emit(kind, source, output, version, commit, lock="Cargo.lock", roots=(), target=None, wintun_script=None, deb_script=None, gosum="apps/desktop/go.sum"):
     properties = [{"name": "atenea:commit", "value": commit}]
     if kind == "rust":
         components, dependencies = rust(source, lock, roots, wintun_script, deb_script)
+        if target:
+            properties.append({"name": "atenea:target", "value": target})
+    elif kind == "go":
+        components, dependencies = golang(source, gosum)
         if target:
             properties.append({"name": "atenea:target", "value": target})
     elif kind == "panel":
@@ -197,15 +226,16 @@ def emit(kind, source, output, version, commit, lock="Cargo.lock", roots=(), tar
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=["rust", "panel", "image"])
+    parser.add_argument("kind", choices=["rust", "panel", "image", "go"])
     parser.add_argument("source")
     parser.add_argument("output")
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--lock", default="Cargo.lock")
     parser.add_argument("--root", action="append", default=[], help="miembro del workspace que se distribuye (repetible)")
-    parser.add_argument("--target", help="triple del `cargo metadata --filter-platform`")
+    parser.add_argument("--target", help="triple (`rust`) o GOOS/GOARCH (`go`)")
     parser.add_argument("--wintun", help="get-wintun.ps1: añade Wintun como componente")
     parser.add_argument("--deb-depends", help="packaging/deb/build.sh: añade las dependencias del .deb")
+    parser.add_argument("--gosum", default="apps/desktop/go.sum", help="go.sum del módulo (modo `go`)")
     args = parser.parse_args()
-    emit(args.kind, args.source, args.output, args.version, args.commit, args.lock, args.root, args.target, args.wintun, args.deb_depends)
+    emit(args.kind, args.source, args.output, args.version, args.commit, args.lock, args.root, args.target, args.wintun, args.deb_depends, args.gosum)
