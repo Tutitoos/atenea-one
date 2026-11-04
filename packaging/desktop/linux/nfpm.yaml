@@ -26,10 +26,12 @@ contents:
     dst: /usr/share/icons/hicolor/256x256/apps/atenea-desktop.png
     file_info:
       mode: 0644
-# GTK 4 y WebKitGTK 6.0: Debian 13 y Ubuntu 24.04 o posterior (ADR-019).
+# GTK 4 y WebKitGTK 6.0: Debian 13 y Ubuntu 24.04 o posterior (ADR-019). `atenea` es el cliente (ADR-022): misma versión
+# exacta, para que apt impida una combinación inconsistente. Solo el .deb: el .rpm no tiene paquete de cliente.
 depends:
   - libgtk-4-1
   - libwebkitgtk-6.0-4
+  - atenea (= ${ATENEA_VERSION})
 overrides:
   rpm:
     depends:
