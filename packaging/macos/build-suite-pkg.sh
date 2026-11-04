@@ -74,6 +74,8 @@ pkgutil --flatten "$client_component" "$work/components/client.pkg"
 # encuentre en otro sitio, p. ej. en la carpeta del usuario) y sin comprobación de versión (siempre se instala la de
 # este paquete, que es la que corresponde al cliente que lo acompaña).
 pkgbuild --analyze --root "$stage" "$work/app.plist" >/dev/null
+# Según la versión de macOS, `--analyze` ya trae BundleIsRelocatable (true) o no la trae: se reemplaza en ambos casos.
+/usr/libexec/PlistBuddy -c 'Delete :0:BundleIsRelocatable' "$work/app.plist" 2>/dev/null || :
 /usr/libexec/PlistBuddy -c 'Add :0:BundleIsRelocatable bool false' "$work/app.plist"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsVersionChecked false' "$work/app.plist"
 pkgbuild --root "$stage" --component-plist "$work/app.plist" --identifier one.atenea.desktop.app --version "$version" \
