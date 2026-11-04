@@ -79,7 +79,7 @@ detecta antes de un tag lo que haría fallar a `publish`. Ese ensayo no firma na
 firma ad hoc de la aplicación, todo propiedad de root) y lo ateste. `manifest.py` lo ata al SBOM Rust **y** al Go de macOS.
 `tests/macos/test_suite_pkg.py` cubre el constructor. **Sin firma de desarrollador ni notarización.** **Ensayado** el 2026-11-04 con
 `workflow_dispatch` sobre `main` (sin publicar): `suite-macos` y `assemble` (manifiesto de ensayo) pasaron y el `.pkg` descargado
-pasa `check-suite-pkg.sh` fuera de CI. **Publicado** en la `v0.1.15` e instalado en un Mac real con las redes conectadas (ver [v0.1.15](v0.1.15.md) §5). **Sin comprobar:** que la ventana de primera ejecución se abra en un Mac recién instalado.
+pasa `check-suite-pkg.sh` fuera de CI. **Publicado** en la `v0.1.15` e instalado en un Mac real con las redes conectadas; con un perfil vacío la aplicación abre su ventana y crea `first-run.json` (ver [v0.1.15](v0.1.15.md) §5). **Sin comprobar:** el aspecto de esa ventana.
 
 El runner deja `dist/` (ignorado por Git), elimina claves temporales, contenedores
 y etiquetas propias. Conserva los volúmenes de compilación y la caché normal de
