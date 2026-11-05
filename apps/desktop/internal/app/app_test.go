@@ -208,8 +208,8 @@ func TestAutostartRoundTripWritesOnlyUnderTheUsersHome(t *testing.T) {
 	}
 }
 
-// trayApp es la aplicación de la bandeja con todo el entorno sustituido: reloj controlado, portapapeles
-// presente y avisos recogidos en `delivered` en vez de lanzar un proceso del sistema.
+// trayApp es la aplicación de la bandeja con todo el entorno sustituido: reloj controlado y avisos recogidos en
+// `delivered` en vez de lanzar un proceso del sistema.
 func trayApp(t *testing.T, ask func(socket string) (string, error), now *time.Time, delivered *[]string) *App {
 	t.Helper()
 	dir := t.TempDir()
@@ -217,7 +217,6 @@ func trayApp(t *testing.T, ask func(socket string) (string, error), now *time.Ti
 		Ask:       ask,
 		ConfigDir: func() (string, error) { return dir, nil },
 		Now:       func() time.Time { return *now },
-		Clipboard: func() bool { return true },
 		Deliver:   func(text string) error { *delivered = append(*delivered, text); return nil },
 		Log:       func(string) {},
 	}
@@ -241,7 +240,7 @@ func TestPollRefreshesTheNetworkListEveryFiveReadsAndCountsOnlyAnsweringNetworks
 
 	writeList(t, list, `[{"network_id":"`+id1+`","name":"casa"}]`)
 	read := a.Poll(state)
-	if read.Health != health.Ok || read.Text != "Conectado" || len(read.Lines) != 1 {
+	if read.Health != health.Ok || read.Text != "Conectado" {
 		t.Fatalf("una red: %+v", read)
 	}
 
@@ -253,7 +252,7 @@ func TestPollRefreshesTheNetworkListEveryFiveReadsAndCountsOnlyAnsweringNetworks
 		}
 	}
 	read = a.Poll(state)
-	if read.Health != health.Degraded || !strings.HasPrefix(read.Text, "2 redes · ") || len(read.Lines) != 2 {
+	if read.Health != health.Degraded || !strings.HasPrefix(read.Text, "2 redes · ") {
 		t.Fatalf("lectura 6, dos redes: %+v", read)
 	}
 
@@ -264,51 +263,6 @@ func TestPollRefreshesTheNetworkListEveryFiveReadsAndCountsOnlyAnsweringNetworks
 	}
 	if got := a.Poll(state); got.Health != health.Ok || got.Text != "Conectado" {
 		t.Errorf("la red que no responde no debe contar: %+v", got)
-	}
-}
-
-func TestPollOffersPerNetworkActionsEvenForNetworksThatDoNotAnswer(t *testing.T) {
-	list := fakeCLI(t)
-	now := time.Unix(1_000_000, 0)
-	var delivered []string
-	a := trayApp(t, func(socket string) (string, error) {
-		if filepath.Base(filepath.Dir(socket)) == "456789ab" {
-			return statusJSON("direct"), nil
-		}
-		return "", errors.New("parada")
-	}, &now, &delivered)
-	writeList(t, list, `[{"network_id":"`+id1+`","name":"casa","state":"conectada"},`+
-		`{"network_id":"`+id2+`","name":"oficina","state":"detenida"}]`)
-	read := a.Poll(&TrayState{})
-	var got []string
-	for _, e := range read.Actions {
-		got = append(got, e.ID+" | "+e.Text)
-	}
-	want := []string{"down:" + id1 + " | Desconectar casa", "up:" + id2 + " | Conectar oficina"}
-	if !slices.Equal(got, want) {
-		t.Errorf("acciones = %q\nesperadas = %q", got, want)
-	}
-}
-
-func TestPollOffersCopyIPOnlyWithClipboardAndAnIPv4(t *testing.T) {
-	list := fakeCLI(t)
-	now := time.Unix(1_000_000, 0)
-	var delivered []string
-	withAddrs := `{"public_key":"k","addrs":["fd00::1","10.50.0.1"],"config":{"lease_active":true},"sync":{},"coordinator":{},"peers":[]}`
-	a := trayApp(t, func(string) (string, error) { return withAddrs, nil }, &now, &delivered)
-	writeList(t, list, `[{"network_id":"`+id1+`","name":"casa","state":"conectada"}]`)
-	ids := func() (out []string) {
-		for _, e := range a.Poll(&TrayState{}).Actions {
-			out = append(out, e.ID)
-		}
-		return
-	}
-	if got := ids(); !slices.Equal(got, []string{"down:" + id1, "copy:10.50.0.1"}) {
-		t.Errorf("con portapapeles: %q", got)
-	}
-	a.Clipboard = func() bool { return false }
-	if got := ids(); !slices.Equal(got, []string{"down:" + id1}) {
-		t.Errorf("sin portapapeles: %q", got)
 	}
 }
 

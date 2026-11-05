@@ -19,10 +19,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
-	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/runtimefilter"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/secure"
-	"github.com/Tutitoos/atenea-one/apps/desktop/internal/trayaction"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/traymenu"
 )
 
@@ -83,13 +81,7 @@ func main() {
 		quitting.Store(true)
 		wails.Quit()
 	}
-	handler := &traymenu.Handler{
-		Apply: func(op, network string) error { _, err := backend.Apply(op, network, "", ""); return err },
-		Copy:  trayaction.Copy,
-		Show:  show,
-		Quit:  quit,
-		Log:   core.Log,
-	}
+	handler := &traymenu.Handler{Show: show, Quit: quit}
 	startTray(wails, core, handler, trayPNG)
 
 	if smoke {

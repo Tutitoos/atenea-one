@@ -175,34 +175,28 @@ func first(s []string, def string) string {
 
 // Source es lo que responde cada red unida.
 type Source struct {
-	Label  string
 	Health Health
 	Text   string
 }
 
-// Line es una línea del menú de la bandeja.
-type Line struct{ ID, Text string }
-
-// Summarize da icono, tooltip y líneas del menú a partir de las redes que responden (joined = unidas). Una
+// Summarize da el icono y la descripción de la bandeja a partir de las redes que responden (joined = unidas). Una
 // red detenida a propósito no responde y no cuenta: no pone rojo el icono de las que sí están conectadas.
-func Summarize(joined int, sources []Source) (Health, string, []Line) {
+func Summarize(joined int, sources []Source) (Health, string) {
 	switch len(sources) {
 	case 0:
 		text := "Redes paradas o sin acceso al estado"
 		if joined == 0 {
 			text = "Sin redes"
 		}
-		return Stopped, text, []Line{{"*", text}}
+		return Stopped, text
 	case 1:
-		return sources[0].Health, sources[0].Text, []Line{{"*", sources[0].Text}}
+		return sources[0].Health, sources[0].Text
 	}
 	worst := sources[0]
-	lines := make([]Line, 0, len(sources))
 	for _, s := range sources {
 		if s.Health >= worst.Health { // max_by_key de Rust devuelve el último máximo
 			worst = s
 		}
-		lines = append(lines, Line{s.Label, s.Label + ": " + s.Text})
 	}
-	return worst.Health, fmt.Sprintf("%d redes · %s", len(sources), worst.Text), lines
+	return worst.Health, fmt.Sprintf("%d redes · %s", len(sources), worst.Text)
 }

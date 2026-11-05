@@ -144,39 +144,31 @@ func TestAssessTracksLostLeasePerKey(t *testing.T) {
 	}
 }
 
-func src(label string, h Health, text string) Source { return Source{label, h, text} }
+func src(h Health, text string) Source { return Source{h, text} }
 
 func TestTraySummaryCountsOnlySourcesThatAnswer(t *testing.T) {
 	// Sin redes unidas: gris y «Sin redes».
-	h, text, lines := Summarize(0, nil)
-	if h != Stopped || text != "Sin redes" || !reflect.DeepEqual(lines, []Line{{"*", "Sin redes"}}) {
-		t.Errorf("inesperado: %v %q %v", h, text, lines)
+	h, text := Summarize(0, nil)
+	if h != Stopped || text != "Sin redes" {
+		t.Errorf("inesperado: %v %q", h, text)
 	}
 	// Redes unidas pero ninguna responde (paradas a propósito): también gris, sin rojo.
-	h, text, _ = Summarize(2, nil)
+	h, text = Summarize(2, nil)
 	if h != Stopped || text != "Redes paradas o sin acceso al estado" {
 		t.Errorf("inesperado: %v %q", h, text)
 	}
-	// Una red detenida no pone rojo el icono de la que sí responde.
-	h, _, lines = Summarize(2, []Source{src("casa", Ok, "Conectado")})
-	if h != Ok || len(lines) != 1 {
-		t.Errorf("inesperado: %v %v", h, lines)
+	// Una red detenida no pone rojo el icono de la que sí responde: una sola fuente, el mismo texto de siempre.
+	h, text = Summarize(2, []Source{src(Ok, "Conectado")})
+	if h != Ok || text != "Conectado" {
+		t.Errorf("inesperado: %v %q", h, text)
 	}
-	// Una sola fuente: el mismo texto de siempre, sin prefijo.
-	h, text, lines = Summarize(1, []Source{src("casa", Ok, "Conectado")})
-	if h != Ok || text != "Conectado" || !reflect.DeepEqual(lines, []Line{{"*", "Conectado"}}) {
-		t.Errorf("inesperado: %v %q %v", h, text, lines)
-	}
-	// Varias: gana la peor, una línea por red con su nombre.
-	h, text, lines = Summarize(2, []Source{src("casa", Ok, "Conectado"), src("trabajo", Degraded, "Degradado: por relay")})
+	// Varias: gana la peor.
+	h, text = Summarize(2, []Source{src(Ok, "Conectado"), src(Degraded, "Degradado: por relay")})
 	if h != Degraded || text != "2 redes · Degradado: por relay" {
 		t.Errorf("inesperado: %v %q", h, text)
 	}
-	if lines[1] != (Line{"trabajo", "trabajo: Degradado: por relay"}) {
-		t.Errorf("línea: %v", lines[1])
-	}
 	// En empate gana la última, como max_by_key de Rust.
-	_, text, _ = Summarize(2, []Source{src("a", Down, "uno"), src("b", Down, "dos")})
+	_, text = Summarize(2, []Source{src(Down, "uno"), src(Down, "dos")})
 	if text != "2 redes · dos" {
 		t.Errorf("empate: %q", text)
 	}
