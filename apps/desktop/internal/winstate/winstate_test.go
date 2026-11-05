@@ -6,6 +6,7 @@ package winstate
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -90,7 +91,8 @@ func TestSaveAtomicoYPermisos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	// Windows no tiene permisos Unix: el modo que informa no es 0600 aunque el fichero sea privado de su usuario.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("permisos = %o; quería 600", perm)
 	}
 	entries, err := os.ReadDir(dir)
