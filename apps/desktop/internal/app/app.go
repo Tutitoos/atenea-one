@@ -23,7 +23,6 @@ import (
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notifyprefs"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/panel"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/ping"
-	"github.com/Tutitoos/atenea-one/apps/desktop/internal/trayaction"
 )
 
 // App son las operaciones de la aplicación y las dependencias del entorno que las pruebas sustituyen.
@@ -40,9 +39,7 @@ type App struct {
 	Now func() time.Time
 	// Deliver muestra un aviso del sistema.
 	Deliver func(text string) error
-	// Clipboard dice si hay un programa de portapapeles (para ofrecer «Copiar mi IP»).
-	Clipboard func() bool
-	// Log recibe los errores que no tienen a quién devolverse (avisos, acciones de bandeja).
+	// Log recibe los errores que no tienen a quién devolverse (avisos del sistema).
 	Log func(message string)
 }
 
@@ -60,13 +57,12 @@ func New() *App {
 			}
 			return filepath.Join(dir, "one.atenea.desktop"), nil
 		},
-		HomeDir:   os.UserHomeDir,
-		Exe:       os.Executable,
-		Getenv:    os.Getenv,
-		Now:       time.Now,
-		Deliver:   notify.Deliver,
-		Clipboard: trayaction.Available,
-		Log:       func(message string) { fmt.Fprintln(os.Stderr, message) },
+		HomeDir: os.UserHomeDir,
+		Exe:     os.Executable,
+		Getenv:  os.Getenv,
+		Now:     time.Now,
+		Deliver: notify.Deliver,
+		Log:     func(message string) { fmt.Fprintln(os.Stderr, message) },
 	}
 }
 
@@ -245,17 +241,15 @@ type TrayState struct {
 
 // Tray es lo que pinta la bandeja tras una lectura.
 type Tray struct {
-	Health  health.Health
-	Text    string
-	Lines   []health.Line
-	Actions []trayaction.Entry
+	Health health.Health
+	Text   string
 }
 
-// Poll lee el estado de las redes unidas y devuelve el icono, el texto, las líneas y las acciones por red de la
-// bandeja. La lista de redes se consulta con el CLI cada 5 lecturas (~10 s), no en cada una. Una red que no
-// responde (parada a propósito o sin acceso al estado) no cuenta para la salud: no tiene que poner rojo el icono de
-// las que sí están conectadas, pero sí tiene su acción (Conectar) y su detector de avisos. Los avisos del sistema se
-// deciden siempre (para que el estado no se desfase) y solo se entregan si la preferencia está activada.
+// Poll lee el estado de las redes unidas y devuelve el icono y el texto (descripción) de la bandeja. La lista de
+// redes se consulta con el CLI cada 5 lecturas (~10 s), no en cada una. Una red que no responde (parada a propósito o
+// sin acceso al estado) no cuenta para la salud: no tiene que poner rojo el icono de las que sí están conectadas, pero
+// sí tiene su detector de avisos. Los avisos del sistema se deciden siempre (para que el estado no se desfase) y solo
+// se entregan si la preferencia está activada.
 func (a *App) Poll(state *TrayState) Tray {
 	if state.tick%5 == 0 {
 		state.nets = backend.JoinedNetworks()
@@ -266,13 +260,11 @@ func (a *App) Poll(state *TrayState) Tray {
 		enabled, _ = notifyprefs.Get(path)
 	}
 	now := a.Now().Unix()
-	clipboard := a.Clipboard()
 	if state.notify == nil {
 		state.notify = map[string]*notify.State{}
 	}
 	live := map[string]bool{}
 	var sources []health.Source
-	var actions []trayaction.Entry
 	for _, net := range state.nets {
 		id, _ := net["network_id"].(string)
 		name, ok := net["name"].(string)
@@ -285,9 +277,8 @@ func (a *App) Poll(state *TrayState) Tray {
 			obj = nil
 		} else {
 			assessment := health.Assess(obj)
-			sources = append(sources, health.Source{Label: name, Health: assessment.Health, Text: assessment.Text})
+			sources = append(sources, health.Source{Health: assessment.Health, Text: assessment.Text})
 		}
-		actions = append(actions, trayaction.Entries(net, obj, clipboard)...)
 		if state.notify[id] == nil {
 			state.notify[id] = &notify.State{}
 		}
@@ -309,6 +300,6 @@ func (a *App) Poll(state *TrayState) Tray {
 			delete(state.notify, id)
 		}
 	}
-	h, text, lines := health.Summarize(len(state.nets), sources)
-	return Tray{Health: h, Text: text, Lines: lines, Actions: actions}
+	h, text := health.Summarize(len(state.nets), sources)
+	return Tray{Health: h, Text: text}
 }

@@ -24,11 +24,7 @@ func TestServiceSurfaceIsExactlyTheTwelveOperations(t *testing.T) {
 }
 
 func TestNativeMenuMirrorsTheItemsWithTheirEnabledState(t *testing.T) {
-	items := []traymenu.Item{
-		{ID: "state:x", Text: "casa: Conectado"},
-		{ID: "down:0199ab12-3456-7def-8abc-0123456789ab", Text: "Desconectar casa", Enabled: true},
-		{ID: traymenu.IDQuit, Text: "Salir", Enabled: true},
-	}
+	items := traymenu.Items()
 	menu := application.NewMenu()
 	fillMenu(menu, items, func(string) {})
 	for _, item := range items {

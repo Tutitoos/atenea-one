@@ -4,7 +4,6 @@
 package main
 
 import (
-	"slices"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -30,9 +29,8 @@ func fillMenu(menu *application.Menu, items []traymenu.Item, do func(id string))
 	}
 }
 
-// startTray crea la bandeja: el icono lleva un punto del color de la salud y el menú, una línea por red que
-// responde, sus acciones (Conectar o Desconectar, Copiar mi IP), «Abrir Atenea One» y «Salir». Solo se reconstruye el
-// menú si cambian sus elementos (no cierra un menú abierto) y solo se cambia el icono y el texto si cambian.
+// startTray crea la bandeja: el icono lleva un punto del color de la salud y el menú solo tiene «Abrir Atenea One» y
+// «Salir». El menú se crea una vez; el sondeo solo cambia el icono y el texto si cambian.
 func startTray(wails *application.App, core *app.App, handler *traymenu.Handler, base []byte) {
 	tray := wails.SystemTray.New()
 	tray.SetTooltip("Atenea One")
@@ -41,23 +39,15 @@ func startTray(wails *application.App, core *app.App, handler *traymenu.Handler,
 			tray.SetIcon(png)
 		}
 	}
-	menu := func(items []traymenu.Item) *application.Menu {
-		m := wails.NewMenu()
-		fillMenu(m, items, handler.Do)
-		return m
-	}
-	current := traymenu.Items([]health.Line{{ID: "*", Text: "Comprobando…"}}, nil)
+	menu := wails.NewMenu()
+	fillMenu(menu, traymenu.Items(), handler.Do)
+	tray.SetMenu(menu)
 	level, text := health.Stopped, "Atenea One"
 	setIcon(level)
-	tray.SetMenu(menu(current))
 	go func() {
 		state := &app.TrayState{}
 		for {
 			read := core.Poll(state)
-			if items := traymenu.Items(read.Lines, read.Actions); !slices.Equal(items, current) {
-				tray.SetMenu(menu(items))
-				current = items
-			}
 			if read.Health != level {
 				setIcon(read.Health)
 				level = read.Health
