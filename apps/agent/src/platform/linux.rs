@@ -75,12 +75,35 @@ impl Network {
 }
 /// Rutas no predeterminadas de `ip -j route show table all` fuera de la interfaz propia.
 pub(crate) fn parse_routes(bytes: &[u8], interface: &str) -> Result<Vec<Prefix>, String> {
+    parse_routes_by(bytes, |dev| dev != Some(interface))
+}
+/// Nombres de enlaces de tipo túnel (`tun`, `wireguard`) de `ip -j -d link show`.
+pub(crate) fn parse_tunnel_links(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let links: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| "respuesta ip inválida")?;
+    Ok(links
+        .as_array()
+        .ok_or("respuesta ip inválida")?
+        .iter()
+        .filter(|l| {
+            matches!(
+                l["linkinfo"]["info_kind"].as_str(),
+                Some("tun" | "wireguard")
+            )
+        })
+        .filter_map(|l| l["ifname"].as_str().map(str::to_owned))
+        .collect())
+}
+fn parse_routes_by(
+    bytes: &[u8],
+    keep: impl Fn(Option<&str>) -> bool,
+) -> Result<Vec<Prefix>, String> {
     let entries: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|_| "respuesta ip inválida")?;
     let mut routes = Vec::new();
     for entry in entries.as_array().ok_or("respuesta ip inválida")? {
         let dst = entry["dst"].as_str().ok_or("ruta sin destino")?;
-        if dst == "default" || entry["dev"].as_str() == Some(interface) {
+        if dst == "default" || !keep(entry["dev"].as_str()) {
             continue;
         }
         let prefix = parse_prefix(dst).ok_or("prefijo del host inválido")?;
@@ -181,6 +204,20 @@ impl HostNetwork for Network {
                 &["-j", family, "route", "show", "table", "all"],
             )?;
             routes.extend(parse_routes(&bytes, &self.interface)?);
+        }
+        Ok(routes)
+    }
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+        let links = parse_tunnel_links(&run(&self.bins.ip, &["-j", "-d", "link", "show"])?)?;
+        let mut routes = Vec::new();
+        for family in ["-4", "-6"] {
+            let bytes = run(
+                &self.bins.ip,
+                &["-j", family, "route", "show", "table", "all"],
+            )?;
+            routes.extend(parse_routes_by(&bytes, |dev| {
+                dev.is_some_and(|d| d != self.interface && links.iter().any(|l| l == d))
+            })?);
         }
         Ok(routes)
     }
@@ -291,5 +328,30 @@ impl HostNetwork for Network {
             ),
             _ => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tunnel_routes_keep_only_other_tunnel_links() {
+        let links = br#"[{"ifname":"lo"},{"ifname":"eth0","linkinfo":{"info_kind":"veth"}},{"ifname":"atenea0","linkinfo":{"info_kind":"tun"}},{"ifname":"atenea1","linkinfo":{"info_kind":"tun"}},{"ifname":"wg0","linkinfo":{"info_kind":"wireguard"}}]"#;
+        assert_eq!(
+            parse_tunnel_links(links).unwrap(),
+            ["atenea0", "atenea1", "wg0"]
+        );
+        let routes = br#"[{"dst":"default","dev":"eth0"},{"dst":"192.0.2.0/24","dev":"eth0"},{"dst":"10.99.1.0/24","dev":"atenea1"},{"dst":"10.77.0.0/24","dev":"atenea0"},{"dst":"10.9.0.0/24","dev":"wg0"}]"#;
+        let tunnels = ["atenea0", "atenea1", "wg0"];
+        let found = parse_routes_by(routes, |dev| {
+            dev.is_some_and(|d| d != "atenea0" && tunnels.contains(&d))
+        })
+        .unwrap();
+        let found: Vec<_> = found
+            .iter()
+            .map(|p| format!("{}/{}", p.addr, p.len))
+            .collect();
+        assert_eq!(found, ["10.99.1.0/24", "10.9.0.0/24"]);
     }
 }

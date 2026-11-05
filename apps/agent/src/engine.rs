@@ -575,6 +575,10 @@ pub struct Engine {
     advertised: Vec<Prefix>,
     /// Red del túnel y subredes (propias y de los pares): nada de ello es un destino de sondeo directo.
     tunnel_only: Vec<Prefix>,
+    /// Parte de `tunnel_only` derivada de la configuración firmada (sin las rutas de otros túneles del host).
+    config_tunnel: Vec<Prefix>,
+    /// Rutas del host que salen por otro túnel (otra red Atenea, VPN): sondear ahí anidaría túneles.
+    host_tunnel: Vec<Prefix>,
     peers: Vec<Peer>,
     by_addr: HashMap<IpAddr, usize>,
     by_key: HashMap<[u8; 32], usize>,
@@ -616,6 +620,8 @@ impl Engine {
             own: Vec::new(),
             advertised: Vec::new(),
             tunnel_only: Vec::new(),
+            config_tunnel: Vec::new(),
+            host_tunnel: Vec::new(),
             peers: Vec::new(),
             by_addr: HashMap::new(),
             by_key: HashMap::new(),
@@ -720,13 +726,19 @@ impl Engine {
     pub fn apply_config(&mut self, cfg: &DeviceConfig) {
         self.device = cfg.device_id;
         let mut old = std::mem::take(&mut self.peers);
-        // Prefijos alcanzables únicamente a través del túnel: red del túnel, rutas de los pares y las propias.
-        let tunnel_only: Vec<Prefix> = cfg
+        // Prefijos alcanzables únicamente a través del túnel: red del túnel, rutas de los pares y las propias,
+        // más las rutas del host que salen por otro túnel.
+        let config_tunnel: Vec<Prefix> = cfg
             .network_prefixes
             .iter()
             .cloned()
             .chain(cfg.peers.iter().flat_map(|p| p.routes.iter().cloned()))
             .chain(cfg.advertised.iter().map(|r| r.prefix.clone()))
+            .collect();
+        let tunnel_only: Vec<Prefix> = config_tunnel
+            .iter()
+            .chain(&self.host_tunnel)
+            .cloned()
             .collect();
         for p in &cfg.peers {
             let mut peer = match old
@@ -749,6 +761,7 @@ impl Engine {
                 .retain(|c| !tunnel_only.iter().any(|t| prefix_contains(t, &c.ip())));
             self.peers.push(peer);
         }
+        self.config_tunnel = config_tunnel;
         self.tunnel_only = tunnel_only;
         self.own = cfg.tunnel_addrs.clone();
         self.advertised = cfg.advertised.iter().map(|r| r.prefix.clone()).collect();
@@ -759,6 +772,30 @@ impl Engine {
         self.last_config_error_detail = None;
         self.reindex();
         self.counters.inc("config_applied");
+    }
+
+    /// Rutas del host que salen por otro túnel. Un candidato dentro de ellas no es directo: el
+    /// paquete UDP viajaría anidado por ese otro túnel (y por su relay). Poda candidatos y el
+    /// endpoint ya aprendido; las pistas estáticas de la configuración se reevalúan al aplicarla.
+    /// shortcut: se ignoran rutas anchas (< /8 en IPv4, < /16 en IPv6: VPN de túnel completo), que
+    /// descartarían todo candidato público; subir si hace falta distinguir una VPN de salida.
+    pub fn set_host_tunnel_routes(&mut self, mut routes: Vec<Prefix>) {
+        routes.retain(|r| r.len >= if r.addr.is_ipv4() { 8 } else { 16 });
+        if routes == self.host_tunnel {
+            return;
+        }
+        self.tunnel_only = self.config_tunnel.iter().chain(&routes).cloned().collect();
+        self.host_tunnel = routes;
+        let tunnel_only = &self.tunnel_only;
+        let inside = |a: &SocketAddr| tunnel_only.iter().any(|t| prefix_contains(t, &a.ip()));
+        for peer in &mut self.peers {
+            peer.candidates.retain(|c| !inside(c));
+            if peer.endpoint.as_ref().is_some_and(inside) {
+                peer.endpoint = None;
+                peer.stat[0].last_rx = None;
+                peer.stat[0].healthy_since = None;
+            }
+        }
     }
 
     /// Una configuración rechazada no revoca la vigente (sigue hasta su lease).
@@ -2322,6 +2359,48 @@ mod tests {
             l.unix,
         );
         assert_eq!(l.a.peers[0].candidates, vec![ep("192.0.2.7:51820")]);
+    }
+
+    #[test]
+    fn candidates_inside_routes_of_other_host_tunnels_are_discarded_and_restored() {
+        let mut l = lab();
+        l.a.apply_config(&l.cfg_a);
+        let nested = Prefix {
+            addr: ip("10.99.1.0"),
+            len: 24,
+        };
+        l.a.on_peer_candidates(
+            &[2; 16],
+            vec![ep("10.99.1.56:51820"), ep("192.0.2.7:51820")],
+            l.now,
+            l.unix,
+        );
+        assert_eq!(l.a.peers[0].candidates.len(), 2);
+        // Una VPN de túnel completo (0.0.0.0/1) no debe vaciar los candidatos públicos.
+        l.a.set_host_tunnel_routes(vec![
+            nested.clone(),
+            Prefix {
+                addr: ip("0.0.0.0"),
+                len: 1,
+            },
+        ]);
+        assert_eq!(l.a.peers[0].candidates, vec![ep("192.0.2.7:51820")]);
+        l.a.on_peer_candidates(
+            &[2; 16],
+            vec![ep("10.99.1.56:51820"), ep("192.0.2.8:51820")],
+            l.now,
+            l.unix,
+        );
+        assert_eq!(l.a.peers[0].candidates, vec![ep("192.0.2.8:51820")]);
+        // Un endpoint directo ya aprendido dentro de la ruta se olvida.
+        l.a.set_host_tunnel_routes(Vec::new());
+        l.a.peers[0].endpoint = Some(ep("10.99.1.56:51820"));
+        l.a.set_host_tunnel_routes(vec![nested]);
+        assert_eq!(l.a.peers[0].endpoint, None);
+        // Si la ruta desaparece, vuelve a aceptarse.
+        l.a.set_host_tunnel_routes(Vec::new());
+        l.a.on_peer_candidates(&[2; 16], vec![ep("10.99.1.56:51820")], l.now, l.unix);
+        assert_eq!(l.a.peers[0].candidates, vec![ep("10.99.1.56:51820")]);
     }
 
     #[test]

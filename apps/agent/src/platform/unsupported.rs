@@ -27,6 +27,9 @@ impl HostNetwork for Network {
     fn existing_routes(&self) -> Result<Vec<Prefix>, String> {
         Err(UNSUPPORTED.into())
     }
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+        Err(UNSUPPORTED.into())
+    }
     fn add_route(&self, _prefix: &str) -> Result<(), String> {
         Err(UNSUPPORTED.into())
     }
