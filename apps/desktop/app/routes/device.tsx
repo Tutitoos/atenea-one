@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { PanelButton, PingButton } from '../device-actions';
 import { TrafficHistory } from '../device-history';
 import type { DeviceHistory } from '../lib/history';
@@ -12,9 +12,11 @@ import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
 import { Card, CopyButton, Dot, Empty, Heading, Row } from '../ui';
 
-function Title({ id, name, editable }: { id: string; name: string; editable: boolean }) {
+function Title({ id, name, editable, rename = false }: { id: string; name: string; editable: boolean; rename?: boolean }) {
   const names = useNames();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(rename);
+  // El menú de la lista pide abrir el editor también cuando este detalle ya estaba abierto.
+  useEffect(() => { if (rename) setEditing(true); }, [rename]);
   const cancelled = useRef(false);
   const save = (value: string) => { setName(id, value); setEditing(false); };
   if (!editable) return <h2 className="text-xl font-semibold">{name}</h2>;
@@ -86,7 +88,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
 }
 
 
-function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory }) {
+function PeerDetail({ peer, rate, network, history, rename, ping }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory; rename: boolean; ping: boolean }) {
   const names = useNames();
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
@@ -96,10 +98,10 @@ function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate;
   const traffic = (total: number, perSec?: number) => `${bytes(total)}${perSec == null ? '' : `  (${bytes(perSec)}/s)`}`;
   return (
     <>
-      <Title id={peer.public_key} name={peerName(peer, names)} editable />
+      <Title id={peer.public_key} name={peerName(peer, names)} editable rename={rename} />
       <State tone={tone}>{label}</State>
       {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
-      <div className="mb-4 flex flex-wrap gap-3"><PingButton network={network} addrs={peer.addrs} /><PanelButton network={network} deviceId={peer.device_id} /></div>
+      <div className="mb-4 flex flex-wrap gap-3"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></div>
       <Addresses addrs={peer.addrs} />
       <Heading>Detalles</Heading>
       <Card>
@@ -120,11 +122,16 @@ function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate;
   );
 }
 
+/** El menú de la lista navega aquí con `state` `{ rename }` o `{ ping }`; se consume y se limpia para no repetirse al volver. */
 export default function Device() {
   const { id = '' } = useParams();
   const { sample, error, network } = useAgent();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const asked = location.state as { rename?: boolean; ping?: boolean } | null;
+  useEffect(() => { if (asked) void navigate(location.pathname, { replace: true, state: null }); }, [asked, location.pathname, navigate]);
   if (!sample) return <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>;
   if (id === 'self') return <SelfDetail reply={sample.reply} />;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
-  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
+  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true} ping={asked?.ping === true} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }

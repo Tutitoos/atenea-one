@@ -3,6 +3,7 @@
 import { Links, Meta, Outlet, Scripts } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
+import { ToastProvider } from './toast';
 import './styles.css';
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -39,5 +40,5 @@ export function HydrateFallback() {
 
 export default function App() {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  return <QueryClientProvider client={client}><Outlet /></QueryClientProvider>;
+  return <QueryClientProvider client={client}><ToastProvider><Outlet /></ToastProvider></QueryClientProvider>;
 }

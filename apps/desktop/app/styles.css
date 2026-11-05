@@ -15,4 +15,7 @@ a, button, [class~="rounded-full"] { transition-property: color, background-colo
 /* Datos de la red anterior mientras llega la nueva: atenuados, sin vaciar la pantalla. */
 .stale-fade { transition: opacity 150ms ease-out; }
 .stale-fade.stale { opacity: 0.55; }
+/* Aviso breve: entra y sale con fundido dentro de sus 2 s de vida. */
+@keyframes toast { 0% { opacity: 0; } 8% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }
+.toast { animation: toast 2s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

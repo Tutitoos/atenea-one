@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Tone } from './lib/format';
+import { useCopy, useToast } from './toast';
 
 const bg: Record<Tone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad', off: 'bg-off' };
 
@@ -38,8 +39,9 @@ export function CopyButton({ value, label, icon = 'copy', text }: { value: strin
   useEffect(() => () => clearTimeout(timer.current), []);
   const name = `Copiar ${label}`;
   const show = (next: 'done' | 'failed') => { clearTimeout(timer.current); setState(next); timer.current = setTimeout(() => setState('idle'), 1500); };
-  // `navigator.clipboard` puede faltar (contexto no seguro) o rechazar (permiso denegado).
-  const copy = () => { Promise.resolve().then(() => navigator.clipboard.writeText(value)).then(() => show('done'), () => show('failed')); };
+  const doCopy = useCopy();
+  const announced = useToast() !== null;
+  const copy = () => { void doCopy(value, label).then((ok) => show(ok ? 'done' : 'failed')); };
   return (
     <>
       <button type="button" aria-label={name} title={state === 'done' ? 'Copiado' : state === 'failed' ? 'No se pudo copiar' : name} className={`inline-flex h-6 cursor-default items-center justify-center gap-1 text-sel align-middle ${text ? 'rounded-md border border-line bg-bg px-2 text-xs' : 'ml-2 size-6 rounded'}`} onClick={copy}>
@@ -48,7 +50,8 @@ export function CopyButton({ value, label, icon = 'copy', text }: { value: strin
         </svg>
         {text && <span aria-hidden="true">{text}</span>}
       </button>
-      {state === 'failed' && <span role="status" className="sr-only">No se pudo copiar</span>}
+      {/* Sin `ToastProvider` (pantallas sueltas) el fallo se anuncia aquí; con él, lo anuncia el aviso. */}
+      {state === 'failed' && !announced && <span role="status" className="sr-only">No se pudo copiar</span>}
     </>
   );
 }

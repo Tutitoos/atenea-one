@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/runtimefilter"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/secure"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/traymenu"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/winstate"
 )
 
 // La interfaz se compila antes (`pnpm run build`) y se embebe en el binario: no hay servidor ni puerto.
@@ -55,20 +57,52 @@ func main() {
 	// Primera ejecución del usuario (ADR-021): se abre la ventana una vez; en macOS, sin Dock, sería lo único que
 	// delata que la aplicación arrancó. El humo no toca la carpeta de configuración real.
 	first := !smoke && core.ClaimFirstRun()
+	// Tamaño recordado (solo el tamaño, no la posición). El humo no lee ni escribe la carpeta de configuración real.
+	width, height := 920, 600
+	statePath := ""
+	if !smoke {
+		if dir, err := core.ConfigDir(); err == nil {
+			statePath = filepath.Join(dir, winstate.File)
+			if s, ok := winstate.Load(statePath); ok {
+				width, height = s.Width, s.Height
+			}
+		}
+	}
 	window := wails.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "Atenea One",
-		Width:     920,
-		Height:    600,
-		MinWidth:  760,
-		MinHeight: 460,
+		Width:     width,
+		Height:    height,
+		MinWidth:  winstate.MinWidth,
+		MinHeight: winstate.MinHeight,
 		URL:       "/",
 		Hidden:    !smoke && !first && !slices.Contains(os.Args[1:], "--open"),
+	})
+	saveSize := func() {
+		if statePath == "" {
+			return
+		}
+		w, h := window.Size()
+		if err := winstate.Save(statePath, winstate.Size{Width: w, Height: h}); err != nil {
+			core.Log("tamaño de ventana: " + err.Error())
+		}
+	}
+	// Tras redimensionar se guarda con un debounce corto: el evento llega muchas veces por arrastre.
+	var resizeMu sync.Mutex
+	var resizeTimer *time.Timer
+	window.OnWindowEvent(events.Common.WindowDidResize, func(*application.WindowEvent) {
+		resizeMu.Lock()
+		defer resizeMu.Unlock()
+		if resizeTimer != nil {
+			resizeTimer.Stop()
+		}
+		resizeTimer = time.AfterFunc(800*time.Millisecond, saveSize)
 	})
 	// Cerrar la ventana la oculta; la aplicación sigue en la bandeja hasta «Salir».
 	var quitting atomic.Bool
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		if !quitting.Load() {
+			saveSize()
 			window.Hide()
 			event.Cancel()
 		}
@@ -78,6 +112,7 @@ func main() {
 		window.Focus()
 	}
 	quit := func() {
+		saveSize()
 		quitting.Store(true)
 		wails.Quit()
 	}
