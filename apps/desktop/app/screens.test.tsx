@@ -121,7 +121,7 @@ it('abre en este dispositivo y al elegir un par enseña su camino, direcciones y
   expect(await detail.findByText('Por relay UDP', { selector: 'span' })).toBeInTheDocument();
   expect(detail.getByText('IPv4')).toBeInTheDocument();
   // Puede ir seguido de la tasa si hubo una lectura anterior (el muestreador vive a nivel de módulo).
-  expect(detail.getByText(/^4\.0 KiB/)).toBeInTheDocument();
+  expect(detail.getByText(/^4,0 KiB/)).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Degradado');
 });
 
@@ -651,9 +651,13 @@ it('el ping refresca el camino y registra la transición en el historial', async
     device_ping: () => { path = 'direct'; return JSON.stringify({ sent: 5, received: 5, loss_pct: 0, min_ms: null, avg_ms: null, max_ms: null }); },
   });
   app('/devices/prueba-historial');
-  await userEvent.click(await screen.findByRole('button', { name: 'Probar conexión' }));
+  const ping = await screen.findByRole('button', { name: 'Probar conexión' });
+  // Dos lecturas a menos de 1 s no dan tasa: se espera para que la del ping la tenga.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await userEvent.click(ping);
   expect(await screen.findByRole('list', { name: 'Historial de eventos' })).toHaveTextContent('Se conectó directamente');
-  expect(await screen.findByRole('img', { name: /Velocidad de bajada/ })).toBeInTheDocument();
+  // El gráfico necesita dos muestras con tasa: la del ping y la del siguiente sondeo (2 s).
+  expect(await screen.findByRole('img', { name: /Velocidad de bajada/ }, { timeout: 4000 })).toBeInTheDocument();
 });
 
 it('mantiene la preferencia anterior si guardar notificaciones falla', async () => {

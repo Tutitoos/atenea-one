@@ -3,9 +3,9 @@
 import type { Network, NetState } from './networks';
 import { readReply } from './agent';
 
-/** URL elimina puertos estándar; no se mezclan subdominios ni puertos no estándar. */
+/** URL elimina puertos estándar; no se mezclan subdominios ni puertos no estándar. Con una URL inválida devuelve el texto tal cual. */
 export function serverHost(url: string): string {
-  return new URL(url.includes('://') ? url : `https://${url}`).host.toLowerCase();
+  try { return new URL(url.includes('://') ? url : `https://${url}`).host.toLowerCase(); } catch { return url.trim().toLowerCase(); }
 }
 
 export type Server = { host: string; networks: Network[]; state: NetState };

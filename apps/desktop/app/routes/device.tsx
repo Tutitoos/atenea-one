@@ -6,11 +6,11 @@ import { PanelButton, PingButton } from '../device-actions';
 import { TrafficHistory } from '../device-history';
 import type { DeviceHistory } from '../lib/history';
 import type { Rate } from '../lib/agent';
-import { ago, bytes, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
+import { ago, bytes, int, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
-import { Card, CopyButton, Dot, Empty, Heading, Row, Stack } from '../ui';
+import { Card, CopyButton, Dot, Empty, Heading, Row } from '../ui';
 
 function Title({ id, name, editable }: { id: string; name: string; editable: boolean }) {
   const names = useNames();
@@ -45,7 +45,17 @@ const State = ({ tone, children }: { tone: Tone; children: string }) => <div cla
 const Addresses = ({ addrs }: { addrs: string[] }) => (
   <>
     <Heading>Direcciones del túnel</Heading>
-    <Card>{addrs.length ? addrs.map((a) => <Stack key={a} label={ipKind(a)}>{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /><CopyButton value={`ssh ${a}`} label="comando SSH" icon="terminal" text="ssh" /><CopyButton value={`ping ${a}`} label="comando ping" icon="pulse" text="ping" /></Stack>) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
+    <p className="-mt-1 mb-2 text-xs text-mut">Los botones <code>ssh</code> y <code>ping</code> copian el comando para pegarlo en una terminal.</p>
+    <Card>{addrs.length ? addrs.map((a) => (
+      <div key={a} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-line py-2.5 last:border-b-0">
+        <dt className="col-start-1 row-start-2 text-xs text-mut">{ipKind(a)}</dt>
+        <dd className="col-start-1 row-start-1 select-text break-all text-sm">{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /></dd>
+        <dd className="col-start-2 row-span-2 row-start-1 flex gap-1.5">
+          <CopyButton value={`ssh ${a}`} label="comando SSH" icon="terminal" text="ssh" />
+          <CopyButton value={`ping ${a}`} label="comando ping" icon="pulse" text="ping" />
+        </dd>
+      </div>
+    )) : <Row label="Direcciones">no las informa este agente</Row>}</Card>
   </>
 );
 
@@ -62,7 +72,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
       <Heading>Detalles</Heading>
       <Card>
         <Row label="Nombre del sistema">{status.hostname}</Row>
-        <Row label="Lease">{left == null ? null : left > 0 ? `válido ${ago(left)}` : 'caducado'}</Row>
+        <Row label="Lease">{left == null ? null : left > 0 ? `quedan ${ago(left)}` : 'caducado'}</Row>
         <Row label="Configuración">{`v${status.config.version}`}</Row>
         <Row label="NAT">{status.nat?.mapping}</Row>
         <Row label="IP pública vista">{status.nat?.reflexive}</Row>
@@ -80,7 +90,9 @@ function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate;
   const names = useNames();
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
-  const ready = peer.paths.filter((p) => p.ready).map((p) => p.kind).join(', ');
+  const ready = peer.paths.map((p) => <Row key={p.kind} label={`Camino ${pathLabel(p.kind).label.toLowerCase()}`}>{[p.ready ? 'listo' : 'no listo', p.healthy ? 'sano' : 'con fallos', p.last_rx_secs == null ? 'sin recepción' : `sin recibir desde hace ${ago(p.last_rx_secs)}`].join(' · ')}</Row>);
+  // `rtt_ms` es el RTT cliente↔relay (no con el par) y en conexión directa nunca existe.
+  const latency = peer.path.startsWith('relay') ? <Row label="Latencia al relay">{used?.rtt_ms == null ? null : `${used.rtt_ms} ms`}</Row> : peer.path === 'direct' ? <Row label="Latencia">No medida en conexión directa</Row> : null;
   const traffic = (total: number, perSec?: number) => `${bytes(total)}${perSec == null ? '' : `  (${bytes(perSec)}/s)`}`;
   return (
     <>
@@ -93,13 +105,13 @@ function PeerDetail({ peer, rate, network, history }: { peer: Peer; rate?: Rate;
       <Card>
         <Row label="Nombre en la red">{peer.name}</Row>
         <Row label="Camino en uso">{label}</Row>
-        <Row label="Caminos listos">{ready}</Row>
-        <Row label="Latencia">{used?.rtt_ms == null ? null : `${used.rtt_ms} ms`}</Row>
+        {ready}
+        {latency}
         <Row label="Recibido">{traffic(peer.rx_bytes, rate?.down)}</Row>
         <Row label="Enviado">{traffic(peer.tx_bytes, rate?.up)}</Row>
-        <Row label="Última sesión">{peer.session ? `hace ${ago(peer.last_handshake_secs_ago ?? 0)}` : 'sin sesión'}</Row>
+        <Row label="Última sesión">{peer.session ? (peer.last_handshake_secs_ago == null ? '—' : `hace ${ago(peer.last_handshake_secs_ago)}`) : 'sin sesión'}</Row>
         <Row label="Dirección remota">{peer.endpoint}</Row>
-        <Row label="Candidatos">{String(peer.candidates)}</Row>
+        <Row label="Direcciones conocidas">{int(peer.candidates)}</Row>
         {peer.probe && (peer.probe.failures > 0 || peer.probe.hold_secs != null) && <Row label="Reintentos de conexión">{`${peer.probe.failures} fallos · ${peer.probe.hold_secs == null ? 'sin espera de sondeo' : `${peer.probe.hold_secs} s hasta el próximo intento`}`}</Row>}
         <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
       </Card>

@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { deviceFingerprint, inspectCode, joinNetwork, migrateLegacy, type CodeInfo } from './lib/networks';
 import type { Joined } from './lib/wizard';
@@ -47,8 +47,12 @@ export function Legacy({ onDone }: { onDone: () => void }) {
  */
 export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joined: Joined) => void }) {
   const [code, setCode] = useState('');
-  const [info, setInfo] = useState<CodeInfo>();
-  const check = useMutation({ mutationFn: inspectCode, onSuccess: setInfo });
+  // La huella que se confirma y el código con el que se une son SIEMPRE los de la misma inspección.
+  const [inspected, setInspected] = useState<{ code: string; info: CodeInfo }>();
+  const info = inspected?.info;
+  // Identifica la última inspección pedida: una respuesta de otra anterior (código editado o cancelada) se descarta.
+  const latest = useRef(0);
+  const check = useMutation({ mutationFn: inspectCode });
   const join = useMutation({
     mutationFn: joinNetwork,
     onSuccess: (output) => {
@@ -56,7 +60,11 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
       if (info) onJoined?.({ networkId: info.network_id, name: info.name, server: info.server, hasToken: info.has_token, fingerprint: deviceFingerprint(output) });
     },
   });
-  const reset = () => { setInfo(undefined); check.reset(); join.reset(); };
+  const inspect = (text: string) => {
+    const id = ++latest.current;
+    check.mutate(text, { onSuccess: (data) => { if (id === latest.current) setInspected({ code: text, info: data }); } });
+  };
+  const reset = () => { latest.current++; setInspected(undefined); check.reset(); join.reset(); };
 
   if (join.isSuccess && info) {
     const fp = deviceFingerprint(join.data);
@@ -82,7 +90,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
         </Card>
         <p className="mt-3 text-sm">Compara el nombre, el servidor y la huella con los que te dio quien te pasó el código, <strong>por otro canal</strong>. Una red puede instalar rutas privadas y DNS para dominios concretos en este equipo.</p>
         <div className="mt-3 flex items-center gap-2">
-          <button type="button" className={primary} disabled={join.isPending} onClick={() => join.mutate(code)}>Unirme a esta red</button>
+          <button type="button" className={primary} disabled={join.isPending} onClick={() => join.mutate(inspected!.code)}>Unirme a esta red</button>
           <button type="button" className={button} disabled={join.isPending} onClick={reset}>Cancelar</button>
           {join.isPending && <span role="status" className="text-sm text-mut">Esperando la autorización del sistema…</span>}
         </div>
@@ -92,7 +100,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
   }
 
   return (
-    <form className="rounded-[10px] bg-card px-3.5 py-3" onSubmit={(e) => { e.preventDefault(); if (code.trim()) check.mutate(code); }}>
+    <form className="rounded-[10px] bg-card px-3.5 py-3" onSubmit={(e) => { e.preventDefault(); if (code.trim()) inspect(code); }}>
       <label htmlFor="join-code" className="block text-sm">Código de red</label>
       <textarea
         id="join-code"
@@ -101,7 +109,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
         autoComplete="off"
         placeholder="ATENEA1-…"
         value={code}
-        onChange={(e) => { setCode(e.target.value); check.reset(); }}
+        onChange={(e) => { setCode(e.target.value); latest.current++; check.reset(); }}
         className="mt-1 w-full select-text rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-fg"
       />
       <div className="mt-2 flex items-center gap-2">

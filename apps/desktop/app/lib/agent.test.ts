@@ -22,6 +22,14 @@ it('un contador que retrocede (agente reiniciado) da tasa 0 y no negativa', () =
   expect(sample(make(10, 10), 1000).rates.aa).toEqual({ down: 0, up: 0 });
 });
 
+it('descarta la tasa si las lecturas están demasiado juntas o demasiado separadas y reanuda después', () => {
+  const sample = createSampler();
+  sample(make(0, 0), 0);
+  expect(sample(make(500, 0), 300).rates).toEqual({});
+  expect(sample(make(9000, 0), 60000).rates).toEqual({});
+  expect(sample(make(11000, 0), 62000).rates).toEqual({ aa: { down: 1000, up: 0 } });
+});
+
 it('acepta un agente anterior sin direcciones y rechaza una respuesta con otra forma', () => {
   const old = make(0, 0);
   expect(old.status.addrs).toEqual([]);
