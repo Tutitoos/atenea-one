@@ -44,7 +44,7 @@ export default function Networks() {
   const refresh = () => { void client.invalidateQueries({ queryKey: ['networks'] }); void client.invalidateQueries({ queryKey: ['agent'] }); void client.invalidateQueries({ queryKey: ['legacy'] }); };
   const change = useMutation({ mutationFn: ({ op, id }: { op: 'up' | 'down' | 'leave'; id: string }) => changeNetwork(op, id), onSuccess: refresh });
   // Un fallo al consultar la instalación heredada no impide usar las redes: simplemente no hay banner.
-  const legacy = useQuery({ queryKey: ['legacy'], queryFn: readLegacy, refetchInterval: 5000 });
+  const legacy = useQuery({ queryKey: ['legacy'], queryFn: readLegacy });
 
   return (
     <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">

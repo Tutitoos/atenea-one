@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"time"
 )
 
 // CLIPath es el binario del CLI que instala el paquete. ATENEA_CLI lo sustituye (desarrollo y pruebas).
@@ -74,17 +76,51 @@ func List() (string, error) {
 	if _, err := os.Stat(cli); err != nil {
 		return "[]", nil
 	}
+	listCache.mu.Lock()
+	if listCache.cli == cli && time.Since(listCache.at) < listTTL {
+		text := listCache.text
+		listCache.mu.Unlock()
+		return text, nil
+	}
+	gen := listCache.gen
+	listCache.mu.Unlock()
+
 	text, err := Run(cli, "network", "list", "--json")
 	if err != nil {
-		return "", err
+		return "", err // los errores no se cachean
 	}
 	var v any
 	if json.Unmarshal([]byte(text), &v) == nil {
 		if _, ok := v.([]any); ok {
+			listCache.mu.Lock()
+			if listCache.gen == gen { // una invalidación durante la lectura descarta este resultado
+				listCache.cli, listCache.text, listCache.at = cli, text, time.Now()
+			}
+			listCache.mu.Unlock()
 			return text, nil
 		}
 	}
 	return "", errors.New("`atenea network list` devolvió una respuesta inesperada")
+}
+
+// listTTL es lo que se reutiliza la última lista: la ventana (5 s), la bandeja y DevicePing/OpenPanel la piden a
+// la vez y no necesitan un proceso cada uno.
+const listTTL = 3 * time.Second
+
+var listCache struct {
+	mu   sync.Mutex
+	cli  string
+	text string
+	at   time.Time
+	gen  uint64
+}
+
+// InvalidateList descarta la lista guardada: se llama al aplicar un cambio de redes para no mostrar estado viejo.
+func InvalidateList() {
+	listCache.mu.Lock()
+	listCache.at = time.Time{}
+	listCache.gen++
+	listCache.mu.Unlock()
 }
 
 // Legacy devuelve `atenea network legacy --json`: {"present": bool}. Sin CLI (o en Windows) no hay instalación
@@ -137,7 +173,7 @@ var Elevate = func(script, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return Run(program, args...)
+	return RunElevated(program, args...)
 }
 
 // safePromptName admite el nombre de la red en el texto del diálogo solo si no puede romper su cita: el texto del diálogo
@@ -208,6 +244,7 @@ func Apply(op, network, code, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer InvalidateList() // aunque falle o se cancele, el estado pudo cambiar a medias
 	return Elevate(script, prompt(o, joinName))
 }
 

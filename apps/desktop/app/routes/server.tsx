@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { PanelButton } from '../device-actions';
 import { ago, bytes, num, pathLabel, peerName, serverTone, text } from '../lib/format';
@@ -63,7 +63,7 @@ export default function Server() {
   const read = useQuery({
     queryKey: ['server-status', host, connected], enabled: connected.length > 0,
     queryFn: () => readServerNetworks(connected),
-    refetchInterval: 2000,
+    refetchInterval: 5000, placeholderData: keepPreviousData,
   });
   const change = useMutation({
     mutationFn: ({ op, id }: { op: 'up' | 'down'; id: string }) => changeNetwork(op, id),

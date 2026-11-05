@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { readNetworks, stateText, stateTone } from '../lib/networks';
 import { certificateLeft, groupServers, readServerNetworks } from '../lib/servers';
@@ -11,7 +11,7 @@ export default function Servers() {
   const servers = groupServers(networks.error ? [] : networks.data ?? []);
   const statuses = useQueries({ queries: servers.map((server) => {
     const connected = server.networks.filter((net) => net.state === 'conectada').map((net) => net.network_id);
-    return { queryKey: ['server-status', server.host, connected], queryFn: () => readServerNetworks(connected), enabled: connected.length > 0, refetchInterval: 2000 };
+    return { queryKey: ['server-status', server.host, connected], queryFn: () => readServerNetworks(connected), enabled: connected.length > 0, refetchInterval: 10000, placeholderData: keepPreviousData };
   }) });
   return (
     <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">

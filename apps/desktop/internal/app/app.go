@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/autostart"
@@ -41,6 +42,9 @@ type App struct {
 	Deliver func(text string) error
 	// Log recibe los errores que no tienen a quién devolverse (avisos del sistema).
 	Log func(message string)
+
+	prefMu sync.Mutex
+	pref   *bool // preferencia de avisos en memoria (nil = aún sin leer)
 }
 
 // New devuelve la aplicación con el entorno real. La carpeta de configuración es la misma que usaba la versión
@@ -48,7 +52,7 @@ type App struct {
 func New() *App {
 	return &App{
 		Ask: func(socket string) (string, error) {
-			return backend.Ask(socket, backend.MaxStatusBytes, 5*time.Second)
+			return backend.Ask(socket, backend.MaxStatusBytes, 2*time.Second)
 		},
 		ConfigDir: func() (string, error) {
 			dir, err := os.UserConfigDir()
@@ -193,13 +197,7 @@ func (a *App) notificationsPath() (string, error) {
 }
 
 // NotificationsGet lee la preferencia de avisos del sistema (activada por defecto).
-func (a *App) NotificationsGet() (bool, error) {
-	path, err := a.notificationsPath()
-	if err != nil {
-		return false, err
-	}
-	return notifyprefs.Get(path)
-}
+func (a *App) NotificationsGet() (bool, error) { return a.notificationsEnabled() }
 
 // NotificationsSet guarda la preferencia de avisos del sistema.
 func (a *App) NotificationsSet(on bool) error {
@@ -207,7 +205,33 @@ func (a *App) NotificationsSet(on bool) error {
 	if err != nil {
 		return err
 	}
-	return notifyprefs.Set(path, on)
+	if err := notifyprefs.Set(path, on); err != nil {
+		return err
+	}
+	a.prefMu.Lock()
+	a.pref = &on
+	a.prefMu.Unlock()
+	return nil
+}
+
+// notificationsEnabled lee la preferencia del disco una sola vez y la recuerda: la bandeja la pide en cada lectura.
+// Solo NotificationsSet la cambia. Un error de lectura no se recuerda.
+func (a *App) notificationsEnabled() (bool, error) {
+	a.prefMu.Lock()
+	defer a.prefMu.Unlock()
+	if a.pref != nil {
+		return *a.pref, nil
+	}
+	path, err := a.notificationsPath()
+	if err != nil {
+		return false, err
+	}
+	on, err := notifyprefs.Get(path)
+	if err != nil {
+		return on, err
+	}
+	a.pref = &on
+	return on, nil
 }
 
 // AutostartGet dice si la aplicación se abre al iniciar sesión; `nil` si el sistema no lo admite.
@@ -255,25 +279,37 @@ func (a *App) Poll(state *TrayState) Tray {
 		state.nets = backend.JoinedNetworks()
 	}
 	state.tick++
-	enabled := false
-	if path, err := a.notificationsPath(); err == nil {
-		enabled, _ = notifyprefs.Get(path)
-	}
+	enabled, _ := a.notificationsEnabled()
 	now := a.Now().Unix()
 	if state.notify == nil {
 		state.notify = map[string]*notify.State{}
 	}
 	live := map[string]bool{}
 	var sources []health.Source
-	for _, net := range state.nets {
+	type reading struct {
+		obj map[string]any
+		err error
+	}
+	reads := make([]reading, len(state.nets)) // un hueco por red: cada goroutine escribe solo el suyo
+	var wg sync.WaitGroup
+	for i, net := range state.nets {
+		id, _ := net["network_id"].(string)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, reads[i].obj, reads[i].err = a.readStatus(id)
+		}()
+	}
+	wg.Wait()
+	for i, net := range state.nets {
 		id, _ := net["network_id"].(string)
 		name, ok := net["name"].(string)
 		if !ok {
 			name = "Red"
 		}
 		live[id] = true
-		_, obj, err := a.readStatus(id)
-		if err != nil || obj == nil {
+		obj := reads[i].obj
+		if reads[i].err != nil || obj == nil {
 			obj = nil
 		} else {
 			assessment := health.Assess(obj)

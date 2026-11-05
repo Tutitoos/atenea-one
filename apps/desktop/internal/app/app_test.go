@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/backend"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/health"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/panel"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/ping"
@@ -79,6 +80,7 @@ func writeList(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	backend.InvalidateList() // la caché de List no debe servir la lista anterior
 }
 
 func TestStatusComposesHealthKeepsNumbersExactAndNeverEmitsNullReasons(t *testing.T) {

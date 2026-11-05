@@ -13,6 +13,11 @@ it('normaliza host exacto, esquema, mayúsculas y puertos estándar sin confundi
   expect(serverHost('https://[2001:db8::1]:443/api')).toBe('[2001:db8::1]');
 });
 
+it('serverHost no lanza con una URL inválida', () => {
+  expect(() => serverHost('http://')).not.toThrow();
+  expect(serverHost('https://[::1')).toBe('https://[::1');
+});
+
 it('agrupa por url y conserva los estados de red; el peor estado agregado no convierte detenida en rojo', () => {
   const net = (url: string, state: string) => network.parse({ network_id: url + state, name: state, url, server: 'nombre visible', interface: 'atenea0', listen_port: 51820, join_status: 'aprobada', state });
   const groups = groupServers([net('https://PANEL.EXAMPLE.TEST:443/api', 'conectada'), net('https://panel.example.test', 'detenida'), net('https://otro.example.test', 'conflicto')]);

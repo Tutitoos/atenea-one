@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 // Frontera con el agente: se valida lo que se usa y se toleran campos ausentes (agentes anteriores
 // no informan `addrs`) o añadidos. Cualquier otra forma se rechaza con un error visible.
-const path = z.object({ kind: z.string(), ready: z.boolean(), healthy: z.boolean(), rtt_ms: z.number().nullish() });
+const path = z.object({ kind: z.string(), ready: z.boolean(), healthy: z.boolean(), rtt_ms: z.number().nullish(), last_rx_secs: z.number().nullish() });
 // El agente informa `device_id` como lista de 16 bytes (así sale en el JSON real, visto contra un agente 0.1.5); se
 // normaliza a UUID canónico. Es un dato opcional: lo irreconocible se ignora y NO debe invalidar el estado entero.
 const deviceId = z

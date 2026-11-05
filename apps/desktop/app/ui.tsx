@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Tone } from './lib/format';
 
@@ -25,16 +25,6 @@ export function Row({ label, children }: { label: string; children: ReactNode })
   );
 }
 
-/** Valor destacado con su etiqueta debajo, como la tarjeta de direcciones. */
-export function Stack({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col-reverse border-b border-line py-2.5 last:border-b-0">
-      <dt className="text-xs text-mut">{label}</dt>
-      <dd className="select-text text-sm">{children}</dd>
-    </div>
-  );
-}
-
 const icons = {
   copy: <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /></>,
   terminal: <><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></>,
@@ -43,15 +33,23 @@ const icons = {
 
 /** Botón de copiar con icono propio por tipo (`copy`, `terminal`, `pulse`) y, si se da, una etiqueta corta visible. */
 export function CopyButton({ value, label, icon = 'copy', text }: { value: string; label: string; icon?: keyof typeof icons; text?: string }) {
-  const [done, setDone] = useState(false);
+  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const name = `Copiar ${label}`;
+  const show = (next: 'done' | 'failed') => { clearTimeout(timer.current); setState(next); timer.current = setTimeout(() => setState('idle'), 1500); };
+  // `navigator.clipboard` puede faltar (contexto no seguro) o rechazar (permiso denegado).
+  const copy = () => { Promise.resolve().then(() => navigator.clipboard.writeText(value)).then(() => show('done'), () => show('failed')); };
   return (
-    <button type="button" aria-label={name} title={done ? 'Copiado' : name} className={`ml-2 inline-flex h-6 cursor-default items-center justify-center gap-1 rounded text-sel align-middle ${text ? 'px-1.5 text-xs' : 'size-6'}`} onClick={() => { void navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>
-      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        {done ? <path d="m5 12 4 4L19 6" /> : icons[icon]}
-      </svg>
-      {text && <span aria-hidden="true">{text}</span>}
-    </button>
+    <>
+      <button type="button" aria-label={name} title={state === 'done' ? 'Copiado' : state === 'failed' ? 'No se pudo copiar' : name} className={`inline-flex h-6 cursor-default items-center justify-center gap-1 text-sel align-middle ${text ? 'rounded-md border border-line bg-bg px-2 text-xs' : 'ml-2 size-6 rounded'}`} onClick={copy}>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          {state === 'done' ? <path d="m5 12 4 4L19 6" /> : icons[icon]}
+        </svg>
+        {text && <span aria-hidden="true">{text}</span>}
+      </button>
+      {state === 'failed' && <span role="status" className="sr-only">No se pudo copiar</span>}
+    </>
   );
 }
 

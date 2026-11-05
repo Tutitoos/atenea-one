@@ -39,7 +39,7 @@ export default function Welcome() {
   const queries = useQueryClient();
   const client = useQuery({ queryKey: ['client'], queryFn: readClient });
   const networks = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000, enabled: client.data?.supported === true && client.data.installed });
-  const legacy = useQuery({ queryKey: ['legacy'], queryFn: readLegacy, refetchInterval: 5000, enabled: client.data?.supported === true && client.data.installed });
+  const legacy = useQuery({ queryKey: ['legacy'], queryFn: readLegacy, enabled: client.data?.supported === true && client.data.installed });
   const [joined, setJoined] = useState<Joined>();
   const [skippedLegacy, setSkippedLegacy] = useState(false);
   const [skippedApproval, setSkippedApproval] = useState(false);

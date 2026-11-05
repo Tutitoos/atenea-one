@@ -6,6 +6,7 @@ package backend
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,14 +59,34 @@ func Checked(line string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-// Run ejecuta un programa sin shell y con la entrada vacía. El usuario que cierra el diálogo de
+// ReadTimeout acota las lecturas del CLI (`list`, `legacy`, `inspect`): un CLI colgado devuelve error en vez de
+// bloquear la interfaz. Es una variable para que las pruebas la acorten.
+var ReadTimeout = 5 * time.Second
+
+// Run ejecuta una lectura del CLI con ReadTimeout. Para operaciones con diálogo de administrador usa RunElevated.
+func Run(program string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ReadTimeout)
+	defer cancel()
+	return runCtx(ctx, program, args...)
+}
+
+// RunElevated ejecuta un programa sin plazo: el diálogo de administrador tarda lo que tarde el usuario.
+func RunElevated(program string, args ...string) (string, error) {
+	return runCtx(context.Background(), program, args...)
+}
+
+// runCtx ejecuta un programa sin shell y con la entrada vacía. El usuario que cierra el diálogo de
 // administrador devuelve «Cancelado»: en macOS `osascript` falla con el error (-128), cuyo texto sale traducido
 // («User canceled», «Cancelado por el usuario»…), así que se reconoce por el código y no por el texto; polkit usa 126/127.
-func Run(program string, args ...string) (string, error) {
-	cmd := exec.Command(program, args...)
+func runCtx(ctx context.Context, program string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, program, args...)
+	cmd.WaitDelay = time.Second // un nieto que conserve las tuberías no puede retener la espera
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
+	if err != nil && ctx.Err() != nil {
+		return "", fmt.Errorf("%s: tiempo de espera agotado", program)
+	}
 	out := strings.TrimSpace(stdout.String())
 	if err == nil {
 		return out, nil
