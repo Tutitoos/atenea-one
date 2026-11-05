@@ -418,7 +418,8 @@ it('si ningún socket de las redes conectadas responde muestra el estado vacío 
 it('un par sin camino es Inactivo y explica la conexión bajo demanda sin degradar la cabecera', async () => {
   serve(agent([peer('a'.repeat(64), '10.77.0.3', 'none')], { level: 'ok', text: 'Conectado', reasons: [] }));
   app(`/devices/${'a'.repeat(64)}`);
-  expect(await screen.findByText('Inactivo', { selector: 'span' })).toBeInTheDocument();
+  // La lista también lleva la insignia «Inactivo»: se mira solo el detalle.
+  expect(await within(await screen.findByRole('main')).findByText('Inactivo', { selector: 'span' })).toBeInTheDocument();
   expect(screen.getByText('Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.')).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Conectado');
 });

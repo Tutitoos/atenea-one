@@ -1,11 +1,12 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from 'react';
-import { NavLink, Outlet, useMatch, useNavigate } from 'react-router';
+import { useEffect, useMemo, useState } from 'react';
+import { NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { readAgent } from '../lib/agent';
 import { ago, levelTone } from '../lib/format';
 import { readNetworks, stateText, stateTone } from '../lib/networks';
+import { saveSection } from '../lib/section';
 import { groupServers } from '../lib/servers';
 import type { Agent } from '../lib/live';
 import { Dot, Pill } from '../ui';
@@ -14,6 +15,8 @@ const NETWORK_KEY = 'atenea.network';
 const link = ({ isActive }: { isActive: boolean }) => `cursor-default rounded-md px-2.5 py-1.5 text-sm ${isActive ? 'bg-fg/10' : ''}`;
 
 export default function Shell() {
+  const { pathname } = useLocation();
+  useEffect(() => saveSection(pathname), [pathname]);
   // Red cuyo estado se enseña: la guardada si sigue unida, si no la primera. Sin redes unidas no hay estado.
   const [chosen, choose] = useState(() => localStorage.getItem(NETWORK_KEY) ?? '');
   const navigate = useNavigate();
