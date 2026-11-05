@@ -616,6 +616,10 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let mut routes_declared = false;
     let mut endpoint_task: Option<tokio::task::JoinHandle<Result<Vec<IpAddr>, String>>> = None;
     let mut endpoint_started: Option<Instant> = None;
+    let mut tunnel_routes_task: Option<
+        tokio::task::JoinHandle<Result<Vec<atenea_identity::Prefix>, String>>,
+    > = None;
+    let mut tunnel_routes_started: Option<Instant> = None;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -702,6 +706,21 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     let before = cand_tx.borrow().len();
                     cand_tx.send_modify(|cands| net::exclude_tunnel_candidates(cands, &rt.candidate_exclusions));
                     if cand_tx.borrow().len() != before { announce_now.notify_one(); }
+                    // Rutas del host por otros túneles (otra red Atenea, VPN): un candidato directo ahí anidaría túneles.
+                    if tunnel_routes_task.as_ref().is_some_and(|task| task.is_finished())
+                        && let Some(task) = tunnel_routes_task.take()
+                    {
+                        match task.await {
+                            Ok(Ok(routes)) => rt.engine.set_host_tunnel_routes(routes),
+                            Ok(Err(e)) => tracing::debug!("no se pudieron leer las rutas de otros túneles: {e}"),
+                            Err(_) => {}
+                        }
+                    }
+                    if tunnel_routes_task.is_none() && tunnel_routes_started.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(10)) {
+                        let iface = rt.tun.name().to_owned();
+                        tunnel_routes_task = Some(tokio::task::spawn_blocking(move || net::tunnel_routes(&iface)));
+                        tunnel_routes_started = Some(now);
+                    }
                     rt.housekeeping(unix);
                     let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));
                     if (!rt.cfg.advertise_routes.is_empty() || routes_declared)

@@ -38,6 +38,9 @@ pub(crate) trait HostNetwork {
     fn configure_link(&self, mtu: usize, addrs: &[(IpAddr, u8)]) -> Result<(), String>;
     /// Rutas no predeterminadas de otros enlaces, para comprobar conflictos.
     fn existing_routes(&self) -> Result<Vec<Prefix>, String>;
+    /// Rutas no predeterminadas que salen por otro túnel del host (otra red Atenea, VPN), no por
+    /// una interfaz física. Solo lectura.
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String>;
     fn add_route(&self, prefix: &str) -> Result<(), String>;
     fn remove_route(&self, prefix: &str) -> Result<(), String>;
     /// Solo lectura; un error impide aplicar la configuración.

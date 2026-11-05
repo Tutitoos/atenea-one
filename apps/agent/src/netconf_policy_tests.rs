@@ -27,6 +27,9 @@ impl HostNetwork for MemoryHost {
     fn existing_routes(&self) -> Result<Vec<Prefix>, String> {
         Ok(self.existing.borrow().clone())
     }
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+        Ok(Vec::new())
+    }
     fn add_route(&self, prefix: &str) -> Result<(), String> {
         self.routes.borrow_mut().insert(prefix.into());
         Ok(())
@@ -354,6 +357,9 @@ fn failing_route_listing_is_an_error_not_a_pass() {
         }
         fn existing_routes(&self) -> Result<Vec<Prefix>, String> {
             Err("netstat: fallo".into())
+        }
+        fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+            Ok(Vec::new())
         }
         fn add_route(&self, p: &str) -> Result<(), String> {
             self.0.add_route(p)

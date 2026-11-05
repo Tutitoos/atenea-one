@@ -88,6 +88,12 @@ pub async fn local_addrs(
     candidates
 }
 
+/// Rutas del host que salen por otro túnel; bloqueante (ejecuta el comando de red del sistema).
+pub fn tunnel_routes(skip_iface: &str) -> Result<Vec<atenea_identity::Prefix>, String> {
+    use crate::platform::HostNetwork;
+    crate::platform::Platform::new(skip_iface.into(), Default::default()).tunnel_routes()
+}
+
 /// Cliente STUN: dos consultas (dos puertos del mismo servidor) desde el socket de datos.
 pub struct Stun {
     names: Vec<String>,

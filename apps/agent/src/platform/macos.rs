@@ -83,6 +83,13 @@ fn prefix(text: &str, host: bool) -> Result<Prefix, String> {
     Ok(Prefix { addr, len })
 }
 pub(crate) fn parse_routes(text: &str, skip: &str) -> Result<Vec<Prefix>, String> {
+    parse_routes_by(text, |netif| netif != skip)
+}
+/// Rutas que salen por otro `utun` (otra red Atenea o VPN); `skip` es la interfaz propia.
+pub(crate) fn parse_tunnel_routes(text: &str, skip: &str) -> Result<Vec<Prefix>, String> {
+    parse_routes_by(text, |netif| netif != skip && netif.starts_with("utun"))
+}
+fn parse_routes_by(text: &str, keep: impl Fn(&str) -> bool) -> Result<Vec<Prefix>, String> {
     let mut out = Vec::new();
     let mut iface_column = None;
     for line in text.lines() {
@@ -100,7 +107,7 @@ pub(crate) fn parse_routes(text: &str, skip: &str) -> Result<Vec<Prefix>, String
         if fields.len() <= column || fields.len() < 3 {
             return Err("salida netstat inválida".into());
         }
-        if fields[0] == "default" || fields[column] == skip {
+        if fields[0] == "default" || !keep(fields[column]) {
             continue;
         }
         let p = prefix(fields[0], fields[2].contains('H'))?;
@@ -272,6 +279,16 @@ impl HostNetwork for Network {
         }
         Ok(out)
     }
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+        let mut out = Vec::new();
+        for family in ["inet", "inet6"] {
+            out.extend(parse_tunnel_routes(
+                &String::from_utf8_lossy(&run(&self.bins.netstat, &["-rn", "-f", family])?),
+                &self.interface,
+            )?);
+        }
+        Ok(out)
+    }
     fn add_route(&self, p: &str) -> Result<(), String> {
         self.route("add", p)
     }
@@ -391,6 +408,16 @@ mod tests {
         let a = parse_addrs(addrs, "utun9", 51820);
         assert!(!a.iter().any(|a| a.ip().to_string() == "10.77.0.2"));
         assert!(!a.iter().any(|a| a.ip().is_loopback()));
+    }
+    #[test]
+    fn tunnel_routes_exclude_physical_links_and_own_interface() {
+        let routes = "Routing tables\n\nInternet:\nDestination Gateway Flags Netif Expire\ndefault 192.0.2.1 UGScg en0\n198.51.100/24 link#4 UCS en0 !\n10.99.1/24 link#49 UCS utun7\n10.78.0.1 10.78.0.1 UH utun7\n10.77/24 link#50 UCS utun9\n";
+        let p: Vec<_> = parse_tunnel_routes(routes, "utun9")
+            .unwrap()
+            .iter()
+            .map(|p| format!("{}/{}", p.addr, p.len))
+            .collect();
+        assert_eq!(p, ["10.99.1.0/24", "10.78.0.1/32"]);
     }
     #[test]
     fn resolver_ownership_and_validation() {

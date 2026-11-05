@@ -261,6 +261,10 @@ impl HostNetwork for Network {
     fn existing_routes(&self) -> Result<Vec<Prefix>, String> {
         parse_routes(&self.execute("$items = @(Get-NetRoute -PolicyStore ActiveStore | Select-Object InterfaceIndex,DestinationPrefix); @{ InterfaceIndex = $i; Items = $items } | ConvertTo-Json -Depth 4 -Compress")?)
     }
+    fn tunnel_routes(&self) -> Result<Vec<Prefix>, String> {
+        // Wintun es el adaptador de Atenea, WireGuard y Tailscale: otro adaptador de ese tipo es otro túnel.
+        parse_routes(&self.execute("$tun = @(Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceDescription -like 'Wintun*' } | Select-Object -ExpandProperty InterfaceIndex); $items = @(Get-NetRoute -PolicyStore ActiveStore | Where-Object { $tun -contains $_.InterfaceIndex } | Select-Object InterfaceIndex,DestinationPrefix); @{ InterfaceIndex = $i; Items = $items } | ConvertTo-Json -Depth 4 -Compress")?)
+    }
     fn add_route(&self, p: &str) -> Result<(), String> {
         self.route(p, true)
     }
