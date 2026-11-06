@@ -14,7 +14,7 @@ out=${GITHUB_OUTPUT:-/dev/stdout}
 emit() { printf 'native=%s\ndesktop=%s\n' "$1" "$2" >> "$out"; }
 
 NATIVE='^(apps/(agent|cli)/|crates/|packaging/|tests/(macos|windows)/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$|scripts/ci-changes\.sh$)'
-DESKTOP='^(apps/desktop/|packaging/desktop/|crates/windows/|rust-toolchain\.toml$|\.github/workflows/ci\.yml$|scripts/ci-changes\.sh$)'
+DESKTOP='^(apps/desktop/|packaging/desktop/|crates/windows/|rust-toolchain\.toml$|\.github/workflows/ci\.yml$|scripts/ci-changes\.sh$|scripts/install-linux-desktop-deps\.sh$)'
 
 case "${EVENT:-}" in
     push) base=${BEFORE:-} ;;

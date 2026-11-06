@@ -213,17 +213,7 @@ jobs:
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 15
-        run: |
-          # Mismo límite que en ci.yml: un apt colgado no debe bloquear una publicación.
-          for intento in 1 2 3; do
-            sudo timeout 90 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -qq &&
-              sudo timeout 240 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-                libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev build-essential pkg-config xvfb x11-xserver-utils \
-                at-spi2-core xdg-desktop-portal-gtk dbus-x11 && exit 0
-            echo "::warning::apt falló o superó el plazo (intento $intento de 3)"
-            sleep 10
-          done
-          exit 1
+        run: '"$GITHUB_WORKSPACE/scripts/install-linux-desktop-deps.sh"' # sin caché: el paquete de release no depende de una caché de la CI
       - name: "Instalar wails3 a la versión de go.mod (solo Linux, para .deb y .rpm)"
         if: runner.os == 'Linux'
         run: |
