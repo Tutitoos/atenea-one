@@ -13,15 +13,15 @@ export const Pill = ({ tone, children }: { tone: Tone; children: ReactNode }) =>
   <span role="status" className={`ml-auto rounded-full px-3 py-0.5 text-xs font-medium text-white ${bg[tone]}`}>{children}</span>
 );
 
-export const Heading = ({ children }: { children: ReactNode }) => <h3 className="mb-2 mt-6 text-[15px] font-semibold">{children}</h3>;
+export const Heading = ({ children }: { children: ReactNode }) => <h2 className="mb-2 mt-6 text-[15px] font-semibold">{children}</h2>;
 
 export const Card = ({ children }: { children: ReactNode }) => <dl className="rounded-[10px] bg-card px-3.5">{children}</dl>;
 
-export function Row({ label, children }: { label: string; children: ReactNode }) {
+export function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex justify-between gap-3 border-b border-line py-2.5 last:border-b-0">
-      <dt className="whitespace-nowrap text-mut">{label}</dt>
-      <dd className="select-text break-words text-right tabular-nums">{children ?? '—'}</dd>
+      <dt className="max-w-[40%] shrink-0 text-mut">{label}</dt>
+      <dd className="min-w-0 select-text break-words text-right tabular-nums">{children ?? '—'}</dd>
     </div>
   );
 }
@@ -56,7 +56,9 @@ export function CopyButton({ value, label, icon = 'copy', text }: { value: strin
   );
 }
 
-export const Empty = ({ children }: { children: ReactNode }) => <p className="p-4 text-mut">{children}</p>;
+export const Empty = ({ children, tone }: { children: ReactNode; tone?: 'error' | 'loading' }) => (
+  <p role={tone === 'error' ? 'alert' : tone === 'loading' ? 'status' : undefined} className={`p-4 ${tone === 'error' ? 'text-bad' : 'text-mut'}`}>{children}</p>
+);
 
 /** Bloque gris de carga; la animación se apaga con `prefers-reduced-motion` (ver styles.css). */
 export const Skeleton = ({ className = '' }: { className?: string }) => <div aria-hidden="true" className={`skeleton rounded-md bg-fg/10 ${className}`} />;
@@ -71,6 +73,7 @@ export const Loading = ({ children, className }: { children: ReactNode; classNam
 
 export const button = 'cursor-default rounded-md border border-line bg-card px-3 py-1 text-sm disabled:opacity-50';
 export const primary = 'cursor-default rounded-md bg-sel px-3 py-1 text-sm text-white disabled:opacity-50';
+export const danger = 'cursor-default rounded-md bg-bad px-3 py-1 text-sm text-white disabled:opacity-50';
 
 /** Estado vacío de las pantallas que dependen de una red: sin redes unidas no hay nada que enseñar. */
 export const NoNetworks = () => (

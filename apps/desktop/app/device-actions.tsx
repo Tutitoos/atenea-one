@@ -3,11 +3,12 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { openPanel, pingDevice } from './lib/networks';
+import { button } from './ui';
 
 export function PanelButton({ network, deviceId }: { network: string; deviceId?: string | null }) {
   const action = useMutation({ mutationFn: () => openPanel(network, deviceId) });
   return <div>
-    <button type="button" className="rounded-md border border-line px-3 py-1 disabled:opacity-50" disabled={action.isPending} onClick={() => action.mutate()}>Abrir en el panel</button>
+    <button type="button" className={button} disabled={action.isPending} onClick={() => action.mutate()}>Abrir en el panel</button>
     {action.error && <p role="alert" className="text-bad">{action.error.message}</p>}
   </div>;
 }

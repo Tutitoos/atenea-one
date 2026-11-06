@@ -501,9 +501,9 @@ it('los servicios opcionales se muestran solo cuando llegan y el desfase pequeñ
 it('el certificado próximo a caducar pone una insignia en su servidor y no en otro', async () => {
   serve(agent(), [net(), net({ network_id: OTHER_ID, url: 'https://otro.example.test' })], undefined, { status: (args) => agent(undefined, degraded, { ...server, server: args && typeof args === 'object' && 'network' in args && args.network === NET_ID ? serverInfo(14) : null }) });
   const { container } = app('/servers');
-  const badge = await screen.findByText('Certificado próximo a caducar');
+  const badge = await screen.findByText('Certificado: quedan 14 días');
   expect(badge.closest('a')).toHaveAttribute('href', '/servers/control.example.test');
-  expect(screen.getAllByText('Certificado próximo a caducar')).toHaveLength(1);
+  expect(screen.getAllByText(/^Certificado: quedan/)).toHaveLength(1);
   expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
 });
 
@@ -538,7 +538,7 @@ it('una información sin certificado no inventa una caducidad ni una insignia', 
   unmount();
   app('/servers');
   await screen.findByRole('link', { name: /control.example.test 1 red/ });
-  expect(screen.queryByText('Certificado próximo a caducar')).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Certificado: quedan/)).not.toBeInTheDocument();
 });
 
 it.each([0, 40])('prueba conexión con pérdida del %s %% y refresca', async (loss) => {

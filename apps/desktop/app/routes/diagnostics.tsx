@@ -52,14 +52,16 @@ export default function Diagnostics() {
   const { sample, error, empty, stale, network } = useAgent();
   const [all, setAll] = useState(false);
   const copy = useCopy();
+  const client = useQueryClient();
   const status = sample?.reply.status;
   return (
     <main aria-busy={stale} className={`min-w-0 flex-1 overflow-y-auto px-6 py-5 ${stale ? 'opacity-60' : ''}`}>
-      <h2 className="text-xl font-semibold">Diagnóstico</h2>
-      <Notifications />
-      <Autostart />
+      <h1 className="text-xl font-semibold">Diagnóstico</h1>
       {empty ? <p className="mt-4 text-mut">Sin redes. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link> o sigue el <Link to="/welcome" className="text-sel underline">asistente</Link>.</p>
-        : !status || !sample ? <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>
+        : !status || !sample ? <>
+          <Empty tone={error ? 'error' : undefined}>{error?.message ?? 'Sin datos del agente.'}</Empty>
+          {error && <button type="button" className={button} onClick={() => { void client.invalidateQueries({ queryKey: ['agent'] }); }}>Reintentar</button>}
+        </>
         : <>
           {stale && <p className="mt-4 text-sm text-mut">Actualizando…</p>}
           <Heading>Informe</Heading>
@@ -67,9 +69,13 @@ export default function Diagnostics() {
           {!stale && <button type="button" className={button} onClick={() => { void copy(buildReport({ reply: sample.reply, network }), 'informe de diagnóstico'); }}>Copiar informe de diagnóstico</button>}
           <AgentDiagnostics status={status} all={all} onAll={() => setAll((v) => !v)} />
         </>}
+      <Notifications />
+      <Autostart />
     </main>
   );
 }
+
+const none = (error: string | null | undefined) => <span className={error ? 'text-bad' : 'text-mut'}>{error ?? 'ninguno'}</span>;
 
 function AgentDiagnostics({ status, all, onAll }: { status: Status; all: boolean; onAll: () => void }) {
   const { config, sync, coordinator, relay, counters } = status;
@@ -80,9 +86,9 @@ function AgentDiagnostics({ status, all, onAll }: { status: Status; all: boolean
     <>
       <Heading>Errores</Heading>
       <Card>
-        <Row label="Configuración">{config.last_error ?? 'ninguno'}</Row>
-        <Row label="Control plane">{sync?.last_error ?? 'ninguno'}</Row>
-        <Row label="Coordinator">{coordinator?.last_error ?? 'ninguno'}</Row>
+        <Row label="Configuración">{none(config.last_error)}</Row>
+        <Row label="Control plane (servidor de control)">{none(sync?.last_error)}</Row>
+        <Row label="Coordinator (coordinador)">{none(coordinator?.last_error)}</Row>
       </Card>
       <Heading>{`Relays (${entries.length})`}</Heading>
       <p className="mb-2 text-sm text-mut">Los bytes del relay son datagramas cifrados del relay y no equivalen a los bytes de datos por dispositivo.</p>
@@ -95,14 +101,14 @@ function AgentDiagnostics({ status, all, onAll }: { status: Status; all: boolean
                 text(e.state),
                 e.rtt_ms == null ? null : `${num(e.rtt_ms)} ms`,
                 sent > 0 ? `pings perdidos ${pct(lost, sent)} (${int(lost)}/${int(sent)})` : null,
-                `tx ${bytes(num(e.tx_bytes))} (${int(num(e.tx_packets))} paq.)`,
-                `rx ${bytes(num(e.rx_bytes))} (${int(num(e.rx_packets))} paq.)`,
+                `enviados ${bytes(num(e.tx_bytes))} (${int(num(e.tx_packets))} paq.)`,
+                `recibidos ${bytes(num(e.rx_bytes))} (${int(num(e.rx_packets))} paq.)`,
                 typeof e.peer_ready === 'boolean' ? (e.peer_ready ? 'par listo' : 'par no listo') : null,
                 text(e.last_error) ? `error: ${text(e.last_error)}` : null,
               ].filter(Boolean).join(' · ')}
             </Row>
           );
-        }) : <Row label="Asignaciones">ninguna</Row>}
+        }) : <Row label="Asignaciones">Este equipo no usa ningún relay ahora</Row>}
       </Card>
       {drops.length > 0 && <><Heading>Descartes del relay</Heading><Card>{drops.map(([k, v]) => <Row key={k} label={k}>{int(v)}</Row>)}</Card></>}
       <Heading>Contadores</Heading>
@@ -110,7 +116,7 @@ function AgentDiagnostics({ status, all, onAll }: { status: Status; all: boolean
       <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={all} onChange={onAll} />Mostrar todos (incluidos los que valen 0)</label>
       {groups.length ? groups.map((g) => (
         <section key={g.title} aria-label={g.title}>
-          <h4 className="mb-1 mt-3 text-sm font-semibold text-mut">{g.title}</h4>
+          <h3 className="mb-1 mt-3 text-sm font-semibold text-mut">{g.title}</h3>
           <Card>{g.items.map(([k, v]) => (
             <Row key={k} label={k}>
               <span className={ERRORS[k] && v > 0 ? 'text-warn' : undefined}>{int(v)}</span>{HINTS[k] && <span className="ml-2 text-xs text-mut">{HINTS[k]}</span>}
