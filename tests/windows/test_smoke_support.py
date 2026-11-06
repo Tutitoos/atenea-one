@@ -3,6 +3,7 @@
 """Pruebas locales sin SCM, PowerShell ni objetos nativos de Windows."""
 import io
 import json
+import socket
 import subprocess
 import unittest
 from contextlib import redirect_stderr
@@ -12,6 +13,13 @@ import smoke_support as support
 
 
 class SmokeSupportTests(unittest.TestCase):
+    def test_free_udp_ports_are_distinct_and_bindable(self):
+        ports = support.free_udp_ports(2)
+        self.assertEqual(len(set(ports)), 2)
+        for port in ports:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.bind(('127.0.0.1', port))
+
     def test_windows_powershell_environment_drops_pwsh_modules_case_insensitively(self):
         source = {'SystemRoot': r'D:\Windows', 'PSMODULEPATH': r'C:\Program Files\PowerShell\7\Modules',
                   'pshome': 'pwsh', 'PowerShell_Distribution_Channel': 'MSI', 'OTHER': 'keep'}

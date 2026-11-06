@@ -13,7 +13,7 @@ import tempfile
 import time
 import sys
 from smoke_support import (
-    ask, call, parse_count, parse_nrpt, parse_private_principals,
+    ask, call, free_udp_ports, parse_count, parse_nrpt, parse_private_principals,
     parse_service, parse_snapshot, parse_strings, ps,
 )
 import zipfile
@@ -194,6 +194,7 @@ try:
     assert not nrpt(), 'No se sobrescribe una regla NRPT existente'
     assert not root_nrpt(), 'El runner ya tiene una regla NRPT raíz'
     before = snapshot()
+    AGENT_PORT, PEER_PORT = free_udp_ports(2)
     anchor = call(CLI, 'root-init', '--out', work / 'root.key')
     call(CLI, 'issuer-init', '--root', work / 'root.key', '--network-id', NETWORK, '--serial', '1', '--out-dir', work / 'issuer')
     device = call(CLI, 'device-init', '--dir', DATA / 'device')
@@ -203,7 +204,7 @@ try:
     def toml_path(path):
         return str(path).replace('\\', '/')
     config.write_text(f'''interface = "atenea0"
-listen = "127.0.0.1:51820"
+listen = "127.0.0.1:{AGENT_PORT}"
 ipc_socket = '\\\\.\\pipe\\atenea-control'
 status_socket = '\\\\.\\pipe\\atenea-status'
 status_gid = 545
@@ -229,7 +230,7 @@ network_prefixes = ["10.77.0.0/24", "fd77::/64"]
 [[peer]]
 bundle = "{toml_path(work / 'peer/bundle.bin')}"
 addrs = ["10.77.0.1", "fd77::1"]
-endpoints = ["127.0.0.1:51821"]
+endpoints = ["127.0.0.1:{PEER_PORT}"]
 routes = {('["10.88.0.0/24", "fd88::/64"]' if extended else '[]')}
 [[rule]]
 src = "any"
@@ -251,7 +252,7 @@ dst = "any"
         assert reset == 86400 and actions == [(1, 5000), (1, 15000), (1, 60000)] and raw['Flag'] == 1, (reset, actions, raw)
         issue(1, False)
         peerlog = (work / 'peer.log').open('w+')
-        peer = subprocess.Popen([str(REPO / 'target/debug/atenea-testpeer.exe'), '--device-dir', str(work / 'peer'), '--agent-bundle', str(DATA / 'device/bundle.bin'), '--listen', '127.0.0.1:51821', '--own-addr', '10.77.0.1', '--own-addr6', 'fd77::1', '--agent-addr', '10.77.0.2', '--agent-addr6', 'fd77::2', '--network-id', NETWORK, '--count', '2', '--timeout-secs', '120'], stdout=peerlog, stderr=subprocess.STDOUT)
+        peer = subprocess.Popen([str(REPO / 'target/debug/atenea-testpeer.exe'), '--device-dir', str(work / 'peer'), '--agent-bundle', str(DATA / 'device/bundle.bin'), '--listen', f'127.0.0.1:{PEER_PORT}', '--own-addr', '10.77.0.1', '--own-addr6', 'fd77::1', '--agent-addr', '10.77.0.2', '--agent-addr6', 'fd77::2', '--network-id', NETWORK, '--count', '2', '--timeout-secs', '120'], stdout=peerlog, stderr=subprocess.STDOUT)
         until(lambda: 'ready' in (work / 'peer.log').read_text())
         ps('Start-Service AteneaAgent')
         until(lambda: ask(CONTROL, 'status'))
