@@ -1,8 +1,11 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createSampler } from './agent';
 import { reply } from './status';
+
+// Como el resto de tests: sin esto se carga el runtime de Wails, cuyo sondeo de 50 ms (drag.js) puede disparar tras desmontar jsdom y lanzar «window is not defined».
+vi.mock('./bridge', () => ({ invoke: vi.fn() }));
 
 const peer = (rx: number, tx: number) => ({ public_key: 'aa', path: 'direct', rx_bytes: rx, tx_bytes: tx });
 const make = (rx: number, tx: number, extra: object = {}) => reply.parse({
