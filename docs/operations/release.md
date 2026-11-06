@@ -130,10 +130,21 @@ manifiesto OCI real** de la plataforma y las capas observadas en Docker. Disting
 - `config_digest`: digest de la configuración referida por el manifiesto;
 - `manifest_digest`: digest del manifiesto de la plataforma exportado, verificado
   contra el blob del archivo OCI; no es un hash inventado a partir de una etiqueta;
-- `registry_digest`: `null` mientras no se haya publicado. El job protegido lo
-  sustituye por `repositorio@sha256:…` tras push. Puede ser un índice de registro,
-  distinto del manifiesto de plataforma local. Para desplegar use esta referencia
-  completa por digest, nunca el ID como si fuera digest de registro.
+- `registry_digest`: `null` en el `images.json` de `dist/` (el del artefacto
+  `release-unsigned`, que **nunca se reescribe**). El job protegido calcula
+  `repositorio@sha256:…` tras el push, lo guarda fuera de `dist/` y
+  `manifest.py create --registry-digests` lo incorpora solo al manifiesto firmado.
+  Puede ser un índice de registro, distinto del manifiesto de plataforma local.
+  Para desplegar use esta referencia completa por digest, nunca el ID como si
+  fuera digest de registro. `verify.sh` exige que `images.json` sea idéntico al
+  de `release-manifest.json` salvo ese campo (que firma el manifiesto).
+
+Hasta la 0.1.20 `publish` reescribía `images.json` con los digests, así que el
+del artefacto no coincidía con el firmado (su SHA-256 y su contenido diferían
+solo en `registry_digest`) y había que reconstruirlo a mano. Desde esta
+corrección, para verificar un release publicado basta descargar `release-unsigned`
+y añadir `release-manifest.json`, su `.sig` y `SHA256SUMS` del release, sin
+reconstruir nada.
 
 ## Firmar y verificar con clave aportada
 
