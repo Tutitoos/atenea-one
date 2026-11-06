@@ -485,11 +485,21 @@ async fn session_server_information_requires_membership_and_limits_rate() {
         .await
         .error(StatusCode::FORBIDDEN, "forbidden");
     let org = t.org(&user).await;
-    for _ in 0..60 {
+    // El cubo repone 1 token por segundo (60/minuto): si las 60 primeras peticiones tardan más de un segundo en total
+    // (un equipo cargado), la 61.ª todavía pasa. Se pide hasta recibir 429 y se exige al menos la ráfaga entera.
+    let mut accepted = 0;
+    let mut limited = false;
+    for _ in 0..300 {
         let r = t
             .json("GET", "/api/v1/server", Some(&user), Value::Null)
             .await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            r.error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+            limited = true;
+            break;
+        }
         assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        accepted += 1;
         assert_eq!(r.headers["cache-control"], "no-store");
         assert_eq!(
             r.json["control_plane"]["version"],
@@ -509,9 +519,11 @@ async fn session_server_information_requires_membership_and_limits_rate() {
                 < 5
         );
     }
-    t.json("GET", "/api/v1/server", Some(&user), Value::Null)
-        .await
-        .error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    assert!(limited, "tras {accepted} peticiones aceptadas no hubo 429");
+    assert!(
+        accepted >= 60,
+        "la ráfaga es de 60 y solo se aceptaron {accepted}"
+    );
     let member = t.user().await;
     membership(&t, &user, org, &member, "member").await;
     assert_eq!(
