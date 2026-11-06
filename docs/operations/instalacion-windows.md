@@ -48,7 +48,7 @@ Hash publicado en [wintun.net](https://www.wintun.net/) y obtenido independiente
 
 ## Enrolar, configurar y arrancar
 
-El administrador de la red entrega un `join.json` auténtico (URL, ID de red y ancla pública) y un token de enrolamiento. No generar ni copiar la clave raíz o del emisor al cliente. En una sesión elevada, con `$Join` apuntando al fichero recibido, `$Url` a su URL y `$Token` al token efímero recibido:
+El administrador de la red entrega un `join.json` auténtico (URL, ID de red y ancla pública), un token de enrolamiento y, si el servidor lo tiene configurado, la **conectividad** del código de red (ADR-018): el host STUN/relay (`stun_host`) y, si el relay usa una CA propia, el SHA-256 de esa CA (`relay_ca_sha256`); `GET …/join-code` y `POST …/enrollment-tokens` los devuelven en `connectivity`. No generar ni copiar la clave raíz o del emisor al cliente. En una sesión elevada, con `$Join` apuntando al fichero recibido, `$Url` a su URL, `$Token` al token efímero, `$Stun` al host STUN (sin puerto) y `$CaSha` al hash de la CA:
 
 ```powershell
 $Cli = Join-Path $env:ProgramFiles 'Atenea/atenea.exe'
@@ -58,11 +58,14 @@ $Data = Join-Path $env:ProgramData 'Atenea'
 & $Cli enroll --url $Url --token $Token --dir "$Data/device"
 & $Cli agent-config --join $Join --dir "$Data/device" --out "$Data/agent.toml" `
   --interface atenea0 --state-dir "$Data/state" --config-file "$Data/config.bin" `
-  --ipc-socket '\\.\pipe\atenea-control' --status-socket '\\.\pipe\atenea-status' --status-gid 545
+  --ipc-socket '\\.\pipe\atenea-control' --status-socket '\\.\pipe\atenea-status' --status-gid 545 `
+  --stun-host $Stun --relay-ca-sha256 $CaSha
 Remove-Variable Token
 Start-Service AteneaAgent
 & $Cli status --socket '\\.\pipe\atenea-status'
 ```
+
+`--stun-host` y `--relay-ca-sha256` hacen que `agent-config` escriba la sección `[coordinator]` del `agent.toml`: `url` es la del `join.json` (la misma que `[sync]`), `stun` son `<host>:3478` y `<host>:3479` (el agente exige los dos puertos del mismo servidor) y `relay_ca_file` apunta a `%ProgramData%\Atenea\device\relay-ca.pem`. Esa CA se descarga de `GET /api/v1/relay-ca` y **solo se acepta si su SHA-256 (del DER) coincide con `--relay-ca-sha256`**: lo que sirva el servidor sin ese hash no se usa; con otro hash la orden falla sin crear ningún fichero. El fichero se crea con la misma DACL privada que el resto de `%ProgramData%\Atenea`. Omitir `--relay-ca-sha256` solo si el código no lleva hash (relay con CA pública); `--relay-ca-sha256` exige `--stun-host`. **Sin `--stun-host` el `agent.toml` no tiene `[coordinator]`**: el agente no hace rendezvous, STUN ni relay y el equipo queda sin candidatos hacia los demás. Los valores se validan antes de escribir nada (host sin puerto, hash de 64 dígitos hex); `agent-config` no sobrescribe un `agent.toml` existente.
 
 Comprobar el código de salida de cada orden antes de continuar. El token se pasa a una herramienta de línea de órdenes: no pegarlo en registros, transcripciones compartidas ni repositorios. La primera configuración firmada se obtiene por sincronización; la autorización y el antirrollback son los mismos que en Linux. No usar `--advertise-route` en Windows. No exponer secretos mediante permisos heredados: el backend crea los ficheros privados con DACL protegida y rechaza lecturas con permisos ajenos. `credential:` de systemd no es un mecanismo de Windows.
 

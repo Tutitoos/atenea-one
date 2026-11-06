@@ -51,6 +51,8 @@ imprime (el argumento puede aparecer en el historial del shell/listado de proces
 El administrador compara la huella del bundle antes de aprobar el dispositivo.
 `agent-config` no sobrescribe y crea un fichero 0600; usa rutas absolutas bajo
 `--dir`, con opciones para interfaz, escucha, estado, configuración firmada e IPC.
+Con `--stun-host HOST` (y `--relay-ca-sha256 HEX` si el relay usa una CA propia; la CA se descarga y solo se acepta
+si su SHA-256 coincide) escribe también `[coordinator]`; sin él el agente no hace rendezvous, STUN ni relay.
 La sección opcional `[sync]` descarga al arrancar y cada 60 s (`interval_secs`,
 mínimo 5); el agente verifica la firma antes de aplicar y mantiene el lease si la
 descarga falla. Sin `[sync]` sigue funcionando la emisión manual a fichero.
