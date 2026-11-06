@@ -156,10 +156,18 @@ jobs:
           path: apps/desktop/build/client
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev \
-            build-essential pkg-config xvfb x11-xserver-utils at-spi2-core xdg-desktop-portal-gtk dbus-x11
+          # Un espejo que deja la conexión abierta colgaba este paso hasta el tope del job (25 min, 2 de 15 ejecuciones).
+          for intento in 1 2 3; do
+            sudo timeout 90 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -qq &&
+              sudo timeout 240 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+                libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev build-essential pkg-config xvfb x11-xserver-utils \
+                at-spi2-core xdg-desktop-portal-gtk dbus-x11 && exit 0
+            echo "::warning::apt falló o superó el plazo (intento $intento de 3)"
+            sleep 10
+          done
+          exit 1
       - name: Formato, vet y pruebas
         run: |
           test -z "$(gofmt -l .)"
