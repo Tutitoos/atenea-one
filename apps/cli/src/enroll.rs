@@ -220,16 +220,14 @@ pub fn enroll(
     Ok(())
 }
 
-/// `[coordinator]` del `agent.toml` que genera `network join`. Su origen es el bloque de conectividad del código de
+/// `[coordinator]` del `agent.toml`. Su origen es el bloque de conectividad del código de
 /// unión (ADR-018) o, con prioridad, `--stun-host`/`--relay-ca`: quien ejecuta el comando manda, nunca el servidor.
 /// La URL es la del propio código.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub struct Coordinator {
     stun: [String; 2],
     relay_ca: Option<PathBuf>,
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
 impl Coordinator {
     /// `stun_host`: nombre o IPv4 sin puerto; el agente exige los dos puertos del mismo servidor (3478 y 3479).
     pub fn new(stun_host: &str, relay_ca: Option<PathBuf>) -> Result<Self, String> {
@@ -255,6 +253,7 @@ impl Coordinator {
     }
 
     /// Desde el bloque del código de unión (ADR-018). El host ya lo validó el formato del código.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn from_code(c: &atenea_identity::join_code::Connectivity) -> Self {
         Self {
             stun: [
@@ -266,6 +265,7 @@ impl Coordinator {
     }
 
     /// Fija la CA ya descargada y verificada: el código lleva su hash, nunca una ruta.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn with_relay_ca(mut self, path: PathBuf) -> Self {
         self.relay_ca = Some(path);
         self
@@ -277,7 +277,6 @@ impl Coordinator {
 ///
 /// shortcut: solo se comprueba que el DER sea una secuencia íntegra, no que sea un X.509 válido (el agente lo valida
 /// al cargarlo como raíz del relay); subir si el CLI llegara a usar la CA para algo más que fijar su ruta.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub fn relay_ca_from_pem(text: &str) -> Result<(String, [u8; 32]), &'static str> {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use sha2::{Digest, Sha256};
@@ -305,7 +304,6 @@ pub fn relay_ca_from_pem(text: &str) -> Result<(String, [u8; 32]), &'static str>
 }
 
 /// `SEQUENCE` DER con la longitud declarada igual a los bytes que hay (forma corta o larga de hasta 4 bytes).
-#[cfg_attr(not(unix), allow(dead_code))]
 fn der_sequence(der: &[u8]) -> bool {
     let [0x30, first, rest @ ..] = der else {
         return false;
@@ -330,7 +328,6 @@ fn der_sequence(der: &[u8]) -> bool {
 /// Descarga la CA del relay de `GET {url}/api/v1/relay-ca` y **solo la acepta si su SHA-256 (del DER) coincide con el
 /// del código de unión**: la confianza sigue anclada en el canal del código, no en lo que el servidor sirva después.
 /// Devuelve el PEM canónico; no escribe nada.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub fn fetch_relay_ca(
     url: &str,
     expected: &[u8; 32],
@@ -408,6 +405,8 @@ pub fn pinned_config(
         status_socket: Some(status_socket.into()),
         status_gid,
         insecure_http,
+        stun_host: None,
+        relay_ca_sha256: None,
     };
     let mut table: toml::Table = toml::from_str(&render(&join, &args, &bundle(dir)?.device_id)?)
         .map_err(|e| e.to_string())?;
@@ -415,24 +414,35 @@ pub fn pinned_config(
     hex::decode::<16>(&net).ok_or("network_id inválido")?;
     table.insert("resolver_owner".into(), net[24..].into());
     if let Some(c) = coordinator {
-        let mut section = toml::Table::new();
-        section.insert("url".into(), url.into());
-        section.insert(
-            "stun".into(),
-            toml::Value::Array(c.stun.iter().cloned().map(toml::Value::String).collect()),
-        );
-        if let Some(ca) = &c.relay_ca {
-            section.insert(
-                "relay_ca_file".into(),
-                ca.to_str().ok_or("ruta no UTF-8")?.into(),
-            );
-        }
-        if insecure_http {
-            section.insert("insecure_http".into(), true.into());
-        }
-        table.insert("coordinator".into(), toml::Value::Table(section));
+        insert_coordinator(&mut table, url, c, insecure_http)?;
     }
     crate::issue::write_secret(out, &toml::to_string(&table).map_err(|e| e.to_string())?)
+}
+
+/// Añade `[coordinator]` al `agent.toml`; lo comparten `network join` (Unix) y `agent-config` (Windows incluido).
+fn insert_coordinator(
+    table: &mut toml::Table,
+    url: &str,
+    c: &Coordinator,
+    insecure_http: bool,
+) -> Result<(), String> {
+    let mut section = toml::Table::new();
+    section.insert("url".into(), url.into());
+    section.insert(
+        "stun".into(),
+        toml::Value::Array(c.stun.iter().cloned().map(toml::Value::String).collect()),
+    );
+    if let Some(ca) = &c.relay_ca {
+        section.insert(
+            "relay_ca_file".into(),
+            ca.to_str().ok_or("ruta no UTF-8")?.into(),
+        );
+    }
+    if insecure_http {
+        section.insert("insecure_http".into(), true.into());
+    }
+    table.insert("coordinator".into(), toml::Value::Table(section));
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -487,6 +497,14 @@ pub struct AgentConfigArgs {
     /// Solo laboratorio: acepta una URL `http://` que no sea loopback y la deja anotada en el TOML.
     #[arg(long)]
     insecure_http: bool,
+    /// Servidor STUN/relay (nombre o IPv4 sin puerto): escribe `[coordinator]` con los puertos 3478 y 3479.
+    /// Sin él el agente no hace rendezvous, STUN ni relay (es el `stun_host` del código de unión, ADR-018).
+    #[arg(long)]
+    stun_host: Option<String>,
+    /// SHA-256 (hex del DER) de la CA del relay, del código de unión. Descarga `GET /api/v1/relay-ca` y solo la
+    /// acepta si el hash coincide; se guarda en `--dir/relay-ca.pem`. Sin él, el relay usa una CA pública.
+    #[arg(long, requires = "stun_host")]
+    relay_ca_sha256: Option<String>,
 }
 
 fn render(join: &Join, args: &AgentConfigArgs, device: &[u8; 16]) -> Result<String, String> {
@@ -569,8 +587,38 @@ pub fn agent_config(mut args: AgentConfigArgs) -> Result<(), String> {
     let join = parse_join(&text, args.insecure_http)?;
     args.dir = std::fs::canonicalize(&args.dir).map_err(|e| format!("dir: {e}"))?;
     let bundle = bundle(&args.dir)?;
-    let text = render(&join, &args, &bundle.device_id)?;
-    crate::issue::write_secret(&args.out, &text)
+    let mut table: toml::Table =
+        toml::from_str(&render(&join, &args, &bundle.device_id)?).map_err(|e| e.to_string())?;
+    // Todo lo que puede fallar sin tocar el disco va antes de escribir nada.
+    let mut coordinator = args
+        .stun_host
+        .as_deref()
+        .map(|host| Coordinator::new(host, None))
+        .transpose()?;
+    let ca = match args.relay_ca_sha256.as_deref() {
+        Some(hash) => {
+            let hash = hex::decode::<32>(hash)
+                .ok_or("--relay-ca-sha256: se esperan 64 dígitos hex (SHA-256 del DER de la CA)")?;
+            Some(fetch_relay_ca(&join.url, &hash, args.insecure_http)?)
+        }
+        None => None,
+    };
+    if args.out.exists() {
+        return Err(format!("{}: ya existe", args.out.display()));
+    }
+    if let (Some(c), Some(pem)) = (coordinator.as_mut(), ca) {
+        // La CA verificada queda junto a las claves del dispositivo, con permisos privados.
+        let path = args.dir.join("relay-ca.pem");
+        crate::issue::write_secret(&path, pem.trim_end())?;
+        c.relay_ca = Some(path);
+    }
+    if let Some(c) = &coordinator {
+        insert_coordinator(&mut table, &join.url, c, args.insecure_http)?;
+    }
+    crate::issue::write_secret(
+        &args.out,
+        &toml::to_string(&table).map_err(|e| e.to_string())?,
+    )
 }
 
 #[cfg(test)]
@@ -609,6 +657,8 @@ mod tests {
             ),
             status_gid: Some(545),
             insecure_http: false,
+            stun_host: None,
+            relay_ca_sha256: None,
         };
         let text = render(&join, &args, &[2; 16]).unwrap();
         let cfg = agent_config_contract::Config::parse(&text).unwrap();
@@ -752,5 +802,145 @@ mod relay_ca_tests {
         assert_eq!(c.relay_ca, None);
         let c = c.with_relay_ca(PathBuf::from("/var/lib/atenea/ca.pem"));
         assert_eq!(c.relay_ca, Some(PathBuf::from("/var/lib/atenea/ca.pem")));
+    }
+}
+
+#[cfg(test)]
+mod agent_config_coordinator_tests {
+    use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
+
+    // DER SINTÉTICO (no es X.509): una secuencia íntegra basta para el CLI.
+    const DER: [u8; 12] = [0x30, 10, 2, 1, 1, 4, 5, b'c', b'a', b'-', b'o', b'k'];
+
+    fn pem() -> String {
+        format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            STANDARD.encode(DER)
+        )
+    }
+
+    /// Servidor HTTP de un solo uso en loopback que responde 200 con `body`; devuelve la URL.
+    fn serve(body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf);
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        url
+    }
+
+    /// Dispositivo y `join.json` sintéticos en un directorio temporal nuevo.
+    fn setup(tag: &str, url: &str) -> (PathBuf, String) {
+        let root = std::env::temp_dir().join(format!("atenea-cfg-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        crate::issue::device_create(&root.join("device")).unwrap();
+        let join = format!(
+            r#"{{"url":"{url}","network_id":"00112233-4455-6677-8899-aabbccddeeff","root_anchor":"{}"}}"#,
+            "01".repeat(32)
+        );
+        (root, join)
+    }
+
+    fn args(root: &Path, join: String, stun: Option<&str>, sha: Option<String>) -> AgentConfigArgs {
+        AgentConfigArgs {
+            join,
+            dir: root.join("device"),
+            out: root.join("agent.toml"),
+            interface: "atenea0".into(),
+            listen: "0.0.0.0:51820".parse().unwrap(),
+            handshake_cookie_threshold_per_second: std::num::NonZeroU32::new(100).unwrap(),
+            state_dir: None,
+            config_file: None,
+            ipc_socket: None,
+            advertise_routes: Vec::new(),
+            status_socket: None,
+            status_gid: None,
+            insecure_http: false,
+            stun_host: stun.map(str::to_owned),
+            relay_ca_sha256: sha,
+        }
+    }
+
+    #[test]
+    fn sin_stun_host_no_hay_coordinator() {
+        let (root, join) = setup("sin", "https://panel.example.org");
+        agent_config(args(&root, join, None, None)).unwrap();
+        let text = std::fs::read_to_string(root.join("agent.toml")).unwrap();
+        assert!(!text.contains("[coordinator]"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stun_host_escribe_coordinator_con_los_dos_puertos() {
+        let (root, join) = setup("stun", "https://panel.example.org");
+        agent_config(args(&root, join, Some("stun.example.org"), None)).unwrap();
+        let text = std::fs::read_to_string(root.join("agent.toml")).unwrap();
+        // El contrato del agente valida la sección (dos puertos del mismo servidor, URL permitida).
+        agent_config_contract::Config::parse(&text).unwrap();
+        let table: toml::Table = toml::from_str(&text).unwrap();
+        let c = table["coordinator"].as_table().unwrap();
+        assert_eq!(c["url"].as_str(), Some("https://panel.example.org"));
+        assert_eq!(
+            c["stun"].as_array().unwrap(),
+            &["stun.example.org:3478", "stun.example.org:3479"].map(toml::Value::from)
+        );
+        assert!(!c.contains_key("relay_ca_file"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn la_ca_se_acepta_solo_con_el_hash_del_codigo() {
+        let hash = hex::encode(&<[u8; 32]>::from(Sha256::digest(DER)));
+        let url = serve(pem());
+        let (root, join) = setup("ca", &url);
+        agent_config(args(&root, join, Some("198.51.100.7"), Some(hash))).unwrap();
+        let ca = root.join("device").join("relay-ca.pem");
+        assert_eq!(
+            std::fs::read_to_string(&ca).unwrap().trim_end(),
+            pem().trim_end()
+        );
+        let text = std::fs::read_to_string(root.join("agent.toml")).unwrap();
+        let table: toml::Table = toml::from_str(&text).unwrap();
+        let c = table["coordinator"].as_table().unwrap();
+        assert_eq!(
+            c["relay_ca_file"].as_str().unwrap(),
+            std::fs::canonicalize(&ca).unwrap().to_str().unwrap()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn entradas_invalidas_se_rechazan_sin_tocar_el_disco() {
+        // CA con otro hash: el servidor no manda.
+        let url = serve(pem());
+        let (root, join) = setup("mal", &url);
+        let e = agent_config(args(
+            &root,
+            join.clone(),
+            Some("198.51.100.7"),
+            Some("ab".repeat(32)),
+        ))
+        .unwrap_err();
+        assert!(e.contains("no coincide"), "{e}");
+        // Host STUN con puerto y hash que no es hex.
+        for (stun, sha) in [
+            ("host:3478", None),
+            ("198.51.100.7", Some("xyz".to_owned())),
+        ] {
+            assert!(agent_config(args(&root, join.clone(), Some(stun), sha)).is_err());
+        }
+        assert!(!root.join("agent.toml").exists());
+        assert!(!root.join("device").join("relay-ca.pem").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
