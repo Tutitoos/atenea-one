@@ -41,30 +41,27 @@ func TestOpenPassesTheURLAsOneArgumentPerOS(t *testing.T) {
 	old := Launch
 	defer func() { Launch = old }()
 	var calls [][]string
-	Launch = func(p, a string) error { calls = append(calls, []string{p, a}); return nil }
-	u := "https://panel.example.test/?net=" + id + "&view=Dispositivos; id"
-	for _, goos := range []string{"darwin", "linux"} {
+	Launch = func(p string, a ...string) error { calls = append(calls, append([]string{p}, a...)); return nil }
+	u := "https://panel.example.test/?net=" + id + "&view=Dispositivos; id ^ %PATH%"
+	for _, goos := range []string{"darwin", "linux", "windows"} {
 		if err := open(goos, u); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want := [][]string{{"/usr/bin/open", u}, {"xdg-open", u}}
+	want := [][]string{{"/usr/bin/open", u}, {"xdg-open", u}, {"rundll32.exe", "url.dll,FileProtocolHandler", u}}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %q", calls)
-	}
-	if err := open("windows", u); err == nil || err.Error() != "no soportado en Windows" || len(calls) != 2 {
-		t.Fatalf("windows: %v", err)
 	}
 }
 
 func TestOpenMapsFailures(t *testing.T) {
 	old := Launch
 	defer func() { Launch = old }()
-	Launch = func(string, string) error { return &exec.ExitError{} }
+	Launch = func(string, ...string) error { return &exec.ExitError{} }
 	if err := open("linux", "u"); err == nil || err.Error() != "no se pudo abrir el panel" {
 		t.Fatalf("salida no nula: %v", err)
 	}
-	Launch = func(string, string) error { return errors.New("no encontrado") }
+	Launch = func(string, ...string) error { return errors.New("no encontrado") }
 	if err := open("linux", "u"); err == nil || err.Error() != "no encontrado" {
 		t.Fatalf("spawn: %v", err)
 	}

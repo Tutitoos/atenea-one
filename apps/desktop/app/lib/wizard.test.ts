@@ -8,13 +8,13 @@ const net = (over: Partial<Network> = {}): Network => ({
   network_id: '0199ab12-3456-7def-8abc-0123456789ab', name: 'casa', server: 'control.example.test', url: 'https://control.example.test',
   interface: 'atenea0', listen_port: 51821, join_status: 'aprobada', state: 'conectada', ...over,
 });
-const ok = { os: 'linux', supported: true, installed: true };
+const ok = { os: 'linux', supported: true, can_join: true, installed: true };
 const joined = (over: Partial<Joined> = {}): Joined => ({ networkId: net().network_id, name: 'casa', server: 'control.example.test', hasToken: false, ...over });
 
 it.each([
   ['sin saber nada todavía', {}, 'cargando'],
   ['fallo al comprobar', { client: ok, failed: true }, 'error'],
-  ['sistema no soportado, aunque haya CLI y redes', { client: { os: 'windows', supported: false, installed: true }, networks: [net()] }, 'sistema'],
+  ['sistema no soportado, aunque haya CLI y redes', { client: { os: 'freebsd', supported: false, can_join: false, installed: true }, networks: [net()] }, 'sistema'],
   ['cliente ausente', { client: { ...ok, installed: false } }, 'cliente'],
   ['cliente presente, aún sin la lista de redes', { client: ok }, 'cargando'],
   ['sin redes', { client: ok, networks: [] }, 'unirse'],

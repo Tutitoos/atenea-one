@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os/exec"
 	"strings"
 	"time"
@@ -20,22 +19,10 @@ import (
 // MaxStatusBytes es el tope de la respuesta del agente (ADR-011 §2).
 const MaxStatusBytes = 4 << 20
 
-// Ask conecta con el socket de estado de un agente, pide `status` y devuelve la respuesta validada. Igual que
-// el cliente Rust: lee a lo sumo `limit` bytes y solo la primera línea, así que una respuesta mayor queda
-// truncada y falla por JSON inválido.
-func Ask(socket string, limit int64, timeout time.Duration) (string, error) {
-	conn, err := net.DialTimeout("unix", socket, timeout)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", socket, err)
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-		return "", err
-	}
-	if _, err := conn.Write([]byte("status\n")); err != nil {
-		return "", err
-	}
-	line, err := bufio.NewReader(io.LimitReader(conn, limit)).ReadString('\n')
+// readStatus lee solo la primera línea de la respuesta y la valida. Igual que el cliente Rust: lee a lo sumo
+// `limit` bytes, así que una respuesta mayor queda truncada y falla por JSON inválido.
+func readStatus(r io.Reader, limit int64) (string, error) {
+	line, err := bufio.NewReader(io.LimitReader(r, limit)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}

@@ -26,6 +26,8 @@ export function phaseOf(i: WizardInput): Phase {
   if (!i.client.supported) return 'sistema';
   if (!i.client.installed) return 'cliente';
   if (!i.networks) return 'cargando';
+  // Sin `can_join` (Windows) solo se ve la red ya instalada: no hay nada que unir ni que importar.
+  if (!i.client.can_join) return i.networks.length > 0 ? 'listo' : 'sistema';
   if (i.joined) {
     const net = i.networks.find((n) => n.network_id === i.joined?.networkId);
     // Un código con token entra aprobado; uno de solicitud espera a que un administrador apruebe este equipo.
