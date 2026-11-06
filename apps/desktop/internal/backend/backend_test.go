@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +156,9 @@ func TestElevationCommandPerOS(t *testing.T) {
 // directorio es corto: las rutas de socket Unix tienen un límite de unos 100 caracteres.
 func socketServer(t *testing.T, reply func(c net.Conn)) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("en Windows Ask lee una tubería con nombre (agent_windows.go), no un socket Unix")
+	}
 	dir, err := os.MkdirTemp("", "s")
 	if err != nil {
 		t.Fatal(err)
