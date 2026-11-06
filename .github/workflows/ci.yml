@@ -163,7 +163,7 @@ jobs:
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 15
-        run: scripts/install-linux-desktop-deps.sh "$HOME/apt-archives"
+        run: '"$GITHUB_WORKSPACE/scripts/install-linux-desktop-deps.sh" "$HOME/apt-archives"'
       - name: Formato, vet y pruebas
         run: |
           test -z "$(gofmt -l .)"

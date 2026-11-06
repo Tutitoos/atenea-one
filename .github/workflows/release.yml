@@ -213,7 +213,7 @@ jobs:
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 15
-        run: scripts/install-linux-desktop-deps.sh # sin caché: el paquete de release no depende de una caché de la CI
+        run: '"$GITHUB_WORKSPACE/scripts/install-linux-desktop-deps.sh"' # sin caché: el paquete de release no depende de una caché de la CI
       - name: "Instalar wails3 a la versión de go.mod (solo Linux, para .deb y .rpm)"
         if: runner.os == 'Linux'
         run: |
