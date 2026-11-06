@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -184,10 +185,58 @@ func Parse(text string) (Result, error) {
 	return res, nil
 }
 
+// packets son los envíos que se piden en todos los sistemas (-c 5 / -n 5).
+const packets = 5
+
+// replyTime reconoce el tiempo de una respuesta de ping.exe sin depender del idioma: `=12ms`, `<1ms`, `= 12 ms`
+// y la forma abreviada `<1m` que imprime Windows en español.
+var replyTime = regexp.MustCompile(`([=<])\s*(\d+)\s*ms?\b`)
+
+// ttl está en todas las líneas de respuesta (no se traduce) y no en el resumen («Minimum = 1ms…»).
+var ttl = regexp.MustCompile(`(?i)\bTTL\s*=`)
+
+// ParseWindows resume la salida de `ping.exe -n <sent>`. La salida está traducida, así que no se lee ningún texto:
+// una respuesta es una línea con TTL y un tiempo; los envíos son los que se lanzaron y la pérdida se calcula aquí.
+// `<1ms` cuenta como 0 ms. Una salida vacía (ping.exe no llegó a ejecutarse) no es «100 % perdido».
+func ParseWindows(text string, sent uint32) (Result, error) {
+	if strings.TrimSpace(text) == "" || sent == 0 {
+		return Result{}, errBad
+	}
+	var times []float64
+	for _, l := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if !ttl.MatchString(l) {
+			continue
+		}
+		m := replyTime.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		v, _ := strconv.ParseFloat(m[2], 64)
+		if m[1] == "<" {
+			v = 0
+		}
+		times = append(times, v)
+	}
+	received := uint32(len(times))
+	if received > sent {
+		return Result{}, errBad
+	}
+	res := Result{Sent: sent, Received: received, LossPct: 100 * float64(sent-received) / float64(sent)}
+	if received > 0 {
+		lo, hi, sum := times[0], times[0], 0.0
+		for _, v := range times {
+			lo, hi, sum = math.Min(lo, v), math.Max(hi, v), sum+v
+		}
+		avg := sum / float64(received)
+		res.MinMs, res.AvgMs, res.MaxMs = &lo, &avg, &hi
+	}
+	return res, nil
+}
+
 // Command elige programa y argumentos según el sistema operativo; sin shell.
 func Command(goos string, ip netip.Addr) (string, []string, error) {
 	if goos == "windows" {
-		return "", nil, errors.New("no soportado en Windows")
+		return "ping.exe", []string{"-n", strconv.Itoa(packets), "-w", "1000", ip.String()}, nil
 	}
 	mac := goos == "darwin"
 	program := "ping"
@@ -249,7 +298,12 @@ func run(goos string, ip netip.Addr, timeout time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := Parse(text)
+	var res Result
+	if goos == "windows" {
+		res, err = ParseWindows(text, packets)
+	} else {
+		res, err = Parse(text)
+	}
 	if err != nil {
 		return "", err
 	}

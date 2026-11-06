@@ -195,12 +195,12 @@ func TestClientInfoSaysWhetherTheCLIIsThereWithoutRunningIt(t *testing.T) {
 		name, goos, cli string
 		want            ClientInfo
 	}{
-		{"instalado en linux", "linux", exe, ClientInfo{OS: "linux", Supported: true, Installed: true}},
-		{"instalado en macOS", "darwin", exe, ClientInfo{OS: "darwin", Supported: true, Installed: true}},
-		{"ausente", "linux", filepath.Join(dir, "no-existe"), ClientInfo{OS: "linux", Supported: true}},
-		{"sin permiso de ejecución", "linux", notExe, ClientInfo{OS: "linux", Supported: true}},
-		{"un directorio no es el CLI", "darwin", dir, ClientInfo{OS: "darwin", Supported: true}},
-		{"Windows no está soportado aunque exista", "windows", exe, ClientInfo{OS: "windows"}},
+		{"instalado en linux", "linux", exe, ClientInfo{OS: "linux", Supported: true, CanJoin: true, Installed: true}},
+		{"instalado en macOS", "darwin", exe, ClientInfo{OS: "darwin", Supported: true, CanJoin: true, Installed: true}},
+		{"ausente", "linux", filepath.Join(dir, "no-existe"), ClientInfo{OS: "linux", Supported: true, CanJoin: true}},
+		{"sin permiso de ejecución", "linux", notExe, ClientInfo{OS: "linux", Supported: true, CanJoin: true}},
+		{"un directorio no es el CLI", "darwin", dir, ClientInfo{OS: "darwin", Supported: true, CanJoin: true}},
+		{"Windows se puede ver pero no unir; el CLI no cuenta", "windows", exe, ClientInfo{OS: "windows", Supported: true}},
 		{"otro sistema no está soportado", "freebsd", exe, ClientInfo{OS: "freebsd"}},
 	} {
 		if runtime.GOOS == "windows" && tc.want.Supported {
@@ -230,7 +230,7 @@ func TestClientInfoUsesTheFixedCLIPathAndExposesNoPath(t *testing.T) {
 	if strings.Contains(string(b), "/") || strings.Contains(string(b), "atenea") {
 		t.Errorf("ClientInfo no debe llevar rutas: %s", b)
 	}
-	if string(b) != `{"os":"`+runtime.GOOS+`","supported":`+strconv.FormatBool(got.Supported)+`,"installed":`+strconv.FormatBool(got.Installed)+`}` {
+	if string(b) != `{"os":"`+runtime.GOOS+`","supported":`+strconv.FormatBool(got.Supported)+`,"can_join":`+strconv.FormatBool(got.CanJoin)+`,"installed":`+strconv.FormatBool(got.Installed)+`}` {
 		t.Errorf("forma JSON inesperada: %s", b)
 	}
 }

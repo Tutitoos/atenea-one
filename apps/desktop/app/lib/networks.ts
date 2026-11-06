@@ -109,8 +109,8 @@ export async function setAutostart(on: boolean): Promise<void> {
   await call<void>('autostart_set', { on });
 }
 
-/** ADR-021: el sistema, si la aplicación puede gestionar redes en él y si el CLI está instalado. Sin rutas ni versiones. */
-export const clientInfo = z.object({ os: z.string(), supported: z.boolean(), installed: z.boolean() });
+/** ADR-021: el sistema, si la aplicación puede ver redes en él (`supported`), si además puede unir y gestionarlas (`can_join`: no en Windows) y si el cliente está. Sin rutas ni versiones. */
+export const clientInfo = z.object({ os: z.string(), supported: z.boolean(), can_join: z.boolean(), installed: z.boolean() });
 export type ClientInfo = z.infer<typeof clientInfo>;
 export async function readClient(): Promise<ClientInfo> {
   const parsed = clientInfo.safeParse(await call<unknown>('client_status'));

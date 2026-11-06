@@ -106,8 +106,9 @@ func TestCommandPerOS(t *testing.T) {
 			t.Errorf("%s %s: %q %q %v", c.goos, c.ip, prog, args, err)
 		}
 	}
-	if _, _, err := Command("windows", v4); err == nil || err.Error() != "no soportado en Windows" {
-		t.Errorf("windows: %v", err)
+	prog, args, err := Command("windows", v4)
+	if err != nil || prog != "ping.exe" || !reflect.DeepEqual(args, []string{"-n", "5", "-w", "1000", "10.50.0.2"}) {
+		t.Errorf("windows: %q %q %v", prog, args, err)
 	}
 }
 
@@ -130,8 +131,14 @@ func TestRunUsesInjectedLauncher(t *testing.T) {
 	if _, err := run("linux", netip.MustParseAddr("10.50.0.2"), deadline); err == nil {
 		t.Fatal("salida corrupta debía fallar")
 	}
-	if _, err := run("windows", netip.MustParseAddr("10.50.0.2"), deadline); err == nil {
-		t.Fatal("windows debía fallar")
+	Exec = func(p string, a []string, _ time.Duration) (string, error) {
+		gotProg, gotArgs = p, a
+		return "Reply from 10.50.0.2: bytes=32 time=3ms TTL=64\nReply from 10.50.0.2: bytes=32 time<1ms TTL=64", nil
+	}
+	out, err = run("windows", netip.MustParseAddr("10.50.0.2"), deadline)
+	want = `{"avg_ms":1.5,"loss_pct":60.0,"max_ms":3.0,"min_ms":0.0,"received":2,"sent":5}`
+	if err != nil || out != want || gotProg != "ping.exe" || gotArgs[len(gotArgs)-1] != "10.50.0.2" {
+		t.Fatalf("windows: %q %v %q %v", out, err, gotProg, gotArgs)
 	}
 }
 

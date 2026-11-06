@@ -17,7 +17,7 @@ vi.mock('./lib/bridge', () => ({ invoke: vi.fn() }));
 const NET_ID = '0199ab12-3456-7def-8abc-0123456789ab';
 const info = { name: 'casa', server: 'control.example.test', network_id: NET_ID, root_fingerprint: '6c4b-fd0b-2585-9aae', has_token: false };
 const pending = { network_id: NET_ID, name: 'casa', server: 'control.example.test', url: 'https://control.example.test', interface: 'atenea0', listen_port: 51821, join_status: 'pendiente', state: 'iniciada_sin_configuracion' };
-const linux = { os: 'linux', supported: true, installed: true };
+const linux = { os: 'linux', supported: true, can_join: true, installed: true };
 
 type World = {
   client: object | (() => object);
@@ -71,9 +71,9 @@ async function review() {
 beforeEach(() => { vi.mocked(invoke).mockReset(); });
 
 it('un sistema no soportado no ofrece unirse ni consulta redes', async () => {
-  serve({ client: { os: 'windows', supported: false, installed: false } });
+  serve({ client: { os: 'freebsd', supported: false, can_join: false, installed: false } });
   show();
-  expect(await screen.findByRole('region', { name: 'Este sistema todavía no está soportado' })).toHaveTextContent('Windows');
+  expect(await screen.findByRole('region', { name: 'Este sistema todavía no está soportado' })).toHaveTextContent('freebsd');
   expect(screen.queryByRole('textbox', { name: 'Código de red' })).not.toBeInTheDocument();
   expect(calls('network_list')).toHaveLength(0);
   expect(calls('network_apply')).toHaveLength(0);
@@ -83,7 +83,7 @@ it.each([
   ['linux', 'sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb'],
   ['darwin', 'sudo installer -pkg atenea-one-*-macos-*.pkg -target /'],
 ])('sin cliente (%s) enseña la orden para copiar y no ofrece unirse', async (os, command) => {
-  serve({ client: { os, supported: true, installed: false } });
+  serve({ client: { os, supported: true, can_join: true, installed: false } });
   show();
   const step = within(await screen.findByRole('region', { name: 'Instala el cliente de Atenea One' }));
   expect(step.getByText(command)).toBeInTheDocument();
@@ -189,7 +189,7 @@ it('el inicio lleva al asistente cuando no hay redes y a Dispositivos cuando las
 });
 
 it.each([
-  ['cliente ausente', { client: { os: 'linux', supported: true, installed: false } }, 'Instala el cliente de Atenea One'],
+  ['cliente ausente', { client: { os: 'linux', supported: true, can_join: true, installed: false } }, 'Instala el cliente de Atenea One'],
   ['unirse', {}, 'Únete a una red'],
   ['listo', { networks: [{ ...pending, state: 'conectada' }] }, 'Ya tienes redes unidas'],
 ])('sin infracciones de accesibilidad: %s', async (_, world, region) => {

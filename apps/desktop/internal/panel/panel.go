@@ -37,30 +37,29 @@ func URL(base, network, device string) (string, error) {
 	return "https://" + host + "/?" + q.Encode(), nil
 }
 
-// Launch ejecuta el programa con un único argumento; sin shell. Variable para las pruebas.
-var Launch = func(program, arg string) error {
-	return exec.Command(program, arg).Run()
+// Launch ejecuta el programa con sus argumentos; sin shell. Variable para las pruebas.
+var Launch = func(program string, args ...string) error {
+	return exec.Command(program, args...).Run()
 }
 
-func program(goos string) (string, error) {
+// command devuelve el programa y los argumentos que abren la URL, siempre como un único argumento aparte. En
+// Windows no se usa `cmd /c start` (interpretaría `&` y `^` de la URL): rundll32 recibe la URL tal cual.
+func command(goos, rawURL string) (string, []string) {
 	switch goos {
 	case "windows":
-		return "", errors.New("no soportado en Windows")
+		return "rundll32.exe", []string{"url.dll,FileProtocolHandler", rawURL}
 	case "darwin":
-		return "/usr/bin/open", nil
+		return "/usr/bin/open", []string{rawURL}
 	}
-	return "xdg-open", nil
+	return "xdg-open", []string{rawURL}
 }
 
 // Open abre la URL en el navegador del sistema.
 func Open(rawURL string) error { return open(runtime.GOOS, rawURL) }
 
 func open(goos, rawURL string) error {
-	p, err := program(goos)
-	if err != nil {
-		return err
-	}
-	if err := Launch(p, rawURL); err != nil {
+	p, args := command(goos, rawURL)
+	if err := Launch(p, args...); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return errors.New("no se pudo abrir el panel")

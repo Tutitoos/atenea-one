@@ -26,6 +26,8 @@ function Step({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+const noJoinText = 'En Windows todavía no se puede unir ni gestionar redes desde la aplicación; puedes ver el estado de la red ya instalada.';
+
 function Command({ value }: { value: string }) {
   return <p className="mt-2 flex items-center rounded-lg border border-line bg-bg px-2.5 py-1.5"><code className="select-text break-all font-mono text-xs">{value}</code><CopyButton value={value} label="orden de instalación" icon="terminal" /></p>;
 }
@@ -80,14 +82,16 @@ export default function Welcome() {
       )}
 
       {phase === 'sistema' && (
-        <Step title="Este sistema todavía no está soportado">
-          <p>{os === 'windows' ? 'En Windows la aplicación todavía no puede unir este equipo a una red.' : `La aplicación no puede gestionar redes en este sistema (${os}).`} Puedes seguir viendo el estado de lo que ya esté unido.</p>
+        <Step title={os === 'windows' ? 'Sin red que ver en este equipo' : 'Este sistema todavía no está soportado'}>
+          <p>{os === 'windows' ? noJoinText : `La aplicación no puede gestionar redes en este sistema (${os}). Puedes seguir viendo el estado de lo que ya esté unido.`}</p>
         </Step>
       )}
 
       {phase === 'cliente' && (
         <Step title="Instala el cliente de Atenea One">
-          <p>Falta el programa que une este equipo a las redes (<code>atenea</code>). La aplicación no lo instala ni lo descarga: instálalo tú desde el paquete de la misma versión y vuelve aquí.</p>
+          {os === 'windows'
+            ? <p>No se detecta el agente de este equipo. Instala y arranca el servicio AteneaAgent siguiendo la guía de instalación de Windows y vuelve aquí. La aplicación no lo instala ni lo descarga.</p>
+            : <p>Falta el programa que une este equipo a las redes (<code>atenea</code>). La aplicación no lo instala ni lo descarga: instálalo tú desde el paquete de la misma versión y vuelve aquí.</p>}
           {installCommand(os) ? <><p className="mt-2">Desde la carpeta donde descargaste el paquete:</p><Command value={installCommand(os) ?? ''} /></> : null}
           <div className="mt-3 flex items-center gap-2">
             <button type="button" className={primary} disabled={client.isFetching} onClick={() => { setRechecked(false); void client.refetch().then(() => setRechecked(true)); }}>Comprobar de nuevo</button>
@@ -129,11 +133,12 @@ export default function Welcome() {
 
       {phase === 'listo' && (
         <Step title={joined ? 'Listo' : 'Ya tienes redes unidas'}>
-          <p>{joined ? `«${joined.name}» está en este equipo.` : 'Este equipo ya está unido a una o más redes.'} {trayHint(os)}</p>
+          <p>{joined ? `«${joined.name}» está en este equipo.` : client.data?.can_join ? 'Este equipo ya está unido a una o más redes.' : 'Puedes ver el estado de la red ya instalada en este equipo.'} {trayHint(os)}</p>
+          {!client.data?.can_join && <p className="mt-2 text-mut">{noJoinText}</p>}
           <Autostart />
           <div className="mt-3 flex items-center gap-2">
             <Link to="/devices" className={primary}>Ver dispositivos</Link>
-            {!joined && <Link to="/networks" className={button}>Unirme a otra red</Link>}
+            {!joined && client.data?.can_join && <Link to="/networks" className={button}>Unirme a otra red</Link>}
           </div>
         </Step>
       )}

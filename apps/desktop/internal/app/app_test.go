@@ -145,7 +145,7 @@ func TestOpenPanelBuildsTheURLFromTheJoinedNetworkOnly(t *testing.T) {
 	list := fakeCLI(t)
 	var opened []string
 	old := panel.Launch
-	panel.Launch = func(program, arg string) error { opened = append(opened, arg); return nil }
+	panel.Launch = func(program string, args ...string) error { opened = append(opened, args[len(args)-1]); return nil }
 	t.Cleanup(func() { panel.Launch = old })
 	a := &App{}
 

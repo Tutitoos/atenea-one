@@ -36,21 +36,27 @@ func RunDir() string {
 }
 
 // ClientInfo es lo único que la interfaz sabe del cliente instalado (ADR-021): el sistema, si la aplicación puede
-// gestionar redes en él y si el CLI está. Sin rutas, versiones ni texto del sistema.
+// VER redes en él (Supported), si además puede unir y gestionarlas (CanJoin) y si el cliente está. En Windows
+// «instalado» es que la tubería de estado del agente responde. Sin rutas, versiones ni texto del sistema.
 type ClientInfo struct {
 	OS        string `json:"os"`
 	Supported bool   `json:"supported"`
+	CanJoin   bool   `json:"can_join"`
 	Installed bool   `json:"installed"`
 }
 
-// Client comprueba, sin ejecutar nada ni abrir ningún socket, si el CLI está en su ruta fija.
+// Client comprueba si el CLI está en su ruta fija (en Windows, si responde la tubería del agente).
 func Client() ClientInfo { return clientFor(runtime.GOOS, CLIPath()) }
 
 func clientFor(goos, cli string) ClientInfo {
-	info := ClientInfo{OS: goos, Supported: goos == "darwin" || goos == "linux"}
-	if info.Supported {
+	unix := goos == "darwin" || goos == "linux"
+	info := ClientInfo{OS: goos, Supported: unix || goos == "windows", CanJoin: unix}
+	switch {
+	case unix:
 		st, err := os.Stat(cli)
 		info.Installed = err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
+	case goos == "windows":
+		info.Installed = windowsAgentResponds()
 	}
 	return info
 }
@@ -58,7 +64,10 @@ func clientFor(goos, cli string) ClientInfo {
 // NetworkSocket es el socket de estado de una red unida: <run>/<id8>/status.sock, el mismo que usa el CLI.
 func NetworkSocket(id string) (string, error) {
 	if runtime.GOOS == "windows" {
-		return "", errors.New("las redes múltiples no están soportadas en Windows")
+		if id != WindowsNetworkID {
+			return "", errors.New("identificador de red no válido")
+		}
+		return WindowsStatusPipe, nil
 	}
 	if !ValidUUID(id) {
 		return "", errors.New("identificador de red no válido")
@@ -66,11 +75,12 @@ func NetworkSocket(id string) (string, error) {
 	return filepath.Join(RunDir(), ShortID(id), "status.sock"), nil
 }
 
-// List devuelve `atenea network list --json` (sin privilegios). Sin CLI, o en Windows, es una lista vacía. Rechaza
-// cualquier salida que no sea un array JSON antes de entregarla.
+// List devuelve `atenea network list --json` (sin privilegios). Sin CLI es una lista vacía. En Windows es la red
+// única del equipo leída de la tubería de estado (windowsList). Rechaza cualquier salida que no sea un array JSON
+// antes de entregarla.
 func List() (string, error) {
 	if runtime.GOOS == "windows" {
-		return "[]", nil
+		return windowsList(Ask), nil
 	}
 	cli := CLIPath()
 	if _, err := os.Stat(cli); err != nil {

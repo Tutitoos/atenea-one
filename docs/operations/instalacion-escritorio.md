@@ -27,7 +27,7 @@ muestra la ventana con el asistente de **Primeros pasos** ([ADR-021](../architec
 
 1. **Sistema y cliente.** Si falta el cliente (`atenea`), el asistente enseña la orden de instalación para copiar
    (`sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb` o `sudo installer -pkg atenea-one-*-macos-*.pkg -target /`) y «Comprobar de
-   nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows dice que todavía no está soportado.
+   nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows solo **ve el estado** (ver «Windows: solo ver el estado»).
 2. **Instalación heredada**, si la hay: ofrece importarla antes de unirse a otra red.
 3. **Unirse:** pegar el código, revisar a qué red te unes (nombre, servidor, huella de la raíz, conectividad) y confirmar; el
    sistema pide la autorización. Es la misma pantalla de «Redes».
@@ -50,6 +50,20 @@ Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el 
   rodeo en los paquetes: desactivar el sandbox de WebKit o relajar ese ajuste es una decisión de seguridad del usuario.
 - La aplicación guarda sus preferencias en la carpeta de configuración del usuario (`one.atenea.desktop`); desinstalar el paquete
   **no** las borra.
+
+### Windows: solo ver el estado
+
+En Windows la aplicación **no une ni gestiona redes** (unirse, conectar, desconectar y salir no se ofrecen; el CLI de Windows aún
+no admite `atenea network`, ADR-017). Lo que sí hace, sin privilegios: leer la tubería de estado del agente
+(`\\.\pipe\atenea-status`, legible por el grupo Users) y mostrar **una única red**, la instalada a mano con `install.ps1`
+(«Red de este equipo»). Si el servicio `AteneaAgent` no responde, el asistente pide instalarlo y arrancarlo siguiendo la
+[guía de Windows](instalacion-windows.md) (la aplicación no lo instala). También lanza `ping.exe` a los pares (el resultado
+se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre el panel con `rundll32 url.dll,FileProtocolHandler`.
+Siguen sin soporte en Windows las notificaciones del sistema y el inicio con la sesión.
+
+**Comprobado en un Windows real (2026-11-06):** en un Windows 11 Pro 24H2 (amd64, en español, unido a un dominio), con el cliente instalado con `install.ps1` y el agente enrolado en una red y arrancado, la aplicación (compilada desde esta rama) muestra **«Red de este equipo» como conectada**. Es la lectura real de la tubería de estado desde la aplicación, que corre **sin elevar** (la cuenta que la usó es de administrador, así que no se ha probado con una cuenta estándar); lo vio el responsable en pantalla (sin captura).
+
+**Sin comprobar en un Windows real:** el ping a un par (no había ningún par: era el único dispositivo de la red), abrir el panel con `rundll32`, el resto de pantallas (Diagnóstico, Servidores) y otras versiones o idiomas de Windows. El formato de tiempo de `ping` en español (`<1m`) está escrito de memoria. La app no verifica que el propietario de la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI, vetado en la app): un usuario local que creara esa tubería antes que el servicio podría mostrar un estado falso y que «Abrir el panel» abriera una URL suya (siempre `https`, sin credenciales).
 
 ## Construir en local
 
