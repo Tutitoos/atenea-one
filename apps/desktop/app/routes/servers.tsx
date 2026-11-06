@@ -4,7 +4,7 @@ import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { readNetworks, stateText, stateTone } from '../lib/networks';
 import { certificateLeft, groupServers, readServerNetworks } from '../lib/servers';
-import { Dot, Empty } from '../ui';
+import { Dot, Empty, Loading, Skeleton } from '../ui';
 
 export default function Servers() {
   const networks = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000 });
@@ -16,7 +16,7 @@ export default function Servers() {
   return (
     <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
       <h1 className="mb-4 text-xl font-semibold">Servidores</h1>
-      {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Empty>Comprobando…</Empty> : networks.data.length === 0 ? <Empty>Sin servidores. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link>.</Empty> : (
+      {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Loading className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</Loading> : networks.data.length === 0 ? <Empty>Sin servidores. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link>.</Empty> : (
         <ul className="space-y-3">
           {servers.map((server, index) => <li key={server.host}>
             <Link to={`/servers/${encodeURIComponent(server.host)}`} className="flex items-center gap-2 rounded-lg bg-card p-3">

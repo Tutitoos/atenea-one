@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { ago, bytes } from './lib/format';
-import type { DeviceHistory } from './lib/history';
+import { bytes } from './lib/format';
+import { eventText, useDeviceEvents, type DeviceHistory } from './lib/history';
 import { Heading } from './ui';
 
 type Point = NonNullable<DeviceHistory['points']>[number];
@@ -18,7 +18,11 @@ export function sessionStats(points: Point[]) {
   return stats;
 }
 
+/** Hoy basta la hora; otro día, fecha y hora. */
+const when = (at: number) => (new Date(at).toDateString() === new Date().toDateString() ? `hoy ${new Date(at).toLocaleTimeString('es')}` : new Date(at).toLocaleString('es'));
+
 export function TrafficHistory({ history }: { history?: DeviceHistory }) {
+  const events = useDeviceEvents(history?.network, history?.id);
   const points = history?.points ?? [];
   const max = Math.max(1, ...points.flatMap((p) => [p.down, p.up]));
   // Eje X anclado a la hora actual: una pausa en el muestreo se ve como hueco a la derecha.
@@ -36,7 +40,7 @@ export function TrafficHistory({ history }: { history?: DeviceHistory }) {
       {points.length === 1 && <circle cx={600 - (end - points[0].at) / 1000} cy={130 - points[0].down / max * 120} r="3" fill="currentColor" />}
     </svg> : <p className="mt-2 text-mut">Sin muestras de tráfico todavía.</p>}
     <Heading>Historial de eventos</Heading>
-    <p className="text-sm text-mut">El historial se pierde al cerrar la app o cambiar de red.</p>
-    {history?.events.length ? <ol aria-label="Historial de eventos" className="mt-2 space-y-1">{[...history.events].reverse().map((event, i) => <li key={`${event.at}-${i}`}>{event.text} · hace {ago(Math.max(0, Date.now() - event.at) / 1000)}</li>)}</ol> : <p className="mt-2 text-mut">Sin eventos desde que se abrió esta red.</p>}
+    <p className="text-sm text-mut">Se guardan en este equipo los cambios de camino de los últimos 30 días (máximo 200 por red); no se guarda tráfico.</p>
+    {events.length ? <ol aria-label="Historial de eventos" className="mt-2 space-y-1">{[...events].reverse().map((event, i) => <li key={`${event.at}-${i}`}>{eventText(event.to)} · {when(event.at)}</li>)}</ol> : <p className="mt-2 text-mut">Sin eventos registrados para este dispositivo.</p>}
   </>;
 }

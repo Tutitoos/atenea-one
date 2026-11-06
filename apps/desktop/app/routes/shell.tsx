@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { readAgent } from '../lib/agent';
 import { ago, levelTone } from '../lib/format';
 import { readNetworks, stateText, stateTone } from '../lib/networks';
 import { saveSection } from '../lib/section';
 import { groupServers } from '../lib/servers';
+import { useShortcuts } from '../lib/shortcuts';
+import { ShortcutsHelp } from '../shortcuts-help';
+import { useToast } from '../toast';
 import type { Agent } from '../lib/live';
 import { Dot, Pill } from '../ui';
 
@@ -48,6 +51,29 @@ export default function Shell() {
   const left = lease ? Math.round(lease - Date.now() / 1000) : null;
   const subtitle = error ? error.message : empty ? 'Sin redes' : health ? (health.reasons[0] ?? (left == null ? '' : left > 0 ? `Lease: quedan ${ago(left)}` : 'Lease caducado')) : 'Comprobando…';
 
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [help, setHelp] = useState(false);
+  useShortcuts({
+    search: () => {
+      if (inDevices) return window.dispatchEvent(new CustomEvent('atenea:buscar'));
+      void navigate('/devices');
+      // La lista aún no está montada: se espera a que lo esté para que reciba el evento.
+      setTimeout(() => window.dispatchEvent(new CustomEvent('atenea:buscar')), 50);
+    },
+    network: (n) => {
+      const target = networks.data ? groupServers(networks.data).flatMap((s) => s.networks)[n - 1] : undefined;
+      if (!target) return;
+      selectNetwork(target.network_id);
+      void navigate('/devices');
+    },
+    refresh: () => {
+      void queryClient.invalidateQueries({ queryKey: ['agent'] });
+      void queryClient.invalidateQueries({ queryKey: ['networks'] });
+      toast?.('Actualizado');
+    },
+    help: () => setHelp(true),
+  });
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-line px-4 py-2.5">
@@ -68,6 +94,7 @@ export default function Shell() {
       )}
       <div className="flex min-h-0 flex-1">
         <nav aria-label="Secciones" className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-line bg-side p-2">
+          <NavLink to="/overview" className={link}>Resumen</NavLink>
           <NavLink to="/devices" className={link}>Dispositivos</NavLink>
           {inDevices && networks.data && networks.data.length > 0 && (
             <div role="group" aria-label="Elegir red" className="mb-1 ml-4 flex flex-col border-l border-fg/25 pl-1.5">
@@ -84,6 +111,7 @@ export default function Shell() {
           <NavLink to="/diagnostics" className={link}>Diagnóstico</NavLink>
         </nav>
         <div className={`flex min-w-0 flex-1 stale-fade${stale ? ' stale' : ''}`} aria-busy={stale}><Outlet context={agent} /></div>
+        {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
       </div>
     </div>
   );

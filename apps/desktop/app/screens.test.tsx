@@ -1,12 +1,13 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { axe } from 'vitest-axe';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from './lib/bridge';
+import { recordEvents, resetHistoryStore } from './lib/history-store';
 import Device from './routes/device';
 import Devices from './routes/devices';
 import DevicesIndex from './routes/devices-index';
@@ -73,7 +74,7 @@ function serve(statusReply: string, networks: object[] = [net()], fail?: string,
 }
 const calls = (cmd: string) => vi.mocked(invoke).mock.calls.filter(([c]) => c === cmd);
 
-beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); });
+beforeEach(() => { localStorage.clear(); resetHistoryStore(); vi.mocked(invoke).mockReset(); });
 
 it('la banda de avisos solo aparece si hay motivos que contar', async () => {
   // Caso real de Rust: un par por relay degrada el estado pero no aporta ningún motivo textual.
@@ -636,12 +637,13 @@ it('dibuja tráfico con escala automática, leyenda e historial relativo accesib
   const { container, rerender } = render(<main><h2>Dispositivo de prueba</h2><TrafficHistory /></main>);
   expect(screen.getByText('Sin muestras de tráfico todavía.')).toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
-  expect(screen.getByText('Sin eventos desde que se abrió esta red.')).toBeInTheDocument();
-  rerender(<main><h2>Dispositivo de prueba</h2><TrafficHistory history={{ path: 'relay', points: [{ at: Date.now() - 2000, down: 2048, up: 1024 }, { at: Date.now(), down: 4096, up: 0 }], events: [{ at: Date.now() - 5000, text: 'Pasó a relay' }] }} /></main>);
+  expect(screen.getByText('Sin eventos registrados para este dispositivo.')).toBeInTheDocument();
+  act(() => recordEvents('red-test', [{ key: 'equipo-a', at: Date.now() - 5000, from: 'direct', to: 'relay' }]));
+  rerender(<main><h2>Dispositivo de prueba</h2><TrafficHistory history={{ network: 'red-test', id: 'equipo-a', path: 'relay', points: [{ at: Date.now() - 2000, down: 2048, up: 1024 }, { at: Date.now(), down: 4096, up: 0 }] }} /></main>);
   expect(screen.getByRole('img', { name: /Velocidad de bajada/ })).toBeInTheDocument();
   expect(screen.getByText(/escala 0–4.0 KiB\/s/)).toBeInTheDocument();
-  expect(screen.getByRole('list', { name: 'Historial de eventos' })).toHaveTextContent('Pasó a relay · hace 5 s');
-  expect(screen.getByText(/El historial se pierde al cerrar la app/)).toBeInTheDocument();
+  expect(screen.getByRole('list', { name: 'Historial de eventos' })).toHaveTextContent(/Pasó a relay · hoy \d/);
+  expect(screen.getByText(/últimos 30 días/)).toBeInTheDocument();
   expect((await axe(container)).violations).toEqual([]);
 });
 

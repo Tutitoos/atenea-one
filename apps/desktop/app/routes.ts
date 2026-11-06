@@ -5,6 +5,7 @@ import { type RouteConfig, index, layout, route } from '@react-router/dev/routes
 export default [
   layout('routes/shell.tsx', [
     index('routes/home.tsx'),
+    route('overview', 'routes/overview.tsx'),
     route('devices', 'routes/devices.tsx', [index('routes/devices-index.tsx'), route(':id', 'routes/device.tsx')]),
     route('networks', 'routes/networks.tsx'),
     route('welcome', 'routes/welcome.tsx'),

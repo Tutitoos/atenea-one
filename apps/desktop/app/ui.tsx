@@ -58,6 +58,17 @@ export function CopyButton({ value, label, icon = 'copy', text }: { value: strin
 
 export const Empty = ({ children }: { children: ReactNode }) => <p className="p-4 text-mut">{children}</p>;
 
+/** Bloque gris de carga; la animación se apaga con `prefers-reduced-motion` (ver styles.css). */
+export const Skeleton = ({ className = '' }: { className?: string }) => <div aria-hidden="true" className={`skeleton rounded-md bg-fg/10 ${className}`} />;
+
+/** Región de primera carga: marcada como ocupada y con un texto que solo leen los lectores de pantalla. */
+export const Loading = ({ children, className }: { children: ReactNode; className?: string }) => (
+  <div aria-busy="true" className={className}>
+    <span className="sr-only">Cargando…</span>
+    {children}
+  </div>
+);
+
 export const button = 'cursor-default rounded-md border border-line bg-card px-3 py-1 text-sm disabled:opacity-50';
 export const primary = 'cursor-default rounded-md bg-sel px-3 py-1 text-sm text-white disabled:opacity-50';
 

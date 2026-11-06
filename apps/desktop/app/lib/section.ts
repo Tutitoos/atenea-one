@@ -3,7 +3,7 @@
 
 const KEY = 'atenea.section';
 /** Secciones que se recuerdan; la primera es la de por defecto. No incluye la bienvenida ni dispositivos concretos. */
-const SECTIONS = ['/devices', '/servers', '/networks', '/diagnostics'];
+const SECTIONS = ['/devices', '/overview', '/servers', '/networks', '/diagnostics'];
 
 /** Última sección visitada, validada: un valor guardado desconocido vale como la de por defecto. */
 export const readSection = () => SECTIONS.find((s) => s === localStorage.getItem(KEY)) ?? SECTIONS[0];

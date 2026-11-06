@@ -12,10 +12,12 @@ import { ago, bytes, networkSummary, pct } from './lib/format';
 import { reply } from './lib/status';
 import Device from './routes/device';
 import Devices from './routes/devices';
-import Diagnostics, { groupCounters } from './routes/diagnostics';
+import Diagnostics from './routes/diagnostics';
+import { groupCounters } from './lib/report';
+import { resetHistoryStore } from './lib/history-store';
 
 vi.mock('./lib/bridge', () => ({ invoke: vi.fn() }));
-beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); vi.mocked(invoke).mockImplementation(async (cmd: string) => (cmd === 'notifications_get' ? true : null) as never); });
+beforeEach(() => { localStorage.clear(); resetHistoryStore(); vi.mocked(invoke).mockReset(); vi.mocked(invoke).mockImplementation(async (cmd: string) => (cmd === 'notifications_get' ? true : null) as never); });
 
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
@@ -121,6 +123,6 @@ it('las estadísticas de sesión salen de los puntos: pico, media y total', () =
   expect(sessionStats(points)).toEqual({ peakDown: 300, peakUp: 50, avgDown: 200, avgUp: 20, totalDown: 300 * 2 + 200, totalUp: 100 + 10 });
   expect(sessionStats([])).toMatchObject({ peakDown: 0, totalUp: 0 });
 
-  render(<TrafficHistory history={{ path: 'direct', events: [], points: [{ at: Date.now() - 2000, down: 1024, up: 0 }, { at: Date.now(), down: 2048, up: 512 }] }} />);
+  render(<TrafficHistory history={{ network: 'n', id: 'equipo-a', path: 'direct', points: [{ at: Date.now() - 2000, down: 1024, up: 0 }, { at: Date.now(), down: 2048, up: 512 }] }} />);
   expect(screen.getByLabelText('Estadísticas de la ventana')).toHaveTextContent('Pico ↓ 2,0 KiB/s ↑ 512 B/s · Media ↓ 1,5 KiB/s ↑ 256 B/s · Total ↓ 4,0 KiB ↑ 1,0 KiB');
 });

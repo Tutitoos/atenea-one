@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { ContextMenu, type MenuItem } from '../context-menu';
 import { bytes, levelTone, networkSummary, pathLabel, peerName, selfName, type Tone } from '../lib/format';
@@ -8,7 +8,7 @@ import { useAgent } from '../lib/live';
 import { useNames } from '../lib/names';
 import { Sparkline } from '../sparkline';
 import { useCopy } from '../toast';
-import { button, Dot, Empty, NoNetworks } from '../ui';
+import { button, Dot, Empty, Loading, NoNetworks, Skeleton } from '../ui';
 
 type Point = { at: number; down: number; up: number };
 /** `path` solo existe en los pares: el dispositivo local no lleva insignia de camino ni se filtra. */
@@ -30,19 +30,22 @@ const inFilter = (path: string, f: Filter) => f === 'all' || (f === 'connected' 
 const preferred = (addrs: string[]) => addrs.find((a) => !a.includes(':')) ?? addrs[0] ?? '';
 
 /** Solo se vuelve a pintar una fila si cambia algo que se ve; las listas de puntos se recrean en cada lectura. */
-const sameItem = (a: { e: Entry; onMenu: OpenMenu }, b: { e: Entry; onMenu: OpenMenu }) =>
-  a.onMenu === b.onMenu && a.e.id === b.e.id && a.e.name === b.e.name && a.e.addr === b.e.addr && a.e.tone === b.e.tone && a.e.path === b.e.path
+const sameItem = (a: { e: Entry; onMenu: OpenMenu; stale: boolean }, b: { e: Entry; onMenu: OpenMenu; stale: boolean }) =>
+  a.onMenu === b.onMenu && a.stale === b.stale && a.e.id === b.e.id && a.e.name === b.e.name && a.e.addr === b.e.addr && a.e.tone === b.e.tone && a.e.path === b.e.path
   && a.e.points?.length === b.e.points?.length && a.e.points?.at(-1)?.at === b.e.points?.at(-1)?.at;
 
-const Item = memo(function Item({ e, onMenu }: { e: Entry; onMenu: OpenMenu }) {
+/** `stale`: la fila es de otra red; se ve, pero ni abre detalle ni deja actuar sobre ella. */
+const Item = memo(function Item({ e, onMenu, stale }: { e: Entry; onMenu: OpenMenu; stale: boolean }) {
   const below = (el: HTMLElement) => { const r = el.getBoundingClientRect(); onMenu(e.id, r.left, r.bottom, el); };
   const path = e.path === undefined ? null : pathLabel(e.path);
   return (
     <div className="mb-1 flex items-start gap-0.5">
       <NavLink
         to={`/devices/${encodeURIComponent(e.id)}`}
-        onContextMenu={(ev) => { ev.preventDefault(); onMenu(e.id, ev.clientX, ev.clientY, ev.currentTarget); }}
-        onKeyDown={(ev) => { if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10')) { ev.preventDefault(); below(ev.currentTarget); } }}
+        aria-disabled={stale || undefined}
+        onClick={(ev) => { if (stale) ev.preventDefault(); }}
+        onContextMenu={(ev) => { ev.preventDefault(); if (!stale) onMenu(e.id, ev.clientX, ev.clientY, ev.currentTarget); }}
+        onKeyDown={(ev) => { if (!stale && (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10'))) { ev.preventDefault(); below(ev.currentTarget); } }}
         className={({ isActive }) => `flex min-w-0 flex-1 cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}
       >
         <Dot tone={e.tone} list />
@@ -57,23 +60,31 @@ const Item = memo(function Item({ e, onMenu }: { e: Entry; onMenu: OpenMenu }) {
           </span>
         )}
       </NavLink>
-      <button type="button" aria-label={`Acciones de ${e.name}`} aria-haspopup="menu" onClick={(ev) => below(ev.currentTarget)} className="mt-1 size-6 shrink-0 cursor-default rounded text-mut hover:bg-fg/10 focus-visible:outline-2 focus-visible:outline-sel">⋯</button>
+      <button type="button" disabled={stale} aria-label={`Acciones de ${e.name}`} aria-haspopup="menu" onClick={(ev) => below(ev.currentTarget)} className="mt-1 size-6 shrink-0 cursor-default rounded text-mut hover:bg-fg/10 focus-visible:outline-2 focus-visible:outline-sel disabled:opacity-50">⋯</button>
     </div>
   );
 }, sameItem);
 
-const Group = memo(function Group({ title, entries, onMenu }: { title: string; entries: Entry[]; onMenu: OpenMenu }) {
+const Group = memo(function Group({ title, entries, onMenu, stale }: { title: string; entries: Entry[]; onMenu: OpenMenu; stale: boolean }) {
   if (!entries.length) return null;
   return (
     <section aria-label={title}>
       <h2 className="mx-2 mb-1 mt-3.5 text-[13px] font-semibold text-mut">{title}</h2>
-      {entries.map((e) => <Item key={e.id} e={e} onMenu={onMenu} />)}
+      {entries.map((e) => <Item key={e.id} e={e} onMenu={onMenu} stale={stale} />)}
     </section>
   );
 });
 
+/** Primera carga: filas con el aspecto de `Item`. */
+const ListSkeleton = () => (
+  <Loading>
+    {[0, 1, 2, 3].map((i) => <div key={i} aria-hidden="true" className="mb-1 flex items-start gap-2 px-2 py-1.5"><Skeleton className="mt-1 size-2.5 rounded-full" /><div className="flex-1 space-y-1.5"><Skeleton className="h-3.5 w-3/5" /><Skeleton className="h-3 w-2/5" /></div></div>)}
+  </Loading>
+);
+
 export default function Devices() {
   const agent = useAgent();
+  const stale = agent.stale;
   const names = useNames();
   const navigate = useNavigate();
   const copy = useCopy();
@@ -81,13 +92,20 @@ export default function Devices() {
   const [filter, setFilterState] = useState(readFilter);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const search = useRef<HTMLInputElement>(null);
+  // Atajo de teclado (lo emite otro bloque): enfoca y selecciona el buscador.
+  useEffect(() => {
+    const focus = () => { search.current?.focus(); search.current?.select(); };
+    window.addEventListener('atenea:buscar', focus);
+    return () => window.removeEventListener('atenea:buscar', focus);
+  }, []);
   const sample = agent.sample;
   const status = sample?.reply.status;
   const level = sample?.reply.health.level;
   const history = sample?.history;
 
   const setFilter = (f: Filter) => { localStorage.setItem(FILTER_KEY, f); setFilterState(f); };
-  const openMenu = useCallback<OpenMenu>((id, x, y, el) => { opener.current = el; setMenu({ id, x, y }); }, []);
+  const openMenu = useCallback<OpenMenu>((id, x, y, el) => { if (stale) return; opener.current = el; setMenu({ id, x, y }); }, [stale]);
   const closeMenu = useCallback((restoreFocus: boolean) => { setMenu(null); if (restoreFocus) opener.current?.focus(); }, []);
 
   const { selfEntries, peerEntries, counts } = useMemo(() => {
@@ -105,7 +123,7 @@ export default function Devices() {
 
   if (agent.empty) return <NoNetworks />;
 
-  const target = menu && [...selfEntries, ...peerEntries].find((e) => e.id === menu.id);
+  const target = !stale && menu && [...selfEntries, ...peerEntries].find((e) => e.id === menu.id);
   const items = (e: Entry): MenuItem[] => [
     { label: 'Abrir detalle', onSelect: () => void navigate(`/devices/${encodeURIComponent(e.id)}`) },
     ...(e.address ? [{ label: 'Copiar dirección', onSelect: () => void copy(e.address, 'dirección') }] : []),
@@ -126,8 +144,9 @@ export default function Devices() {
     <>
       <div className="flex w-[300px] shrink-0 flex-col border-r border-line px-3 py-4">
         <h1 className="mb-1 text-xl font-semibold">Dispositivos</h1>
-        {sample && <p aria-label="Resumen de la red" className="mb-3 text-xs text-mut"><span className="whitespace-nowrap">{`↓ ${bytes(summary.down)}/s · ↑ ${bytes(summary.up)}/s`}</span>{' · '}<span className="whitespace-nowrap">{`${summary.peers} ${summary.peers === 1 ? 'par' : 'pares'}${summary.peers ? ` (${[summary.direct && `${summary.direct} directo`, summary.relay && `${summary.relay} relay`, summary.other && `${summary.other} otros`].filter(Boolean).join(', ')})` : ''}`}</span></p>}
+        {sample && <p aria-label="Resumen de la red" className="mb-3 text-xs text-mut"><span className="whitespace-nowrap">{`↓ ${bytes(summary.down)}/s · ↑ ${bytes(summary.up)}/s`}</span>{' · '}<span className="whitespace-nowrap">{`${summary.peers} ${summary.peers === 1 ? 'par' : 'pares'}${summary.peers ? ` (${[summary.direct && `${summary.direct} directo`, summary.relay && `${summary.relay} relay`, summary.other && `${summary.other} ${summary.other === 1 ? 'otro' : 'otros'}`].filter(Boolean).join(', ')})` : ''}`}</span></p>}
         <input
+          ref={search}
           type="search"
           aria-label="Buscar dispositivos"
           placeholder="Buscar por nombre, IP o clave"
@@ -145,12 +164,12 @@ export default function Devices() {
           ))}
         </div>
         <div className="mt-2 flex-1 overflow-y-auto">
-          {sample ? <><Group title="Local" entries={selfEntries} onMenu={openMenu} /><Group title="Dispositivos" entries={peerEntries} onMenu={openMenu} />{!selfEntries.length && !peerEntries.length && (
+          {sample ? <><Group title="Local" entries={selfEntries} onMenu={openMenu} stale={stale} /><Group title="Dispositivos" entries={peerEntries} onMenu={openMenu} stale={stale} />{!selfEntries.length && !peerEntries.length && (
             <div>
               <Empty>Sin resultados.</Empty>
               {filtered && <div className="px-4 pb-2"><p className="mb-2 text-xs text-mut">{[query.trim() && `la búsqueda «${query.trim()}»`, filter !== 'all' && `el filtro «${filterLabel}»`].filter(Boolean).join(' y ')} no deja ningún dispositivo.</p><button type="button" className={button} onClick={() => { setQuery(''); setFilter('all'); }}>Quitar filtros</button></div>}
             </div>
-          )}</> : <Empty>Sin datos del agente.</Empty>}
+          )}</> : agent.error ? <Empty>Sin datos del agente.</Empty> : <ListSkeleton />}
         </div>
       </div>
       <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5"><Outlet context={agent} /></main>

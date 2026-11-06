@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { changeNetwork, readLegacy, readNetworks, stateText, stateTone, type Network } from '../lib/networks';
 import { Join, Legacy } from '../join';
-import { button, Dot, Empty, primary } from '../ui';
+import { button, Dot, Empty, Loading, primary, Skeleton } from '../ui';
 
 function NetworkCard({ net, busy, onChange }: { net: Network; busy: boolean; onChange: (op: 'up' | 'down' | 'leave', id: string) => void }) {
   const [leaving, setLeaving] = useState(false);
@@ -52,6 +52,7 @@ export default function Networks() {
       {legacy.data && <Legacy onDone={refresh} />}
       {change.isPending && <p role="status" className="mb-3 text-sm text-mut">Esperando la autorización del sistema…</p>}
       {change.error && <p role="alert" className="mb-3 text-sm text-bad">{change.error.message}</p>}
+      {list.isPending && <Loading className="mb-4 space-y-3">{[0, 1].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</Loading>}
       {list.error && <p role="alert" className="mb-3 text-sm text-bad">{list.error.message}</p>}
       {list.data?.length === 0 && <Empty>No hay redes unidas con un código.</Empty>}
       {list.data?.map((n) => <NetworkCard key={n.network_id} net={n} busy={change.isPending} onChange={(op, id) => change.mutate({ op, id })} />)}
