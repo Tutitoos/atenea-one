@@ -5,8 +5,22 @@ import json
 import ntpath
 import os
 import re
+import socket
 import subprocess
 import sys
+
+
+def free_udp_ports(count, host='127.0.0.1'):
+    # El SO elige puertos que sí puede enlazar: evita rangos excluidos (Hyper-V/WinNAT, WSAEACCES 10013).
+    # Se mantienen abiertos a la vez para que sean distintos; hay una ventana mínima hasta que el proceso real los enlaza.
+    sockets = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(count)]
+    try:
+        for sock in sockets:
+            sock.bind((host, 0))
+        return [sock.getsockname()[1] for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 def powershell_environment(source):
