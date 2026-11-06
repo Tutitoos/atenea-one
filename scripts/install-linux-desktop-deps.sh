@@ -43,9 +43,10 @@ sample &
 sampler=$!
 trap 'kill "$sampler" 2>/dev/null || true' EXIT HUP INT TERM
 
-# Respaldo del espejo de Azure; idempotente y sin efecto si el equipo no lo usa.
+# Respaldo del espejo de Azure; idempotente y sin efecto si el equipo no lo usa. En las imágenes de los runners el espejo
+# no está en ubuntu.sources (que apunta a `mirror+file:/etc/apt/apt-mirrors.txt`) sino en ese fichero.
 use_canonical_mirror() {
-    for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+    for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
         [ -f "$f" ] || continue
         if grep -q '//azure\.archive\.ubuntu\.com/' "$f"; then
             echo "[diag] cambio de espejo: azure.archive.ubuntu.com -> archive.ubuntu.com ($f)"
