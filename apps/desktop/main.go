@@ -58,26 +58,34 @@ func main() {
 	// delata que la aplicación arrancó. El humo no toca la carpeta de configuración real.
 	first := !smoke && core.ClaimFirstRun()
 	// Tamaño recordado (solo el tamaño, no la posición). El humo no lee ni escribe la carpeta de configuración real.
-	width, height := 920, 600
+	var saved winstate.Size
+	haveSaved := false
 	statePath := ""
 	if !smoke {
 		if dir, err := core.ConfigDir(); err == nil {
 			statePath = filepath.Join(dir, winstate.File)
-			if s, ok := winstate.Load(statePath); ok {
-				width, height = s.Width, s.Height
-			}
+			saved, haveSaved = winstate.Load(statePath)
 		}
 	}
+	// Las opciones de creación fijan el tamaño del CONTENIDO (en macOS, sin la barra de título), mientras que `Size()`
+	// y `SetSize()` hablan del MARCO. Por eso el tamaño guardado no puede ir a las opciones: la ventana crecería lo que
+	// mide la barra de título en cada reinicio. Se crea con el tamaño por defecto y el guardado se aplica con
+	// `SetSize` cuando la aplicación ya arrancó (antes de eso no hay ventana nativa y solo cambiaría las opciones).
 	window := wails.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "Atenea One",
-		Width:     width,
-		Height:    height,
+		Width:     920,
+		Height:    600,
 		MinWidth:  winstate.MinWidth,
 		MinHeight: winstate.MinHeight,
 		URL:       "/",
 		Hidden:    !smoke && !first && !slices.Contains(os.Args[1:], "--open"),
 	})
+	if haveSaved {
+		wails.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+			window.SetSize(saved.Width, saved.Height)
+		})
+	}
 	saveSize := func() {
 		if statePath == "" {
 			return
