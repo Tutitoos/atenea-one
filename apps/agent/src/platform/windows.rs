@@ -86,7 +86,9 @@ struct Route {
 struct Address {
     interface_index: u32,
     #[serde(rename = "IPAddress")]
-    ip_address: IpAddr,
+    // Texto, no `IpAddr`: Windows añade la zona a las link-local (`fe80::1%8`) y una sola entrada inválida haría
+    // fallar la lista entera (y el agente no anunciaría ningún candidato de LAN).
+    ip_address: String,
     address_state: String,
 }
 #[derive(Deserialize)]
@@ -116,8 +118,17 @@ fn parse_addrs(bytes: &[u8], port: u16) -> Result<Vec<SocketAddr>, String> {
         serde_json::from_slice(bytes).map_err(|e| format!("Get-NetIPAddress: {e}"))?;
     let mut out = Vec::new();
     for entry in snapshot.items {
+        let Ok(ip) = entry
+            .ip_address
+            .split('%')
+            .next()
+            .unwrap_or_default()
+            .parse::<IpAddr>()
+        else {
+            continue;
+        };
         if entry.interface_index != snapshot.interface_index && entry.address_state == "Preferred" {
-            let addr = SocketAddr::new(entry.ip_address, port);
+            let addr = SocketAddr::new(ip, port);
             if atenea_nat_traversal::candidate_ok(&addr) && !out.contains(&addr) {
                 out.push(addr);
             }
@@ -359,6 +370,18 @@ mod tests {
         assert_eq!(
             parse_addrs(addrs, 51820).unwrap(),
             vec!["192.0.2.7:51820".parse().unwrap()]
+        );
+    }
+    #[test]
+    fn windows_link_local_zone_does_not_hide_the_lan_candidates() {
+        // Salida real de `Get-NetIPAddress`: las link-local llevan la zona (`%8`).
+        let addrs = br#"{"InterfaceIndex":8,"Items":[{"InterfaceIndex":8,"IPAddress":"fe80::1234:abcd:5678:9abc%8","AddressState":"Preferred"},{"InterfaceIndex":9,"IPAddress":"fe80::1%9","AddressState":"Preferred"},{"InterfaceIndex":9,"IPAddress":"192.0.2.7","AddressState":"Preferred"},{"InterfaceIndex":9,"IPAddress":"no es una IP","AddressState":"Preferred"},{"InterfaceIndex":9,"IPAddress":"2001:db8::7","AddressState":"Preferred"}]}"#;
+        assert_eq!(
+            parse_addrs(addrs, 51820).unwrap(),
+            vec![
+                "192.0.2.7:51820".parse().unwrap(),
+                "[2001:db8::7]:51820".parse().unwrap()
+            ]
         );
     }
     #[test]
