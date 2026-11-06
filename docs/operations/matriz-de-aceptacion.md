@@ -66,9 +66,9 @@ Fuente normativa de detalle y condiciones de salida: [modelo de amenazas T1–T3
 | T29 | CI supply-chain verde; confianza residual en GitHub/atestaciones, PKG/ZIP sin firma nativa, token y publicación real pendientes. |
 | T30 | Cookie v2 y CI propia; no autenticación por MAC1/cookie, disponibilidad y roaming F7 siguen residuales. |
 
-Excepciones temporales exactas de [deny.toml](../../deny.toml), autorizadas **2026-10-25**, responsable de seguridad del proyecto, revisión **antes de 2027-01-23**:
+Excepción temporal exacta de [deny.toml](../../deny.toml), autorizada **2026-10-25**, responsable de seguridad del proyecto, revisión **antes de 2027-01-23**:
 
-- **RUSTSEC-2026-0387 / crypto-bigint 0.5.5**: verificación pública de ID tokens por openidconnect/p256/p384, sin secretos ECDSA/DH en ese proceso. Salida: dependencia corregida compatible (p256/p384 0.14, crypto-bigint ≥0.7.6), retirar excepción.
 - **RUSTSEC-2023-0071 / rsa 0.9.10**: solo verificación con clave pública RSA en producción; sin firma/descifrado privado, sin parche upstream compatible acreditado. Salida: versión corregida o retirada de dependencia y eliminar excepción.
+- **Retirada el 2026-11-06: RUSTSEC-2026-0387 / crypto-bigint 0.5.5.** `openidconnect` 4.1.0 usa p256/p384 0.14 y el grafo de producción resuelve crypto-bigint 0.7.10 (≥ 0.7.6).
 
-Cualquier uso privado nuevo de esos algoritmos invalida anticipadamente la aceptación. No se deshabilitan otros advisories. Detalle y justificación en [riesgos temporales](../security/threat-model.md#riesgos-aceptados-temporalmente-dependencias). La atribución exacta del fallo multipar histórico sigue abierta en [caídas](caidas-y-leases.md#hallazgos-abiertos): corregir dos defectos y dimensionar cuotas no demuestra su causa histórica. Las aceptaciones residuales no dispensan la auditoría independiente.
+Cualquier uso privado nuevo de RSA invalida anticipadamente la aceptación. No se deshabilitan otros advisories. Detalle y justificación en [riesgos temporales](../security/threat-model.md#riesgos-aceptados-temporalmente-dependencias). La atribución exacta del fallo multipar histórico sigue abierta en [caídas](caidas-y-leases.md#hallazgos-abiertos): corregir dos defectos y dimensionar cuotas no demuestra su causa histórica. Las aceptaciones residuales no dispensan la auditoría independiente.
