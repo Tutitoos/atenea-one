@@ -158,12 +158,12 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/apt-archives
+          path: /tmp/apt-archives # fuera de /home/runner: el usuario _apt de apt no puede entrar allí
           key: apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-linux-desktop-deps.sh') }}
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 15
-        run: '"$GITHUB_WORKSPACE/scripts/install-linux-desktop-deps.sh" "$HOME/apt-archives"'
+        run: '"$GITHUB_WORKSPACE/scripts/install-linux-desktop-deps.sh" /tmp/apt-archives'
       - name: Formato, vet y pruebas
         run: |
           test -z "$(gofmt -l .)"
