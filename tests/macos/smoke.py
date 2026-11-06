@@ -357,9 +357,10 @@ domains = ["{domain}"]
                 assert (plist.stat().st_uid, plist.stat().st_gid) == (0, 0)
             else:
                 call("/bin/launchctl", "bootstrap", "system", plist)
-            until(lambda: resolver.exists(), description=f"DNS red {index}")
             owner = OWNER if not index else f"# Atenea One: resolver administrado ({short})\n"
-            assert resolver.read_text() == owner + f"nameserver {peer_addr}\n"
+            # El agente crea el fichero y luego lo escribe (no es atómico): esperar el contenido, no solo la existencia.
+            until(lambda: resolver.read_text() == owner + f"nameserver {peer_addr}\n",
+                  description=f"DNS red {index}")
             interface = next(line.split(":")[0] for line in call("/sbin/ifconfig").splitlines()
                              if line.startswith("utun") and f"inet {addr} " in
                              call("/sbin/ifconfig", line.split(":")[0]))
