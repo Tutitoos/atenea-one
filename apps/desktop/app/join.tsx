@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { deviceFingerprint, inspectCode, joinNetwork, migrateLegacy, type CodeInfo } from './lib/networks';
 import type { Joined } from './lib/wizard';
@@ -13,14 +13,15 @@ export function Legacy({ onDone }: { onDone: () => void }) {
   const migrate = useMutation({ mutationFn: migrateLegacy, onSuccess: () => { setAsking(false); onDone(); } });
   return (
     <section aria-label="Instalación heredada" className="mb-4 rounded-[10px] bg-warn/15 px-3.5 py-3 text-sm">
-      <p>Hay una instalación heredada pendiente de importar</p>
+      <p>Hay una instalación heredada pendiente de importar: se detectó la configuración de una versión anterior de Atenea One (un único agente). Impórtala para gestionarla desde aquí.</p>
       {!asking && <button type="button" className={`${primary} mt-2`} onClick={() => setAsking(true)}>Importar red existente</button>}
       {asking && (
         <div role="alertdialog" aria-label="Importar red existente" className="mt-2">
           <p>Se parará la instancia actual de este equipo y se importará como una red más. El túnel se cortará unos segundos.</p>
-          <label htmlFor="legacy-name" className="mt-2 block">Nombre de la red (opcional)</label>
+          <label htmlFor="legacy-name" className="mt-2 block">Nombre de la red (opcional: si lo dejas vacío se usa el nombre del servidor)</label>
           <input
             id="legacy-name"
+            aria-describedby="legacy-name-rule"
             maxLength={64}
             autoComplete="off"
             spellCheck={false}
@@ -28,7 +29,7 @@ export function Legacy({ onDone }: { onDone: () => void }) {
             onChange={(e) => setName(e.target.value)}
             className="mt-1 w-64 select-text rounded-lg border border-line bg-bg px-2.5 py-1 text-fg"
           />
-          <span className="ml-2 text-xs text-mut">Letras, números, espacio, punto, guion y guion bajo.</span>
+          <span id="legacy-name-rule" className="ml-2 text-xs text-mut">Letras, números, espacio, punto, guion y guion bajo.</span>
           <div className="mt-2 flex items-center gap-2">
             <button type="button" className={primary} disabled={migrate.isPending} onClick={() => migrate.mutate(name)}>Importar</button>
             <button type="button" className={button} disabled={migrate.isPending} onClick={() => { setAsking(false); migrate.reset(); }}>Cancelar</button>
@@ -52,6 +53,10 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
   const info = inspected?.info;
   // Identifica la última inspección pedida: una respuesta de otra anterior (código editado o cancelada) se descarta.
   const latest = useRef(0);
+  const confirmBox = useRef<HTMLDivElement>(null);
+  // Al cancelar la confirmación el foco vuelve al campo del código (el control que llevó hasta ella).
+  const refocusCode = useRef(false);
+  useEffect(() => { if (info) confirmBox.current?.focus(); }, [info]);
   const check = useMutation({ mutationFn: inspectCode });
   const join = useMutation({
     mutationFn: joinNetwork,
@@ -65,6 +70,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
     check.mutate(text, { onSuccess: (data) => { if (id === latest.current) setInspected({ code: text, info: data }); } });
   };
   const reset = () => { latest.current++; setInspected(undefined); check.reset(); join.reset(); };
+  const cancel = () => { refocusCode.current = true; reset(); };
 
   if (join.isSuccess && info) {
     const fp = deviceFingerprint(join.data);
@@ -79,7 +85,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
 
   if (info) {
     return (
-      <div role="group" aria-label="Confirmar unión" className="rounded-[10px] bg-card px-3.5 py-3">
+      <div ref={confirmBox} tabIndex={-1} role="group" aria-label="Confirmar unión" className="rounded-[10px] bg-card px-3.5 py-3">
         <Card>
           <Row label="Red">{info.name}</Row>
           <Row label="Servidor">{info.server}</Row>
@@ -91,7 +97,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
         <p className="mt-3 text-sm">Compara el nombre, el servidor y la huella con los que te dio quien te pasó el código, <strong>por otro canal</strong>. Una red puede instalar rutas privadas y DNS para dominios concretos en este equipo.</p>
         <div className="mt-3 flex items-center gap-2">
           <button type="button" className={primary} disabled={join.isPending} onClick={() => join.mutate(inspected!.code)}>Unirme a esta red</button>
-          <button type="button" className={button} disabled={join.isPending} onClick={reset}>Cancelar</button>
+          <button type="button" className={button} disabled={join.isPending} onClick={cancel}>Cancelar</button>
           {join.isPending && <span role="status" className="text-sm text-mut">Esperando la autorización del sistema…</span>}
         </div>
         {join.error && <p role="alert" className="mt-2 text-sm text-bad">{join.error.message}</p>}
@@ -104,6 +110,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
       <label htmlFor="join-code" className="block text-sm">Código de red</label>
       <textarea
         id="join-code"
+        ref={(el) => { if (el && refocusCode.current) { refocusCode.current = false; el.focus(); } }}
         rows={3}
         spellCheck={false}
         autoComplete="off"

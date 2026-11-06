@@ -9,7 +9,8 @@ import { changeNetwork, readNetworks, stateText, stateTone } from '../lib/networ
 import { useNames } from '../lib/names';
 import { certificateLeft, groupServers, readServerNetworks } from '../lib/servers';
 import type { Reply } from '../lib/status';
-import { Card, Dot, Empty, Loading, Row, Skeleton } from '../ui';
+import { useToast } from '../toast';
+import { button, Card, Dot, Empty, Loading, Row, Skeleton } from '../ui';
 
 const heading = 'mb-2 mt-6 text-[15px] font-semibold';
 
@@ -21,11 +22,11 @@ function Services({ status }: { status: Reply['status'] }) {
     <div className="mt-1 flex items-center gap-2"><Dot tone={serverTone(status)} /><span>{sync?.last_error ? `Control plane: ${sync.last_error}` : coordinator?.last_error ? `Coordinator: ${coordinator.last_error}` : 'Conectado'}</span></div>
     <h2 className={heading}>Servicios</h2>
     <Card>
-      <Row label="Control plane">{sync?.last_error ?? seen(sync?.last_ok_unix)}</Row>
+      <Row label={<span title="Servicio que gestiona las redes, los dispositivos y los certificados">Control plane</span>}>{sync?.last_error ?? seen(sync?.last_ok_unix)}</Row>
       <Row label="Sincronizaciones">{sync?.sync_ok == null ? null : `${sync.sync_ok} correctas · ${sync.sync_denied ?? 0} denegadas · ${sync.sync_errors ?? 0} con error`}</Row>
-      <Row label="Coordinator">{coordinator?.last_error ?? seen(coordinator?.last_announce_ok_unix)}</Row>
+      <Row label={<span title="Servicio que ayuda a los dispositivos a encontrarse entre sí">Coordinator</span>}>{coordinator?.last_error ?? seen(coordinator?.last_announce_ok_unix)}</Row>
       <Row label="Anuncios y avisos">{coordinator?.announces == null ? null : `${coordinator.announces} anuncios · ${coordinator.events ?? 0} avisos`}</Row>
-      <Row label="NAT">{status.nat?.mapping}</Row>
+      <Row label={<span title="Traducción de direcciones de tu router: afecta a cómo se conectan los dispositivos">NAT</span>}>{status.nat?.mapping}</Row>
       <Row label="IP pública vista">{status.nat?.reflexive}</Row>
     </Card>
     <h2 className={heading}>{`Relays (${entries.length})`}</h2>
@@ -44,7 +45,7 @@ function Information({ info }: { info: Reply['status']['server'] }) {
       {info.coordinator && <Row label="Coordinator">{`${info.coordinator.version} · ${info.coordinator.commit.slice(0, 8)}`}</Row>}
       {info.relay && <Row label="Relay">{`${info.relay.version} · ${info.relay.commit.slice(0, 8)}`}</Row>}
       <Row label="Hora del servidor">{new Date(info.server_time_unix * 1000).toLocaleString('es')}</Row>
-      <Row label="Desfase de reloj"><span className={Math.abs(info.clock_skew_secs) > 30 ? 'text-warn' : 'text-mut'}>{`${info.clock_skew_secs} s${Math.abs(info.clock_skew_secs) > 30 ? ' · Los leases dependen del reloj' : ''}`}</span></Row>
+      <Row label="Desfase de reloj"><span title={Math.abs(info.clock_skew_secs) > 30 ? 'lease: concesión temporal de la dirección del dispositivo en la red' : undefined} className={Math.abs(info.clock_skew_secs) > 30 ? 'text-warn' : 'text-mut'}>{`${info.clock_skew_secs} s${Math.abs(info.clock_skew_secs) > 30 ? ' · Los leases dependen del reloj' : ''}`}</span></Row>
       <Row label="Caducidad del certificado de la red">{left == null ? 'no informada' : <span className={left <= 3 * 86400 ? 'text-bad' : left <= 14 * 86400 ? 'text-warn' : 'text-mut'}>{`${left <= 0 ? 'El certificado ha caducado' : `Quedan ${Math.ceil(left / 86400)} días`} · ${new Date(info.issuer_cert_not_after_unix! * 1000).toLocaleString('es')}`}</span>}</Row>
       <Row label="Última lectura">{new Date(info.fetched_unix * 1000).toLocaleString('es')}</Row>
       {info.last_error && <Row label="Error de lectura">{info.last_error}</Row>}
@@ -56,6 +57,7 @@ export default function Server() {
   const { host = '' } = useParams();
   const { selectNetwork } = useAgent();
   const names = useNames();
+  const toast = useToast();
   const client = useQueryClient();
   const networks = useQuery({ queryKey: ['networks'], queryFn: readNetworks, refetchInterval: 5000 });
   const server = groupServers(networks.error ? [] : networks.data ?? []).find((s) => s.host === host);
@@ -66,35 +68,42 @@ export default function Server() {
     refetchInterval: 5000, placeholderData: keepPreviousData,
   });
   const change = useMutation({
-    mutationFn: ({ op, id }: { op: 'up' | 'down'; id: string }) => changeNetwork(op, id),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['networks'] }); await client.invalidateQueries({ queryKey: ['agent'] }); await client.invalidateQueries({ queryKey: ['server-status'] }); },
+    mutationFn: ({ op, id }: { op: 'up' | 'down'; id: string; name: string }) => changeNetwork(op, id),
+    onSuccess: async (_, { op, name }) => {
+      toast?.(`«${name}» ${op === 'up' ? 'conectada' : 'desconectada'}`);
+      await client.invalidateQueries({ queryKey: ['networks'] }); await client.invalidateQueries({ queryKey: ['agent'] }); await client.invalidateQueries({ queryKey: ['server-status'] });
+    },
   });
   return <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
     <Link to="/servers" className="text-sel underline">Servidores</Link>
     <h1 className="mt-2 text-xl font-semibold">{host}</h1>
-    {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Loading className="mt-4 space-y-3"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></Loading> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
+    {networks.error ? <Empty tone="error">{networks.error.message}</Empty> : !networks.data ? <Loading className="mt-4 space-y-3"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></Loading> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
       {connected.length > 0 && read.isPending ? <Loading className="mt-4 space-y-3"><Skeleton className="h-24 w-full" /></Loading> : read.data?.length ? <Services status={read.data[0].status} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
       {read.data?.length ? read.data.map(({ id, status }) => <section key={id} aria-label={`Información de ${server.networks.find((net) => net.network_id === id)?.name}`}>
         <h2 className={heading}>{server.networks.find((net) => net.network_id === id)?.name}</h2>
         <Information info={status.server} />
       </section>) : <Information info={null} />}
       <h2 className={heading}>Dispositivos del servidor</h2>
-      <ul>{read.data?.flatMap(({ id, status }) => status.peers.filter((peer) => peer.role === 'server').map((peer) => <li key={`${id}-${peer.public_key}`}>
-        <Link to={`/devices/${encodeURIComponent(peer.public_key)}`} className="flex items-center gap-2 rounded-lg bg-card p-3" onClick={() => selectNetwork(id)}>
-          <Dot tone={pathLabel(peer.path).tone} />{peerName(peer, names)} · {peer.addrs.join(', ')} · {pathLabel(peer.path).label} · {server.networks.find((net) => net.network_id === id)?.name}
-        </Link>
-      </li>))}</ul>
+      <ul>{read.data?.flatMap(({ id, status }) => status.peers.filter((peer) => peer.role === 'server').map((peer) => {
+        const detail = `${peer.addrs.join(', ')} · ${pathLabel(peer.path).label} · ${server.networks.find((net) => net.network_id === id)?.name}`;
+        return <li key={`${id}-${peer.public_key}`}>
+          <Link to={`/devices/${encodeURIComponent(peer.public_key)}`} className="flex min-w-0 items-start gap-2 rounded-lg bg-card p-3" onClick={() => selectNetwork(id)}>
+            <Dot tone={pathLabel(peer.path).tone} list />
+            <span className="min-w-0"><span className="block">{peerName(peer, names)}</span><span title={detail} className="block truncate text-xs text-mut">{detail}</span></span>
+          </Link>
+        </li>;
+      }))}</ul>
       <h2 className={heading}>Redes unidas</h2>
       {change.error && <p role="alert" className="text-bad">{change.error.message}</p>}
-      {change.isPending && <p role="status">Esperando la autorización del sistema…</p>}
       {server.networks.map((net) => <section key={net.network_id} aria-label={net.name} className="mb-3 rounded-lg bg-card p-3">
         <div className="flex items-center gap-2"><Dot tone={stateTone[net.state]} /><h3 className="font-semibold">{net.name}</h3><span className="text-mut">{stateText[net.state]}</span></div>
         {net.detail && <p className="text-mut">{net.detail}</p>}
         <div className="mt-2 flex items-center gap-3">
-          <button type="button" disabled={change.isPending} className="rounded-md border border-line px-3 py-1 disabled:opacity-50" onClick={() => change.mutate({ op: net.state === 'detenida' ? 'up' : 'down', id: net.network_id })}>{net.state === 'detenida' ? 'Conectar' : 'Desconectar'}</button>
-          <Link to="/devices" className="text-sel underline" onClick={() => selectNetwork(net.network_id)}>Ver dispositivos</Link>
+          <button type="button" disabled={change.isPending} className={button} onClick={() => change.mutate({ op: net.state === 'detenida' ? 'up' : 'down', id: net.network_id, name: net.name })}>{net.state === 'detenida' ? 'Conectar' : 'Desconectar'}</button>
+          <Link to="/devices" className={button} onClick={() => selectNetwork(net.network_id)}>Ver dispositivos</Link>
           <PanelButton network={net.network_id} />
         </div>
+        {change.isPending && change.variables?.id === net.network_id && <p role="status" className="mt-2 text-sm text-mut">Esperando la autorización del sistema…</p>}
       </section>)}
     </>}
   </main>;

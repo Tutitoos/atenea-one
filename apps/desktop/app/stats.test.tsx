@@ -90,7 +90,7 @@ it('los contadores se agrupan por familia, ocultan los ceros y marcan los errore
 it('cada relay muestra pérdida de pings en %, paquetes, peer_ready y el último error', () => {
   const entries = [{ peer: 'aabbccdd11', transport: 'Udp', state: 'ready', rtt_ms: 42, pings_sent: 540, pings_lost: 1, tx_bytes: 2048, tx_packets: 7, rx_bytes: 1024, rx_packets: 5, peer_ready: false, last_error: 'ping_timeout' }];
   view('/diagnostics', { sample: sample({ relay: { allocations: 1, drops: {}, entries } }) });
-  expect(screen.getByText(/42 ms · pings perdidos 0,2 % \(1\/540\) · tx 2,0 KiB \(7 paq\.\) · rx 1,0 KiB \(5 paq\.\) · par no listo · error: ping_timeout/)).toBeInTheDocument();
+  expect(screen.getByText(/42 ms · pings perdidos 0,2 % \(1\/540\) · enviados 2,0 KiB \(7 paq\.\) · recibidos 1,0 KiB \(5 paq\.\) · par no listo · error: ping_timeout/)).toBeInTheDocument();
   expect(screen.getByText(/no equivalen a los bytes de datos/)).toBeInTheDocument();
 });
 
