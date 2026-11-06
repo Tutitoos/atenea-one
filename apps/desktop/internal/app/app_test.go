@@ -185,7 +185,7 @@ func TestNotificationPreferenceLivesInTheTauriConfigFolder(t *testing.T) {
 
 func TestAutostartRoundTripWritesOnlyUnderTheUsersHome(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Windows no admite el inicio con la sesión")
+		t.Skip("este test usa ficheros bajo HOME; en Windows el arranque es un valor del registro, que prueba el paquete autostart")
 	}
 	home := t.TempDir()
 	a := &App{

@@ -1,9 +1,9 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package autostart implementa «Abrir al iniciar sesión»: el estado es la existencia de un fichero de
-// arranque del propio usuario (LaunchAgent en macOS, .desktop XDG en Linux). Sin privilegios, sin servicio
-// residente y sin preferencia aparte que pueda desincronizarse. Windows no está soportado.
+// Package autostart implementa «Abrir al iniciar sesión»: el estado es la existencia de un arranque del propio
+// usuario (LaunchAgent en macOS, .desktop XDG en Linux, valor bajo la clave `Run` de HKCU en Windows). Sin
+// privilegios, sin servicio residente y sin preferencia aparte que pueda desincronizarse.
 package autostart
 
 import (
@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"unicode"
@@ -38,6 +39,13 @@ func entryPath(goos, home, xdgConfig string) string {
 func Get(home, xdgConfig string) (*bool, error) { return getFor(runtime.GOOS, home, xdgConfig) }
 
 func getFor(goos, home, xdgConfig string) (*bool, error) {
+	if goos == "windows" {
+		on, err := windowsGet()
+		if err != nil {
+			return nil, err
+		}
+		return &on, nil
+	}
 	path := entryPath(goos, home, xdgConfig)
 	if path == "" {
 		return nil, nil
@@ -55,6 +63,16 @@ func Set(home, xdgConfig, exe string, on bool) error {
 }
 
 func setFor(goos, home, xdgConfig, exe string, on bool) error {
+	if goos == "windows" {
+		if !on {
+			return windowsSet("", false) // desactivar no depende de la ruta del ejecutable
+		}
+		command, err := windowsCommand(exe)
+		if err != nil {
+			return err
+		}
+		return windowsSet(command, true)
+	}
 	path := entryPath(goos, home, xdgConfig)
 	if path == "" {
 		return errors.New("«Abrir al iniciar sesión» no está disponible en este sistema operativo")
@@ -92,6 +110,25 @@ func checkedExe(exe string) (string, error) {
 		}
 	}
 	return exe, nil
+}
+
+// windowsDriveAbs es una ruta absoluta con letra de unidad. La comprobación es propia (no `filepath.IsAbs`) para que se
+// pueda probar en cualquier sistema.
+var windowsDriveAbs = regexp.MustCompile(`^[A-Za-z]:\\`)
+
+// windowsCommand es la línea de arranque: la ruta entre comillas, sin argumentos (la aplicación arranca oculta, en la
+// bandeja, salvo la primera vez). Rechaza lo que cambiaría el sentido de la línea: comillas, `%` (se expandiría), `&`,
+// `|`, `<`, `>`, `^`, controles y rutas que no sean de unidad con letra (relativas, UNC, de dispositivo).
+func windowsCommand(exe string) (string, error) {
+	if exe == "" || !utf8.ValidString(exe) || !windowsDriveAbs.MatchString(exe) {
+		return "", errors.New("ruta del ejecutable no válida")
+	}
+	for _, c := range exe {
+		if unicode.IsControl(c) || strings.ContainsRune(`"%&|<>^`+"`", c) {
+			return "", errors.New("la ruta del ejecutable contiene caracteres no admitidos")
+		}
+	}
+	return `"` + exe + `"`, nil
 }
 
 func render(goos, exe string) (string, error) {

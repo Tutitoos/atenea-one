@@ -133,10 +133,39 @@ func TestPathsPerOSAndXDGConfigHomeOnlyWhenAbsolute(t *testing.T) {
 
 func TestUnsupportedSystemsReportNilAndRefuseToSet(t *testing.T) {
 	h := t.TempDir()
-	if got, err := getFor("windows", h, ""); got != nil || err != nil {
+	if got, err := getFor("freebsd", h, ""); got != nil || err != nil {
 		t.Fatalf("getFor = %v, %v", got, err)
 	}
-	if err := setFor("windows", h, "", "/x", true); err == nil {
+	if err := setFor("freebsd", h, "", "/x", true); err == nil {
 		t.Fatal("debía fallar")
+	}
+}
+
+func TestWindowsCommandQuotesTheExecutableAndRejectsAnythingThatChangesTheLine(t *testing.T) {
+	ok := `C:\Users\equipo-a\AppData\Local\Programs\Atenea One\atenea-desktop.exe`
+	got, err := windowsCommand(ok)
+	if err != nil || got != `"`+ok+`"` {
+		t.Fatalf("windowsCommand = %q, %v", got, err)
+	}
+	if _, err := windowsCommand(`D:\Program Files (x86)\Atenea\atenea-desktop.exe`); err != nil {
+		t.Errorf("espacios y paréntesis son válidos en una ruta de Windows: %v", err)
+	}
+	for name, exe := range map[string]string{
+		"vacía":              "",
+		"relativa":           `atenea-desktop.exe`,
+		"sin barra tras ':'": `C:atenea-desktop.exe`,
+		"UNC":                `\\servidor\recurso\atenea-desktop.exe`,
+		"POSIX":              "/usr/bin/atenea-desktop",
+		"comilla":            `C:\a"b\x.exe`,
+		"variable":           `C:\%APPDATA%\x.exe`,
+		"ampersand":          `C:\a&b\x.exe`,
+		"tubería":            `C:\a|b\x.exe`,
+		"redirección":        `C:\a>b\x.exe`,
+		"control":            "C:\\a\nb\\x.exe",
+		"UTF-8 inválido":     "C:\\\xff\\x.exe",
+	} {
+		if _, err := windowsCommand(exe); err == nil {
+			t.Errorf("%s: una ruta así no debe aceptarse (%q)", name, exe)
+		}
 	}
 }

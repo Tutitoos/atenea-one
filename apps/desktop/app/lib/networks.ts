@@ -101,7 +101,7 @@ export async function setNotifications(on: boolean): Promise<void> {
   await call<void>('notifications_set', { on });
 }
 
-/** `null`: el sistema operativo no ofrece inicio de sesión automático (Windows). */
+/** `null`: sistema sin inicio de sesión automático (no ocurre en macOS, Linux ni Windows). */
 export async function readAutostart(): Promise<boolean | null> {
   return z.boolean().nullable().parse(await call<boolean | null>('autostart_get'));
 }
