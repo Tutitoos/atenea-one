@@ -19,6 +19,8 @@ cache=${1:-}
 set -- -o Acquire::Retries=3 -o Acquire::http::Timeout=30
 if [ -n "$cache" ]; then
     mkdir -p "$cache/partial"
+    # Las descargas las hace el usuario _apt (sandbox de apt); sin esto avisa de que descarga como root.
+    sudo chown _apt "$cache/partial" 2>/dev/null || true
     set -- "$@" -o "Dir::Cache::archives=$cache"
 fi
 
