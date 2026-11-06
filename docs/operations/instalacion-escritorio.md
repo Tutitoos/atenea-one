@@ -59,7 +59,7 @@ no admite `atenea network`, ADR-017). Lo que sí hace, sin privilegios: leer la 
 («Red de este equipo»). Si el servicio `AteneaAgent` no responde, el asistente pide instalarlo y arrancarlo siguiendo la
 [guía de Windows](instalacion-windows.md) (la aplicación no lo instala). También lanza `ping.exe` a los pares (el resultado
 se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre el panel con `rundll32 url.dll,FileProtocolHandler`.
-Siguen sin soporte en Windows las notificaciones del sistema y el inicio con la sesión.
+«Abrir al iniciar sesión» (Diagnóstico y último paso del asistente) funciona en Windows con un valor bajo la clave `Run` del propio usuario (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor `Atenea One` con la ruta del ejecutable entre comillas y sin argumentos): sin privilegios y sin servicio residente, y la aplicación arranca oculta, en la bandeja. Desactivarlo borra el valor. No está comprobado en un Windows real; lo prueba la CI de Windows sobre una clave temporal. Siguen sin soporte en Windows las notificaciones del sistema.
 
 **Comprobado en un Windows real (2026-11-06):** en un Windows 11 Pro 24H2 (amd64, en español, unido a un dominio), con el cliente instalado con `install.ps1` y el agente enrolado en una red y arrancado, la aplicación (compilada desde esta rama) muestra **«Red de este equipo» como conectada**. Es la lectura real de la tubería de estado desde la aplicación, que corre **sin elevar** (la cuenta que la usó es de administrador, así que no se ha probado con una cuenta estándar); lo vio el responsable en pantalla (sin captura).
 
