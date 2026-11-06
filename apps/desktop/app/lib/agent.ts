@@ -3,6 +3,7 @@
 import { invoke } from './bridge';
 import { reply, type Reply } from './status';
 import { recordHistory, type History } from './history';
+import { recordEvents } from './history-store';
 
 export type Rate = { down: number; up: number };
 export type Sample = { reply: Reply; rates: Record<string, Rate>; history?: History };
@@ -57,5 +58,6 @@ export async function readAgent(network: string): Promise<Sample> {
   const sample = samplers.get(network)!(current, now);
   const history = recordHistory(histories.get(network), network, current.status.peers, sample.rates, now);
   histories.set(network, history);
+  recordEvents(network, history.transitions);
   return { ...sample, history };
 }

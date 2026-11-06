@@ -7,8 +7,10 @@ import { readNotifications, setNotifications } from '../lib/networks';
 import { Autostart } from '../preferences';
 import { bytes, int, num, pct, text } from '../lib/format';
 import { useAgent } from '../lib/live';
+import { buildReport, groupCounters } from '../lib/report';
 import type { Status } from '../lib/status';
-import { Card, Empty, Heading, Row } from '../ui';
+import { useCopy } from '../toast';
+import { button, Card, Empty, Heading, Row } from '../ui';
 
 function Notifications() {
   const client = useQueryClient();
@@ -25,15 +27,6 @@ function Notifications() {
   </section>;
 }
 
-type Group = { title: string; match: RegExp };
-// Orden = prioridad: la primera familia que coincide se queda con el contador; lo no reconocido va a «Otros».
-const FAMILIES: Group[] = [
-  { title: 'Configuración y lease', match: /^(config_|denied_no_lease|lease)/ },
-  { title: 'Caminos', match: /^(path_|probe_)/ },
-  { title: 'Relay', match: /^relay_/ },
-  { title: 'Handshakes', match: /^(tx_init|rx_init|init_|cookie_|tx_cookie|rx_cookie|handshake)/ },
-  { title: 'Tráfico denegado o descartado', match: /(_acl_denied|^rx_bad_|^rx_malformed|^rx_oversize|^tx_malformed|^tx_bad_source|^tx_no_route|^tx_encrypt)/ },
-];
 const ERRORS: Record<string, true> = { tx_encrypt_failed: true, rx_init_invalid: true, relay_renewal_failed: true, denied_no_lease: true, config_rejected: true };
 const HINTS: Record<string, string> = {
   path_lost: 'caminos que dejaron de responder',
@@ -55,29 +48,25 @@ const HINTS: Record<string, string> = {
   tx_encrypt_failed: 'fallos al cifrar',
 };
 
-/** Agrupa por familia y, salvo `all`, oculta los que valen 0. Devuelve solo las familias con algo que enseñar. */
-export function groupCounters(counters: Record<string, number>, all: boolean) {
-  const groups = [...FAMILIES, { title: 'Otros', match: /./ }].map((g) => ({ title: g.title, items: [] as [string, number][] }));
-  for (const [k, v] of Object.entries(counters).sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (!all && v === 0) continue;
-    const i = FAMILIES.findIndex((f) => f.match.test(k));
-    groups[i < 0 ? FAMILIES.length : i].items.push([k, v]);
-  }
-  return groups.filter((g) => g.items.length);
-}
-
 export default function Diagnostics() {
-  const { sample, error, empty } = useAgent();
+  const { sample, error, empty, stale, network } = useAgent();
   const [all, setAll] = useState(false);
+  const copy = useCopy();
   const status = sample?.reply.status;
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
+    <main aria-busy={stale} className={`min-w-0 flex-1 overflow-y-auto px-6 py-5 ${stale ? 'opacity-60' : ''}`}>
       <h2 className="text-xl font-semibold">Diagnóstico</h2>
       <Notifications />
       <Autostart />
       {empty ? <p className="mt-4 text-mut">Sin redes. Únete a una red desde <Link to="/networks" className="text-sel underline">Redes</Link> o sigue el <Link to="/welcome" className="text-sel underline">asistente</Link>.</p>
-        : !status ? <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>
-        : <AgentDiagnostics status={status} all={all} onAll={() => setAll((v) => !v)} />}
+        : !status || !sample ? <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>
+        : <>
+          {stale && <p className="mt-4 text-sm text-mut">Actualizando…</p>}
+          <Heading>Informe</Heading>
+          <p className="mb-2 text-sm text-mut">Resumen en texto para pegar en un correo o una incidencia: estado, lease, NAT, pares por camino, contadores distintos de cero, relays y errores de sincronización. Va anonimizado: sin IP, claves, nombres de equipo ni direcciones.</p>
+          {!stale && <button type="button" className={button} onClick={() => { void copy(buildReport({ reply: sample.reply, network }), 'informe de diagnóstico'); }}>Copiar informe de diagnóstico</button>}
+          <AgentDiagnostics status={status} all={all} onAll={() => setAll((v) => !v)} />
+        </>}
     </main>
   );
 }

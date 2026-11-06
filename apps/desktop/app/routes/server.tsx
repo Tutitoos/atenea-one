@@ -9,7 +9,7 @@ import { changeNetwork, readNetworks, stateText, stateTone } from '../lib/networ
 import { useNames } from '../lib/names';
 import { certificateLeft, groupServers, readServerNetworks } from '../lib/servers';
 import type { Reply } from '../lib/status';
-import { Card, Dot, Empty, Row } from '../ui';
+import { Card, Dot, Empty, Loading, Row, Skeleton } from '../ui';
 
 const heading = 'mb-2 mt-6 text-[15px] font-semibold';
 
@@ -72,8 +72,8 @@ export default function Server() {
   return <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
     <Link to="/servers" className="text-sel underline">Servidores</Link>
     <h1 className="mt-2 text-xl font-semibold">{host}</h1>
-    {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Empty>Comprobando…</Empty> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
-      {connected.length > 0 && read.isPending ? <Empty>Comprobando…</Empty> : read.data?.length ? <Services status={read.data[0].status} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
+    {networks.error ? <Empty>{networks.error.message}</Empty> : !networks.data ? <Loading className="mt-4 space-y-3"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></Loading> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
+      {connected.length > 0 && read.isPending ? <Loading className="mt-4 space-y-3"><Skeleton className="h-24 w-full" /></Loading> : read.data?.length ? <Services status={read.data[0].status} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
       {read.data?.length ? read.data.map(({ id, status }) => <section key={id} aria-label={`Información de ${server.networks.find((net) => net.network_id === id)?.name}`}>
         <h2 className={heading}>{server.networks.find((net) => net.network_id === id)?.name}</h2>
         <Information info={status.server} />

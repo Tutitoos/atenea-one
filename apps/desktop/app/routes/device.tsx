@@ -10,7 +10,7 @@ import { ago, bytes, int, ipKind, levelTone, pathLabel, peerName, selfName, type
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
-import { Card, CopyButton, Dot, Empty, Heading, Row } from '../ui';
+import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton } from '../ui';
 
 function Title({ id, name, editable, rename = false }: { id: string; name: string; editable: boolean; rename?: boolean }) {
   const names = useNames();
@@ -88,7 +88,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
 }
 
 
-function PeerDetail({ peer, rate, network, history, rename, ping }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory; rename: boolean; ping: boolean }) {
+function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory; rename: boolean; ping: boolean; stale: boolean }) {
   const names = useNames();
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
@@ -98,10 +98,11 @@ function PeerDetail({ peer, rate, network, history, rename, ping }: { peer: Peer
   const traffic = (total: number, perSec?: number) => `${bytes(total)}${perSec == null ? '' : `  (${bytes(perSec)}/s)`}`;
   return (
     <>
-      <Title id={peer.public_key} name={peerName(peer, names)} editable rename={rename} />
+      <Title id={peer.public_key} name={peerName(peer, names)} editable={!stale} rename={rename} />
       <State tone={tone}>{label}</State>
       {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
-      <div className="mb-4 flex flex-wrap gap-3"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></div>
+      {/* Con datos de otra red, `fieldset disabled` apaga los botones de acción sin tocarlos uno a uno. */}
+      <fieldset disabled={stale} className="mb-4 flex flex-wrap gap-3 border-0 p-0"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></fieldset>
       <Addresses addrs={peer.addrs} />
       <Heading>Detalles</Heading>
       <Card>
@@ -125,13 +126,20 @@ function PeerDetail({ peer, rate, network, history, rename, ping }: { peer: Peer
 /** El menú de la lista navega aquí con `state` `{ rename }` o `{ ping }`; se consume y se limpia para no repetirse al volver. */
 export default function Device() {
   const { id = '' } = useParams();
-  const { sample, error, network } = useAgent();
+  const { sample, error, network, stale } = useAgent();
   const location = useLocation();
   const navigate = useNavigate();
   const asked = location.state as { rename?: boolean; ping?: boolean } | null;
   useEffect(() => { if (asked) void navigate(location.pathname, { replace: true, state: null }); }, [asked, location.pathname, navigate]);
-  if (!sample) return <Empty>{error?.message ?? 'Sin datos del agente.'}</Empty>;
+  if (!sample) return error ? <Empty>{error.message}</Empty> : (
+    <Loading className="space-y-3">
+      <Skeleton className="h-6 w-1/3" />
+      <Skeleton className="h-4 w-1/5" />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-32 w-full" />
+    </Loading>
+  );
   if (id === 'self') return <SelfDetail reply={sample.reply} />;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
-  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true} ping={asked?.ping === true} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
+  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true && !stale} ping={asked?.ping === true && !stale} stale={stale} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }
