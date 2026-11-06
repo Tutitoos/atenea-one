@@ -61,9 +61,9 @@ no admite `atenea network`, ADR-017). Lo que sí hace, sin privilegios: leer la 
 se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre el panel con `rundll32 url.dll,FileProtocolHandler`.
 Siguen sin soporte en Windows las notificaciones del sistema y el inicio con la sesión.
 
-**No probado en un Windows real:** solo compila (`GOOS=windows`) y pasa pruebas con salidas de muestra. La lectura real de la
-tubería, el ping y abrir el panel están pendientes de comprobar en un equipo Windows. La app no verifica que el propietario de
-la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI, vetado en la app).
+**Comprobado en un Windows real (2026-11-06):** en un Windows 11 Pro 24H2 (amd64, en español, unido a un dominio), con el cliente instalado con `install.ps1` y el agente enrolado en una red y arrancado, la aplicación (compilada desde esta rama) muestra **«Red de este equipo» como conectada**. Es la lectura real de la tubería de estado desde la aplicación, que corre **sin elevar** (la cuenta que la usó es de administrador, así que no se ha probado con una cuenta estándar); lo vio el responsable en pantalla (sin captura).
+
+**Sin comprobar en un Windows real:** el ping a un par (no había ningún par: era el único dispositivo de la red), abrir el panel con `rundll32`, el resto de pantallas (Diagnóstico, Servidores) y otras versiones o idiomas de Windows. El formato de tiempo de `ping` en español (`<1m`) está escrito de memoria. La app no verifica que el propietario de la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI, vetado en la app): un usuario local que creara esa tubería antes que el servicio podría mostrar un estado falso y que «Abrir el panel» abriera una URL suya (siempre `https`, sin credenciales).
 
 ## Construir en local
 
