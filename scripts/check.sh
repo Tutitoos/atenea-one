@@ -20,6 +20,10 @@ else
   cargo test --workspace --locked
 fi
 
+# Workspace de fuzz (excluido del raíz): solo se compila, con la toolchain fijada (no exige nightly ni
+# cargo-fuzz). Sin esto un cambio interno puede romper los objetivos sin que nada lo detecte.
+cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+
 pnpm install --frozen-lockfile
 pnpm -r --if-present run lint
 pnpm -r --if-present run typecheck

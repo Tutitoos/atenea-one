@@ -23,6 +23,29 @@ mod relay {
         Tls,
     }
 }
+/// `net.rs` arrastra tokio/plataforma; el motor solo usa esta normalización (copia literal).
+mod net {
+    use std::net::{IpAddr, SocketAddr};
+    pub fn from_wire(a: SocketAddr) -> SocketAddr {
+        match a {
+            SocketAddr::V6(v6) => v6
+                .ip()
+                .to_ipv4_mapped()
+                .map_or(a, |v4| SocketAddr::new(IpAddr::V4(v4), v6.port())),
+            SocketAddr::V4(_) => a,
+        }
+    }
+}
+/// `sync.rs` arrastra HTTP/ficheros; el motor solo necesita el tipo de metadatos (misma forma).
+mod sync {
+    use atenea_identity::DeviceId;
+    use std::collections::HashMap;
+    #[derive(Clone, Default)]
+    pub struct PeerMetadata {
+        pub names: HashMap<DeviceId, String>,
+        pub roles: HashMap<DeviceId, &'static str>,
+    }
+}
 
 use arbitrary::Unstructured;
 use atenea_crypto::{StaticKeypair, cookie};
