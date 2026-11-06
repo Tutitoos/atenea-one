@@ -403,7 +403,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          python3 scripts/release/publish-images.py dist "ghcr.io/${GITHUB_REPOSITORY,,}"
+          python3 scripts/release/publish-images.py dist "ghcr.io/${GITHUB_REPOSITORY,,}" "$RUNNER_TEMP/registry-digests.json"
       - name: Firmar manifiesto y publicar release
         env:
           ATENEA_RELEASE_KEY: ${{ secrets.ATENEA_RELEASE_ED25519_PEM }}
@@ -418,7 +418,7 @@ jobs:
           openssl pkey -in "$key" -pubout -out "$pub"
           export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
           version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
-          python3 scripts/release/manifest.py create dist "$key" "$GITHUB_SHA" "$version"
+          python3 scripts/release/manifest.py create dist "$key" "$GITHUB_SHA" "$version" --registry-digests "$RUNNER_TEMP/registry-digests.json"
           bash scripts/release/verify.sh dist "$pub" "$GITHUB_SHA" "$version"
           # Se firma y verifica todo dist/, pero solo se publican los instaladores y la verificación (sha256sum -c --ignore-missing SHA256SUMS).
           gh release create "v$version" dist/*.pkg dist/*.dmg dist/*.deb dist/*.rpm dist/*.exe dist/SHA256SUMS dist/release-manifest.json dist/release-manifest.json.sig --target "$GITHUB_SHA" --verify-tag --title "Atenea $version" --notes 'Manifiesto Ed25519; verifique con la clave pública del responsable por canal independiente. PKG y paquetes de escritorio (DEB, RPM, DMG, EXE) sin firma de desarrollador ni notarización.'

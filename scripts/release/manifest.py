@@ -61,7 +61,8 @@ def check(dist, manifest, commit, version):
             identity(json.loads((dist / entry['name']).read_text()), version, commit)
         for ref in entry.get('sboms', []):
             assert ref in {e['name'] for e in manifest['sboms']}
-    assert json.loads((dist / 'images.json').read_text()) == manifest['images']
+    # images.json es el del artefacto sin firma (sin digest de registro); los digests solo viven en el manifiesto firmado.
+    assert json.loads((dist / 'images.json').read_text()) == [{**i, 'registry_digest': None} for i in manifest['images']]
     for entry in manifest['artifacts']:
         path = dist / entry['name']
         if path.suffix == '.zip':
@@ -96,7 +97,7 @@ def check(dist, manifest, commit, version):
         assert 'sha256:' + digest(dist / image['manifest']) == image['manifest_digest']
 
 
-def create(dist, key, version, commit):
+def create(dist, key, version, commit, registry_digests=None):
     assert re.fullmatch(r'[0-9a-f]{40}', commit)
     ed25519(key)
     date = datetime.datetime.fromtimestamp(int(os.environ['SOURCE_DATE_EPOCH']), datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -107,7 +108,7 @@ def create(dist, key, version, commit):
             entries.append({'name': path.name, 'size': path.stat().st_size, 'sha256': digest(path)})
     manifest = {'version': version, 'commit': commit, 'date': date,
                 'toolchain': json.loads((dist / 'BUILD-INFO.json').read_text())['toolchain'],
-                'images': json.loads((dist / 'images.json').read_text()),
+                'images': [{**i, 'registry_digest': registry_digests[i['name']] if registry_digests else i['registry_digest']} for i in json.loads((dist / 'images.json').read_text())],
                 'artifacts': [e for e in entries if not e['name'].endswith('.cdx.json')],
                 'sboms': [e for e in entries if e['name'].endswith('.cdx.json')]}
     for entry in manifest['artifacts']:
@@ -146,9 +147,10 @@ if __name__ == '__main__':
     parser.add_argument('key')
     parser.add_argument('commit')
     parser.add_argument('version')
+    parser.add_argument('--registry-digests', type=Path, help='JSON nombre→digest de GHCR (solo create); no modifica dist/')
     args = parser.parse_args()
     if args.mode == 'create':
-        create(args.dist, args.key, args.version, args.commit)
+        create(args.dist, args.key, args.version, args.commit, json.loads(args.registry_digests.read_text()) if args.registry_digests else None)
     else:
         target = args.dist / 'release-manifest.json'
         ed25519(args.key, public=True)
