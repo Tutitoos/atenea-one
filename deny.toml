@@ -6,10 +6,10 @@ exclude-dev = true
 [advisories]
 yanked = "deny"
 unmaintained = "workspace"
-# Excepciones temporales aprobadas; no hay claves privadas RSA/ECDSA en el flujo OIDC de producción.
+# Excepción temporal aprobada; no hay claves privadas RSA en el flujo OIDC de producción.
+# RUSTSEC-2026-0387 (crypto-bigint 0.5.5) se retiró el 2026-11-06: openidconnect 4.1.0 usa p256/p384 0.14 y el grafo de
+# producción resuelve crypto-bigint 0.7.10. Solo queda 0.5.5 en dependencias de pruebas (jsonwebtoken), fuera de `exclude-dev`.
 ignore = [
-    # REVISAR ANTES DE 2027-01-23
-    { id = "RUSTSEC-2026-0387", reason = "apps/control-plane/src/auth.rs::callback solo verifica ID tokens: operaciones afectadas solo sobre enteros públicos (verificación); sin secretos ECDSA en el proceso. p256/p384 solo llegan por openidconnect 4.0.1; pendiente de openidconnect estable con p256/p384 0.14. Revisar antes de 2027-01-23. https://rustsec.org/advisories/RUSTSEC-2026-0387" },
     # REVISAR ANTES DE 2027-01-23
     { id = "RUSTSEC-2023-0071", reason = "apps/control-plane/src/auth.rs::callback verifica ID tokens con la clave pública RSA del IdP; no firma ni descifra con claves privadas RSA. apps/control-plane/tests/oidc.rs usa una clave efímera solo para el IdP de pruebas. Sin versión corregida upstream; revisar antes de 2027-01-23. https://rustsec.org/advisories/RUSTSEC-2023-0071" },
 ]

@@ -75,21 +75,19 @@ Ataques físicos al dispositivo; compromiso del núcleo del SO; canales laterale
 
 ## Riesgos aceptados temporalmente (dependencias)
 
-### DEP-2026-01 — crypto-bigint 0.5.5 / RUSTSEC-2026-0387
+### DEP-2026-01 — crypto-bigint 0.5.5 / RUSTSEC-2026-0387 (RETIRADA 2026-11-06)
 
-- **Estado:** excepción temporal autorizada el 2026-10-25; revisar **antes de
-  2027-01-23**. Propietario: responsable de seguridad de Atenea One.
-- **Motivo:** [el advisory](https://rustsec.org/advisories/RUSTSEC-2026-0387)
-  describe variabilidad temporal al operar con enteros secretos. El grafo de
-  producción solo llega por `openidconnect` → `p256`/`p384` → `elliptic-curve`.
-  `apps/control-plane/src/auth.rs::callback` verifica ID tokens: operaciones
-  afectadas solo sobre enteros públicos (verificación); sin secretos ECDSA en el
-  proceso. No se usa esta cadena para firmar, generar claves ni hacer DH.
-- **Condición de salida:** openidconnect estable con p256/p384 0.14 y
-  crypto-bigint ≥ 0.7.6 resuelto; retirar la excepción de `deny.toml`. La versión
-  estable actual de openidconnect (4.0.1) exige todavía las curvas 0.13.
-- **Invalidación anticipada:** introducir claves privadas ECDSA o DH mediante
-  estos crates exige retirar esta aceptación y revisar la exposición.
+- **Estado:** excepción retirada de `deny.toml` el 2026-11-06. Estuvo autorizada
+  desde el 2026-10-25. Ya no es un riesgo aceptado en producción.
+- **Por qué se retira:** `openidconnect` 4.1.0 usa `p256`/`p384` 0.14 «para corregir
+  RUSTSEC-2026-0387» y el grafo de producción resuelve `crypto-bigint` 0.7.10
+  (≥ 0.7.6, la versión corregida). `crypto-bigint` 0.5.5 ya no tiene ningún
+  dependiente de producción (`cargo tree --locked -e normal,build -i
+  crypto-bigint@0.5.5` no encuentra nada); solo queda en `Cargo.lock` por
+  `jsonwebtoken` 11.1.0, dependencia de pruebas que `deny.toml` excluye.
+- **Invalidación anticipada de la retirada:** si el job `supply-chain` vuelve a
+  señalar este ID, una dependencia de producción nueva trae `crypto-bigint` 0.5.x:
+  revisar antes de volver a aceptarlo.
 
 ### DEP-2026-02 — rsa 0.9.10 / RUSTSEC-2023-0071
 
@@ -107,7 +105,7 @@ Ataques físicos al dispositivo; compromiso del núcleo del SO; canales laterale
 - **Invalidación anticipada:** cualquier firma o descifrado con clave privada RSA
   en producción exige retirar esta aceptación y revisar la exposición.
 
-Estas excepciones se limitan a esos dos IDs; el resto de advisories y las
+La única excepción vigente es DEP-2026-02; el resto de advisories y las
 restricciones de licencias y fuentes siguen activas. Análisis de compatibilidad:
 `docs/architecture/dependencies.md`, sección de excepciones temporales.
 

@@ -356,22 +356,6 @@ Responsable: responsable de seguridad de Atenea One. Revisar **antes de 2027-01-
 (máximo tres meses); las entradas concretas están en `deny.toml`. No se deshabilitan
 las comprobaciones de advisories ni de fuentes.
 
-- **RUSTSEC-2026-0387 — `crypto-bigint` 0.5.5.**
-  [Advisory](https://rustsec.org/advisories/RUSTSEC-2026-0387). El problema es
-  variabilidad temporal con enteros secretos. El grafo de producción
-  (`cargo tree --offline --locked -e normal,build -i crypto-bigint`) solo llega
-  por `openidconnect` → `p256`/`p384` → `elliptic-curve`. En
-  `apps/control-plane/src/auth.rs::callback` se verifica el ID token; operaciones
-  afectadas solo sobre enteros públicos (verificación); sin secretos ECDSA en el
-  proceso. `openidconnect::core::crypto::verify_ec_signature` usa
-  `p256::ecdsa::VerifyingKey` y `p384::ecdsa::VerifyingKey` con la clave pública del
-  IdP, la firma y el mensaje. No hay firma, generación de claves ni DH con estos
-  crates en producción. La versión corregida es ≥ 0.7.6, incompatible con
-  `elliptic-curve` 0.13.8 (`crypto-bigint ^0.5`). El índice consultado el
-  2026-10-25 solo publica `openidconnect` estable hasta 4.0.1, que exige `p256
-  ^0.13.2` y `p384 ^0.13.0`; los últimos compatibles siguen en 0.13.
-  **Salida:** openidconnect estable con p256/p384 0.14, siempre que el grafo
-  resultante resuelva crypto-bigint ≥ 0.7.6; retirar la excepción tras verificarlo.
 - **RUSTSEC-2023-0071 — `rsa` 0.9.10.**
   [Advisory](https://rustsec.org/advisories/RUSTSEC-2023-0071). El flujo de
   producción es el mismo callback OIDC y solo verifica firmas con la clave pública
@@ -382,8 +366,18 @@ las comprobaciones de advisories ni de fuentes.
   **Salida:** versión corregida de rsa compatible con openidconnect, o retirada
   upstream de esa dependencia; retirar la excepción después de la actualización.
 
-Ambas excepciones dejan de ser válidas si se introduce uso de claves privadas
-RSA/ECDSA o DH con estas dependencias: revisar antes de cambiar el flujo.
+La excepción deja de ser válida si se introduce uso de claves privadas RSA con
+esta dependencia: revisar antes de cambiar el flujo.
+
+### Excepción retirada: RUSTSEC-2026-0387 — `crypto-bigint` 0.5.5 (2026-11-06)
+
+`openidconnect` 4.1.0 actualizó `p256`/`p384` a 0.14 «para corregir
+RUSTSEC-2026-0387»; el grafo de producción resuelve ahora `crypto-bigint` 0.7.10
+(`cargo tree --locked -e normal -i crypto-bigint@0.5.5` no encuentra ningún
+dependiente). La 0.5.5 sigue en `Cargo.lock` solo por `jsonwebtoken` 11.1.0
+(dependencia de pruebas de `apps/control-plane`), que `deny.toml` excluye con
+`exclude-dev`. Se retiró la excepción de `deny.toml`; si el job `supply-chain`
+vuelve a señalar este ID, la causa es una dependencia de producción nueva.
 
 
 ### Fase 11 — Wire v2
