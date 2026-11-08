@@ -25,6 +25,7 @@
 | [021](ADR-021-asistente-de-primera-ejecucion.md) | Asistente de primera ejecución de la aplicación de escritorio (modelo de privilegios) | Aceptado el 2026-11-04 (implementación en curso) |
 | [022](ADR-022-instalar-el-cliente-con-la-aplicacion.md) | Que la aplicación de escritorio traiga el cliente (instalador integrado) | Aceptado e implementado el 2026-11-04, opción O2; publicado en la v0.1.15 |
 | [023](ADR-023-instalador-unico-de-windows.md) | Un único instalador de Windows (agente, CLI, Wintun y aplicación) | Aceptado el 2026-11-06 con las ocho recomendaciones (sin implementar; nada probado en Windows real) |
+| [024](ADR-024-servicios-expuestos-por-dispositivo.md) | Servicios expuestos por dispositivo: publicarlos y abrirlos con un clic | Propuesto el 2026-11-08 (a decisión del responsable; nada implementado) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
