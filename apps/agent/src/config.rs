@@ -108,6 +108,13 @@ impl ServicesConfig {
         Ok(())
     }
 
+    /// Recarga en caliente (orden `services-reload`): relee el fichero con las mismas reglas que el
+    /// arranque y adopta SOLO `[services]`; si algo no valida, `self` queda intacto.
+    pub fn reload(&mut self, path: &Path) -> Result<(), String> {
+        *self = Config::load(path)?.services;
+        Ok(())
+    }
+
     /// Lista a publicar: los detectados sin los excluidos, con etiqueta y esquema de su entrada.
     pub fn published(
         &self,
@@ -466,6 +473,31 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         ] {
             assert!(Config::parse(&bad).is_err(), "{bad}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn services_reload_adopts_only_valid_services_and_keeps_the_rest_on_error() {
+        let dir = std::env::temp_dir().join(format!("atenea-svc-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agent.toml");
+        let write = |extra: &str| std::fs::write(&path, format!("{GOOD}\n{extra}\n")).unwrap();
+        write("");
+        let mut services = Config::load(&path).unwrap().services;
+        assert!(!services.publish);
+        write("[services]\npublish = true\nexclude = [22]");
+        services.reload(&path).unwrap();
+        assert!(services.publish && services.exclude == [22]);
+        // Inválida: error y estado intacto.
+        write("[services]\npublish = false\nexclude = [0]");
+        assert!(services.reload(&path).is_err());
+        assert!(services.publish && services.exclude == [22]);
+        // Fichero ausente: igual.
+        std::fs::remove_file(&path).unwrap();
+        assert!(services.reload(&path).is_err());
+        assert!(services.publish);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

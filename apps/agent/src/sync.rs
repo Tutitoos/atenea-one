@@ -456,6 +456,7 @@ mod tests {
                 proto: crate::services::Proto::Tcp,
             }],
             services_truncated: false,
+            services_publish: false,
             peers: ["direct", "relay-udp", "relay-tls", "probing", "none"]
                 .into_iter()
                 .map(|path| PeerStatus {
@@ -568,6 +569,7 @@ mod tests {
                 })
                 .to_vec(),
             services_truncated: false,
+            services_publish: false,
             peers: vec![],
         }
     }

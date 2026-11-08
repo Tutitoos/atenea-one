@@ -15,6 +15,8 @@ pub enum Action {
     Stop,
     Reload,
     Cleanup,
+    /// Relee solo `[services]` de `agent.toml` (ADR-024, fase 5); no toca el túnel.
+    ServicesReload,
 }
 
 pub fn bind(path: &Path, status_gid: Option<u32>, read_only: bool) -> Result<Listener, String> {
@@ -78,6 +80,7 @@ fn action(command: &str, read_only: bool) -> Result<Action, &'static str> {
         "stop" => Ok(Action::Stop),
         "reload" => Ok(Action::Reload),
         "cleanup" => Ok(Action::Cleanup),
+        "services-reload" => Ok(Action::ServicesReload),
         _ => Err("orden desconocida"),
     }
 }
@@ -160,6 +163,9 @@ mod tests {
         assert!(action("stop", true).is_err());
         assert!(action("cleanup", true).is_err());
         assert!(action("reload", true).is_err());
+        assert!(action("services-reload", true).is_err());
+        assert_eq!(action("services-reload", false), Ok(Action::ServicesReload));
+        assert!(action("services-reload now", false).is_err());
         assert_eq!(action("status", true), Ok(Action::None));
         assert_eq!(action("stop", false), Ok(Action::Stop));
     }

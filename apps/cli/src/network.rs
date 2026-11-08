@@ -73,6 +73,36 @@ pub enum NetworkCmd {
     },
 }
 
+/// Valor de `atenea services publish`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+#[derive(Subcommand)]
+pub enum ServicesCmd {
+    /// Activa o desactiva la publicación de los servicios de este equipo en una red (`[services] publish`).
+    /// Exige root, como `up`/`down`; el agente en marcha lo aplica sin cortar el túnel.
+    Publish {
+        state: Switch,
+        /// Id completo, prefijo único o nombre de la red.
+        #[arg(long)]
+        network: String,
+    },
+}
+
+#[cfg(not(unix))]
+pub fn services(_root: Option<PathBuf>, _cmd: ServicesCmd) -> Result<(), String> {
+    Err("`atenea services` no está soportado todavía en Windows".into())
+}
+
+#[cfg(unix)]
+pub fn services(root: Option<PathBuf>, cmd: ServicesCmd) -> Result<(), String> {
+    let ServicesCmd::Publish { state, network } = cmd;
+    imp::services_publish(&imp::Ctx::new(root)?, &network, state == Switch::On)
+}
+
 #[cfg(not(unix))]
 pub fn run(
     _root: Option<PathBuf>,
@@ -1012,6 +1042,126 @@ mod imp {
                 "ya estaba detenida"
             }
         );
+        Ok(())
+    }
+
+    /// Fija `[services] publish` conservando el resto del texto (comentarios, orden, espacios).
+    /// `Ok(None)`: ya estaba así (apagar sin clave equivale a apagado: no añade nada).
+    fn set_publish(text: &str, on: bool) -> Result<Option<String>, String> {
+        use toml_edit::{DocumentMut, Item, Value};
+        let mut doc: DocumentMut = text
+            .parse()
+            .map_err(|e| format!("agent.toml no válido; no se ha cambiado nada: {e}"))?;
+        let services = doc.entry("services").or_insert_with(toml_edit::table);
+        let table = services
+            .as_table_like_mut()
+            .ok_or("agent.toml: `services` no es una tabla; no se ha cambiado nada")?;
+        match table.get("publish").map(Item::as_bool) {
+            Some(Some(now)) if now == on => return Ok(None),
+            None if !on => return Ok(None),
+            _ => {}
+        }
+        match table.get_mut("publish") {
+            Some(Item::Value(v)) => {
+                let decor = v.decor().clone();
+                *v = Value::from(on);
+                *v.decor_mut() = decor;
+            }
+            _ => {
+                table.insert("publish", toml_edit::value(on));
+            }
+        }
+        // `[[services.entry]]` sin `[services]` deja la tabla implícita: sin cabecera no se vería la clave.
+        if let Some(t) = services.as_table_mut() {
+            t.set_implicit(false);
+        }
+        Ok(Some(doc.to_string()))
+    }
+
+    /// Sustituye el fichero de forma atómica con el mismo modo, propietario y grupo.
+    fn replace_file(path: &Path, content: &str) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).map_err(|e| io_err(path, &e))?;
+        let mode = meta.mode() & 0o7777;
+        let tmp = path.with_file_name(format!(".agent-{}.toml", std::process::id()));
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(&tmp)
+            .map_err(|e| io_err(&tmp, &e))?;
+        let result = (|| {
+            let own = f.metadata().map_err(|e| e.to_string())?;
+            if own.uid() != meta.uid() || own.gid() != meta.gid() {
+                std::os::unix::fs::fchown(&f, Some(meta.uid()), Some(meta.gid()))
+                    .map_err(|e| io_err(&tmp, &e))?;
+            }
+            f.set_permissions(std::fs::Permissions::from_mode(mode))
+                .map_err(|e| e.to_string())?;
+            f.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+            f.sync_all().map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, path).map_err(|e| io_err(path, &e))
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
+    }
+
+    /// `atenea services publish on|off`: edita `[services] publish` de ESA red y, si el agente corre,
+    /// le pide `services-reload` (sin cortar el túnel) y comprueba que lo aplicó; si no, deja el fichero como estaba.
+    pub fn services_publish(ctx: &Ctx, query: &str, on: bool) -> Result<(), String> {
+        let _lock = root_lock(ctx)?;
+        let metas = read_metas(ctx)?;
+        let m = resolve(&metas, query)?;
+        let control = ctx.run_dir(&m.network_id).join("control.sock");
+        let running = match crate::ask(&control, "status") {
+            Ok(_) => true,
+            Err(e) if e.contains("Permission denied") => {
+                return Err(format!("{e}: ejecuta con sudo"));
+            }
+            Err(_) => false,
+        };
+        let path = ctx.device_dir(&m.network_id).join("agent.toml");
+        let text = std::fs::read_to_string(&path).map_err(|e| io_err(&path, &e))?;
+        let edited = set_publish(&text, on)?;
+        if let Some(new) = &edited {
+            replace_file(&path, new)?;
+        }
+        if running {
+            let applied = crate::ask(&control, "services-reload")
+                .map_err(|e| {
+                    if e.contains("orden desconocida") {
+                        "el agente en marcha es anterior a esta orden; reinicia la red (`atenea network down` y `up`) para aplicarlo".into()
+                    } else {
+                        e
+                    }
+                })
+                .and_then(|_| {
+                    // La orden responde antes de aplicarla: el estado confirma que se adoptó.
+                    for _ in 0..25 {
+                        let status = crate::ask(&control, "status")?;
+                        let v: serde_json::Value = serde_json::from_str(&status).unwrap_or_default();
+                        if v["services_publish"].as_bool() == Some(on) {
+                            return Ok(());
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
+                    Err("el agente no adoptó el cambio (¿`[services]` inválido? revisa su registro)".to_string())
+                });
+            if let Err(e) = applied {
+                if edited.is_some() {
+                    replace_file(&path, &text)?;
+                }
+                return Err(format!("{e}; el agent.toml se ha dejado como estaba"));
+            }
+        } else {
+            eprintln!(
+                "aviso: la red «{}» no está iniciada; el cambio se aplicará al iniciarla",
+                m.name
+            );
+        }
+        println!("publish={}", if on { "on" } else { "off" });
         Ok(())
     }
 
@@ -2639,6 +2789,210 @@ mod imp {
                 assert_eq!(list_json(&c).unwrap()[0]["state"], expected);
                 h.join().unwrap();
             }
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn services_publish_parses_on_off_and_requires_network() {
+            use clap::Parser;
+            let ok = |args: &[&str]| {
+                crate::Cli::try_parse_from(["atenea", "services"].iter().chain(args))
+            };
+            assert!(ok(&["publish", "on", "--network", "casa"]).is_ok());
+            assert!(ok(&["publish", "off", "--network", "casa"]).is_ok());
+            assert!(ok(&["publish", "maybe", "--network", "casa"]).is_err());
+            assert!(ok(&["publish", "on"]).is_err());
+            assert!(ok(&["publish", "--network", "casa"]).is_err());
+        }
+
+        #[test]
+        fn set_publish_edits_only_the_flag_and_is_idempotent() {
+            // Sin sección: se añade al final; apagar sin clave no cambia nada.
+            let base = "# configuración\ninterface = \"atenea0\"  # comentario\n\n[sync]\nurl = \"https://panel.example.org\"\n";
+            assert_eq!(set_publish(base, false).unwrap(), None);
+            let on = set_publish(base, true).unwrap().unwrap();
+            assert!(on.starts_with(base), "{on}");
+            assert_eq!(on[base.len()..].trim(), "[services]\npublish = true");
+            assert_eq!(set_publish(&on, true).unwrap(), None);
+            // Existente: cambia solo el valor y conserva comentarios y el resto exacto.
+            let existing = "a = 1\n[services]\n# nota\npublish = false # off\nexclude = [22]\n\n[[services.entry]]\nport = 8080\n";
+            let on = set_publish(existing, true).unwrap().unwrap();
+            assert_eq!(on, existing.replace("publish = false", "publish = true"));
+            assert_eq!(set_publish(&on, false).unwrap().unwrap(), existing);
+            // Sección sin la clave, solo con entradas `[[services.entry]]`.
+            let entries = "a = 1\n\n[[services.entry]]\nport = 8080\n";
+            let on = set_publish(entries, true).unwrap().unwrap();
+            let parsed: toml::Table = toml::from_str(&on).unwrap();
+            assert_eq!(parsed["services"]["publish"].as_bool(), Some(true));
+            assert_eq!(
+                parsed["services"]["entry"][0]["port"].as_integer(),
+                Some(8080)
+            );
+            assert!(on.contains("[[services.entry]]\nport = 8080"), "{on}");
+            // Sin salto de línea final.
+            let on = set_publish("a = 1", true).unwrap().unwrap();
+            assert_eq!(
+                toml::from_str::<toml::Table>(&on).unwrap()["services"]["publish"].as_bool(),
+                Some(true)
+            );
+        }
+
+        #[test]
+        fn set_publish_rejects_invalid_files() {
+            assert!(
+                set_publish("a = = 1", true)
+                    .unwrap_err()
+                    .contains("no se ha cambiado nada")
+            );
+            assert!(
+                set_publish("services = 3\n", true)
+                    .unwrap_err()
+                    .contains("no es una tabla")
+            );
+        }
+
+        /// Agente simulado: atiende `n` conexiones secuenciales y responde según la orden.
+        fn fake_agent(
+            sock: &Path,
+            n: usize,
+            mut reply: impl FnMut(&str) -> String + Send + 'static,
+        ) -> std::thread::JoinHandle<Vec<String>> {
+            let l = std::os::unix::net::UnixListener::bind(sock).unwrap();
+            std::thread::spawn(move || {
+                let mut seen = Vec::new();
+                for _ in 0..n {
+                    let (mut s, _) = l.accept().unwrap();
+                    let mut line = String::new();
+                    std::io::BufReader::new(&s).read_line(&mut line).unwrap();
+                    let line = line.trim().to_string();
+                    writeln!(s, "{}", reply(&line)).unwrap();
+                    seen.push(line);
+                }
+                seen
+            })
+        }
+
+        fn put_agent_toml(c: &Ctx, text: &str) -> PathBuf {
+            put_meta(c, &fake_meta(A, "Casa", "atenea0", 51820, 1));
+            let path = c.device_dir(A).join("agent.toml");
+            std::fs::write(&path, text).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            path
+        }
+
+        #[test]
+        fn services_publish_edits_the_file_when_the_network_is_stopped() {
+            let d = temp("pub-parada");
+            let c = ctx(&d);
+            let path = put_agent_toml(&c, "interface = \"atenea0\"\n");
+            // Por prefijo, por nombre y repetido (idempotente).
+            services_publish(&c, "1111", true).unwrap();
+            services_publish(&c, "casa", true).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(
+                text,
+                "interface = \"atenea0\"\n\n[services]\npublish = true\n"
+            );
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            services_publish(&c, A, false).unwrap();
+            assert!(
+                std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("publish = false")
+            );
+            let names: Vec<_> = std::fs::read_dir(c.device_dir(A))
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert!(
+                names
+                    .iter()
+                    .all(|n| !n.to_string_lossy().starts_with(".agent-")),
+                "{names:?}"
+            );
+            assert!(
+                services_publish(&c, "no-existe", true)
+                    .unwrap_err()
+                    .contains("ninguna red coincide")
+            );
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn services_publish_leaves_an_invalid_file_untouched() {
+            let d = temp("pub-invalido");
+            let c = ctx(&d);
+            let path = put_agent_toml(&c, "interface = = 1\n");
+            assert!(services_publish(&c, "casa", true).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "interface = = 1\n");
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn services_publish_asks_the_running_agent_to_reload_and_confirms_it() {
+            let d = temp("pub-activa");
+            let c = ctx(&d);
+            put_agent_toml(&c, "interface = \"atenea0\"\n");
+            std::fs::create_dir_all(c.run_dir(A)).unwrap();
+            let mut published = false;
+            let agent = fake_agent(&c.run_dir(A).join("control.sock"), 3, move |cmd| {
+                if cmd == "services-reload" {
+                    published = true;
+                    return r#"{"ok":true}"#.into();
+                }
+                format!(r#"{{"services_publish":{published}}}"#)
+            });
+            services_publish(&c, "casa", true).unwrap();
+            assert_eq!(
+                agent.join().unwrap(),
+                ["status", "services-reload", "status"]
+            );
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn services_publish_restores_the_file_if_the_agent_does_not_adopt_it() {
+            let d = temp("pub-rechazo");
+            let c = ctx(&d);
+            let original = "interface = \"atenea0\"\n";
+            let path = put_agent_toml(&c, original);
+            std::fs::create_dir_all(c.run_dir(A)).unwrap();
+            // El agente acepta la orden pero conserva `services_publish: false` (p. ej. `[services]` inválido).
+            let agent = fake_agent(&c.run_dir(A).join("control.sock"), 27, |cmd| {
+                if cmd == "services-reload" {
+                    r#"{"ok":true}"#.into()
+                } else {
+                    r#"{"services_publish":false}"#.into()
+                }
+            });
+            let e = services_publish(&c, "casa", true).unwrap_err();
+            assert!(e.contains("no adoptó") && e.contains("como estaba"), "{e}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+            agent.join().unwrap();
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn services_publish_explains_an_agent_without_the_command() {
+            let d = temp("pub-antiguo");
+            let c = ctx(&d);
+            let original = "interface = \"atenea0\"\n";
+            let path = put_agent_toml(&c, original);
+            std::fs::create_dir_all(c.run_dir(A)).unwrap();
+            let agent = fake_agent(&c.run_dir(A).join("control.sock"), 2, |cmd| {
+                if cmd == "services-reload" {
+                    r#"{"error":"orden desconocida"}"#.into()
+                } else {
+                    r#"{"services_publish":false}"#.into()
+                }
+            });
+            let e = services_publish(&c, "casa", true).unwrap_err();
+            assert!(e.contains("anterior a esta orden"), "{e}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+            agent.join().unwrap();
             std::fs::remove_dir_all(d).unwrap();
         }
 

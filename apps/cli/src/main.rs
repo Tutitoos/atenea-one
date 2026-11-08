@@ -136,6 +136,14 @@ enum Cmd {
         #[command(subcommand)]
         cmd: network::NetworkCmd,
     },
+    /// Servicios que este equipo expone en una red (ADR-024).
+    Services {
+        /// Directorio raíz de las redes (por defecto `ATENEA_NETWORKS_DIR` o el del sistema).
+        #[arg(long, global = true)]
+        root: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: network::ServicesCmd,
+    },
     /// Estado del agente (JSON); admite el socket de control o el de solo lectura.
     Status {
         #[arg(long)]
@@ -201,6 +209,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
             out,
         } => issue::issue(&issuer_key, &issuer_cert, &spec, &out),
         Cmd::Network { root, backend, cmd } => network::run(root, backend, cmd),
+        Cmd::Services { root, cmd } => network::services(root, cmd),
         Cmd::Up { config, agent, log } => up(&config, agent, &log),
         Cmd::Status { socket } => {
             println!("{}", ask(&socket, "status")?);

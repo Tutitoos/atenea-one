@@ -120,7 +120,9 @@ Este presupuesto no interrumpe la limpieza ni modifica los plazos HTTP durante e
 
 ## Sockets y estado
 
-El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload` y `cleanup`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
+El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload`, `cleanup` y `services-reload`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
+
+`services-reload` (ADR-024, fase 5) no acepta argumentos: vuelve a leer `agent.toml` con las mismas reglas de validación del arranque y adopta **solo** la sección `[services]`. No toca el túnel, las rutas, el DNS ni la configuración firmada. Si el fichero no valida, no cambia nada y se registra el rechazo. La respuesta `{"ok":true}` se envía antes de aplicarlo; el nuevo valor aparece en `services_publish` con la siguiente instantánea del estado (aprox. un segundo). Lo usa `atenea services publish on|off --network …`.
 
 Los listeners atienden clientes fuera del bucle TUN/UDP: como máximo 16 conexiones simultáneas por socket, órdenes de hasta 32 bytes y un segundo para toda la conexión (lectura y respuesta). El estado es una instantánea serializada renovada una vez por segundo, no un cálculo por cliente. La saturación del socket de estado no ocupa las plazas del control. Los paquetes rechazados como malformados por el backend TUN se descartan y cuentan en `tx_malformed`; los errores de E/S del dispositivo siguen siendo fatales.
 
@@ -135,6 +137,8 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 ### Servicios TCP del equipo (solo estado local)
 
 El estado IPC incluye `services`, la lista de puertos TCP que escucha el equipo, y `services_truncated` (`true` si hubo más de 64). Cada entrada es `{"port": 8080, "proto": "tcp"}`, ordenada y sin duplicados; no incluye procesos, PID, rutas ni usuarios. Se detecta cada 30 s en una tarea aparte (Linux: `/proc/net/tcp` y `/proc/net/tcp6`; macOS: `netstat -an -p tcp`; Windows: `Get-NetTCPConnection -State Listen`) y solo se conservan los sockets en dirección comodín (`0.0.0.0`, `::`) o en una dirección de la interfaz de esta red; se excluyen loopback, otras interfaces, el puerto 0 y el puerto UDP del propio agente. Si la lectura falla se conserva la lista anterior y se registra el fallo una vez. Esta información no sale del equipo salvo que se active `[services] publish` (siguiente sección).
+
+El estado IPC incluye además `services_publish` (booleano de primer nivel): el valor de `[services] publish` en vigor, que es lo que lee la aplicación de escritorio para pintar el interruptor. Cambia con la orden de control `services-reload` (véase «Sockets y estado»), no con editar el fichero sin recargar.
 
 **macOS: solo con privilegios.** En macOS 27.0.1, `netstat -an -p tcp` ejecutado **sin privilegios imprime la cabecera pero ninguna fila TCP** (ni en la salida completa de `netstat -an`), mientras que como administrador lista los sockets con el formato que parsea el agente (`tcp4`, `tcp6` y `tcp46`, con `*.puerto` como comodín y `LISTEN` al final). El agente del servicio corre como administrador y la lista sale bien; un agente de desarrollo lanzado sin privilegios en macOS devuelve `services` vacío sin error.
 
