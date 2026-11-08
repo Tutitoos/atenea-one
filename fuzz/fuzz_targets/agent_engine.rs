@@ -46,6 +46,7 @@ mod sync {
     pub struct PeerMetadata {
         pub names: HashMap<DeviceId, String>,
         pub roles: HashMap<DeviceId, &'static str>,
+        pub services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
     }
 }
 

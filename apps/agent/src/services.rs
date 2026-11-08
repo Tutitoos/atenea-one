@@ -21,6 +21,25 @@ pub struct Service {
     pub proto: Proto,
 }
 
+/// Esquema de presentación (ADR-024, D4): solo decide cómo se abre el enlace; no se comprueba.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scheme {
+    #[default]
+    Http,
+    Https,
+}
+
+/// Servicio tal como viaja al control plane y vuelve de él (informe y `peers[].services`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PeerService {
+    pub port: u16,
+    pub proto: Proto,
+    pub scheme: Scheme,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// Conserva los sockets en comodín o en una dirección de la interfaz de esta red; descarta loopback,
 /// otras interfaces, el puerto 0 y los puertos del propio agente. Ordenado, sin duplicados y
 /// recortado a `MAX_SERVICES` (el booleano indica el recorte).

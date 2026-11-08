@@ -858,7 +858,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             _ = report_every.tick(), if rt.cfg.sync.is_some() => {
                 if report_task.as_ref().is_none_or(|task| task.is_finished())
                     && let Some(sync) = rt.cfg.sync.clone()
-                    && let Some(mut report) = crate::sync::build_report(&rt.engine.status(Instant::now(), unix_now()), &relay.status())
+                    && let Some(mut report) = crate::sync::build_report(&rt.engine.status(Instant::now(), unix_now()), &relay.status(), &rt.cfg.services)
                 {
                     report.network(&rt.netconf.status());
                     let key = identity.clone();

@@ -134,9 +134,31 @@ El estado IPC y los informes autenticados al control plane incluyen `routes` (`p
 
 ### Servicios TCP del equipo (solo estado local)
 
-El estado IPC incluye `services`, la lista de puertos TCP que escucha el equipo, y `services_truncated` (`true` si hubo más de 64). Cada entrada es `{"port": 8080, "proto": "tcp"}`, ordenada y sin duplicados; no incluye procesos, PID, rutas ni usuarios. Se detecta cada 30 s en una tarea aparte (Linux: `/proc/net/tcp` y `/proc/net/tcp6`; macOS: `netstat -an -p tcp`; Windows: `Get-NetTCPConnection -State Listen`) y solo se conservan los sockets en dirección comodín (`0.0.0.0`, `::`) o en una dirección de la interfaz de esta red; se excluyen loopback, otras interfaces, el puerto 0 y el puerto UDP del propio agente. Si la lectura falla se conserva la lista anterior y se registra el fallo una vez. Esta información no sale del equipo: no se envía al control plane ni a ningún par (publicarla es una fase futura, ADR-024).
+El estado IPC incluye `services`, la lista de puertos TCP que escucha el equipo, y `services_truncated` (`true` si hubo más de 64). Cada entrada es `{"port": 8080, "proto": "tcp"}`, ordenada y sin duplicados; no incluye procesos, PID, rutas ni usuarios. Se detecta cada 30 s en una tarea aparte (Linux: `/proc/net/tcp` y `/proc/net/tcp6`; macOS: `netstat -an -p tcp`; Windows: `Get-NetTCPConnection -State Listen`) y solo se conservan los sockets en dirección comodín (`0.0.0.0`, `::`) o en una dirección de la interfaz de esta red; se excluyen loopback, otras interfaces, el puerto 0 y el puerto UDP del propio agente. Si la lectura falla se conserva la lista anterior y se registra el fallo una vez. Esta información no sale del equipo salvo que se active `[services] publish` (siguiente sección).
 
 **macOS: solo con privilegios.** En macOS 27.0.1, `netstat -an -p tcp` ejecutado **sin privilegios imprime la cabecera pero ninguna fila TCP** (ni en la salida completa de `netstat -an`), mientras que como administrador lista los sockets con el formato que parsea el agente (`tcp4`, `tcp6` y `tcp46`, con `*.puerto` como comodín y `LISTEN` al final). El agente del servicio corre como administrador y la lista sale bien; un agente de desarrollo lanzado sin privilegios en macOS devuelve `services` vacío sin error.
+
+### Publicar servicios (`[services]`, opcional)
+
+```toml
+[services]
+publish = false          # por defecto; con true el informe incluye los servicios detectados
+exclude = [22, 5432]     # puertos que nunca se publican
+
+[[services.entry]]       # solo presentación: etiqueta y esquema del enlace
+port = 8080
+label = "Panel interno"  # 1 a 32 caracteres, sin controles
+
+[[services.entry]]
+port = 8443
+scheme = "https"         # http (por defecto) o https
+```
+
+- **Apagado por defecto.** Con `publish = false` el informe es idéntico al de versiones anteriores: el campo `services` no se envía.
+- **No actives `publish` hasta que el control plane tenga la migración `0010` desplegada.** Un servidor anterior valida el informe con campos desconocidos prohibidos y rechazaría **todo** el informe (incluido el nombre y el estado de rutas), no solo los servicios.
+- Con `publish = true` se envía, cada 15 s y solo con la configuración vigente, la lista de servicios detectados menos `exclude`: por servicio `port`, `proto` (`tcp`), `scheme` (siempre; `http` salvo que la entrada diga `https`) y `label` (solo si la entrada lo define). Si no hay servicios se envía `[]`, que sustituye la lista anterior. Una entrada para un puerto que no escucha se ignora. Nunca se publican procesos, rutas, usuarios ni direcciones locales, y el contenido de la lista no se escribe en los registros.
+- Un `agent.toml` inválido (`label` vacía, de más de 32 caracteres o con caracteres de control o de dirección de texto; `scheme` distinto de `http`/`https`; puertos fuera de 1..=65535 o repetidos en `entry`) impide arrancar.
+- **Lectura.** El agente lee los `services` que el control plane devuelve para cada par con política hacia este equipo y los expone en `peers[].services` del estado (`port`, `proto`, `scheme` y `label` opcional). Cada entrada se valida por separado: una incorrecta se descarta sin afectar a las demás ni al nombre y rol del par. Un servidor anterior sin el campo equivale a una lista vacía. Son datos de presentación: no autorizan ni abren nada.
 
 ## Pruebas sin privilegios
 
