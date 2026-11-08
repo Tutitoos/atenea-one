@@ -88,6 +88,14 @@ pub async fn local_addrs(
     candidates
 }
 
+/// Sockets TCP en escucha del equipo (sin filtrar); ejecuta, según la plataforma, una orden del sistema.
+pub async fn listening_tcp(skip_iface: &str) -> Result<Vec<SocketAddr>, String> {
+    use crate::platform::HostNetwork;
+    crate::platform::Platform::new(skip_iface.into(), Default::default())
+        .listening_tcp()
+        .await
+}
+
 /// Rutas del host que salen por otro túnel; bloqueante (ejecuta el comando de red del sistema).
 pub fn tunnel_routes(skip_iface: &str) -> Result<Vec<atenea_identity::Prefix>, String> {
     use crate::platform::HostNetwork;

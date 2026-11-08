@@ -560,6 +560,9 @@ pub struct Status {
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
+    /// Servicios TCP detectados en este equipo (ADR-024, fase 2): solo local, no se publican.
+    pub services: Vec<crate::services::Service>,
+    pub services_truncated: bool,
 }
 
 pub struct Engine {
@@ -596,6 +599,7 @@ pub struct Engine {
     last_config_error: Option<&'static str>,
     last_config_error_detail: Option<String>,
     nat: Option<NatStatus>,
+    services: (Vec<crate::services::Service>, bool),
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
     roles: HashMap<DeviceId, &'static str>,
@@ -637,6 +641,7 @@ impl Engine {
             last_config_error_detail: None,
             nat: None,
             names: HashMap::new(),
+            services: (Vec::new(), false),
             roles: HashMap::new(),
             hostname: None,
             probe_random: crypto::random_u32,
@@ -1937,6 +1942,15 @@ impl Engine {
         self.nat = Some(nat);
     }
 
+    /// Direcciones del túnel de este dispositivo (para filtrar los servicios detectados).
+    pub fn own_addrs(&self) -> &[IpAddr] {
+        &self.own
+    }
+
+    pub fn set_services(&mut self, services: (Vec<crate::services::Service>, bool)) {
+        self.services = services;
+    }
+
     pub fn set_metadata(&mut self, hostname: Option<String>, peers: crate::sync::PeerMetadata) {
         self.hostname = hostname;
         self.names = peers.names;
@@ -1957,6 +1971,8 @@ impl Engine {
                 last_error_detail: self.last_config_error_detail.clone(),
             },
             nat: self.nat.clone(),
+            services: self.services.0.clone(),
+            services_truncated: self.services.1,
             peers: self
                 .peers
                 .iter()
@@ -2887,6 +2903,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_status_carries_detected_services() {
+        use crate::services::{Proto, Service};
+        let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
+        let json = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(json["services"], serde_json::json!([]));
+        assert_eq!(json["services_truncated"], false);
+        e.set_services((
+            vec![Service {
+                port: 8080,
+                proto: Proto::Tcp,
+            }],
+            true,
+        ));
+        let json = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(
+            json["services"],
+            serde_json::json!([{"port": 8080, "proto": "tcp"}])
+        );
+        assert_eq!(json["services_truncated"], true);
+    }
     #[test]
     fn no_configuration_means_no_traffic() {
         let mut e = Engine::new(NET, StaticKeypair::generate(), 0);

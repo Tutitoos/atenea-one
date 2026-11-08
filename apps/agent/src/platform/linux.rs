@@ -171,6 +171,37 @@ fn run(bin: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     }
     Ok(out.stdout)
 }
+/// Sockets en escucha (estado `0A`) de `/proc/net/tcp` o `/proc/net/tcp6`. Las direcciones son
+/// palabras de 32 bits en orden del host (little-endian en las plataformas Linux soportadas);
+/// una línea ilegible se descarta sin afectar al resto.
+pub(crate) fn parse_proc_net_tcp(text: &str, v6: bool) -> Vec<SocketAddr> {
+    fn word(hex: &str) -> Option<[u8; 4]> {
+        u32::from_str_radix(hex, 16).ok().map(u32::to_le_bytes)
+    }
+    text.lines()
+        .filter_map(|line| {
+            let mut f = line.split_whitespace();
+            let (_, local, _, state) = (f.next()?, f.next()?, f.next()?, f.next()?);
+            if state != "0A" {
+                return None;
+            }
+            let (host, port) = local.split_once(':')?;
+            let port = u16::from_str_radix(port, 16).ok()?;
+            let ip = match (v6, host.len()) {
+                (false, 8) => IpAddr::from(word(host)?),
+                (true, 32) => {
+                    let mut b = [0u8; 16];
+                    for (i, chunk) in b.chunks_mut(4).enumerate() {
+                        chunk.copy_from_slice(&word(host.get(i * 8..i * 8 + 8)?)?);
+                    }
+                    IpAddr::from(b)
+                }
+                _ => return None,
+            };
+            Some(SocketAddr::new(ip, port))
+        })
+        .collect()
+}
 impl HostNetwork for Network {
     fn supports_subnet_routing(&self) -> bool {
         true
@@ -329,12 +360,47 @@ impl HostNetwork for Network {
             _ => Vec::new(),
         }
     }
+    async fn listening_tcp(&self) -> Result<Vec<SocketAddr>, String> {
+        let v4 = tokio::fs::read_to_string("/proc/net/tcp")
+            .await
+            .map_err(|e| format!("/proc/net/tcp: {e}"))?;
+        let mut out = parse_proc_net_tcp(&v4, false);
+        // Sin IPv6 en el núcleo el fichero no existe: no es un error.
+        if let Ok(v6) = tokio::fs::read_to_string("/proc/net/tcp6").await {
+            out.extend(parse_proc_net_tcp(&v6, true));
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const TCP4: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 11111 1 0000000000000000 100 0 0 10 0\n   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 22222 1 0000000000000000 100 0 0 10 0\n   2: 0200630A:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 33333 1 0000000000000000 100 0 0 10 0\n   3: 0700000A:C350 0500000A:01BB 01 00000000:00000000 02:000A7B3C 00000000  1000        0 44444 2 0000000000000000 20 4 30 10 -1\n   4: zzzzzzzz:0016 00000000:0000 0A\n   5: 0100007F\n";
+    const TCP6: &str = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 00000000000000000000000000000000:0050 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 55555 1 0000000000000000 100 0 0 10 0\n   1: 00000000000000000000000001000000:1538 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000   999        0 66666 1 0000000000000000 100 0 0 10 0\n   2: 0000000000000000FFFF00000100007F:2382 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 77777 1 0000000000000000 100 0 0 10 0\n   3: 000000FD000000000000000002000000:2328 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 88888 1 0000000000000000 100 0 0 10 0\n   4: 000000FD0000000000000000020000:2328 00000000000000000000000000000000:0000 0A\n";
+    #[test]
+    fn proc_net_tcp_listening_sockets() {
+        let s = |t: &str| t.parse::<SocketAddr>().unwrap();
+        // Cabecera, ESTABLISHED (01) y líneas truncadas o con hexadecimal inválido se descartan.
+        assert_eq!(
+            parse_proc_net_tcp(TCP4, false),
+            [s("0.0.0.0:22"), s("127.0.0.1:8080"), s("10.99.0.2:80")]
+        );
+        assert_eq!(
+            parse_proc_net_tcp(TCP6, true),
+            [
+                s("[::]:80"),
+                s("[::1]:5432"),
+                s("[::ffff:127.0.0.1]:9090"),
+                s("[fd00::2]:9000")
+            ]
+        );
+        // Un fichero IPv6 leído como IPv4 (y al revés) no produce direcciones.
+        assert!(parse_proc_net_tcp(TCP6, false).is_empty());
+        assert!(parse_proc_net_tcp(TCP4, true).is_empty());
+        assert!(parse_proc_net_tcp("", false).is_empty());
+    }
     #[test]
     fn tunnel_routes_keep_only_other_tunnel_links() {
         let links = br#"[{"ifname":"lo"},{"ifname":"eth0","linkinfo":{"info_kind":"veth"}},{"ifname":"atenea0","linkinfo":{"info_kind":"tun"}},{"ifname":"atenea1","linkinfo":{"info_kind":"tun"}},{"ifname":"wg0","linkinfo":{"info_kind":"wireguard"}}]"#;

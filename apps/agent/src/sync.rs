@@ -403,6 +403,11 @@ mod tests {
                 last_error: None,
                 last_error_detail: None,
             },
+            services: vec![crate::services::Service {
+                port: 8080,
+                proto: crate::services::Proto::Tcp,
+            }],
+            services_truncated: false,
             peers: ["direct", "relay-udp", "relay-tls", "probing", "none"]
                 .into_iter()
                 .map(|path| PeerStatus {

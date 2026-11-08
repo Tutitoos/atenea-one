@@ -120,6 +120,31 @@ fn parse_routes_by(text: &str, keep: impl Fn(&str) -> bool) -> Result<Vec<Prefix
     }
     Ok(out)
 }
+/// Sockets en `LISTEN` de `netstat -an -p tcp`. La dirección local lleva el puerto tras el último
+/// punto (`*.3000`, `127.0.0.1.8080`, `::1.5432`); `*` es el comodín de la familia de la fila
+/// (`tcp4` → `0.0.0.0`; `tcp6`/`tcp46` → `::`). Una fila ilegible se descarta sin afectar al resto.
+pub(crate) fn parse_netstat_listen(text: &str) -> Vec<SocketAddr> {
+    text.lines()
+        .filter_map(|line| {
+            let f: Vec<_> = line.split_whitespace().collect();
+            if f.len() < 6 || !f[0].starts_with("tcp") || f.last() != Some(&"LISTEN") {
+                return None;
+            }
+            let (host, port) = f[3].rsplit_once('.')?;
+            let port: u16 = port.parse().ok()?;
+            let ip = if host == "*" {
+                if f[0] == "tcp4" {
+                    IpAddr::from([0u8; 4])
+                } else {
+                    IpAddr::from([0u8; 16])
+                }
+            } else {
+                host.split('%').next()?.parse().ok()?
+            };
+            Some(SocketAddr::new(ip, port))
+        })
+        .collect()
+}
 fn parse_addrs(text: &str, skip: &str, port: u16) -> Vec<SocketAddr> {
     let mut iface = "";
     let mut out = Vec::new();
@@ -389,6 +414,17 @@ impl HostNetwork for Network {
             _ => Vec::new(),
         }
     }
+    async fn listening_tcp(&self) -> Result<Vec<SocketAddr>, String> {
+        let out = tokio::process::Command::new(&self.bins.netstat)
+            .args(["-an", "-p", "tcp"])
+            .output()
+            .await
+            .map_err(|e| format!("{}: {e}", self.bins.netstat.display()))?;
+        if !out.status.success() {
+            return Err(format!("{}: {}", self.bins.netstat.display(), out.status));
+        }
+        Ok(parse_netstat_listen(&String::from_utf8_lossy(&out.stdout)))
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -408,6 +444,25 @@ mod tests {
         let a = parse_addrs(addrs, "utun9", 51820);
         assert!(!a.iter().any(|a| a.ip().to_string() == "10.77.0.2"));
         assert!(!a.iter().any(|a| a.ip().is_loopback()));
+    }
+    #[test]
+    fn netstat_listening_sockets() {
+        // Formato de `netstat -an -p tcp` en macOS con direcciones sintéticas.
+        let text = "Active Internet connections (including servers)\nProto Recv-Q Send-Q  Local Address          Foreign Address        (state)\ntcp4       0      0  192.0.2.7.52100        198.51.100.5.443       ESTABLISHED\ntcp6       0      0  2001:db8::7.52101      2001:db8:1::5.443      ESTABLISHED\ntcp4       0      0  127.0.0.1.8080         *.*                    LISTEN\ntcp6       0      0  ::1.5432               *.*                    LISTEN\ntcp46      0      0  *.3000                 *.*                    LISTEN\ntcp4       0      0  *.5355                 *.*                    LISTEN\ntcp4       0      0  10.99.0.2.9000         *.*                    LISTEN\ntcp6       0      0  fe80::1%lo0.8021       *.*                    LISTEN\ntcp6       0      0  fd00::2.9001           *.*                    LISTEN\ntcp4       0      0  *.*                    *.*                    LISTEN\ntcp4       0      0  10.99.0.2.zz           *.*                    LISTEN\ntcp4       0      0  *.22                   *.*                    CLOSED\n";
+        let s = |t: &str| t.parse::<SocketAddr>().unwrap();
+        assert_eq!(
+            parse_netstat_listen(text),
+            [
+                s("127.0.0.1:8080"),
+                s("[::1]:5432"),
+                s("[::]:3000"),
+                s("0.0.0.0:5355"),
+                s("10.99.0.2:9000"),
+                s("[fe80::1]:8021"),
+                s("[fd00::2]:9001")
+            ]
+        );
+        assert!(parse_netstat_listen("").is_empty());
     }
     #[test]
     fn tunnel_routes_exclude_physical_links_and_own_interface() {
