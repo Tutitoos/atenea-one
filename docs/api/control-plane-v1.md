@@ -97,7 +97,7 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/networks/{net}/join-code` | admin | Código de red sin token y huella de la raíz (§13) |
 | `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?}` | público | Solicitud de unión sin token (§13) |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
-| `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres y roles no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12, §15) |
+| `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres, roles y servicios publicados (§20) no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12, §15, §20) |
 | `POST /api/v1/device/leave` (cuerpo vacío) | dispositivo (§3.3) | Revoca únicamente la identidad firmante, también pendiente; idempotente (§14) |
 | `GET /api/v1/server/info` | dispositivo aprobado (§3.3) | Versión y commit del control plane, hora y caducidad del certificado de emisor de su propia red; `Cache-Control: no-store` (§15) |
 | `GET /api/v1/server` | sesión con alguna membresía | Versión y commit del control plane y hora UTC; no requiere firma de dispositivo (§16) |
@@ -417,3 +417,21 @@ Uso: `Authorization: Bearer atsvc_…` en cualquier `GET` de lectura de administ
 - **Fuera de alcance:** `GET /api/v1/session`, `GET …/events` y todas las rutas `service-tokens` rechazan el token (`403`); `join-code` y la gestión de miembros exigen admin/owner (`403`). El usuario interno no se puede ascender con `PUT …/members/{user}` (`403`). Los correos de otros miembros siguen ocultos (ADR-015: es `member`).
 - **Fallos indistinguibles:** token desconocido, caducado o revocado → `401 invalid_session`. La validez se consulta por petición; no hay caché.
 - **Límite:** `service_per_minute` (`ATENEA_CP_SERVICE_PER_MINUTE`, por defecto 120) por token, `429 rate_limited`, aplicado tras autenticar. Auditoría `service_token.use` como mucho una vez por token y hora, sin cuerpo ni cabeceras.
+
+## 20. Servicios publicados por dispositivo (ADR-024, fase 3)
+
+La migración `0010_device_services.sql` añade `devices.services jsonb NOT NULL DEFAULT '[]'` y `devices.services_at timestamptz` (nulo hasta el primer informe con servicios). Es un metadato **de presentación, sin firmar**, como el nombre y el rol: no viaja en la configuración firmada ni autoriza, enruta o abre nada.
+
+**Informe (`POST /api/v1/device/status`).** Campo opcional `services`: lista de `{"port": 1..=65535, "proto": "tcp", "scheme"?: "http"|"https", "label"?: string}`. Se aplican la autenticación, el límite de 64 KiB, el nonce y la tasa (5 s) ya descritos; no hay límites nuevos salvo estos:
+
+- Como máximo **64** servicios; **puertos duplicados se rechazan** (no se deduplican); puerto `0` rechazado.
+- `proto` solo `tcp`; `scheme` por defecto `http` (se guarda ya normalizado); `label` de 1 a 32 caracteres Unicode tras recortar espacios, con las mismas reglas de caracteres que los nombres de dispositivo (§12: sin controles C0/C1 ni marcas bidireccionales).
+- Semántica y códigos: puerto 0, duplicados, más de 64 o etiqueta inválida → `400 invalid_request`; `proto` o `scheme` fuera de la lista, puerto fuera de `u16`, campo desconocido (también dentro de cada servicio) o tipo erróneo → `400 invalid_report`. Un rechazo no modifica lo guardado.
+- **Ausente (o `null`)**: no se toca lo guardado ni `services_at` (agente anterior o publicación apagada). **Presente**, también `[]`: **sustituye** la lista anterior y fija `services_at = now()` (hora de la base de datos). Sin historial.
+- El contenido de `services` no se registra en los logs.
+
+**Pares (`GET /api/v1/device/peers`).** Cada par incluye siempre `services: [{"port","proto","scheme","label"?}]` (`label` se omite si no hay). Solo se rellena para los pares que ya devuelve ese endpoint (misma visibilidad por políticas que la configuración firmada, ADR-016; un par sin política hacia el solicitante no aparece y sus servicios tampoco; un dispositivo revocado ya no aparece) y solo si `services_at` tiene **120 s o menos** respecto de la hora de la base de datos; en otro caso es `[]`. Los clientes nuevos deben tolerar que un servidor anterior no incluya el campo.
+
+**Inventario (`GET /api/v1/networks/{net}/devices`).** Cada dispositivo añade `services` (último informe guardado, **sin** filtro de antigüedad) y `services_at` (RFC 3339 o `null`). Lo ve quien ya puede leer el inventario (pertenencia a la organización; incluye al token de servicio de solo lectura de §19, que ya lee ese endpoint).
+
+**Publicar no abre nada.** Que un servicio figure en la lista no lo hace más ni menos alcanzable y **no crea políticas** ni toca cortafuegos: el ACL no limita puertos (ver «Bidireccionalidad efectiva» en §6) y lo decide cada política y el cortafuegos del equipo. Despliegue: este servidor debe actualizarse **antes** de que ningún agente active la publicación, porque el informe rechaza campos desconocidos.
