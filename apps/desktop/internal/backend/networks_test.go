@@ -319,3 +319,33 @@ func TestJoinedNetworkLookupAndFiltering(t *testing.T) {
 		t.Errorf("ante un fallo, vacío: %v", got)
 	}
 }
+
+func TestSetServicesPublishRunsTheExactClosedCommand(t *testing.T) {
+	fakeCLI(t, `echo '[]'`)
+	calls := capture(t)
+	if err := SetServicesPublish(testID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetServicesPublish(testID, false); err != nil {
+		t.Fatal(err)
+	}
+	cli := CLIPath()
+	want := []string{
+		cli + " services publish on --network " + testID + " | Atenea One quiere publicar los servicios de este equipo en una red.",
+		cli + " services publish off --network " + testID + " | Atenea One quiere dejar de publicar los servicios de este equipo en una red.",
+	}
+	if len(*calls) != 2 || (*calls)[0] != want[0] || (*calls)[1] != want[1] {
+		t.Fatalf("órdenes elevadas = %q, esperaba %q", *calls, want)
+	}
+	for _, bad := range []string{"", "x", testID + "0", strings.ToUpper(testID), testID + "; id", "--all"} {
+		if err := SetServicesPublish(bad, true); err == nil {
+			t.Errorf("%q debía rechazarse", bad)
+		}
+	}
+	if len(*calls) != 2 {
+		t.Errorf("una validación fallida no debe elevar nada: %q", *calls)
+	}
+	if _, err := ServicesPublishScript("/usr/bin/atenea; id", testID, true); err == nil {
+		t.Error("una ruta de CLI con metacaracteres debía rechazarse")
+	}
+}

@@ -10,6 +10,7 @@ import { ago, bytes, int, ipKind, levelTone, pathLabel, peerName, selfName, type
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
+import { PeerServices } from '../services';
 import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton } from '../ui';
 
 function Title({ id, name, editable, rename = false }: { id: string; name: string; editable: boolean; rename?: boolean }) {
@@ -104,6 +105,7 @@ function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { pee
       {/* Con datos de otra red, `fieldset disabled` apaga los botones de acción sin tocarlos uno a uno. */}
       <fieldset disabled={stale} className="mb-4 flex flex-wrap gap-3 border-0 p-0"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></fieldset>
       <Addresses addrs={peer.addrs} />
+      <PeerServices peer={peer} network={network} stale={stale} />
       <Heading>Detalles</Heading>
       <Card>
         <Row label="Nombre en la red">{peer.name}</Row>

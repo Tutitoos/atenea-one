@@ -94,6 +94,11 @@ export async function pingDevice(network: string, address: string): Promise<Ping
 
 export const openPanel = (network: string, deviceId?: string | null) => call<void>('open_panel', { network, deviceId: deviceId ?? null });
 
+/** ADR-024: la interfaz nunca envía una URL. Go la construye con la dirección del par y un puerto de SU lista publicada. */
+export const openService = (network: string, deviceId: string, port: number) => call<void>('open_service', { network, deviceId, port });
+/** Pide la autorización de administrador del sistema (la única orden elevada nueva); cancelar el diálogo rechaza y no cambia nada. */
+export const setServicesPublish = (network: string, on: boolean) => call<void>('services_publish_set', { network, on });
+
 export async function readNotifications(): Promise<boolean> {
   return z.boolean().parse(await call<boolean>('notifications_get'));
 }

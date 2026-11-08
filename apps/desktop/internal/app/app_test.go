@@ -166,6 +166,75 @@ func TestOpenPanelBuildsTheURLFromTheJoinedNetworkOnly(t *testing.T) {
 	}
 }
 
+const servicesStatus = `{"public_key":"k","peers":[` +
+	`{"public_key":"p","device_id":"` + id2 + `","addrs":["10.99.0.2"],"services":[{"port":8080,"proto":"tcp","scheme":"http"},{"port":8443,"proto":"tcp","scheme":"https"}]},` +
+	`{"public_key":"q","device_id":"0199ab12-3456-7def-8abc-0123456789ad","addrs":["10.99.0.3"]}]}`
+
+func TestOpenServiceOnlyOpensWhatThePeerPublishedInThatNetwork(t *testing.T) {
+	list := fakeCLI(t)
+	writeList(t, list, `[{"network_id":"`+id1+`","name":"casa"}]`)
+	var opened []string
+	old := panel.Launch
+	panel.Launch = func(program string, args ...string) error { opened = append(opened, args[len(args)-1]); return nil }
+	t.Cleanup(func() { panel.Launch = old })
+	asked := false
+	a := &App{Ask: func(string) (string, error) { asked = true; return servicesStatus, nil }}
+
+	if err := a.OpenService(id1, id2, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.OpenService(id1, id2, 8443); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"http://10.99.0.2:8080/", "https://10.99.0.2:8443/"}; !slices.Equal(opened, want) {
+		t.Fatalf("URL abiertas = %v, esperaba %v", opened, want)
+	}
+	opened = nil
+	for name, call := range map[string]func() error{
+		"puerto no publicado": func() error { return a.OpenService(id1, id2, 22) },
+		"par sin servicios":   func() error { return a.OpenService(id1, "0199ab12-3456-7def-8abc-0123456789ad", 8080) },
+		"par desconocido":     func() error { return a.OpenService(id1, "0199ab12-3456-7def-8abc-0123456789ae", 8080) },
+		"id no válido":        func() error { return a.OpenService(id1, "http://evil.example", 8080) },
+		"puerto no válido":    func() error { return a.OpenService(id1, id2, -1) },
+	} {
+		if err := call(); err == nil || len(opened) != 0 {
+			t.Errorf("%s: err=%v abierto=%v", name, err, opened)
+		}
+	}
+	asked = false
+	if err := a.OpenService(id2, id2, 8080); err == nil || err.Error() != "la red no está unida" || asked || len(opened) != 0 {
+		t.Errorf("red no unida: err=%v preguntó=%v abierto=%v", err, asked, opened)
+	}
+	if err := a.OpenService("no-es-uuid", id2, 8080); err == nil || len(opened) != 0 {
+		t.Errorf("red no válida: err=%v", err)
+	}
+}
+
+func TestServicesPublishSetRunsTheExactCommandOnlyForAJoinedNetwork(t *testing.T) {
+	list := fakeCLI(t)
+	writeList(t, list, `[{"network_id":"`+id1+`","name":"casa"}]`)
+	var scripts []string
+	old := backend.Elevate
+	backend.Elevate = func(script, prompt string) (string, error) { scripts = append(scripts, script); return "", nil }
+	t.Cleanup(func() { backend.Elevate = old })
+	a := &App{}
+
+	if err := a.ServicesPublishSet(id1, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ServicesPublishSet(id1, false); err != nil {
+		t.Fatal(err)
+	}
+	cli := backend.CLIPath()
+	if want := []string{cli + " services publish on --network " + id1, cli + " services publish off --network " + id1}; !slices.Equal(scripts, want) {
+		t.Fatalf("órdenes = %v, esperaba %v", scripts, want)
+	}
+	scripts = nil
+	if err := a.ServicesPublishSet(id2, true); err == nil || len(scripts) != 0 {
+		t.Errorf("red no unida: err=%v órdenes=%v", err, scripts)
+	}
+}
+
 func TestNotificationPreferenceLivesInTheTauriConfigFolder(t *testing.T) {
 	dir := t.TempDir()
 	a := &App{ConfigDir: func() (string, error) { return dir, nil }}
