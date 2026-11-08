@@ -15,6 +15,8 @@
 mod engine;
 #[path = "../../apps/agent/src/packet.rs"]
 mod packet;
+#[path = "../../apps/agent/src/services.rs"]
+mod services;
 /// `relay.rs` arrastra TLS/tokio; el motor solo necesita la etiqueta del camino.
 mod relay {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
