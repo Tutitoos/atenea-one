@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app reúne la lógica de las doce operaciones que la aplicación expone al frontend y el sondeo de la
+// Package app reúne la lógica de las catorce operaciones que la aplicación expone al frontend y el sondeo de la
 // bandeja (ADR-019). No depende de Wails: el servicio vinculado de `main` solo delega aquí, de modo que todo lo
 // que decide algo se puede probar sin ventana.
 package app
@@ -170,6 +170,32 @@ func (a *App) OpenPanel(network, deviceID string) error {
 		return err
 	}
 	return panel.Open(url)
+}
+
+// OpenService abre en el navegador del sistema un servicio que un par publica en ESA red. La interfaz solo da el
+// id del par y el puerto: el esquema y la dirección salen del estado del agente, y el puerto debe estar publicado.
+func (a *App) OpenService(network, deviceID string, port int) error {
+	if _, err := backend.JoinedNetwork(network); err != nil {
+		return err
+	}
+	_, obj, err := a.readStatus(network)
+	if err != nil {
+		return err
+	}
+	url, err := panel.ServiceURL(obj, deviceID, port)
+	if err != nil {
+		return err
+	}
+	return panel.Open(url)
+}
+
+// ServicesPublishSet activa o apaga la publicación de los servicios de este equipo en una red unida, con la
+// autorización del sistema (ADR-024).
+func (a *App) ServicesPublishSet(network string, on bool) error {
+	if _, err := backend.JoinedNetwork(network); err != nil {
+		return err
+	}
+	return backend.SetServicesPublish(network, on)
 }
 
 // ClaimFirstRun dice si esta es la primera vez que se abre la aplicación para este usuario y lo anota (ADR-021): true

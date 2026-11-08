@@ -16,6 +16,11 @@ const deviceId = z
   })
   .optional()
   .catch(undefined);
+// Servicios (ADR-024): lista tolerante. Un elemento mal formado se descarta sin invalidar el estado entero; ausente = sin servicios.
+const port = z.number().int().min(1).max(65535);
+const peerService = z.object({ port, proto: z.literal('tcp'), scheme: z.enum(['http', 'https']).default('http'), label: z.string().nullish() });
+const ownService = z.object({ port, proto: z.literal('tcp') });
+const tolerant = <T extends z.ZodType>(item: T) => z.array(z.unknown()).transform((list) => list.flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data as z.output<T>] : []; })).nullish();
 const peer = z.object({
   public_key: z.string(),
   device_id: deviceId,
@@ -32,6 +37,8 @@ const peer = z.object({
   path: z.string(),
   candidates: z.number().default(0),
   paths: z.array(path).default([]),
+  // Lo que ese par publica en esta red (solo si hay política hacia él y él lo activó).
+  services: tolerant(peerService),
 });
 const status = z.object({
   server: z.object({
@@ -51,6 +58,10 @@ const status = z.object({
   coordinator: z.object({ url: z.string().nullish(), last_announce_ok_unix: z.number().nullish(), last_error: z.string().nullish(), announces: z.number().nullish(), events: z.number().nullish() }).nullish(),
   relay: z.object({ allocations: z.number().default(0), drops: z.record(z.string(), z.number()).default({}), entries: z.array(z.record(z.string(), z.unknown())).default([]) }).nullish(),
   counters: z.record(z.string(), z.number()).default({}),
+  // Servicios que detecta este equipo (solo lectura) y si los publica en esta red; el recorte lo marca `services_truncated`.
+  services: tolerant(ownService),
+  services_truncated: z.boolean().nullish(),
+  services_publish: z.boolean().nullish(),
   peers: z.array(peer).default([]),
 });
 

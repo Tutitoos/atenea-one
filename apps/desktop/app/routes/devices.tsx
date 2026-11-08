@@ -12,7 +12,7 @@ import { button, Dot, Empty, Loading, NoNetworks, Skeleton } from '../ui';
 
 type Point = { at: number; down: number; up: number };
 /** `path` solo existe en los pares: el dispositivo local no lleva insignia de camino ni se filtra. */
-type Entry = { id: string; name: string; addr: string; address: string; tone: Tone; haystack: string; path?: string; points?: Point[] };
+type Entry = { id: string; name: string; addr: string; address: string; tone: Tone; haystack: string; path?: string; points?: Point[]; services?: number };
 type OpenMenu = (id: string, x: number, y: number, opener: HTMLElement) => void;
 
 const FILTER_KEY = 'atenea.devices.filter';
@@ -31,7 +31,7 @@ const preferred = (addrs: string[]) => addrs.find((a) => !a.includes(':')) ?? ad
 
 /** Solo se vuelve a pintar una fila si cambia algo que se ve; las listas de puntos se recrean en cada lectura. */
 const sameItem = (a: { e: Entry; onMenu: OpenMenu; stale: boolean }, b: { e: Entry; onMenu: OpenMenu; stale: boolean }) =>
-  a.onMenu === b.onMenu && a.stale === b.stale && a.e.id === b.e.id && a.e.name === b.e.name && a.e.addr === b.e.addr && a.e.tone === b.e.tone && a.e.path === b.e.path
+  a.onMenu === b.onMenu && a.stale === b.stale && a.e.id === b.e.id && a.e.name === b.e.name && a.e.addr === b.e.addr && a.e.tone === b.e.tone && a.e.path === b.e.path && a.e.services === b.e.services
   && a.e.points?.length === b.e.points?.length && a.e.points?.at(-1)?.at === b.e.points?.at(-1)?.at;
 
 /** `stale`: la fila es de otra red; se ve, pero ni abre detalle ni deja actuar sobre ella. */
@@ -52,6 +52,7 @@ const Item = memo(function Item({ e, onMenu, stale }: { e: Entry; onMenu: OpenMe
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm" title={e.name}>{e.name}</span>
           {e.addr && <span className="block truncate text-xs opacity-70" title={e.addr}>{e.addr}</span>}
+          {!!e.services && <span className="block truncate text-xs opacity-70">{e.services === 1 ? '1 servicio' : `${e.services} servicios`}</span>}
         </span>
         {path && (
           <span className="flex shrink-0 flex-col items-end gap-0.5">
@@ -111,7 +112,7 @@ export default function Devices() {
   const { selfEntries, peerEntries, counts } = useMemo(() => {
     const addrs = status?.addrs ?? [];
     const self: Entry[] = status && level ? [{ id: 'self', name: selfName(status, names), addr: addrs[0] ?? '', address: preferred(addrs), tone: levelTone(level), haystack: `${selfName(status, names)} ${status.hostname ?? ''} este dispositivo ${addrs.join(' ')} ${status.public_key}` }] : [];
-    const peers: Entry[] = (status?.peers ?? []).filter((p) => p.role !== 'server').map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', address: preferred(p.addrs), tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}`, path: p.path, points: history?.devices[p.public_key]?.points }));
+    const peers: Entry[] = (status?.peers ?? []).filter((p) => p.role !== 'server').map((p) => ({ id: p.public_key, name: peerName(p, names), addr: p.addrs[0] ?? '', address: preferred(p.addrs), tone: pathLabel(p.path).tone, haystack: `${peerName(p, names)} ${p.name ?? ''} ${p.addrs.join(' ')} ${p.public_key}`, path: p.path, points: history?.devices[p.public_key]?.points, services: p.services?.length }));
     const q = query.trim().toLowerCase();
     const match = (e: Entry) => !q || e.haystack.toLowerCase().includes(q);
     const found = peers.filter(match);

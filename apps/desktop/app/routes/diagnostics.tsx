@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { readNotifications, setNotifications } from '../lib/networks';
 import { Autostart } from '../preferences';
+import { OwnServices } from '../services';
 import { bytes, int, num, pct, text } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { buildReport, groupCounters } from '../lib/report';
@@ -71,6 +72,7 @@ export default function Diagnostics() {
         </>}
       <Notifications />
       <Autostart />
+      {!empty && status && <OwnServices status={status} network={network} stale={stale} />}
     </main>
   );
 }
