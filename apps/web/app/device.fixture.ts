@@ -8,6 +8,8 @@ export const device: Model<'Device'> = {
   name: 'Equipo sintético',
   name_source: 'admin',
   hostname: null,
+  services: [],
+  services_at: null,
   status: 'pending',
   role: 'device',
   join_origin: 'token',

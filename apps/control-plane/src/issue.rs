@@ -12,6 +12,8 @@ use axum::{
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
+/// Un informe de servicios más antiguo que esto (hora de la base de datos) no se entrega a los pares (ADR-024).
+const SERVICES_FRESH_SECS: f64 = 120.0;
 pub struct Device {
     pub id: Uuid,
     pub noise: [u8; 32],
@@ -266,13 +268,14 @@ async fn respond(
             .iter()
             .map(|p| Uuid::from_bytes(p.device_id))
             .collect();
-        let rows = sqlx::query("SELECT id,name,role FROM devices WHERE id=ANY($1) ORDER BY id")
+        let rows = sqlx::query("SELECT id,name,role,CASE WHEN services_at>now()-make_interval(secs=>$2) THEN services ELSE '[]'::jsonb END services FROM devices WHERE id=ANY($1) ORDER BY id")
             .bind(ids)
+            .bind(SERVICES_FRESH_SECS)
             .fetch_all(&mut *tx)
             .await?;
         let names: Vec<_> = rows
             .iter()
-            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"role":r.get::<String,_>("role")}))
+            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),"services":r.get::<serde_json::Value,_>("services")}))
             .collect();
         tx.commit().await?;
         return Ok(([("cache-control", "no-store")], axum::Json(names)).into_response());
