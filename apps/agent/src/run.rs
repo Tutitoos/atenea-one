@@ -463,6 +463,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     });
     let mut engine = Engine::new(cfg.network_id, noise, unix_now());
     engine.set_cookie_threshold(cfg.handshake_cookie_threshold_per_second);
+    engine.set_services_publish(cfg.services.publish);
     let dual = cfg.listen.is_ipv6();
     let device = cfg.device_id;
 
@@ -951,6 +952,14 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                             rt.seen = None; rt.routes_changed = true;
                         }
                         crate::ipc::Action::Cleanup => { let _ = rt.netconf.cleanup(); rt.seen = None; }
+                        // Solo `[services]`: sin tocar túnel, rutas ni configuración firmada. Si no valida, nada cambia.
+                        crate::ipc::Action::ServicesReload => match rt.cfg.services.reload(&path) {
+                            Ok(()) => {
+                                rt.engine.set_services_publish(rt.cfg.services.publish);
+                                tracing::info!(publish = rt.cfg.services.publish, "[services] recargado");
+                            }
+                            Err(error) => tracing::warn!("recarga de [services] rechazada: {error}"),
+                        },
                         crate::ipc::Action::None => {}
                     }
                 continue;

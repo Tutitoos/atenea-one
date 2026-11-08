@@ -113,6 +113,7 @@ Compatibilidad entre `react-router` 8.5.0, React 19.3.1 y el resto: **no verific
 - pnpm se instala con `scripts/install-pnpm.sh`, que verifica el SHA-512 del tarball de npm de la versión fijada (CI y Dockerfile del control plane); al subir de versión hay que actualizar el script y `packageManager`.
 - **`ring` 0.17.14 llega a través de `snow` 0.10.0** con las características por defecto (visible con `cargo tree -p atenea-crypto -e features -i ring`). Su licencia es propia (mezcla ISC/OpenSSL). **Aceptado por el responsable "por ahora" (2026-10-24)**; se revisará el texto de la licencia antes del primer release.
 - Resueltas y en uso (versiones del `Cargo.lock`): `snow` 0.10.0, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0, `blake2` 0.11.0 (identity) y 0.10 (dentro de snow), `getrandom` 0.3, `zeroize`, `tokio` 1.54, `clap` 4.6, `serde`/`serde_json`/`toml` 0.9, `tracing`, `proptest` 1, `libc` 0.2. No se han leído las licencias de las dependencias transitivas.
+- `toml_edit` 0.25 (MIT OR Apache-2.0) pasa a ser dependencia directa de `apps/cli` para `atenea services publish` (ADR-024, decisión 8): edita `[services] publish` de un `agent.toml` conservando comentarios, orden y espacios, que `toml` (solo serialización de un mapa) no garantiza. **No añade ningún paquete al `Cargo.lock`**: ya estaba en el árbol por `proc-macro-crate`; solo entra además `toml_writer`, que ya usa `toml` 0.9. `deny.toml` no necesita cambios (licencias ya permitidas; `multiple-versions` solo avisa y la 0.22 ya coexistía).
 
 ### Fase 5 — Coordinator relay
 

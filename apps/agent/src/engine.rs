@@ -565,6 +565,8 @@ pub struct Status {
     /// Servicios TCP detectados en este equipo (ADR-024, fase 2); solo se publican con `publish = true`.
     pub services: Vec<crate::services::Service>,
     pub services_truncated: bool,
+    /// `[services] publish` en vigor; la aplicación lo lee para pintar el interruptor (ADR-024, fase 5).
+    pub services_publish: bool,
 }
 
 pub struct Engine {
@@ -602,6 +604,7 @@ pub struct Engine {
     last_config_error_detail: Option<String>,
     nat: Option<NatStatus>,
     services: (Vec<crate::services::Service>, bool),
+    services_publish: bool,
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
     roles: HashMap<DeviceId, &'static str>,
@@ -645,6 +648,7 @@ impl Engine {
             nat: None,
             names: HashMap::new(),
             services: (Vec::new(), false),
+            services_publish: false,
             roles: HashMap::new(),
             peer_services: HashMap::new(),
             hostname: None,
@@ -1955,6 +1959,10 @@ impl Engine {
         self.services = services;
     }
 
+    pub fn set_services_publish(&mut self, publish: bool) {
+        self.services_publish = publish;
+    }
+
     pub fn set_metadata(&mut self, hostname: Option<String>, peers: crate::sync::PeerMetadata) {
         self.hostname = hostname;
         self.names = peers.names;
@@ -1978,6 +1986,7 @@ impl Engine {
             nat: self.nat.clone(),
             services: self.services.0.clone(),
             services_truncated: self.services.1,
+            services_publish: self.services_publish,
             peers: self
                 .peers
                 .iter()
@@ -2920,6 +2929,12 @@ mod tests {
         let json = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
         assert_eq!(json["services"], serde_json::json!([]));
         assert_eq!(json["services_truncated"], false);
+        assert_eq!(json["services_publish"], false);
+        e.set_services_publish(true);
+        assert_eq!(
+            serde_json::to_value(e.status(Instant::now(), 0)).unwrap()["services_publish"],
+            true
+        );
         e.set_services((
             vec![Service {
                 port: 8080,
