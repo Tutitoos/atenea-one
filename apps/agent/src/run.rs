@@ -620,6 +620,12 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         tokio::task::JoinHandle<Result<Vec<atenea_identity::Prefix>, String>>,
     > = None;
     let mut tunnel_routes_started: Option<Instant> = None;
+    // Servicios TCP locales (ADR-024, fase 2): lectura cada 30 s en una tarea; un fallo conserva la lista.
+    let mut services_task: Option<
+        tokio::task::JoinHandle<Result<Vec<std::net::SocketAddr>, String>>,
+    > = None;
+    let mut services_started: Option<Instant> = None;
+    let mut services_failing = false;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -720,6 +726,26 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         let iface = rt.tun.name().to_owned();
                         tunnel_routes_task = Some(tokio::task::spawn_blocking(move || net::tunnel_routes(&iface)));
                         tunnel_routes_started = Some(now);
+                    }
+                    if services_task.as_ref().is_some_and(|task| task.is_finished())
+                        && let Some(task) = services_task.take()
+                    {
+                        match task.await {
+                            Ok(Ok(listening)) => {
+                                services_failing = false;
+                                rt.engine.set_services(crate::services::select_services(&listening, rt.engine.own_addrs(), &[rt.cfg.listen.port()]));
+                            }
+                            Ok(Err(e)) if !services_failing => {
+                                services_failing = true;
+                                tracing::warn!("no se pudieron leer los servicios TCP locales: {e}");
+                            }
+                            _ => {}
+                        }
+                    }
+                    if services_task.is_none() && services_started.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(30)) {
+                        let iface = rt.tun.name().to_owned();
+                        services_task = Some(tokio::spawn(async move { net::listening_tcp(&iface).await }));
+                        services_started = Some(now);
                     }
                     rt.housekeeping(unix);
                     let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));

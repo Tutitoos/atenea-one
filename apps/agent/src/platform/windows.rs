@@ -136,6 +136,33 @@ fn parse_addrs(bytes: &[u8], port: u16) -> Result<Vec<SocketAddr>, String> {
     }
     Ok(out)
 }
+/// `Get-NetTCPConnection -State Listen | ConvertTo-Json`: sin sockets no hay salida, con uno solo es
+/// un objeto y con varios una lista. Una entrada ilegible (zona, tipos inesperados) se descarta sin
+/// afectar al resto; solo un JSON global inválido es un error.
+fn parse_listening(bytes: &[u8]) -> Result<Vec<SocketAddr>, String> {
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Vec::new());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| format!("Get-NetTCPConnection: {e}"))?;
+    let entries = match value {
+        serde_json::Value::Array(list) => list,
+        object => vec![object],
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|e| {
+            let ip = e["LocalAddress"]
+                .as_str()?
+                .split('%')
+                .next()?
+                .parse()
+                .ok()?;
+            let port = u16::try_from(e["LocalPort"].as_u64()?).ok()?;
+            Some(SocketAddr::new(ip, port))
+        })
+        .collect())
+}
 fn domain_ok(domain: &str) -> bool {
     !domain.is_empty()
         && domain.len() <= 253
@@ -342,6 +369,21 @@ impl HostNetwork for Network {
             _ => Vec::new(),
         }
     }
+    async fn listening_tcp(&self) -> Result<Vec<SocketAddr>, String> {
+        let script = "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort | ConvertTo-Json -Compress";
+        let mut cmd = tokio::process::Command::from(command(&self.bins.powershell, script)?);
+        let out = cmd
+            .output()
+            .await
+            .map_err(|e| format!("{}: {e}", self.bins.powershell.display()))?;
+        if !out.status.success() {
+            return Err(format!(
+                "Get-NetTCPConnection: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        parse_listening(&out.stdout)
+    }
 }
 
 #[cfg(test)]
@@ -371,6 +413,30 @@ mod tests {
             parse_addrs(addrs, 51820).unwrap(),
             vec!["192.0.2.7:51820".parse().unwrap()]
         );
+    }
+    #[test]
+    fn windows_listening_sockets_survive_unreadable_entries() {
+        let s = |t: &str| t.parse::<SocketAddr>().unwrap();
+        // Un único socket: `ConvertTo-Json` emite un objeto, no una lista.
+        assert_eq!(
+            parse_listening(br#"{"LocalAddress":"0.0.0.0","LocalPort":445}"#).unwrap(),
+            [s("0.0.0.0:445")]
+        );
+        let list = br#"[{"LocalAddress":"::","LocalPort":135},{"LocalAddress":"fe80::1%8","LocalPort":5040},{"LocalAddress":"127.0.0.1","LocalPort":8080},{"LocalAddress":"no es una IP","LocalPort":1},{"LocalAddress":"10.99.0.2","LocalPort":"x"},{"LocalAddress":null,"LocalPort":2},{"LocalAddress":"10.99.0.2","LocalPort":70000},{"LocalAddress":"10.99.0.2","LocalPort":9000}]"#;
+        assert_eq!(
+            parse_listening(list).unwrap(),
+            [
+                s("[::]:135"),
+                s("[fe80::1]:5040"),
+                s("127.0.0.1:8080"),
+                s("10.99.0.2:9000")
+            ]
+        );
+        // Sin sockets en escucha no hay salida; una lista vacía tampoco da error.
+        assert!(parse_listening(b"").unwrap().is_empty());
+        assert!(parse_listening(b"\r\n").unwrap().is_empty());
+        assert!(parse_listening(b"[]").unwrap().is_empty());
+        assert!(parse_listening(b"basura").is_err());
     }
     #[test]
     fn windows_link_local_zone_does_not_hide_the_lan_candidates() {

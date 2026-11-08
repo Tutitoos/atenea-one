@@ -132,6 +132,10 @@ atenea down --socket /run/atenea/control.sock
 
 El estado IPC y los informes autenticados al control plane incluyen `routes` (`prefix`, `state` y motivo opcional), `dns` (`applied`, `unsupported`, `none`) y `forwarding_ok` (nulo si no sirve subredes). El estado es declarado por el agente, no una prueba de conectividad de la LAN.
 
+### Servicios TCP del equipo (solo estado local)
+
+El estado IPC incluye `services`, la lista de puertos TCP que escucha el equipo, y `services_truncated` (`true` si hubo más de 64). Cada entrada es `{"port": 8080, "proto": "tcp"}`, ordenada y sin duplicados; no incluye procesos, PID, rutas ni usuarios. Se detecta cada 30 s en una tarea aparte (Linux: `/proc/net/tcp` y `/proc/net/tcp6`; macOS: `netstat -an -p tcp`; Windows: `Get-NetTCPConnection -State Listen`) y solo se conservan los sockets en dirección comodín (`0.0.0.0`, `::`) o en una dirección de la interfaz de esta red; se excluyen loopback, otras interfaces, el puerto 0 y el puerto UDP del propio agente. Si la lectura falla se conserva la lista anterior y se registra el fallo una vez. Esta información no sale del equipo: no se envía al control plane ni a ningún par (publicarla es una fase futura, ADR-024).
+
 ## Pruebas sin privilegios
 
 La política de `netconf` usa un backend `HostNetwork` en memoria para probar rutas, diferencias, conflictos, DNS y capacidades en cualquier plataforma, sin procesos ni privilegios. Las pruebas adicionales del backend Linux inyectan las rutas de `ip`, `nft`, `resolvectl` y del árbol de sysctls; usan ejecutables simulados y ficheros temporales y no cambian la red del anfitrión. La aceptación del laboratorio Linux, nftables y resolved reales corresponde al propietario y no queda sustituida por estas pruebas.
