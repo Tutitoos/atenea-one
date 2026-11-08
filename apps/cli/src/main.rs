@@ -28,6 +28,11 @@ mod relay {
         path.map_or(Ok(()), |_| Err("sin CA en el contrato".into()))
     }
 }
+/// `config.rs` del agente usa los tipos de servicios solo para validar `[services]`.
+#[cfg(test)]
+#[path = "../../agent/src/services.rs"]
+#[allow(dead_code)]
+mod services;
 
 use clap::{Parser, Subcommand};
 #[cfg(any(unix, windows))]

@@ -523,6 +523,8 @@ pub struct PeerStatus {
     pub addrs: Vec<String>,
     /// Nombre de visualización que reparte el control plane (ADR-012); no firmado, solo para mostrar.
     pub name: Option<String>,
+    /// Servicios que el par publica (ADR-024); solo informativos, nunca abren acceso.
+    pub services: Vec<crate::services::PeerService>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<&'static str>,
     pub endpoint: Option<String>,
@@ -560,7 +562,7 @@ pub struct Status {
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
-    /// Servicios TCP detectados en este equipo (ADR-024, fase 2): solo local, no se publican.
+    /// Servicios TCP detectados en este equipo (ADR-024, fase 2); solo se publican con `publish = true`.
     pub services: Vec<crate::services::Service>,
     pub services_truncated: bool,
 }
@@ -603,6 +605,7 @@ pub struct Engine {
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
     roles: HashMap<DeviceId, &'static str>,
+    peer_services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
     hostname: Option<String>,
     probe_random: fn() -> u32,
 }
@@ -643,6 +646,7 @@ impl Engine {
             names: HashMap::new(),
             services: (Vec::new(), false),
             roles: HashMap::new(),
+            peer_services: HashMap::new(),
             hostname: None,
             probe_random: crypto::random_u32,
         }
@@ -1955,6 +1959,7 @@ impl Engine {
         self.hostname = hostname;
         self.names = peers.names;
         self.roles = peers.roles;
+        self.peer_services = peers.services;
     }
 
     pub fn status(&self, now: Instant, unix: u64) -> Status {
@@ -1981,6 +1986,11 @@ impl Engine {
                     public_key: crypto::hex::encode(&p.public),
                     addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
                     name: self.names.get(&p.device_id).cloned(),
+                    services: self
+                        .peer_services
+                        .get(&p.device_id)
+                        .cloned()
+                        .unwrap_or_default(),
                     role: self.roles.get(&p.device_id).copied(),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
@@ -4070,12 +4080,26 @@ mod tests {
             crate::sync::PeerMetadata {
                 names,
                 roles: HashMap::from([([2; 16], "server")]),
+                services: HashMap::from([(
+                    [2; 16],
+                    vec![crate::services::PeerService {
+                        port: 8443,
+                        proto: crate::services::Proto::Tcp,
+                        scheme: crate::services::Scheme::Https,
+                        label: Some("panel".into()),
+                    }],
+                )]),
             },
         );
         let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
         assert_eq!(after["hostname"], "este equipo");
         assert_eq!(after["peers"][0]["name"], "el otro");
         assert_eq!(after["peers"][0]["role"], "server");
+        assert_eq!(
+            after["peers"][0]["services"],
+            serde_json::json!([{"port":8443,"proto":"tcp","scheme":"https","label":"panel"}])
+        );
+        assert_eq!(before["peers"][0]["services"], serde_json::json!([]));
         // Un nombre sin par en la configuración no crea pares ni cambia claves.
         assert_eq!(after["peers"].as_array().unwrap().len(), 1);
         assert_eq!(

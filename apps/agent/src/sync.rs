@@ -140,6 +140,9 @@ pub struct Report {
     routes: Option<Vec<crate::netconf::RouteStatus>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hostname: Option<String>,
+    /// `Some([])` sustituye lo guardado por «sin servicios»; `None` no toca nada (ADR-024, D1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    services: Option<Vec<crate::services::PeerService>>,
 }
 
 impl Report {
@@ -160,9 +163,11 @@ struct ReportPath {
 }
 
 /// Lista blanca: el estado IPC también contiene claves públicas y direcciones que no se envían.
+/// `services` solo se informa con `publish = true`; apagado, el informe no cambia ni un byte.
 pub fn build_report(
     status: &crate::engine::Status,
     relays: &crate::relay::RelayStatus,
+    services: &crate::config::ServicesConfig,
 ) -> Option<Report> {
     if !status.config.lease_active {
         return None;
@@ -171,6 +176,9 @@ pub fn build_report(
         forwarding_ok: None,
         dns: None,
         routes: None,
+        services: services
+            .publish
+            .then(|| services.published(&status.services)),
         hostname: status.hostname.clone(),
         nat_mapping: status.nat.as_ref().map(|nat| nat.mapping),
         paths: status
@@ -230,11 +238,12 @@ pub fn send_report(
     )
 }
 
-/// Metadatos de presentación (ADR-012/014): nunca autorizan ni enrutan.
+/// Metadatos de presentación (ADR-012/014/024): nunca autorizan ni enrutan.
 #[derive(Clone, Default)]
 pub struct PeerMetadata {
     pub names: HashMap<DeviceId, String>,
     pub roles: HashMap<DeviceId, &'static str>,
+    pub services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
 }
 
 pub(crate) const METADATA_LIMIT: usize = 256 * 1024;
@@ -297,7 +306,7 @@ pub(crate) fn get_metadata(
     Ok(Some(bytes))
 }
 
-/// Nombre y rol se validan independientemente: una entrada mala no elimina las demás.
+/// Nombre, rol y cada servicio se validan por separado: una entrada mala no elimina las demás.
 fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
     #[derive(serde::Deserialize)]
     struct Entry {
@@ -305,6 +314,8 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
         name: String,
         #[serde(default)]
         role: serde_json::Value,
+        #[serde(default)]
+        services: serde_json::Value,
     }
     if body.len() > METADATA_LIMIT {
         return Err("respuesta demasiado grande");
@@ -318,6 +329,16 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
         if let Some(name) = crate::names::accept(&e.name) {
             metadata.names.insert(id, name);
         }
+        if let Some(list) = e.services.as_array() {
+            let services: Vec<_> = list
+                .iter()
+                .filter_map(parse_service)
+                .take(crate::services::MAX_SERVICES)
+                .collect();
+            if !services.is_empty() {
+                metadata.services.insert(id, services);
+            }
+        }
         let role = match e.role.as_str() {
             Some("device") => "device",
             Some("server") => "server",
@@ -326,6 +347,33 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
         metadata.roles.insert(id, role);
     }
     Ok(metadata)
+}
+
+/// Solo TCP con puerto 1..=65535; esquema `http` por defecto; etiqueta como un nombre.
+fn parse_service(v: &serde_json::Value) -> Option<crate::services::PeerService> {
+    use crate::services::{PeerService, Proto, Scheme};
+    let port = u16::try_from(v.get("port")?.as_u64()?)
+        .ok()
+        .filter(|p| *p != 0)?;
+    if v.get("proto")?.as_str()? != "tcp" {
+        return None;
+    }
+    let scheme = match v.get("scheme").map(|s| s.as_str()) {
+        None => Scheme::Http,
+        Some(Some("http")) => Scheme::Http,
+        Some(Some("https")) => Scheme::Https,
+        Some(_) => return None,
+    };
+    let label = match v.get("label") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(l) => Some(crate::names::accept(l.as_str()?)?),
+    };
+    Some(PeerService {
+        port,
+        proto: Proto::Tcp,
+        scheme,
+        label,
+    })
 }
 
 pub fn declare_routes(
@@ -420,6 +468,12 @@ mod tests {
                     probe: crate::engine::ProbeStatus::default(),
                     endpoint: Some("203.0.113.1:1234".into()),
                     session: Some("sesión".into()),
+                    services: vec![crate::services::PeerService {
+                        port: 9,
+                        proto: crate::services::Proto::Tcp,
+                        scheme: crate::services::Scheme::Http,
+                        label: Some("del par".into()),
+                    }],
                     last_handshake_secs_ago: Some(1),
                     tx_bytes: 123,
                     rx_bytes: 456,
@@ -437,9 +491,10 @@ mod tests {
                 .collect(),
         };
         let mut relays = crate::relay::RelayStatus::default();
-        assert!(build_report(&status, &relays).is_none());
+        let off = crate::config::ServicesConfig::default();
+        assert!(build_report(&status, &relays, &off).is_none());
         status.config.lease_active = true;
-        let json = serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap();
+        let json = serde_json::to_value(build_report(&status, &relays, &off).unwrap()).unwrap();
         let paths: Vec<_> = ["direct", "relay-udp", "relay-tls", "probing", "none"]
             .into_iter()
             .map(|path| {
@@ -474,21 +529,165 @@ mod tests {
             last_error: None,
             renew_at: u64::MAX,
         });
-        let known = serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap();
+        let known = serde_json::to_value(build_report(&status, &relays, &off).unwrap()).unwrap();
         assert_eq!(known["paths"][1]["relay"], "sintético");
         assert!(known["paths"][0]["relay"].is_null());
         assert!(known["paths"][2]["relay"].is_null());
         status.nat = None;
         status.peers.clear();
         assert_eq!(
-            serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap(),
+            serde_json::to_value(build_report(&status, &relays, &off).unwrap()).unwrap(),
             serde_json::json!({"nat_mapping": null, "paths": []})
         );
         status.hostname = Some("equipo de prueba".into());
         assert_eq!(
-            serde_json::to_value(build_report(&status, &relays).unwrap()).unwrap(),
+            serde_json::to_value(build_report(&status, &relays, &off).unwrap()).unwrap(),
             serde_json::json!({"nat_mapping": null, "paths": [], "hostname": "equipo de prueba"})
         );
+    }
+
+    fn services_status() -> crate::engine::Status {
+        use crate::services::{Proto, Service};
+        crate::engine::Status {
+            nat: None,
+            public_key: String::new(),
+            addrs: vec![],
+            hostname: None,
+            counters: Default::default(),
+            config: crate::engine::ConfigStatus {
+                version: 1,
+                valid_until_unix: Some(300),
+                lease_active: true,
+                last_error: None,
+                last_error_detail: None,
+            },
+            services: [22, 8080, 8443]
+                .map(|port| Service {
+                    port,
+                    proto: Proto::Tcp,
+                })
+                .to_vec(),
+            services_truncated: false,
+            peers: vec![],
+        }
+    }
+
+    #[test]
+    fn report_without_publish_is_byte_identical_to_the_previous_format() {
+        let report =
+            build_report(&services_status(), &Default::default(), &Default::default()).unwrap();
+        assert_eq!(
+            serde_json::to_string(&report).unwrap(),
+            r#"{"nat_mapping":null,"paths":[]}"#
+        );
+    }
+
+    #[test]
+    fn report_publishes_services_with_exclude_label_and_scheme() {
+        let cfg = |extra: &str| {
+            crate::config::Config::parse(&format!(
+                "{}\n{extra}",
+                r#"interface = "atenea0"
+listen = "0.0.0.0:51820"
+ipc_socket = "/s"
+noise_key_file = "/n"
+identity_key_file = "/i"
+config_file = "/c"
+state_dir = "/d"
+network_id = "00112233445566778899aabbccddeeff"
+device_id = "ffeeddccbbaa99887766554433221100"
+trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001"
+"#
+            ))
+            .unwrap()
+            .services
+        };
+        let status = services_status();
+        let json = |c: &crate::config::ServicesConfig| {
+            serde_json::to_string(&build_report(&status, &Default::default(), c).unwrap()).unwrap()
+        };
+        let all = cfg(r#"[services]
+publish = true
+exclude = [22]
+[[services.entry]]
+port = 8443
+label = "  Panel  "
+scheme = "https"
+[[services.entry]]
+port = 9999
+label = "no escucha"
+"#);
+        assert_eq!(
+            json(&all),
+            r#"{"nat_mapping":null,"paths":[],"services":[{"port":8080,"proto":"tcp","scheme":"http"},{"port":8443,"proto":"tcp","scheme":"https","label":"Panel"}]}"#
+        );
+        // Sin servicios (o todos excluidos) se envía la lista vacía, que sustituye la anterior.
+        let none = cfg("[services]\npublish = true\nexclude = [22, 8080, 8443]\n");
+        assert_eq!(
+            json(&none),
+            r#"{"nat_mapping":null,"paths":[],"services":[]}"#
+        );
+        // Publicar apagado ignora exclude y entradas.
+        let off = cfg("[services]\nexclude = [22]\n");
+        assert_eq!(json(&off), r#"{"nat_mapping":null,"paths":[]}"#);
+        // Sin lease no hay informe aunque se publique.
+        let mut inactive = services_status();
+        inactive.config.lease_active = false;
+        assert!(build_report(&inactive, &Default::default(), &all).is_none());
+    }
+
+    #[test]
+    fn peer_services_are_validated_per_entry() {
+        use crate::services::{PeerService, Proto, Scheme};
+        let long = "x".repeat(65);
+        let many: Vec<_> = (1..=70)
+            .map(|port| serde_json::json!({"port": port, "proto": "tcp"}))
+            .collect();
+        let body = serde_json::json!([
+            {"device_id": "01".repeat(16), "name": "uno", "role": "server", "services": [
+                {"port": 80, "proto": "tcp"},
+                {"port": 443, "proto": "tcp", "scheme": "https", "label": "Web"},
+                {"port": 0, "proto": "tcp"},
+                {"port": 70000, "proto": "tcp"},
+                {"port": 53, "proto": "udp"},
+                {"port": 22, "proto": "tcp", "scheme": "ftp"},
+                {"port": 23, "proto": "tcp", "label": "mal\u{202e}"},
+                {"port": 24, "proto": "tcp", "label": long},
+                {"port": 25, "proto": "tcp", "label": 7},
+                {"port": 8080, "proto": "tcp", "label": " api ", "x": 1},
+                "basura"
+            ]},
+            {"device_id": "02".repeat(16), "name": "dos"},
+            {"device_id": "03".repeat(16), "name": "tres", "services": "no es lista"},
+            {"device_id": "04".repeat(16), "name": "cuatro", "services": many},
+            {"device_id": "05".repeat(16), "name": "cinco", "services": []}
+        ]);
+        let m = parse_peer_metadata(&serde_json::to_vec(&body).unwrap()).unwrap();
+        let svc = |port, scheme, label: Option<&str>| PeerService {
+            port,
+            proto: Proto::Tcp,
+            scheme,
+            label: label.map(Into::into),
+        };
+        assert_eq!(
+            m.services[&[1; 16]],
+            [
+                svc(80, Scheme::Http, None),
+                svc(443, Scheme::Https, Some("Web")),
+                svc(8080, Scheme::Http, Some("api")),
+            ]
+        );
+        // Una entrada mala no tumba el nombre ni el rol del par.
+        assert_eq!(
+            (m.names[&[1; 16]].as_str(), m.roles[&[1; 16]]),
+            ("uno", "server")
+        );
+        // Servidor anterior (sin campo), valor no lista o lista vacía: sin servicios.
+        for id in [2, 3, 5] {
+            assert!(!m.services.contains_key(&[id; 16]));
+            assert_eq!(m.names.len(), 5);
+        }
+        assert_eq!(m.services[&[4; 16]].len(), crate::services::MAX_SERVICES);
     }
 
     #[test]
