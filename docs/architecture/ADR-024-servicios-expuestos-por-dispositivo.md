@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-024: Servicios expuestos por dispositivo (publicarlos y abrirlos con un clic)
 
-- **Estado:** **Propuesto**, a decisión del responsable (2026-11-08). Nada de lo que describe está implementado. Las «Decisiones» llevan una recomendación; las que dependen del responsable están marcadas en «A decidir».
+- **Estado:** **Aceptado** por el responsable el 2026-11-08, con las cuatro decisiones D1 a D4 tal como se redactaron (la recomendación de cada una). **Implementación por fases**; la fase 2 (detección local en el agente) en curso. Nada de lo que describe está publicado.
 - **Relacionados:** [ADR-012](ADR-012-nombres-de-dispositivo.md) (el canal de metadatos de presentación que se reutiliza), [ADR-014](ADR-014-servidores-roles-y-redes-por-servidor.md) (`role` en `/device/peers`), [ADR-016](ADR-016-politicas-de-acceso-minimas.md) (políticas y ACL sin estado), [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md) y [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (la aplicación solo abre el panel y expone una lista cerrada de métodos), [ADR-013](ADR-013-redes-multiples-y-union-por-codigo.md) (una instancia de agente e interfaz por red) y [ADR-017](ADR-017-redes-por-instancia-en-windows.md).
 
 ## Contexto
@@ -29,9 +29,9 @@ Hoy, para abrir un servicio de otro dispositivo (por ejemplo, un Storybook o una
 6. **Etiquetas y esquema.** En esta versión solo se pueden fijar en la configuración del agente (`[services]`), no desde la aplicación. Eso evita un camino nuevo de escritura con privilegios.
 7. **Lo que no cambia:** el contrato firmado, el protocolo del túnel, las políticas, la aprobación por huella y el filtrado del runtime de Wails. **No** se generan políticas, reglas de cortafuegos ni redirecciones a partir de lo detectado.
 
-### A decidir (con mi recomendación)
+### Decisiones del responsable (aceptadas con la recomendación)
 
-| # | Decisión | Recomendación | Alternativa |
+| # | Decisión | Aceptado | Alternativa descartada |
 |---|---|---|---|
 | D1 | **¿Publicación activada por defecto?** | **Apagada por defecto** (`[services] publish = false`), con un interruptor «Publicar mis servicios en esta red» en la aplicación. Una vez activo, todo lo que empiece a escuchar se detecta solo | Encendida por defecto: más cómodo, pero cada equipo que se una empieza a publicar sin haberlo decidido |
 | D2 | **¿Quién ve la lista de un dispositivo?** | Solo los pares con política hacia él (como el resto de `/device/peers`) | Todos los miembros de la red: más fácil de descubrir, pero muestra servicios a quien no puede llegar a ellos |
