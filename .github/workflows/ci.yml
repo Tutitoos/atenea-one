@@ -1,8 +1,11 @@
 name: CI
 
 on:
-  # Solo a demanda (decisión del responsable, 2026-10-28): Actions > CI > Run workflow, o `gh workflow run CI`.
-  # Ni push, ni pull_request, ni ejecución semanal: nada se comprueba solo. `release.yml` es independiente.
+  # En pull requests contra main (publica el check `check`, obligatorio para main) y a demanda:
+  # Actions > CI > Run workflow, o `gh workflow run CI`. Ni push ni ejecución semanal.
+  # `release.yml` es independiente.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
