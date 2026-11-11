@@ -120,7 +120,9 @@ Este presupuesto no interrumpe la limpieza ni modifica los plazos HTTP durante e
 
 ## Sockets y estado
 
-El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload` y `cleanup`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
+El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload`, `cleanup` y `services-reload`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
+
+`services-reload` (ADR-024, fase 5) no acepta argumentos: vuelve a leer `agent.toml` con las mismas reglas de validación del arranque y adopta **solo** la sección `[services]`. No toca el túnel, las rutas, el DNS ni la configuración firmada. Si el fichero no valida, no cambia nada y se registra el rechazo. La respuesta `{"ok":true}` se envía antes de aplicarlo; el nuevo valor aparece en `services_publish` con la siguiente instantánea del estado (aprox. un segundo). Lo usa `atenea services publish on|off --network …`.
 
 Los listeners atienden clientes fuera del bucle TUN/UDP: como máximo 16 conexiones simultáneas por socket, órdenes de hasta 32 bytes y un segundo para toda la conexión (lectura y respuesta). El estado es una instantánea serializada renovada una vez por segundo, no un cálculo por cliente. La saturación del socket de estado no ocupa las plazas del control. Los paquetes rechazados como malformados por el backend TUN se descartan y cuentan en `tx_malformed`; los errores de E/S del dispositivo siguen siendo fatales.
 
@@ -131,6 +133,36 @@ atenea down --socket /run/atenea/control.sock
 ```
 
 El estado IPC y los informes autenticados al control plane incluyen `routes` (`prefix`, `state` y motivo opcional), `dns` (`applied`, `unsupported`, `none`) y `forwarding_ok` (nulo si no sirve subredes). El estado es declarado por el agente, no una prueba de conectividad de la LAN.
+
+### Servicios TCP del equipo (solo estado local)
+
+El estado IPC incluye `services`, la lista de puertos TCP que escucha el equipo, y `services_truncated` (`true` si hubo más de 64). Cada entrada es `{"port": 8080, "proto": "tcp"}`, ordenada y sin duplicados; no incluye procesos, PID, rutas ni usuarios. Se detecta cada 30 s en una tarea aparte (Linux: `/proc/net/tcp` y `/proc/net/tcp6`; macOS: `netstat -an -p tcp`; Windows: `Get-NetTCPConnection -State Listen`) y solo se conservan los sockets en dirección comodín (`0.0.0.0`, `::`) o en una dirección de la interfaz de esta red; se excluyen loopback, otras interfaces, el puerto 0 y el puerto UDP del propio agente. Si la lectura falla se conserva la lista anterior y se registra el fallo una vez. Esta información no sale del equipo salvo que se active `[services] publish` (siguiente sección).
+
+El estado IPC incluye además `services_publish` (booleano de primer nivel): el valor de `[services] publish` en vigor, que es lo que lee la aplicación de escritorio para pintar el interruptor. Cambia con la orden de control `services-reload` (véase «Sockets y estado»), no con editar el fichero sin recargar.
+
+**macOS: solo con privilegios.** En macOS 27.0.1, `netstat -an -p tcp` ejecutado **sin privilegios imprime la cabecera pero ninguna fila TCP** (ni en la salida completa de `netstat -an`), mientras que como administrador lista los sockets con el formato que parsea el agente (`tcp4`, `tcp6` y `tcp46`, con `*.puerto` como comodín y `LISTEN` al final). El agente del servicio corre como administrador y la lista sale bien; un agente de desarrollo lanzado sin privilegios en macOS devuelve `services` vacío sin error.
+
+### Publicar servicios (`[services]`, opcional)
+
+```toml
+[services]
+publish = false          # por defecto; con true el informe incluye los servicios detectados
+exclude = [22, 5432]     # puertos que nunca se publican
+
+[[services.entry]]       # solo presentación: etiqueta y esquema del enlace
+port = 8080
+label = "Panel interno"  # 1 a 32 caracteres, sin controles
+
+[[services.entry]]
+port = 8443
+scheme = "https"         # http (por defecto) o https
+```
+
+- **Apagado por defecto.** Con `publish = false` el informe es idéntico al de versiones anteriores: el campo `services` no se envía.
+- **No actives `publish` hasta que el control plane tenga la migración `0010` desplegada.** Un servidor anterior valida el informe con campos desconocidos prohibidos y rechazaría **todo** el informe (incluido el nombre y el estado de rutas), no solo los servicios.
+- Con `publish = true` se envía, cada 15 s y solo con la configuración vigente, la lista de servicios detectados menos `exclude`: por servicio `port`, `proto` (`tcp`), `scheme` (siempre; `http` salvo que la entrada diga `https`) y `label` (solo si la entrada lo define). Si no hay servicios se envía `[]`, que sustituye la lista anterior. Una entrada para un puerto que no escucha se ignora. Nunca se publican procesos, rutas, usuarios ni direcciones locales, y el contenido de la lista no se escribe en los registros.
+- Un `agent.toml` inválido (`label` vacía, de más de 32 caracteres o con caracteres de control o de dirección de texto; `scheme` distinto de `http`/`https`; puertos fuera de 1..=65535 o repetidos en `entry`) impide arrancar.
+- **Lectura.** El agente lee los `services` que el control plane devuelve para cada par con política hacia este equipo y los expone en `peers[].services` del estado (`port`, `proto`, `scheme` y `label` opcional). Cada entrada se valida por separado: una incorrecta se descarta sin afectar a las demás ni al nombre y rol del par. Un servidor anterior sin el campo equivale a una lista vacía. Son datos de presentación: no autorizan ni abren nada.
 
 ## Pruebas sin privilegios
 

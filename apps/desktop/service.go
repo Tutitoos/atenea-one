@@ -10,9 +10,10 @@ import (
 
 // AteneaService es el servicio vinculado de Wails y la ÚNICA superficie que la página puede invocar (ADR-019 §2 y
 // decisión 10): todo método exportado de un servicio registrado es invocable desde JavaScript, así que este tipo
-// tiene exactamente estos doce métodos (el duodécimo, ClientStatus, es de solo lectura: ADR-021) y la lógica vive en
-// `internal/app`, sin vincular. Añadir un método exportado es un cambio de seguridad: rompe TestServiceSurface y
-// exige revisión.
+// tiene exactamente estos catorce métodos (ClientStatus es de solo lectura: ADR-021; OpenService y ServicesPublishSet son
+// de ADR-024: la primera no recibe URL, solo id de par y puerto; la segunda es la única operación elevada nueva) y la
+// lógica vive en `internal/app`, sin vincular. Añadir un método exportado es un cambio de seguridad: rompe
+// TestServiceSurface y exige revisión.
 type AteneaService struct {
 	core *app.App
 	// onCall es la salida de la prueba de humo (ATENEA_SMOKE=1); en producción es nil.
@@ -96,4 +97,16 @@ func (s *AteneaService) AutostartGet() (*bool, error) {
 func (s *AteneaService) AutostartSet(on bool) error {
 	s.seen("AutostartSet")
 	return s.core.AutostartSet(on)
+}
+
+// OpenService abre en el navegador del sistema un servicio publicado por un par de una red unida (sin URL de la página).
+func (s *AteneaService) OpenService(network, deviceID string, port int) error {
+	s.seen("OpenService")
+	return s.core.OpenService(network, deviceID, port)
+}
+
+// ServicesPublishSet activa o apaga la publicación de los servicios de este equipo en una red, con la autorización del sistema.
+func (s *AteneaService) ServicesPublishSet(network string, on bool) error {
+	s.seen("ServicesPublishSet")
+	return s.core.ServicesPublishSet(network, on)
 }

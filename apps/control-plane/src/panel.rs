@@ -111,6 +111,53 @@ pub struct Report {
     dns: Option<DnsState>,
     routes: Option<Vec<RouteReport>>,
     hostname: Option<String>,
+    services: Option<Vec<Service>>,
+}
+/// Máximo de servicios publicados por dispositivo (ADR-024).
+const MAX_SERVICES: usize = 64;
+const MAX_LABEL_CHARS: usize = 32;
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ServiceProto {
+    Tcp,
+}
+#[derive(Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum ServiceScheme {
+    #[default]
+    Http,
+    Https,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Service {
+    port: u16,
+    proto: ServiceProto,
+    #[serde(default)]
+    scheme: ServiceScheme,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+/// Valida la lista y la devuelve normalizada (esquema por defecto aplicado, etiqueta sin espacios sobrantes).
+fn validate_services(mut list: Vec<Service>) -> Result<Vec<Service>, ApiError> {
+    let bad = || ApiError::bad("invalid_request");
+    if list.len() > MAX_SERVICES {
+        return Err(bad());
+    }
+    let mut ports = std::collections::HashSet::new();
+    for s in &mut list {
+        if s.port == 0 || !ports.insert(s.port) {
+            return Err(bad());
+        }
+        if let Some(label) = &s.label {
+            let label = crate::devices::name(label).map_err(|_| bad())?;
+            if label.chars().count() > MAX_LABEL_CHARS {
+                return Err(bad());
+            }
+            s.label = Some(label.to_owned());
+        }
+    }
+    Ok(list)
 }
 pub async fn status(
     State(s): State<AppState>,
@@ -163,6 +210,7 @@ pub async fn status(
         .map(crate::devices::name)
         .transpose()
         .map_err(|_| ApiError::bad("invalid_report"))?;
+    let services = report.services.map(validate_services).transpose()?;
     if report.routes.as_ref().is_some_and(|routes| {
         routes.len() > 256
             || routes.iter().any(|r| {
@@ -216,6 +264,13 @@ pub async fn status(
         sqlx::query("UPDATE devices SET hostname=$2,name=CASE WHEN name_source='device' THEN $2 ELSE name END WHERE id=$1")
             .bind(dev)
             .bind(hostname)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(services) = services {
+        sqlx::query("UPDATE devices SET services=$2,services_at=now() WHERE id=$1")
+            .bind(dev)
+            .bind(json!(services))
             .execute(&mut *tx)
             .await?;
     }

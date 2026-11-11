@@ -107,7 +107,7 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
             .fetch_all(&t.pool)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     // Reconstruye el estado 0006: redes y dispositivos previos quedan `cerrada` y `token`.
     t.pool
         .execute(
@@ -135,5 +135,23 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
         .await
         .unwrap();
     assert_eq!(allocations, 20000);
+    // Reconstruye el estado 0009: los dispositivos previos quedan sin servicios ni informe.
+    t.pool
+        .execute(
+            "ALTER TABLE devices DROP COLUMN services, DROP COLUMN services_at;
+        DELETE FROM _sqlx_migrations WHERE version=10;",
+        )
+        .await
+        .unwrap();
+    atenea_control_plane::db::migrate(&t.pool, None)
+        .await
+        .unwrap();
+    let empty: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE services='[]'::jsonb AND services_at IS NULL",
+    )
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(empty, 10000);
     t.finish().await;
 }

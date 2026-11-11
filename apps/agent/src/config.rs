@@ -34,6 +34,7 @@ struct RawConfig {
     device_id: String,
     trust_anchor: String,
     sync: Option<SyncConfig>,
+    services: Option<ServicesConfig>,
     coordinator: Option<CoordinatorConfig>,
 }
 
@@ -57,6 +58,84 @@ pub struct Config {
     pub trust_anchor: PublicKey,
     pub sync: Option<SyncConfig>,
     pub coordinator: Option<CoordinatorConfig>,
+    pub services: ServicesConfig,
+}
+
+/// Publicación de servicios (ADR-024, D1/D3/D4): apagada por defecto; nunca añade servicios, solo
+/// quita (`exclude`) y rotula (`entry`) los detectados.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServicesConfig {
+    #[serde(default)]
+    pub publish: bool,
+    #[serde(default)]
+    pub exclude: Vec<u16>,
+    #[serde(default)]
+    pub entry: Vec<ServiceEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceEntry {
+    pub port: u16,
+    pub label: Option<String>,
+    #[serde(default)]
+    pub scheme: crate::services::Scheme,
+}
+
+/// Mismo límite que el control plane para la etiqueta de un servicio.
+const MAX_LABEL_CHARS: usize = 32;
+
+impl ServicesConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.exclude.contains(&0) {
+            return Err("services.exclude: los puertos van de 1 a 65535".into());
+        }
+        let mut ports = std::collections::HashSet::new();
+        for e in &self.entry {
+            if e.port == 0 || !ports.insert(e.port) {
+                return Err("services.entry: puertos de 1 a 65535 y sin repetir".into());
+            }
+            if e.label.as_deref().is_some_and(|l| {
+                crate::names::accept(l).is_none_or(|l| l.chars().count() > MAX_LABEL_CHARS)
+            }) {
+                return Err(format!(
+                    "services.entry (puerto {}): label de 1 a {MAX_LABEL_CHARS} caracteres sin controles",
+                    e.port
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Recarga en caliente (orden `services-reload`): relee el fichero con las mismas reglas que el
+    /// arranque y adopta SOLO `[services]`; si algo no valida, `self` queda intacto.
+    pub fn reload(&mut self, path: &Path) -> Result<(), String> {
+        *self = Config::load(path)?.services;
+        Ok(())
+    }
+
+    /// Lista a publicar: los detectados sin los excluidos, con etiqueta y esquema de su entrada.
+    pub fn published(
+        &self,
+        detected: &[crate::services::Service],
+    ) -> Vec<crate::services::PeerService> {
+        detected
+            .iter()
+            .filter(|s| !self.exclude.contains(&s.port))
+            .map(|s| {
+                let entry = self.entry.iter().find(|e| e.port == s.port);
+                crate::services::PeerService {
+                    port: s.port,
+                    proto: s.proto,
+                    scheme: entry.map(|e| e.scheme).unwrap_or_default(),
+                    label: entry
+                        .and_then(|e| e.label.as_deref())
+                        .and_then(crate::names::accept),
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -230,6 +309,8 @@ impl Config {
         if let Some(c) = &raw.coordinator {
             c.validate()?;
         }
+        let services = raw.services.unwrap_or_default();
+        services.validate()?;
         Ok(Config {
             network_id: hex::decode::<16>(&raw.network_id)
                 .ok_or("network_id: se esperan 32 dígitos hex")?,
@@ -250,6 +331,7 @@ impl Config {
             config_file: raw.config_file,
             state_dir: raw.state_dir,
             sync: raw.sync,
+            services,
             coordinator: raw.coordinator,
         })
     }
@@ -333,6 +415,89 @@ trust_anchor = "0000000000000000000000000000000000000000000000000000000000000001
         assert!(c.status_socket.is_none());
         assert!(c.status_gid.is_none());
         assert_eq!(c.handshake_cookie_threshold_per_second.get(), 100);
+    }
+
+    #[test]
+    fn services_default_to_not_publishing() {
+        let s = Config::parse(GOOD).unwrap().services;
+        assert!(!s.publish && s.exclude.is_empty() && s.entry.is_empty());
+        assert!(
+            !Config::parse(&format!("{GOOD}\n[services]"))
+                .unwrap()
+                .services
+                .publish
+        );
+    }
+
+    #[test]
+    fn services_valid_configuration() {
+        let c = Config::parse(&format!(
+            "{GOOD}\n[services]\npublish = true\nexclude = [22, 5432]\n\
+             [[services.entry]]\nport = 8080\nlabel = \"Panel\"\n\
+             [[services.entry]]\nport = 8443\nscheme = \"https\"\n\
+             [[services.entry]]\nport = 9000\nlabel = \"{}\"\n",
+            "ñ".repeat(32)
+        ))
+        .unwrap()
+        .services;
+        assert!(c.publish);
+        assert_eq!(c.exclude, [22, 5432]);
+        assert_eq!(c.entry.len(), 3);
+        assert_eq!(c.entry[0].scheme, crate::services::Scheme::Http);
+        assert_eq!(c.entry[1].scheme, crate::services::Scheme::Https);
+        assert!(c.entry[1].label.is_none());
+    }
+
+    #[test]
+    fn services_invalid_configuration_is_rejected() {
+        let entry = |body: &str| format!("{GOOD}\n[[services.entry]]\n{body}\n");
+        for bad in [
+            format!("{GOOD}\n[services]\nexclude = [0]"),
+            format!("{GOOD}\n[services]\nexclude = [65536]"),
+            format!("{GOOD}\n[services]\nsurprise = 1"),
+            format!("{GOOD}\n[services]\npublish = \"yes\""),
+            entry("port = 0"),
+            entry("port = 65536"),
+            entry("port = 80\nscheme = \"ftp\""),
+            entry("port = 80\nproto = \"tcp\""),
+            entry("port = 80\nlabel = \"\""),
+            entry("port = 80\nlabel = \"   \""),
+            entry(&format!("port = 80\nlabel = \"{}\"", "x".repeat(33))),
+            entry("port = 80\nlabel = \"mal\\u202etexto\""),
+            entry("port = 80\nlabel = \"salto\\nde línea\""),
+            format!(
+                "{}{}",
+                entry("port = 80"),
+                "[[services.entry]]\nport = 80\n"
+            ),
+        ] {
+            assert!(Config::parse(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn services_reload_adopts_only_valid_services_and_keeps_the_rest_on_error() {
+        let dir = std::env::temp_dir().join(format!("atenea-svc-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agent.toml");
+        let write = |extra: &str| std::fs::write(&path, format!("{GOOD}\n{extra}\n")).unwrap();
+        write("");
+        let mut services = Config::load(&path).unwrap().services;
+        assert!(!services.publish);
+        write("[services]\npublish = true\nexclude = [22]");
+        services.reload(&path).unwrap();
+        assert!(services.publish && services.exclude == [22]);
+        // Inválida: error y estado intacto.
+        write("[services]\npublish = false\nexclude = [0]");
+        assert!(services.reload(&path).is_err());
+        assert!(services.publish && services.exclude == [22]);
+        // Fichero ausente: igual.
+        std::fs::remove_file(&path).unwrap();
+        assert!(services.reload(&path).is_err());
+        assert!(services.publish);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

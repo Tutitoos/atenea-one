@@ -12,6 +12,8 @@ const methods = {
   network_apply: ['NetworkApply', ['op', 'network', 'code', 'name']],
   device_ping: ['DevicePing', ['network', 'address']],
   open_panel: ['OpenPanel', ['network', 'deviceId']],
+  open_service: ['OpenService', ['network', 'deviceId', 'port']],
+  services_publish_set: ['ServicesPublishSet', ['network', 'on']],
   notifications_get: ['NotificationsGet', []],
   notifications_set: ['NotificationsSet', ['on']],
   autostart_get: ['AutostartGet', []],

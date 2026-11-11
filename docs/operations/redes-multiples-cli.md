@@ -6,7 +6,7 @@
 
 ## Comandos
 
-Todos aceptan `--root <dir>` (también `ATENEA_NETWORKS_DIR`). `join`, `up`, `down` y `leave` cambian el sistema y se ejecutan como root.
+Todos aceptan `--root <dir>` (también `ATENEA_NETWORKS_DIR`). `join`, `up`, `down`, `leave` y `services publish` cambian el sistema y se ejecutan como root.
 El indicador global `--backend auto|process|system` selecciona el gestor. `auto` usa systemd en Linux si es PID 1 y launchd en macOS; sin systemd conserva el arranque como proceso. `process` fuerza ese modo (laboratorios) y `system` fuerza el gestor nativo. Se conserva la selección en `network.json` (`service_backend`) y `list` la muestra como `backend`. Antes de cambiar de gestor hay que parar la instancia con su gestor actual.
 
 ```sh
@@ -18,6 +18,7 @@ sudo atenea network down  <id|prefijo|sufijo|nombre>
 sudo atenea network leave <id|prefijo|sufijo|nombre> [--yes] [--offline]
 sudo atenea network up <uuid> --backend system    # habilita el servicio para el siguiente arranque
 sudo atenea network up <uuid> --backend process   # laboratorio: proceso, sin servicio
+sudo atenea services publish <on|off> --network <id|prefijo|sufijo|nombre>   # ADR-024
 ```
 
 - **`inspect <código>`**: decodifica y muestra nombre, servidor, UUID, huella de la raíz y si lleva token; no requiere root, no toca el disco ni usa la red. Nunca muestra el token. Con `--json` imprime una sola línea con este formato (valores del vector sintético de [código de red v1](../protocol/join-code-v1.md)): `{"name":"Red de ejemplo","server":"control.example.test","network_id":"01020304-0506-0708-090a-0b0c0d0e0f10","root_fingerprint":"6c4b-fd0b-2585-9aae-61ad-9159-3650-be21","has_token":false}`. Un código inválido termina con error `código no válido: …`, salida distinta de cero y sin nada en stdout.
@@ -30,6 +31,7 @@ sudo atenea network up <uuid> --backend process   # laboratorio: proceso, sin se
 - **`up` / `down`**: arrancan o paran la instancia de esa red con su configuración; son idempotentes. La red se identifica por id completo, prefijo o sufijo único (≥ 4 caracteres) o nombre único; si es ambiguo se listan las candidatas.
 - **`leave`**: confirma y **revoca el dispositivo en el servidor mediante una petición firmada con las claves de esa red**, también si la solicitud está pendiente de aprobación. Solo después para la instancia, ejecuta `atenea-agent cleanup` de esa red y **borra su directorio, claves incluidas** (irreversible). No toca ninguna otra red. Si el servidor no responde o rechaza, falla sin parar ni borrar nada; reintenta cuando esté disponible. Si la revocación ya se completó y falla la limpieza local, el error lo indica: el dispositivo **ya está revocado**, aunque queden ficheros locales. Repetir la revocación es seguro.
 - **`leave --offline`**: salida de emergencia sin contactar con el servidor; conserva la confirmación y `--yes`, limpia y borra solo lo local. Emite un aviso explícito: el dispositivo **SIGUE registrado en el servidor** y un administrador debe revocarlo por la huella y el id mostrados. Sin las claves borradas ya no podrás firmar su retirada. La aplicación no ofrece esta opción: si el servidor falla, muestra el error del CLI.
+- **`services publish <on|off> --network <red>`** (ADR-024, fase 5): fija `[services] publish` en el `agent.toml` de esa red, conservando el resto del fichero (comentarios, orden y espacios; solo cambia esa clave, o añade la sección `[services]` si no existe), con escritura atómica y el mismo modo, propietario y grupo que el original. Si el agente de la red está en marcha, le envía la orden `services-reload` y **no corta el túnel**: el agente relee solo `[services]` y la publicación empieza o se detiene en el siguiente informe (≤ 15 s). El comando espera a ver `services_publish` con el valor pedido en el estado; si el agente no lo adopta (por ejemplo, `[services]` inválido) o es anterior a esta orden, **restaura el fichero** y falla con un error. Con la red parada solo edita el fichero y avisa. Es idempotente; un fichero inválido no se toca; imprime como última línea `publish=on` o `publish=off`. Solo Unix: en Windows devuelve «no está soportado todavía».
 
 `join`, `leave` y la asignación de interfaz/puerto se serializan con un bloqueo exclusivo del directorio raíz (`File::lock`); también `up` y `down` lo respetan. La asignación reserva los recursos declarados de la instancia heredada aunque esté parada, y comprueba los puertos contra el sistema.
 

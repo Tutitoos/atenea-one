@@ -312,7 +312,7 @@ async fn peers_incluye_rol_actual_solo_de_pares_permitidos_de_su_red() {
     assert_eq!(peers.status, StatusCode::OK, "{}", peers.json);
     assert_eq!(
         peers.json,
-        json!([{"device_id":visible.id,"name":"dispositivo sintético","role":"server"}])
+        json!([{"device_id":visible.id,"name":"dispositivo sintético","role":"server","services":[]}])
     );
     assert_eq!(
         patch(&t, Some(&owner), net, &visible, json!({"role":"device"}))

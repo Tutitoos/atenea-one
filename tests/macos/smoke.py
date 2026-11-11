@@ -43,17 +43,29 @@ def phase(message):
 def until(check, seconds=30, *, description, process=None):
     phase(f"esperando {description} (máximo {seconds}s)")
     deadline = time.monotonic() + seconds
+    last = None  # Último valor/error leído, para diagnosticar el timeout.
     while time.monotonic() < deadline:
         if process is not None and process.poll() is not None:
             raise AssertionError(f"{description}: proceso terminó con {process.returncode}")
         try:
-            result = check()
+            result = last = check()
             if result:
                 return result
-        except (OSError, ValueError, subprocess.CalledProcessError):
-            pass
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            last = repr(error)
         time.sleep(0.2)
-    raise AssertionError(f"Timeout esperando {description}")
+    raise AssertionError(f"Timeout esperando {description}; último valor: {last!r}")
+
+
+def agent_interface():
+    """utun del agente con MTU, IPv4 e IPv6 ya configurados; None si aún no."""
+    for line in call("/sbin/ifconfig").splitlines():
+        if line.startswith("utun") and "mtu 1280" in line:
+            name = line.split(":")[0]
+            text = call("/sbin/ifconfig", name)
+            if "inet 10.77.0.2" in text and "inet6 fd77::2" in text:
+                return name
+    return None
 
 
 def terminate(process):
@@ -523,14 +535,11 @@ dst = "any"
 
         agent = start()
         until(lambda: (work / "control.sock").exists(), description="socket de control", process=agent)
-        until(lambda: "inet 10.77.0.2" in call("/sbin/ifconfig"), description="IPv4 en utun", process=agent)
-        interface = next(line.split(":")[0] for line in call("/sbin/ifconfig").splitlines()
-                         if line.startswith("utun") and "mtu 1280" in line
-                         and "inet 10.77.0.2" in call("/sbin/ifconfig", line.split(":")[0]))
-        assert "fd77::2" in call("/sbin/ifconfig", interface)
-        assert stat.S_IMODE((work / "control.sock").stat().st_mode) == 0o600
-        assert stat.S_IMODE((work / "status.sock").stat().st_mode) == 0o660
-        assert stat.S_IMODE((work / "state/state.bin").stat().st_mode) == 0o600
+        interface = until(agent_interface, description="utun con IPv4 e IPv6", process=agent)
+        # El socket se crea y después se ajusta su modo; state.bin se escribe tras arrancar.
+        until(lambda: stat.S_IMODE((work / "control.sock").stat().st_mode) == 0o600, description="modo del socket de control", process=agent)
+        until(lambda: stat.S_IMODE((work / "status.sock").stat().st_mode) == 0o660, description="modo del socket de estado", process=agent)
+        until(lambda: stat.S_IMODE((work / "state/state.bin").stat().st_mode) == 0o600, description="state.bin", process=agent)
         assert (work / "state/state.bin").stat().st_uid == 0
         phase("comprobando aislamiento del socket con sonda Rust")
         probe = work / "atenea-ipc-probe"
@@ -583,8 +592,7 @@ dst = "any"
         # Reinicio carga v2 persistida; SIGKILL prueba la limpieza de arranque y cleanup offline.
         agent = start()
         until(lambda: RESOLVER.exists(), description="DNS tras reinicio", process=agent)
-        text = call("/sbin/ifconfig")
-        interface = next(line.split(":")[0] for line in text.splitlines() if line.startswith("utun") and "mtu 1280" in line and "inet 10.77.0.2" in call("/sbin/ifconfig", line.split(":")[0]))
+        interface = until(agent_interface, description="utun tras reinicio", process=agent)
         phase("SIGKILL y cleanup offline")
         agent.kill()
         agent.wait(timeout=10)

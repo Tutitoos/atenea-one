@@ -117,11 +117,8 @@ func validName(name string) (string, bool, error) {
 // Script es la orden de shell que se ejecuta con privilegios. Todos los fragmentos variables ya están
 // validados (ValidUUID, NormalizeCode, un número), así que no contienen comillas ni metacaracteres.
 func Script(cli string, op Op, network, code, name string, gid uint32) (string, error) {
-	for i := range len(cli) {
-		c := cli[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("/._-", c) >= 0) {
-			return "", errors.New("ruta del CLI no válida")
-		}
+	if err := validCLI(cli); err != nil {
+		return "", err
 	}
 	net := func() (string, error) {
 		if ValidUUID(network) {
@@ -172,6 +169,32 @@ func Script(cli string, op Op, network, code, name string, gid uint32) (string, 
 		return fmt.Sprintf("%s network migrate-legacy --yes", cli), nil
 	}
 	return "", errors.New("operación no permitida")
+}
+
+func validCLI(cli string) error {
+	for i := range len(cli) {
+		c := cli[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("/._-", c) >= 0) {
+			return errors.New("ruta del CLI no válida")
+		}
+	}
+	return nil
+}
+
+// ServicesPublishScript es EXACTAMENTE `<cli> services publish on|off --network <uuid>` (ADR-024, fase 5): lista
+// cerrada, sin argumentos libres.
+func ServicesPublishScript(cli, network string, on bool) (string, error) {
+	if err := validCLI(cli); err != nil {
+		return "", err
+	}
+	if !ValidUUID(network) {
+		return "", errors.New("identificador de red no válido")
+	}
+	state := "off"
+	if on {
+		state = "on"
+	}
+	return fmt.Sprintf("%s services publish %s --network %s", cli, state, network), nil
 }
 
 // ElevationCommand devuelve el programa y los argumentos que piden la autorización del sistema. No los

@@ -127,7 +127,10 @@ fn schemas() -> ComponentsBuilder {
         ("Server", complete(&[("control_plane", named("ServiceVersion")), ("server_time", timestamp())])),
         ("DeviceName", device_name),
         ("DeviceNameSource", choices(&["admin", "device"])),
-        ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName")), ("role", named("DeviceRole"))])),
+        ("DeviceServiceLabel", ObjectBuilder::new().schema_type(Type::String).min_length(Some(1)).max_length(Some(32)).description(Some("Etiqueta de 1 a 32 caracteres Unicode tras recortar espacios; mismas reglas de caracteres que DeviceName (sin controles ni marcas bidireccionales). Solo visualización.")).into()),
+        ("DeviceService", object(&[("port", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(1)).maximum(Some(65535)).into()), ("proto", choices(&["tcp"])), ("scheme", choices(&["http", "https"])), ("label", named("DeviceServiceLabel"))], &["port", "proto", "scheme"])),
+        ("DeviceServiceInput", object(&[("port", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(1)).maximum(Some(65535)).into()), ("proto", choices(&["tcp"])), ("scheme", choices(&["http", "https"])), ("label", named("DeviceServiceLabel"))], &["port", "proto"])),
+        ("DevicePeer", complete(&[("device_id", uuid()), ("name", named("DeviceName")), ("role", named("DeviceRole")), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Servicios TCP que el par publica; [] si no publica, si el informe tiene más de 120 s o si nunca informó. Es información de visualización: publicar un servicio no lo hace alcanzable ni crea políticas (el ACL no limita puertos).")).into())])),
         ("Name", complete(&[("name", name.clone())])),
         ("OrganizationCreated", complete(&[("id", uuid()), ("name", text())])),
         ("Organization", complete(&[("id", uuid()), ("name", text()), ("role", named("Role"))])),
@@ -157,7 +160,7 @@ fn schemas() -> ComponentsBuilder {
         ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
         ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Último informe de servicios guardado, sin filtro de antigüedad; [] si nunca se ha publicado. Consulte services_at.")).into()), ("services_at", nullable_timestamp()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceId", complete(&[("device_id", uuid())])),
         ("DeviceUpdate", object(&[("role", named("DeviceRole")), ("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
@@ -185,7 +188,7 @@ fn schemas() -> ComponentsBuilder {
         ("DnsState",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).enum_values(Some([serde_json::json!("applied"),serde_json::json!("unsupported"),serde_json::json!("none"),serde_json::Value::Null])).into()),
         ("RouteReport",object(&[("prefix",text()),("state",choices(&["installed","conflict","pending"])),("reason",nullable_text())], &["prefix","state"])),
         ("RouteReports",utoipa::openapi::schema::OneOfBuilder::new().item(ArrayBuilder::new().items(named("RouteReport")).max_items(Some(256))).item(ObjectBuilder::new().schema_type(Type::Null)).into()),
-        ("DeviceReportInput", object(&[("hostname", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).min_length(Some(1)).max_length(Some(64)).description(Some("Nombre del sistema opcional; misma normalización que DeviceName. Inválido: 400 invalid_report. Ausente o null conserva el último hostname; solo actualiza name si name_source=device.")).into()),("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into()),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))], &["paths"])),
+        ("DeviceReportInput", object(&[("hostname", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String,Type::Null])).min_length(Some(1)).max_length(Some(64)).description(Some("Nombre del sistema opcional; misma normalización que DeviceName. Inválido: 400 invalid_report. Ausente o null conserva el último hostname; solo actualiza name si name_source=device.")).into()),("services",utoipa::openapi::schema::OneOfBuilder::new().item(ArrayBuilder::new().items(named("DeviceServiceInput")).max_items(Some(64))).item(ObjectBuilder::new().schema_type(Type::Null)).description(Some("Servicios TCP publicados (ADR-024). Ausente o null: no toca lo guardado (agente antiguo o publicación apagada). Presente, incluida []: sustituye la lista anterior y fija services_at. Puertos duplicados, puerto 0, más de 64 o etiqueta inválida: 400 invalid_request; proto distinto de tcp, scheme fuera de http|https o campos desconocidos: 400 invalid_report.")).into()),("nat_mapping",named("NatMapping")),("paths",ArrayBuilder::new().items(named("DevicePath")).max_items(Some(256)).into()),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))], &["paths"])),
         ("DeviceReport", complete(&[("reported_at",timestamp()),("age_secs",integer()),("nat_mapping",named("NatMapping")),("paths",named("[]DevicePath")),("forwarding_ok",ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::Boolean,Type::Null])).into()),("dns",named("DnsState")),("routes",named("RouteReports"))])),
         ("NetworkSample",complete(&[("at",timestamp()),("total",integer()),("direct",integer()),("relay",integer()),("probing",integer()),("unknown",integer()),("offline",integer())])),
         ("NetworkEvent",object(&[("type",choices(&["hello","changed"])),("seq",integer()),("scope",choices(&["devices","policies","audit","network","metrics","routes","dns"]))], &["type","seq"])),
@@ -989,7 +992,7 @@ pub fn document() -> OpenApi {
             operation = operation.description(Some("Respuesta firmada con versión estrictamente creciente. Sin políticas no hay pares. Excluye dispositivos pendientes/revocados. Incluye reglas inversas sin puertos. not_after no supera el certificado del emisor; duración por defecto 300 s."));
         }
         if id == "getDevicePeers" {
-            operation = operation.description(Some("Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos."));
+            operation = operation.description(Some("Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. services es siempre un array: solo trae servicios de pares ya visibles por política y con un informe de 120 s o menos; en otro caso []. Publicar un servicio no lo hace alcanzable ni crea políticas. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos."));
         }
         if id == "updateDevice" {
             operation = operation.description(Some("name fija name_source=admin y conserva hostname. use_system_name=true restaura el último hostname y fija name_source=device; sin hostname: 409 no_system_name. name junto con use_system_name=true: 400 invalid_request. Nombre inválido: 400 invalid_name."));
@@ -1014,7 +1017,7 @@ pub fn document() -> OpenApi {
             operation = operation.description(Some("Sin autenticación: la CA es pública y solo se usa para validar el TLS del relay. El cliente la descarga al unirse y la acepta únicamente si su SHA-256 (del DER) coincide con relay_ca_sha256 del código de unión. 404 not_found si el servidor no tiene configurada la CA. PEM canónico de un único certificado. Cache-Control: public, max-age=300."));
         }
         if id == "reportDeviceStatus" {
-            operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo."));
+            operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo. services opcional (ver DeviceReportInput): máximo 64, sin puertos duplicados; mismos límites de tamaño, nonce y tasa que el resto del informe."));
         }
         if id == "leaveDeviceNetwork" {
             operation = operation.description(Some("Cuerpo vacío (límite 1024 bytes; exceso o contenido no vacío: 400 invalid_request). Reutiliza la firma AtDevice, ventana de 60 s, anti-replay y device_per_minute. Admite pending y approved; revoked responde 200 sin cambios. Actor device, acción device.leave; libera direcciones y rechaza rutas solo del firmante."));
@@ -1130,6 +1133,23 @@ mod tests {
         assert!(
             document["components"]["schemas"]["DeviceReportInput"]["properties"]
                 .get("hostname")
+                .is_some()
+        );
+        for field in ["services", "services_at"] {
+            assert!(
+                document["components"]["schemas"]["Device"]["properties"]
+                    .get(field)
+                    .is_some()
+            );
+        }
+        assert!(
+            document["components"]["schemas"]["DevicePeer"]["properties"]
+                .get("services")
+                .is_some()
+        );
+        assert!(
+            document["components"]["schemas"]["DeviceReportInput"]["properties"]
+                .get("services")
                 .is_some()
         );
         for field in ["name_source", "hostname"] {

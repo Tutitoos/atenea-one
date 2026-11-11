@@ -258,6 +258,21 @@ func Apply(op, network, code, name string) (string, error) {
 	return Elevate(script, prompt(o, joinName))
 }
 
+// SetServicesPublish activa o apaga la publicación de servicios de ESA red (ADR-024, fase 5) con el diálogo de
+// autorización del sistema. Es la única orden elevada con argumentos fijos: `services publish on|off --network <uuid>`.
+func SetServicesPublish(network string, on bool) error {
+	script, err := ServicesPublishScript(CLIPath(), network, on)
+	if err != nil {
+		return err
+	}
+	text := "Atenea One quiere dejar de publicar los servicios de este equipo en una red."
+	if on {
+		text = "Atenea One quiere publicar los servicios de este equipo en una red."
+	}
+	_, err = Elevate(script, text)
+	return err
+}
+
 // JoinedNetworks son las redes unidas y su estado persistido, actualizado por el CLI. Ante cualquier fallo, vacío.
 func JoinedNetworks() []map[string]any {
 	text, err := List()

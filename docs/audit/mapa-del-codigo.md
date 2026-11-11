@@ -133,7 +133,7 @@ Historia y delta comprobados con `git log --oneline a0f8ac7..HEAD -- apps packag
 
 **14 objetivos** en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets) (**VERIFICADO — lectura**): `datagram_parse` (protocol), `handshake_init`, `session_decrypt`, `replay_window`, `hex_decode` (crypto), `signed_config_verify`, `device_config_parse`, `config_v2_parse`, `cert_bundle_state_parse` y **`join_code_parse`** (identity), `ip_classify` (policies), `relay_parse` (relay-core), `stun_parse` (nat-traversal), `agent_engine` (motor con pares simulados). `join_code_parse` es nuevo desde a0f8ac7. `fuzz` está excluido del workspace raíz y tiene `Cargo.lock` propio; desktop es otro workspace independiente.
 
-**Sin objetivo específico de fuzz** (**VERIFICADO — lectura** del inventario): handlers HTTP de control plane/coordinator, estado y sockets del relay, IPC, elevación/autostart del escritorio, `crates/windows`, `crates/tunnel`, JSON de `coord.rs`. `ci.yml` no ejecuta fuzz. La CI ordinaria es **solo manual (`workflow_dispatch`)**; seleccionar rutas no implica comprobación automática al hacer push/PR. Ejecución/resultados de fuzz actual y campañas prolongadas: **SIN COMPROBAR**.
+**Sin objetivo específico de fuzz** (**VERIFICADO — lectura** del inventario): handlers HTTP de control plane/coordinator, estado y sockets del relay, IPC, elevación/autostart del escritorio, `crates/windows`, `crates/tunnel`, JSON de `coord.rs`. `ci.yml` no ejecuta fuzz. La CI ordinaria corre en pull requests contra `main` y a demanda (`workflow_dispatch`), no al hacer push. Ejecución/resultados de fuzz actual y campañas prolongadas: **SIN COMPROBAR**.
 
 ## 5. Inventario de bloques `unsafe`
 

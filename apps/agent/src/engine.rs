@@ -523,6 +523,8 @@ pub struct PeerStatus {
     pub addrs: Vec<String>,
     /// Nombre de visualización que reparte el control plane (ADR-012); no firmado, solo para mostrar.
     pub name: Option<String>,
+    /// Servicios que el par publica (ADR-024); solo informativos, nunca abren acceso.
+    pub services: Vec<crate::services::PeerService>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<&'static str>,
     pub endpoint: Option<String>,
@@ -560,6 +562,11 @@ pub struct Status {
     pub counters: BTreeMap<&'static str, u64>,
     pub config: ConfigStatus,
     pub peers: Vec<PeerStatus>,
+    /// Servicios TCP detectados en este equipo (ADR-024, fase 2); solo se publican con `publish = true`.
+    pub services: Vec<crate::services::Service>,
+    pub services_truncated: bool,
+    /// `[services] publish` en vigor; la aplicación lo lee para pintar el interruptor (ADR-024, fase 5).
+    pub services_publish: bool,
 }
 
 pub struct Engine {
@@ -596,9 +603,12 @@ pub struct Engine {
     last_config_error: Option<&'static str>,
     last_config_error_detail: Option<String>,
     nat: Option<NatStatus>,
+    services: (Vec<crate::services::Service>, bool),
+    services_publish: bool,
     /// Nombres de visualización (ADR-012): nunca intervienen en la identidad ni en la política.
     names: HashMap<DeviceId, String>,
     roles: HashMap<DeviceId, &'static str>,
+    peer_services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
     hostname: Option<String>,
     probe_random: fn() -> u32,
 }
@@ -637,7 +647,10 @@ impl Engine {
             last_config_error_detail: None,
             nat: None,
             names: HashMap::new(),
+            services: (Vec::new(), false),
+            services_publish: false,
             roles: HashMap::new(),
+            peer_services: HashMap::new(),
             hostname: None,
             probe_random: crypto::random_u32,
         }
@@ -1937,10 +1950,24 @@ impl Engine {
         self.nat = Some(nat);
     }
 
+    /// Direcciones del túnel de este dispositivo (para filtrar los servicios detectados).
+    pub fn own_addrs(&self) -> &[IpAddr] {
+        &self.own
+    }
+
+    pub fn set_services(&mut self, services: (Vec<crate::services::Service>, bool)) {
+        self.services = services;
+    }
+
+    pub fn set_services_publish(&mut self, publish: bool) {
+        self.services_publish = publish;
+    }
+
     pub fn set_metadata(&mut self, hostname: Option<String>, peers: crate::sync::PeerMetadata) {
         self.hostname = hostname;
         self.names = peers.names;
         self.roles = peers.roles;
+        self.peer_services = peers.services;
     }
 
     pub fn status(&self, now: Instant, unix: u64) -> Status {
@@ -1957,6 +1984,9 @@ impl Engine {
                 last_error_detail: self.last_config_error_detail.clone(),
             },
             nat: self.nat.clone(),
+            services: self.services.0.clone(),
+            services_truncated: self.services.1,
+            services_publish: self.services_publish,
             peers: self
                 .peers
                 .iter()
@@ -1965,6 +1995,11 @@ impl Engine {
                     public_key: crypto::hex::encode(&p.public),
                     addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
                     name: self.names.get(&p.device_id).cloned(),
+                    services: self
+                        .peer_services
+                        .get(&p.device_id)
+                        .cloned()
+                        .unwrap_or_default(),
                     role: self.roles.get(&p.device_id).copied(),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
@@ -2887,6 +2922,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_status_carries_detected_services() {
+        use crate::services::{Proto, Service};
+        let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
+        let json = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(json["services"], serde_json::json!([]));
+        assert_eq!(json["services_truncated"], false);
+        assert_eq!(json["services_publish"], false);
+        e.set_services_publish(true);
+        assert_eq!(
+            serde_json::to_value(e.status(Instant::now(), 0)).unwrap()["services_publish"],
+            true
+        );
+        e.set_services((
+            vec![Service {
+                port: 8080,
+                proto: Proto::Tcp,
+            }],
+            true,
+        ));
+        let json = serde_json::to_value(e.status(Instant::now(), 0)).unwrap();
+        assert_eq!(
+            json["services"],
+            serde_json::json!([{"port": 8080, "proto": "tcp"}])
+        );
+        assert_eq!(json["services_truncated"], true);
+    }
     #[test]
     fn no_configuration_means_no_traffic() {
         let mut e = Engine::new(NET, StaticKeypair::generate(), 0);
@@ -4033,12 +4095,26 @@ mod tests {
             crate::sync::PeerMetadata {
                 names,
                 roles: HashMap::from([([2; 16], "server")]),
+                services: HashMap::from([(
+                    [2; 16],
+                    vec![crate::services::PeerService {
+                        port: 8443,
+                        proto: crate::services::Proto::Tcp,
+                        scheme: crate::services::Scheme::Https,
+                        label: Some("panel".into()),
+                    }],
+                )]),
             },
         );
         let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
         assert_eq!(after["hostname"], "este equipo");
         assert_eq!(after["peers"][0]["name"], "el otro");
         assert_eq!(after["peers"][0]["role"], "server");
+        assert_eq!(
+            after["peers"][0]["services"],
+            serde_json::json!([{"port":8443,"proto":"tcp","scheme":"https","label":"panel"}])
+        );
+        assert_eq!(before["peers"][0]["services"], serde_json::json!([]));
         // Un nombre sin par en la configuración no crea pares ni cambia claves.
         assert_eq!(after["peers"].as_array().unwrap().len(), 1);
         assert_eq!(

@@ -65,6 +65,26 @@ se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre e
 
 **Sin comprobar en un Windows real:** el ping a un par (no había ningún par: era el único dispositivo de la red), abrir el panel con `rundll32`, el resto de pantallas (Diagnóstico, Servidores) y otras versiones o idiomas de Windows. El formato de tiempo de `ping` en español (`<1m`) está escrito de memoria. La app no verifica que el propietario de la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI, vetado en la app): un usuario local que creara esa tubería antes que el servicio podría mostrar un estado falso y que «Abrir el panel» abriera una URL suya (siempre `https`, sin credenciales).
 
+## Servicios de los dispositivos
+
+Fase 5 de [ADR-024](../architecture/ADR-024-servicios-expuestos-por-dispositivo.md). Implementada con pruebas unitarias; **no se ha
+visto la interfaz pintada ni se ha ejecutado el diálogo de privilegios real**.
+
+- **Qué se ve.** El detalle de un par tiene una sección **Servicios** con los puertos TCP que ese par publica en la red elegida
+  (puerto, etiqueta, esquema), con **Abrir** y **Copiar dirección**; la lista de dispositivos indica cuántos publica cada uno.
+  Un par solo aparece con servicios si los publica y si hay una política hacia él. **Publicar un servicio no lo hace alcanzable**:
+  lo deciden las políticas y el cortafuegos de cada equipo.
+- **Abrir.** La interfaz nunca envía una URL: manda la red, el id del par y el puerto (`OpenService`). El backend comprueba que ese
+  puerto figura en la lista publicada por ese par en el estado de esa red y construye `http(s)://<IPv4 del par>:<puerto>/` (IPv6
+  entre corchetes si no hay IPv4) con el esquema publicado. Se abre con el navegador del sistema (`open`, `xdg-open` o `rundll32`).
+  El estado local del agente no expone los prefijos de la red: la dirección sale de las del propio par, que el agente solo acepta
+  dentro de ellos, y se descartan bucle local, multicast y enlace local.
+- **Publicar los propios.** En **Diagnóstico → Servicios**, el interruptor «Publicar mis servicios en esta red» (por red, apagado por
+  defecto) ejecuta `atenea services publish on|off --network <id>` con el diálogo de administrador del sistema (`osascript` en
+  macOS, `pkexec` en Linux); cancelar no cambia nada. Debajo se listan, en solo lectura, los servicios que detecta el equipo.
+- **Límites.** En Windows no se ofrece el interruptor (como unirse, ADR-017): la publicación se configura con `[services] publish`
+  en `agent.toml`. Solo TCP; las etiquetas y el esquema se fijan en `agent.toml`, no desde la aplicación.
+
 ## Construir en local
 
 ```sh

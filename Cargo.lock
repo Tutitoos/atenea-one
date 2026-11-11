@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-agent"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "atenea-coordinator",
  "atenea-crypto",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-cli"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "atenea-crypto",
  "atenea-identity",
@@ -205,13 +205,14 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "toml 0.9.12+spec-1.1.0",
+ "toml_edit 0.25.17+spec-1.1.0",
  "ureq",
  "zeroize",
 ]
 
 [[package]]
 name = "atenea-control-plane"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "atenea-identity",
  "atenea-nat-traversal",
@@ -245,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-coordinator"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "atenea-identity",
  "atenea-nat-traversal",
@@ -322,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "atenea-relay"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "atenea-identity",
  "atenea-observability",
@@ -4058,6 +4059,7 @@ dependencies = [
  "indexmap 2.14.2",
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

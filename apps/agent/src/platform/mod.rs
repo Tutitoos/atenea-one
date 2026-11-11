@@ -53,4 +53,8 @@ pub(crate) trait HostNetwork {
     fn cleanup(&self) -> Result<(), String>;
     fn forwarding(&self, ipv6: bool) -> bool;
     async fn local_addrs(&self, port: u16) -> Vec<SocketAddr>;
+    /// Direcciones locales de los sockets TCP en escucha (sin procesos ni usuarios). Solo lectura.
+    async fn listening_tcp(&self) -> Result<Vec<SocketAddr>, String> {
+        Ok(Vec::new())
+    }
 }
