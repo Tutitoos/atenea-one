@@ -180,7 +180,7 @@ Varios necesitan imágenes y volúmenes locales previos (`atenea-lab`, `atenea-l
 
 **Evidencia de laboratorio frente a CI** (detalle y estado por caso en [evidencia.md](evidencia.md)):
 
-- **VERIFICADO — lectura:** la CI ordinaria [`ci.yml`](../../.github/workflows/ci.yml) tiene únicamente **`workflow_dispatch`**: no se lanza con push, PR ni calendario. Los jobs definidos incluyen `check`, `panel`, macOS/Windows nativos, escritorio macOS/Windows y supply-chain (workspace raíz y desktop). Los comentarios históricos sobre ejecuciones semanales no constituyen un trigger. `release.yml` es independiente.
+- **VERIFICADO — lectura:** la CI ordinaria [`ci.yml`](../../.github/workflows/ci.yml) tiene **`pull_request`** (contra `main`) y **`workflow_dispatch`**: no se lanza con push ni calendario. Los jobs definidos incluyen `check`, `panel`, macOS/Windows nativos, escritorio macOS/Windows y supply-chain (workspace raíz y desktop). Los comentarios históricos sobre ejecuciones semanales no constituyen un trigger. `release.yml` es independiente.
 - La CI define `scripts/check.sh`, PostgreSQL real, pnpm lint/typecheck/test/build, empaquetado/aceptación privilegiada macOS y Windows, y análisis de dependencias. No define los laboratorios Docker de red, stack, infra, backup, carga ni fuzz. Resultados de jobs de HEAD: **SIN COMPROBAR aquí**. Los «LOCAL-V2» antiguos siguen siendo históricos y sus salidas no versionadas no están en un clon; los ensayos posteriores se distinguen abajo, sin atribuir a HEAD sus cifras.
 
 ### 6.1 Ensayos añadidos o ampliados hasta 8d975a6
@@ -231,7 +231,7 @@ EVENT=push BEFORE=a0f8ac7 SHA=HEAD sh scripts/ci-changes.sh
 sh tests/ci/changes.sh
 ```
 
-La prueba [changes.sh](../../tests/ci/changes.sh) crea un repositorio temporal y commits sintéticos (no commits en el repositorio de producto): comprueba rutas, borrados/renombrados, múltiples commits, bases inválidas y eventos. `scripts/check.sh` la incluye. **VERIFICADO — lectura; SIN COMPROBAR ejecución aquí.** El selector no reactiva triggers automáticos: actualmente solo `workflow_dispatch` lanza la CI.
+La prueba [changes.sh](../../tests/ci/changes.sh) crea un repositorio temporal y commits sintéticos (no commits en el repositorio de producto): comprueba rutas, borrados/renombrados, múltiples commits, bases inválidas y eventos. `scripts/check.sh` la incluye. **VERIFICADO — lectura; SIN COMPROBAR ejecución aquí.** El selector decide los jobs de plataforma en los eventos `pull_request` (y `push`, si se activara); con `workflow_dispatch` ejecuta todo.
 
 ## 7. Release: construir y verificar
 
