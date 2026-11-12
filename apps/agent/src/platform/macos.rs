@@ -184,17 +184,29 @@ fn domain_ok(domain: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }
-fn owned(path: &Path, marker: &str) -> Result<bool, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+fn owned(path: &Path, marker: &str) -> std::io::Result<bool> {
+    let meta = std::fs::symlink_metadata(path)?;
     if !meta.is_file() || meta.file_type().is_symlink() {
         return Ok(false);
     }
     // Solo importa el prefijo: un resolutor ajeno no UTF-8 no debe impedir la limpieza.
     let mut head = Vec::with_capacity(marker.len());
-    std::fs::File::open(path)
-        .and_then(|f| f.take(marker.len() as u64).read_to_end(&mut head))
-        .map_err(|e| e.to_string())?;
+    std::fs::File::open(path).and_then(|f| f.take(marker.len() as u64).read_to_end(&mut head))?;
     Ok(head == marker.as_bytes())
+}
+/// Retira `path` si lo creó este agente. Que ya no exista no es un error: el agente que se detiene y el `cleanup` fuera de
+/// línea del desinstalador (o de un reinicio) limpian a la vez los mismos ficheros y gana el primero; un `NotFound` en
+/// cualquiera de los tres pasos (`symlink_metadata`, `open`, `remove_file`) solo significa que el otro ya lo hizo.
+fn remove_if_owned(path: &Path, marker: &str) -> Result<(), String> {
+    match owned(path, marker) {
+        Ok(true) => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        },
+        Ok(false) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 impl Network {
     pub fn new(interface: String, bins: Binaries) -> Self {
@@ -336,7 +348,7 @@ impl HostNetwork for Network {
                     .file_name()
                     .to_str()
                     .is_some_and(|name| name.eq_ignore_ascii_case(domain))
-            }) && !owned(&entry.path(), &self.resolver_marker)?
+            }) && !owned(&entry.path(), &self.resolver_marker).map_err(|e| e.to_string())?
             {
                 return Ok(Some(format!(
                     "dominio DNS {domain} reclamado por otro resolutor"
@@ -353,9 +365,7 @@ impl HostNetwork for Network {
         };
         for entry in entries {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if owned(&path, &self.resolver_marker)? {
-                std::fs::remove_file(path).map_err(|e| e.to_string())?;
-            }
+            remove_if_owned(&path, &self.resolver_marker)?;
         }
         Ok(())
     }
@@ -429,6 +439,23 @@ impl HostNetwork for Network {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_resolver_file_already_removed_by_another_cleanup_is_not_an_error() {
+        let dir = std::env::temp_dir().join(format!("atenea-macos-gone-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let mine = dir.join("lab.internal");
+        std::fs::write(&mine, format!("{OWNER}nameserver 10.77.0.1\n")).unwrap();
+        assert_eq!(remove_if_owned(&mine, OWNER), Ok(()));
+        assert!(!mine.exists());
+        // Segundo limpiador (el agente que se para frente al `cleanup` del desinstalador): el fichero ya no está.
+        assert_eq!(remove_if_owned(&mine, OWNER), Ok(()));
+        // Uno ajeno ni se toca ni falla.
+        let foreign = dir.join("foreign.internal");
+        std::fs::write(&foreign, "# Ajeno\nnameserver 192.0.2.53\n").unwrap();
+        assert_eq!(remove_if_owned(&foreign, OWNER), Ok(()));
+        assert!(foreign.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     #[test]
     fn darwin_routes_and_addresses() {
         let routes = "Routing tables\n\nInternet:\nDestination Gateway Flags Netif Expire\ndefault 192.0.2.1 UGScg en0\n10.20/16 link#4 UCS en0 !\n10.77.0.1 10.77.0.1 UH utun9\n192.0.2.7 aa:bb:cc:00:00:00 UHLWI en0 100\n";
