@@ -76,6 +76,21 @@ pub fn exclude_tunnel_candidates(
     });
 }
 
+/// Candidatos a anunciar: la dirección reflexiva primero (si la hay) y después las locales. Quien recorta la lista
+/// sin ordenar (un coordinator o un agente anterior a la `0.1.23` que se queda con las 8 primeras) conserva así la
+/// única dirección alcanzable desde otra red aunque el equipo tenga muchas locales (puentes de contenedores, VPN).
+/// Si la reflexiva ya estaba entre las locales (IP pública en la interfaz) se mueve al principio.
+pub fn announce_order(
+    mut local: Vec<SocketAddr>,
+    reflexive: Option<SocketAddr>,
+) -> Vec<SocketAddr> {
+    if let Some(r) = reflexive {
+        local.retain(|c| *c != r);
+        local.insert(0, r);
+    }
+    local
+}
+
 pub async fn local_addrs(
     skip_iface: &str,
     port: u16,
@@ -226,6 +241,42 @@ mod tests {
             parse_ip_addr(text, "atenea0", 51820),
             vec![sa("192.168.1.2:51820"), sa("[2001:db8:1::2]:51820")]
         );
+    }
+
+    #[test]
+    fn announce_puts_the_reflexive_address_first_and_keeps_the_local_order() {
+        let local = vec![sa("10.0.0.2:5"), sa("172.17.0.1:5"), sa("[2001:db8::2]:5")];
+        let r = sa("203.0.113.9:40000");
+        assert_eq!(
+            announce_order(local.clone(), Some(r)),
+            vec![
+                r,
+                sa("10.0.0.2:5"),
+                sa("172.17.0.1:5"),
+                sa("[2001:db8::2]:5")
+            ]
+        );
+        // Sin STUN no hay reflexiva: las locales quedan como estaban.
+        assert_eq!(announce_order(local.clone(), None), local);
+        // IP pública en la propia interfaz: la reflexiva ya estaba, se mueve al principio sin duplicarse.
+        let public = sa("203.0.113.9:5");
+        let local = vec![sa("10.0.0.2:5"), public, sa("172.17.0.1:5")];
+        assert_eq!(
+            announce_order(local, Some(public)),
+            vec![public, sa("10.0.0.2:5"), sa("172.17.0.1:5")]
+        );
+    }
+
+    #[test]
+    fn a_cut_to_eight_without_sorting_keeps_the_reflexive_address() {
+        // El incidente real: 13 direcciones privadas y la reflexiva; quien se queda con las 8 primeras debe conservarla.
+        let local: Vec<SocketAddr> = (1..=13)
+            .map(|i| sa(&format!("172.17.{i}.1:51820")))
+            .collect();
+        let r = sa("203.0.113.9:51820");
+        let announced = announce_order(local, Some(r));
+        assert_eq!(announced.len(), 14);
+        assert!(announced[..8].contains(&r));
     }
 
     #[test]

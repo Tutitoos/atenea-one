@@ -45,7 +45,7 @@ url = "https://host:8081"         # base HTTPS (http solo en loopback o con inse
 stun = ["host:3478", "host:3479"] # dos puertos del mismo servidor, en este orden
 ```
 
-- **Candidatos propios:** direcciones de las interfaces con el puerto de escucha (excluye loopback, enlace local y no enrutables), el endpoint reflexivo de STUN y, si lo hay, los endpoints de la configuración firmada para los pares. Se recalculan cada 30 s o ante cambio de interfaz; un cambio dispara un `announce` inmediato.
+- **Candidatos propios:** direcciones de las interfaces con el puerto de escucha (excluye loopback, enlace local y no enrutables), el endpoint reflexivo de STUN y, si lo hay, los endpoints de la configuración firmada para los pares. **El endpoint reflexivo se anuncia el primero** (después, las direcciones locales en su orden; si ya era una local, se mueve al principio): quien recorte la lista sin ordenar —un coordinator o un agente anteriores a la `0.1.23`— conserva así la única dirección alcanzable desde otra red. Se recalculan cada 30 s o ante cambio de interfaz; un cambio dispara un `announce` inmediato.
 - **Presencia:** `announce` cada 20 s (TTL 60 s) mientras haya configuración vigente; sin lease no se anuncia.
 - **Aviso de pares:** long-poll continuo a `/v1/events`. Un evento solo se atiende si `peer` figura en la configuración vigente; si no, se ignora y se cuenta.
 - **Iniciar una conexión** (hay tráfico hacia un par sin ruta directa confirmada): `rendezvous` (≤ 1 cada 5 s por par). Con los candidatos del par más los endpoints de la configuración, se inicia el sondeo.
