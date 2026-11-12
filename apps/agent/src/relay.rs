@@ -1749,16 +1749,25 @@ mod tests {
         let status = client.status();
         assert_eq!(status.entries[0].transport, RelayKind::Tls);
         assert_eq!(status.entries[0].state, "ready");
-        assert!(
-            !client
+        // Un sondeo en curso tiene su ruta (≈75 ms de cada ≥400 ms); una ruta huérfana, en cambio, nunca desaparecería.
+        let mut absent = 0;
+        for _ in 0..20 {
+            if !client
                 .hub
                 .get()
                 .unwrap()
                 .routes
                 .lock()
                 .unwrap()
-                .contains_key(&[5; 16]),
-            "ruta UDP huérfana tras un sondeo fallido"
+                .contains_key(&[5; 16])
+            {
+                absent += 1;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            absent >= 10,
+            "ruta UDP huérfana tras un sondeo fallido: ausente en {absent} de 20 muestras"
         );
         client.send([5; 16], [6; 16], RelayKind::Tls, datagram_bytes());
         assert!(matches!(
