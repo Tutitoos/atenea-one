@@ -71,9 +71,9 @@ stun = ["$4:3478", "$4:3479"]
 EOF
 }
 
-# run_case <topología> <direct|nodirect> [ipv6]
+# run_case <topología> <direct|nodirect> [ipv6] [many]   (many: A anuncia 12 direcciones privadas más, reflexiva al final)
 run_case() {
-  local topo=$1 expect=$2 v6=${3:-no} url stun listen
+  local topo=$1 expect=$2 v6=${3:-no} extra=${4:-no} url stun listen
   section "Topología: $topo (esperado: $expect)"
   topo_setup "$topo" || { bad "no se pudo construir $topo"; return; }
   rm -rf $LAB/a.state $LAB/b.state $LAB/*.sock
@@ -87,6 +87,9 @@ run_case() {
   sleep 1
   ( while true; do issue a; issue b; sleep $REFRESH; done ) &
   REFRESHER=$!
+  if [ "$extra" = many ]; then
+    for i in $(seq 17 28); do ip netns exec a ip addr add 172.$i.0.1/32 dev eth0; done
+  fi
   ip netns exec a atenea up --config $LAB/a.toml --log $LAB/a.log >/dev/null
   ip netns exec b atenea up --config $LAB/b.toml --log $LAB/b.log >/dev/null
 
@@ -156,6 +159,14 @@ expect_eq "ruta directa de nuevo" "$(field a peers.0.path)" direct
 kill $REFRESHER 2>/dev/null
 
 run_case double direct
+
+# Incidente real: un host con muchas direcciones privadas (puentes de contenedores, VPN) anuncia más de 8
+# candidatos con la reflexiva al final; sin ordenar públicas primero, el coordinator la descartaba y no había directo.
+run_case home direct no many
+N_CANDS=$(field a nat.candidates | grep -o '172\.' | wc -l)
+[ "$N_CANDS" -ge 12 ] && ok "A anuncia más de 8 candidatos ($N_CANDS privados de contenedor + LAN + reflexiva)" || bad "el escenario no anuncia suficientes candidatos ($N_CANDS)"
+[[ "$(field b peers.0.endpoint)" == 198.51.100.* ]] && ok "muchos candidatos: B alcanza a A por su endpoint reflexivo (público)" || bad "muchos candidatos: endpoint de B inesperado $(field b peers.0.endpoint)"
+kill $REFRESHER 2>/dev/null
 run_case symmetric nodirect
 run_case samelan_hairpin_off direct
 [[ "$(field a peers.0.endpoint)" == 192.168.1.* ]] && ok "misma LAN sin hairpin: ruta por la dirección local (sin pasar por el NAT)" || bad "misma LAN: endpoint inesperado $(field a peers.0.endpoint)"
