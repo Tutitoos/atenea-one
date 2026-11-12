@@ -7,8 +7,10 @@ use atenea_relay_core as wire;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
+    future::Future,
     net::SocketAddr,
     path::Path,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -131,6 +133,9 @@ struct Timing {
     ping: Duration,
     renew: Duration,
     connect: Duration,
+    /// Primer reintento de UDP mientras la asignación vive por TLS; se duplica tras cada fallo hasta `upgrade_max`.
+    upgrade: Duration,
+    upgrade_max: Duration,
 }
 impl Default for Timing {
     fn default() -> Self {
@@ -139,6 +144,8 @@ impl Default for Timing {
             ping: Duration::from_secs(5),
             renew: Duration::from_secs(60),
             connect: Duration::from_secs(10),
+            upgrade: Duration::from_secs(30),
+            upgrade_max: Duration::from_secs(600),
         }
     }
 }
@@ -388,6 +395,10 @@ enum Link {
         decoder: wire::FrameDecoder,
     },
 }
+/// Negociación de UDP en curso mientras la asignación vive por TLS: es un futuro propio para que el tráfico TLS no se
+/// detenga mientras dura.
+type UdpProbe<'a> =
+    Pin<Box<dyn Future<Output = Result<(Link, Vec<u8>, [u8; 16]), &'static str>> + Send + 'a>>;
 impl Link {
     async fn send(&mut self, body: &[u8]) -> Result<(), &'static str> {
         match self {
@@ -708,9 +719,9 @@ impl Worker {
             if let Some(addr) = &endpoint.udp {
                 self.status.lock().unwrap().transport = RelayKind::Udp;
                 match self.udp(addr, &bytes).await {
-                    Ok((link, first, cookie)) => {
+                    Ok((link, first, _)) => {
                         error = self
-                            .connected(link, first, cookie, bytes.clone(), &mut grants, &mut out)
+                            .connected(link, first, bytes.clone(), &mut grants, &mut out, None)
                             .await;
                         self.down(error);
                     }
@@ -740,13 +751,24 @@ impl Worker {
                     }
                 };
                 match timeout(self.timing.connect, self.tls(&endpoint, &bytes)).await {
-                    Ok(Ok((link, first, cookie))) => {
+                    Ok(Ok((link, first, _))) => {
                         error = self
-                            .connected(link, first, cookie, bytes, &mut grants, &mut out)
+                            .connected(
+                                link,
+                                first,
+                                bytes,
+                                &mut grants,
+                                &mut out,
+                                endpoint.udp.as_deref(),
+                            )
                             .await;
                     }
                     Ok(Err(e)) => error = e,
                     Err(_) => error = "tls_timeout",
+                }
+                // Si el enlace acabó en UDP tras volver a negociarlo, su ruta no debe quedar en el hub.
+                if let Some(hub) = self.hub.get() {
+                    hub.routes.lock().unwrap().remove(&self.peer);
                 }
                 self.down(error);
                 if matches!(error, "token_expired" | "token_identity") {
@@ -813,14 +835,22 @@ impl Worker {
         }
     }
 
+    /// Escalona entre pares el primer sondeo de UDP (hasta ~22 % del intervalo) para que no coincidan todos a la vez.
+    fn probe_stagger(&self) -> Duration {
+        self.timing.upgrade * u32::from(self.peer[0] % 8) / 32
+    }
+
+    /// Mantiene viva una asignación hasta que falla. Con una asignación TLS y un relay que también anuncia UDP
+    /// (`upgrade`), reintenta UDP de vez en cuando: tras reiniciar un relay el primer intento falla y, sin este
+    /// reintento, la asignación se renovaría por TLS indefinidamente.
     async fn connected(
         &self,
         mut link: Link,
         first: Vec<u8>,
-        _cookie: [u8; 16],
         mut active: Vec<u8>,
         token: &mut watch::Receiver<Vec<RelayEndpoint>>,
         out: &mut mpsc::Receiver<([u8; 16], RelayKind, Vec<u8>)>,
+        upgrade: Option<&str>,
     ) -> &'static str {
         let (mut id, mut deadline) = match wire::parse(&first) {
             Ok(wire::Message::AllocOk {
@@ -841,7 +871,7 @@ impl Worker {
             _ => return "alloc_response",
         };
         self.confirmed_token(&active);
-        let kind = self.status.lock().unwrap().transport;
+        let mut kind = self.status.lock().unwrap().transport;
         self.event(RelayEvent::Ready {
             peer: self.peer,
             relay_id: self.relay_id,
@@ -856,6 +886,10 @@ impl Worker {
         let mut renewal = None;
         let mut candidate: Option<Vec<u8>> = None;
         let mut renewal_until = Instant::now();
+        let mut udp_probe_addr = upgrade.filter(|_| kind == RelayKind::Tls);
+        let mut probe_every = self.timing.upgrade;
+        let mut next_probe = Instant::now() + probe_every + self.probe_stagger();
+        let mut probe: Option<UdpProbe<'_>> = None;
         loop {
             let expiry = match self.valid_token(&active) {
                 Ok(t) => t,
@@ -864,6 +898,38 @@ impl Worker {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(expiry.saturating_sub((self.clock)()))) => return "token_expired",
                 _ = tokio::time::sleep_until(deadline) => return "allocation_expired",
+                // Sondeo de UDP como futuro propio: el tráfico TLS sigue fluyendo mientras dura.
+                _ = tokio::time::sleep_until(next_probe), if udp_probe_addr.is_some() && probe.is_none() && candidate.is_none() => {
+                    let (addr, probe_token) = (udp_probe_addr.expect("UDP anunciado"), active.clone());
+                    probe = Some(Box::pin(async move { self.udp(addr, &probe_token).await }));
+                }
+                result = async { probe.as_mut().expect("sondeo").await }, if probe.is_some() => {
+                    probe = None;
+                    let upgraded = match result {
+                        Ok((new_link, first, _)) => match wire::parse(&first) {
+                            Ok(wire::Message::AllocOk { alloc_id, ttl_secs, peer_ready }) if ttl_secs > 0 && ttl_secs <= 120 => Some((new_link, alloc_id, ttl_secs, peer_ready)),
+                            _ => None,
+                        },
+                        Err(_) => None,
+                    };
+                    let Some((new_link, alloc_id, ttl_secs, peer_ready)) = upgraded else {
+                        if let Some(hub) = self.hub.get() { hub.routes.lock().unwrap().remove(&self.peer); }
+                        probe_every = (probe_every * 2).min(self.timing.upgrade_max);
+                        next_probe = Instant::now() + probe_every;
+                        continue;
+                    };
+                    // El relay reasignó la misma asignación al enlace UDP: se suelta el TLS antiguo y se avisa al motor
+                    // (primero Ready de UDP, así al caer TLS ya hay otro camino listo y no se pide otro relay).
+                    link = new_link;
+                    id = alloc_id;
+                    deadline = Instant::now() + Duration::from_secs(ttl_secs.into());
+                    kind = RelayKind::Udp;
+                    udp_probe_addr = None;
+                    candidate = None; renewal = None; pending = None; missed = 0;
+                    { let mut s = self.status.lock().unwrap(); s.transport = RelayKind::Udp; s.peer_ready = peer_ready; s.last_error = None; s.rtt_ms = None; }
+                    self.event(RelayEvent::Ready { peer: self.peer, relay_id: self.relay_id, kind: RelayKind::Udp });
+                    self.event(RelayEvent::Down { peer: self.peer, relay_id: self.relay_id, kind: RelayKind::Tls });
+                }
                 _ = tokio::time::sleep_until(renewal_until), if candidate.is_some() => {
                     candidate = None; renewal = None;
                     if let Some(hub) = self.hub.get() && let Some(route) = hub.routes.lock().unwrap().get_mut(&self.peer) { route.awaiting = false; }
@@ -1175,6 +1241,8 @@ mod tests {
             ping: Duration::from_millis(30),
             renew: Duration::from_millis(70),
             connect: Duration::from_secs(2),
+            upgrade: Duration::from_millis(100),
+            upgrade_max: Duration::from_millis(400),
         };
         (client, events)
     }
@@ -1198,7 +1266,15 @@ mod tests {
         relay_id: [u8; 16],
         reject: bool,
     ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        udp_server_at("127.0.0.1:0", relay_id, reject).await
+    }
+
+    async fn udp_server_at(
+        bind: &str,
+        relay_id: [u8; 16],
+        reject: bool,
+    ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+        let socket = UdpSocket::bind(bind).await.unwrap();
         let addr = socket.local_addr().unwrap().to_string();
         let allocations = Arc::new(AtomicUsize::new(0));
         let count = allocations.clone();
@@ -1386,10 +1462,14 @@ mod tests {
         }
     }
     fn tls_config() -> (Arc<rustls::ServerConfig>, TestCa) {
+        // Contador propio: la marca de tiempo sola puede coincidir entre tests en paralelo (resolución de µs en macOS)
+        // y un test acababa confiando en la CA de otro.
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
         let cert = rcgen::generate_simple_self_signed(vec!["relay.test".into()]).unwrap();
         let path = std::env::temp_dir().join(format!(
-            "atenea-relay-ca-{}-{}.pem",
+            "atenea-relay-ca-{}-{}-{}.pem",
             std::process::id(),
+            SEQ.fetch_add(1, Ordering::SeqCst),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -1557,6 +1637,139 @@ mod tests {
         })
         .await;
         client.close([5; 16]);
+    }
+
+    fn tls_and_udp_endpoint(udp: String, tls: String) -> RelayEndpoint {
+        RelayEndpoint {
+            relay_id: [6; 16],
+            token: token_b64([5; 16]),
+            name: "lab".into(),
+            udp: Some(udp),
+            tls: Some(tls),
+            tls_name: Some("relay.test".into()),
+        }
+    }
+
+    /// Tras reiniciar un relay la asignación se negocia por TLS porque UDP aún no responde. Cuando UDP
+    /// vuelve, el cliente debe volver a UDP solo: sin cortar el par y sin pedir otra concesión.
+    #[tokio::test]
+    async fn tls_allocation_returns_to_udp_when_udp_recovers() {
+        let (cfg, ca) = tls_config();
+        let (tls_addr, _, tls) = tls_server(cfg, false).await;
+        let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_addr = silent.local_addr().unwrap().to_string();
+        let (mut client, mut events) = client(Some(ca.0.clone()));
+        client.timing.ping = Timing::default().ping;
+        client.open(
+            [5; 16],
+            vec![tls_and_udp_endpoint(udp_addr.clone(), tls_addr)],
+        );
+        event(&mut events, |e| {
+            matches!(
+                e,
+                RelayEvent::Ready {
+                    kind: RelayKind::Tls,
+                    ..
+                }
+            )
+        })
+        .await;
+        assert_eq!(client.status().entries[0].transport, RelayKind::Tls);
+        // UDP vuelve: el mismo puerto pasa de mudo a servidor real.
+        drop(silent);
+        let (_, udp_allocations, udp) = udp_server_at(&udp_addr, [6; 16], false).await;
+        event(&mut events, |e| {
+            matches!(
+                e,
+                RelayEvent::Ready {
+                    kind: RelayKind::Udp,
+                    ..
+                }
+            )
+        })
+        .await;
+        event(&mut events, |e| {
+            matches!(
+                e,
+                RelayEvent::Down {
+                    kind: RelayKind::Tls,
+                    ..
+                }
+            )
+        })
+        .await;
+        let status = client.status();
+        assert_eq!(status.entries[0].transport, RelayKind::Udp);
+        assert_eq!(status.entries[0].state, "ready");
+        assert!(udp_allocations.load(Ordering::SeqCst) >= 1);
+        // Los datos ya van por UDP y vuelven por UDP.
+        client.send([5; 16], [6; 16], RelayKind::Udp, datagram_bytes());
+        assert!(matches!(
+            event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await,
+            RelayEvent::Rx { kind: RelayKind::Udp, datagram, .. } if datagram == datagram_bytes()
+        ));
+        client.close([5; 16]);
+        udp.abort();
+        tls.abort();
+    }
+
+    /// Con UDP caído de verdad los sondeos fallan: la asignación TLS no se toca, no queda ninguna ruta UDP
+    /// huérfana y el enlace sigue sirviendo datos.
+    #[tokio::test]
+    async fn failed_udp_probes_leave_the_tls_allocation_untouched() {
+        let (cfg, ca) = tls_config();
+        let (tls_addr, _, tls) = tls_server(cfg, false).await;
+        let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_addr = silent.local_addr().unwrap().to_string();
+        let (mut client, mut events) = client(Some(ca.0.clone()));
+        client.timing.ping = Timing::default().ping;
+        client.open([5; 16], vec![tls_and_udp_endpoint(udp_addr, tls_addr)]);
+        event(&mut events, |e| {
+            matches!(
+                e,
+                RelayEvent::Ready {
+                    kind: RelayKind::Tls,
+                    ..
+                }
+            )
+        })
+        .await;
+        // Varios sondeos fallidos (≈120, 320 y 720 ms con estos tiempos).
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let mut cookie_requests = 0;
+        let mut buf = [0; 2048];
+        while silent.try_recv_from(&mut buf).is_ok() {
+            cookie_requests += 1;
+        }
+        // El primer intento de la concesión inicial envía 3; cada sondeo posterior, otros 3.
+        assert!(
+            cookie_requests >= 6,
+            "no hubo sondeos de UDP: {cookie_requests}"
+        );
+        let status = client.status();
+        assert_eq!(status.entries[0].transport, RelayKind::Tls);
+        assert_eq!(status.entries[0].state, "ready");
+        assert!(
+            !client
+                .hub
+                .get()
+                .unwrap()
+                .routes
+                .lock()
+                .unwrap()
+                .contains_key(&[5; 16]),
+            "ruta UDP huérfana tras un sondeo fallido"
+        );
+        client.send([5; 16], [6; 16], RelayKind::Tls, datagram_bytes());
+        assert!(matches!(
+            event(&mut events, |e| matches!(e, RelayEvent::Rx { .. })).await,
+            RelayEvent::Rx {
+                kind: RelayKind::Tls,
+                ..
+            }
+        ));
+        client.close([5; 16]);
+        tls.abort();
     }
 
     #[tokio::test]
