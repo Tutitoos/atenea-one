@@ -173,6 +173,15 @@ integrity "relay TLS (HAProxy SNI/ALPN)" 3
 kill $TCPD 2>/dev/null; sleep 0.5
 expect_eq "texto claro en el pcap del servidor" "$(python3 "$TOOLS" contains $LAB/inet.pcap ATENEA-MARCA-EN-CLARO-9f3c)" 0
 
+# Un relay que reinicia deja la asignación en TLS (UDP aún no respondía). Al volver el UDP el agente debe volver solo a
+# relay UDP; antes se quedaba en TLS mientras la asignación se renovase. P2P sigue bloqueado.
+section "UDP vuelve con P2P bloqueado: de relay TLS de nuevo a relay UDP"
+HS1=$(hs)
+net_block_p2p
+T=$(wait_path relay-udp 120) && ok "de relay TLS a relay UDP en ${T}s de volver el UDP" || bad "se quedó en relay TLS (a=$(field a peers.0.path) b=$(field b peers.0.path))"
+expect_eq "misma sesión Noise al volver a UDP (sin nuevo handshake)" "$(hs)" "$HS1"
+integrity "relay UDP recuperado desde TLS" 6
+
 section "Desbloqueo: vuelta al directo sin oscilación"
 net_unblock_all
 SW1=$(cnt a path_switches)
