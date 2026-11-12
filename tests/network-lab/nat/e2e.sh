@@ -71,7 +71,7 @@ stun = ["$4:3478", "$4:3479"]
 EOF
 }
 
-# run_case <topología> <direct|nodirect> [ipv6] [many]   (many: A anuncia 12 direcciones privadas más, reflexiva al final)
+# run_case <topología> <direct|nodirect> [ipv6] [many]   (many: A tiene 12 direcciones privadas más; el agente anuncia la reflexiva primero)
 run_case() {
   local topo=$1 expect=$2 v6=${3:-no} extra=${4:-no} url stun listen
   section "Topología: $topo (esperado: $expect)"
@@ -160,11 +160,13 @@ kill $REFRESHER 2>/dev/null
 
 run_case double direct
 
-# Incidente real: un host con muchas direcciones privadas (puentes de contenedores, VPN) anuncia más de 8
-# candidatos con la reflexiva al final; sin ordenar públicas primero, el coordinator la descartaba y no había directo.
+# Incidente real: un host con muchas direcciones privadas (puentes de contenedores, VPN) anunciaba más de 8 candidatos
+# con la reflexiva al final; un coordinator que recorta a 8 sin ordenar la descartaba y no había directo. El agente ya la
+# anuncia primero (con un coordinator sin ordenar también conecta); el orden al recibir lo cubren las pruebas unitarias.
 run_case home direct no many
 N_CANDS=$(field a nat.candidates | grep -o '172\.' | wc -l)
 [ "$N_CANDS" -ge 12 ] && ok "A anuncia más de 8 candidatos ($N_CANDS privados de contenedor + LAN + reflexiva)" || bad "el escenario no anuncia suficientes candidatos ($N_CANDS)"
+[[ "$(field a nat.candidates.0)" == 198.51.100.1:* ]] && ok "la reflexiva es el primer candidato anunciado ($(field a nat.candidates.0))" || bad "la reflexiva no va primera: $(field a nat.candidates.0)"
 [[ "$(field b peers.0.endpoint)" == 198.51.100.* ]] && ok "muchos candidatos: B alcanza a A por su endpoint reflexivo (público)" || bad "muchos candidatos: endpoint de B inesperado $(field b peers.0.endpoint)"
 kill $REFRESHER 2>/dev/null
 run_case symmetric nodirect

@@ -778,10 +778,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     if s.complete() || now.duration_since(started) >= Duration::from_secs(3) {
                         stun_started = None;
                         let (mapping, reflexive) = s.result();
-                        let mut cands = net::local_addrs(rt.tun.name(), rt.cfg.listen.port(), &rt.candidate_exclusions).await;
-                        if let Some(r) = reflexive && !cands.contains(&r) {
-                            cands.push(r);
-                        }
+                        let local = net::local_addrs(rt.tun.name(), rt.cfg.listen.port(), &rt.candidate_exclusions).await;
+                        let mut cands = net::announce_order(local, reflexive);
                         net::exclude_tunnel_candidates(&mut cands, &rt.candidate_exclusions);
                         rt.engine.set_nat(NatStatus {
                             mapping: match mapping { "independent" => "independent", "dependent" => "dependent", _ => "unknown" },
