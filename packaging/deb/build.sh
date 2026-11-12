@@ -40,7 +40,7 @@ Maintainer: Equipo Atenea One <maintainers@example.invalid>
 Section: net
 Priority: optional
 Depends: libc6 (>= 2.39), libgcc-s1, libssl3t64, systemd, passwd, nftables, iproute2, ca-certificates
-Recommends: systemd-resolved
+Suggests: systemd-resolved
 Description: Agente y CLI de Atenea One
  Red privada con configuración firmada, rutas aprobadas y DNS dividido.
 EOF

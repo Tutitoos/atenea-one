@@ -17,7 +17,7 @@ for ((i=0; i<60; i++)); do
 done
 docker exec -e EXPECTED_COMMIT="$commit" "$name" bash -c '
     set -euo pipefail
-    # Esta base de infraestructura carece de resolved (Recommends), no se descarga.
+    # Esta base de infraestructura carece de resolved (el paquete solo lo sugiere), no se descarga.
     dpkg -i /release/atenea.deb
     [ "$(dpkg-query -W -f='"'"'${X-Atenea-Commit}'"'"' atenea)" = "$EXPECTED_COMMIT" ]
     version=$(python3 -c "import json; print(json.load(open(\"/release/release-manifest.json\"))[\"version\"])")
