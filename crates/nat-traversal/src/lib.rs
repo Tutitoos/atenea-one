@@ -210,21 +210,43 @@ pub fn candidate_ok(addr: &SocketAddr) -> bool {
     }
 }
 
-/// Filtra, deduplica conservando el orden y acota la lista de candidatos recibida de un tercero.
+/// Dirección de red privada (RFC 1918, compartida 100.64/10 o ULA fc00::/7): no es alcanzable desde otra red.
+fn is_private(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => a.is_private() || (a.octets()[0] == 100 && (a.octets()[1] & 0xc0) == 0x40),
+        IpAddr::V6(a) => (a.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+/// Filtra, deduplica y acota la lista de candidatos recibida de un tercero. Las direcciones públicas
+/// (la reflexiva, IPv6 global) van antes que las privadas y cada grupo conserva su orden: un host con
+/// muchas interfaces (puentes de contenedores, VPN) no puede dejar fuera por el límite la única dirección
+/// que otra red puede alcanzar.
 pub fn sanitize_candidates(
     input: impl IntoIterator<Item = SocketAddr>,
     max: usize,
 ) -> Vec<SocketAddr> {
-    let mut out: Vec<SocketAddr> = Vec::new();
+    let mut public: Vec<SocketAddr> = Vec::new();
+    let mut private: Vec<SocketAddr> = Vec::new();
     for a in input {
-        if candidate_ok(&a) && !out.contains(&a) {
-            out.push(a);
-            if out.len() == max {
-                break;
-            }
+        if public.len() >= max {
+            break;
+        }
+        if !candidate_ok(&a) || public.contains(&a) || private.contains(&a) {
+            continue;
+        }
+        let group = if is_private(&a.ip()) {
+            &mut private
+        } else {
+            &mut public
+        };
+        if group.len() < max {
+            group.push(a);
         }
     }
-    out
+    public.extend(private);
+    public.truncate(max);
+    public
 }
 
 #[cfg(test)]
@@ -406,6 +428,74 @@ mod tests {
             2,
         );
         assert_eq!(v, vec![sa("1.1.1.1:1"), sa("2.2.2.2:2")]);
+    }
+
+    /// Incidente real: un host con 13 direcciones privadas (puentes de contenedores, VPN) y la reflexiva
+    /// al final quedaba sin camino directo porque el límite de 8 descartaba la única dirección pública.
+    #[test]
+    fn public_candidate_survives_the_limit_when_announced_last() {
+        let mut input: Vec<SocketAddr> = (17..25)
+            .map(|n| sa(&format!("172.{n}.0.1:51820")))
+            .collect();
+        input.extend(["10.99.1.50:51820", "100.64.0.9:51820", "[fd00::1]:51820"].map(sa));
+        input.extend(["192.168.1.7:51820", "10.0.0.2:51820"].map(sa));
+        input.push(sa("198.51.100.7:21050"));
+        assert_eq!(input.len(), 14);
+        let v = sanitize_candidates(input.clone(), 8);
+        assert_eq!(v.len(), 8);
+        assert_eq!(v[0], sa("198.51.100.7:21050"));
+        assert_eq!(v[1..], input[..7], "las privadas conservan su orden");
+    }
+
+    #[test]
+    fn private_ranges_are_classified_by_prefix() {
+        for private in [
+            "10.0.0.1:1",
+            "172.16.0.1:1",
+            "172.31.255.255:1",
+            "192.168.0.1:1",
+            "100.64.0.1:1",
+            "100.127.255.255:1",
+            "[fc00::1]:1",
+            "[fd12:3456::1]:1",
+        ] {
+            assert!(is_private(&sa(private).ip()), "{private}");
+        }
+        for public in [
+            "172.15.255.255:1",
+            "172.32.0.1:1",
+            "100.63.255.255:1",
+            "100.128.0.1:1",
+            "192.0.2.1:1",
+            "198.51.100.1:1",
+            "[2001:db8::1]:1",
+        ] {
+            assert!(!is_private(&sa(public).ip()), "{public}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn sanitize_keeps_public_first_then_private_in_order(
+            raw in proptest::collection::vec((prop_oneof![Just(10u8), Just(100), Just(172), Just(192), Just(198), Just(8)], any::<u8>(), any::<u8>(), 0u16..4), 0..40),
+            max in 0usize..10,
+        ) {
+            let input: Vec<SocketAddr> = raw
+                .iter()
+                .map(|&(a, b, c, port)| SocketAddr::new(Ipv4Addr::new(a, b & 0x3f | 0x10, c, 1).into(), port))
+                .collect();
+            let got = sanitize_candidates(input.clone(), max);
+            prop_assert!(got.len() <= max);
+            let mut seen = Vec::new();
+            for a in &input {
+                if candidate_ok(a) && !seen.contains(a) {
+                    seen.push(*a);
+                }
+            }
+            let (public, private): (Vec<_>, Vec<_>) = seen.into_iter().partition(|a| !is_private(&a.ip()));
+            let want: Vec<_> = public.into_iter().chain(private).take(max).collect();
+            prop_assert_eq!(got, want);
+        }
     }
 
     proptest! {
