@@ -202,6 +202,20 @@ T=$(wait_path relay-udp 60) && ok "conectado por relay UDP en ${T}s" || bad "sim
 integrity "relay UDP (NAT simétrico)" 5
 stop_services
 
+# Un CT con `net.ipv6.conf.default.disable_ipv6=1` crea atenea0 sin IPv6: `ip addr add fd77::…` falla («IPv6 is disabled on
+# this device») y el agente rechazaba la configuración entera (interface_failed). Ahora esa red funciona por IPv4.
+section "IPv6 desactivado en un extremo: la red funciona por IPv4"
+topo_setup home || { bad "no se pudo construir home"; exit 1; }
+ip netns exec b sysctl -qw net.ipv6.conf.default.disable_ipv6=1
+start_services
+T=$(wait_path direct 60) && ok "camino directo en ${T}s con IPv6 desactivado en B" || bad "sin camino con IPv6 desactivado en B (a=$(field a peers.0.path) b=$(field b peers.0.path))"
+expect_eq "B aplicó la configuración (sin interface_failed)" "$(field b config.last_error)" none
+expect_eq "B con lease activo" "$(field b config.lease_active)" true
+expect_eq "atenea0 de B sin dirección IPv6 global" "$(ip -n b -6 addr show dev atenea0 scope global | wc -l | tr -d ' ')" 0
+expect_eq "atenea0 de B con su dirección IPv4" "$(ip -n b -4 addr show dev atenea0 | grep -c 'inet 10.77.0.2/24')" 1
+integrity "IPv4 con IPv6 desactivado en B" 7
+stop_services
+
 echo
 if [ $FAILS -eq 0 ]; then echo "E2E RELAY: TODO OK"; else echo "E2E RELAY: $FAILS fallo(s)"; fi
 exit $FAILS

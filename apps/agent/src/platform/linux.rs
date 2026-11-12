@@ -72,6 +72,15 @@ impl Network {
         )
         .map(|_| ())
     }
+    /// `disable_ipv6 = 1` en la interfaz (p. ej. `net.ipv6.conf.default.disable_ipv6=1` al crearla) o un
+    /// núcleo sin IPv6, donde `/proc/sys/net/ipv6` no existe.
+    fn ipv6_disabled(&self) -> bool {
+        let conf = self.bins.proc_sys.join("net/ipv6/conf");
+        match std::fs::read_to_string(conf.join(&self.interface).join("disable_ipv6")) {
+            Ok(v) => v.trim() == "1",
+            Err(_) => !conf.exists(),
+        }
+    }
 }
 /// Rutas no predeterminadas de `ip -j route show table all` fuera de la interfaz propia.
 pub(crate) fn parse_routes(bytes: &[u8], interface: &str) -> Result<Vec<Prefix>, String> {
@@ -223,7 +232,16 @@ impl HostNetwork for Network {
             if addr.is_ipv6() {
                 args.push("nodad");
             }
-            self.configure_ip(&args)?;
+            match self.configure_ip(&args) {
+                // Un CT o equipo con IPv6 desactivado sigue sirviendo por IPv4; cualquier otro fallo es real.
+                Err(e) if addr.is_ipv6() && self.ipv6_disabled() => {
+                    tracing::warn!(
+                        "IPv6 desactivado en {}; la red funciona solo por IPv4 ({e})",
+                        self.interface
+                    );
+                }
+                result => result?,
+            }
         }
         Ok(())
     }

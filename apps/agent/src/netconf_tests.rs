@@ -32,6 +32,9 @@ impl Host {
 set -eu
 base=$(dirname "$0")
 printf '%s\n' "$*" >> "$base/ip.log"
+if [ -f "$base/addr-fail" ] && [ "$1 $2" = 'addr add' ]; then
+    case "$3" in *$(cat "$base/addr-fail")*) echo 'Error: IPv6 is disabled on this device.' >&2; exit 2 ;; esac
+fi
 if [ "$1" = '-j' ]; then
     case "$2" in
         -4) cat "$base/ip4.json" ;;
@@ -496,4 +499,50 @@ fn host_binaries_must_be_absolute_and_not_writable_by_others() {
     fs::set_permissions(&host.root, fs::Permissions::from_mode(0o770)).unwrap();
     assert!(net(host.root.join("resolvectl")).clear_dns().is_err());
     fs::set_permissions(&host.root, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+const DUAL: [(&str, u8); 2] = [("10.77.0.1", 24), ("fd77::1", 64)];
+
+fn dual() -> Vec<(IpAddr, u8)> {
+    DUAL.iter().map(|(a, l)| (a.parse().unwrap(), *l)).collect()
+}
+
+#[test]
+fn ipv6_disabled_on_the_interface_keeps_the_ipv4_address() {
+    let host = Host::new();
+    host.put("addr-fail", ":");
+    host.put("proc_sys/net/ipv6/conf/atenea0/disable_ipv6", "1\n");
+    host.netconf().configure_link(1400, &dual()).unwrap();
+    let log = host.log("ip.log");
+    assert!(log.contains("addr add 10.77.0.1/24 dev atenea0\n"), "{log}");
+    assert!(
+        log.contains("addr add fd77::1/64 dev atenea0 nodad\n"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_kernel_without_ipv6_keeps_the_ipv4_address() {
+    // Sin `/proc/sys/net/ipv6` (arranque con `ipv6.disable=1`).
+    let host = Host::new();
+    host.put("addr-fail", ":");
+    host.netconf().configure_link(1400, &dual()).unwrap();
+}
+
+#[test]
+fn an_ipv6_failure_with_ipv6_enabled_is_still_an_error() {
+    let host = Host::new();
+    host.put("addr-fail", ":");
+    host.put("proc_sys/net/ipv6/conf/atenea0/disable_ipv6", "0\n");
+    let error = host.netconf().configure_link(1400, &dual()).unwrap_err();
+    assert!(error.contains("fd77::1/64"), "{error}");
+}
+
+#[test]
+fn an_ipv4_failure_is_never_masked_by_the_ipv6_fallback() {
+    let host = Host::new();
+    host.put("addr-fail", ".");
+    host.put("proc_sys/net/ipv6/conf/atenea0/disable_ipv6", "1\n");
+    let error = host.netconf().configure_link(1400, &dual()).unwrap_err();
+    assert!(error.contains("10.77.0.1/24"), "{error}");
 }
