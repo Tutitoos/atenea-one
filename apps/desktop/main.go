@@ -20,6 +20,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notify"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/runtimefilter"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/secure"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/traymenu"
@@ -124,6 +125,7 @@ func main() {
 		quitting.Store(true)
 		wails.Quit()
 	}
+	notify.OnClick(show)
 	handler := &traymenu.Handler{Show: show, Quit: quit}
 	startTray(wails, core, handler, trayPNG)
 

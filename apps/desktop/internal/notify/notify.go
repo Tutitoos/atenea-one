@@ -7,12 +7,15 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 )
+
+var errDenied = errors.New("el sistema no permite avisos de Atenea One (Ajustes del Sistema > Notificaciones)")
 
 type peer struct {
 	direct     bool
@@ -163,13 +166,10 @@ func Sanitize(text string) string {
 	return b.String()
 }
 
-// Command devuelve el programa y argumentos que muestran el aviso en el SO dado.
+// Command devuelve el programa y argumentos que muestran el aviso en el SO dado (macOS usa Native).
 func Command(goos, text string) (program string, args []string, ok bool) {
 	text = Sanitize(text)
-	switch goos {
-	case "darwin":
-		return "/usr/bin/osascript", []string{"-e", `display notification "` + text + `" with title "Atenea One"`}, true
-	case "linux":
+	if goos == "linux" {
 		return "notify-send", []string{"--", "Atenea One", text}, true
 	}
 	return "", nil, false
@@ -182,8 +182,14 @@ var Run = func(program string, args []string) error {
 	return exec.CommandContext(ctx, program, args...).Run()
 }
 
+// Native entrega el aviso desde la propia aplicación; solo existe en macOS.
+var Native func(text string) error
+
 // Deliver entrega el aviso; devuelve nil si el SO no lo admite.
 func Deliver(text string) error {
+	if Native != nil {
+		return Native(Sanitize(text))
+	}
 	program, args, ok := Command(runtime.GOOS, text)
 	if !ok {
 		return nil

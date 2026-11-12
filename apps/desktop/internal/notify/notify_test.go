@@ -114,11 +114,10 @@ func TestSanitizeInterpreterTextAndBoundsLength(t *testing.T) {
 }
 
 func TestCommandPerOS(t *testing.T) {
-	p, a, ok := Command("darwin", `Red "de" prueba\`)
-	if !ok || p != "/usr/bin/osascript" || !reflect.DeepEqual(a, []string{"-e", `display notification "Red de prueba" with title "Atenea One"`}) {
-		t.Fatalf("%v %v %v", p, a, ok)
+	if _, _, ok := Command("darwin", "x"); ok {
+		t.Fatal("macOS entrega con Native, no con un programa")
 	}
-	p, a, ok = Command("linux", "Red 'de'\u202e prueba")
+	p, a, ok := Command("linux", "Red 'de'\u202e prueba")
 	if !ok || p != "notify-send" || !reflect.DeepEqual(a, []string{"--", "Atenea One", "Red de prueba"}) {
 		t.Fatalf("%v %v %v", p, a, ok)
 	}
@@ -127,12 +126,20 @@ func TestCommandPerOS(t *testing.T) {
 	}
 }
 
-func TestDeliverUsesRun(t *testing.T) {
-	old := Run
-	defer func() { Run = old }()
+func TestDeliverPrefersNativeThenRun(t *testing.T) {
+	oldRun, oldNative := Run, Native
+	defer func() { Run, Native = oldRun, oldNative }()
 	var program string
 	var args []string
 	Run = func(p string, a []string) error { program, args = p, a; return errors.New("fallo") }
+
+	var got string
+	Native = func(text string) error { got = text; return nil }
+	if err := Deliver("Red \"de\" prueba"); err != nil || got != "Red de prueba" || program != "" {
+		t.Fatalf("nativo: %v %q %q", err, got, program)
+	}
+
+	Native = nil
 	err := Deliver("Red de prueba")
 	if _, _, ok := Command(goosForTest(), "x"); !ok {
 		if err != nil || program != "" {
