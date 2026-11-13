@@ -46,7 +46,7 @@ pub async fn authenticate(
         return Err(invalid());
     }
     let dev = Uuid::from_bytes(signed.device_id);
-    let row = sqlx::query("SELECT network_id,identity_pubkey FROM devices WHERE id=$1")
+    let row = sqlx::query("SELECT network_id,identity_pubkey,status FROM devices WHERE id=$1")
         .bind(dev)
         .fetch_optional(&s.pool)
         .await?
@@ -64,8 +64,13 @@ pub async fn authenticate(
     )
     .map_err(|_| invalid())?;
     crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
-    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
-    Ok((dev, row.get("network_id")))
+    // Un pendiente o revocado se rechaza sin ocupar la caché de nonces ni bloquear la fila de la red.
+    if row.get::<String, _>("status") != "approved" {
+        return Err(ApiError::forbidden("device_not_approved"));
+    }
+    let net: Uuid = row.get("network_id");
+    crate::claim_nonce(&s.nonces, net, dev, signed.nonce, now)?;
+    Ok((dev, net))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

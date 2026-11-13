@@ -26,10 +26,18 @@ use std::{
     time::Instant,
 };
 use uuid::Uuid;
-pub type NonceCache = Arc<Mutex<HashMap<(Uuid, [u8; 16]), u64>>>;
+/// Nonces firmados vigentes, agrupados por red: una red no agota la caché de las demás.
+#[derive(Default)]
+pub struct Nonces {
+    by_network: HashMap<Uuid, HashMap<(Uuid, [u8; 16]), u64>>,
+    total: usize,
+}
+pub type NonceCache = Arc<Mutex<Nonces>>;
 pub type Rates<K> = Arc<Mutex<HashMap<K, (f64, Instant)>>>;
 /// Tope duro de claves en cada caché en memoria.
 pub const MAX_ENTRIES: usize = 65_536;
+/// Tope de nonces vigentes de una sola red.
+pub const MAX_NETWORK_NONCES: usize = MAX_ENTRIES / 4;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: sqlx::PgPool,
@@ -101,26 +109,48 @@ pub fn take<K: Hash + Eq>(
     Ok(())
 }
 
-/// Registra un nonce firmado. Repetido → 401; caché llena de nonces vigentes → 429.
+/// Registra un nonce firmado. Repetido → 401; cuota de la red o caché llenas de nonces vigentes → 429.
+/// Los vigentes no se expulsan: conservan la protección antirrepetición.
 pub fn claim_nonce(
     cache: &NonceCache,
+    net: Uuid,
     dev: Uuid,
     nonce: [u8; 16],
     now: u64,
 ) -> Result<(), api::ApiError> {
-    let mut n = cache.lock().map_err(|_| api::ApiError::internal())?;
-    if n.get(&(dev, nonce))
-        .is_some_and(|ts| now.saturating_sub(*ts) <= 120)
+    let live = |ts: &u64| now.saturating_sub(*ts) <= 120;
+    let limited = || api::ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    let mut guard = cache.lock().map_err(|_| api::ApiError::internal())?;
+    let Nonces { by_network, total } = &mut *guard;
+    if by_network
+        .get(&net)
+        .and_then(|own| own.get(&(dev, nonce)))
+        .is_some_and(live)
     {
         return Err(api::ApiError(StatusCode::UNAUTHORIZED, "invalid_signature"));
     }
-    if n.len() >= MAX_ENTRIES {
-        n.retain(|_, ts| now.saturating_sub(*ts) <= 120);
-        if n.len() >= MAX_ENTRIES {
-            return Err(api::ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    if *total >= MAX_ENTRIES {
+        by_network.retain(|_, own| {
+            own.retain(|_, ts| live(ts));
+            !own.is_empty()
+        });
+        *total = by_network.values().map(HashMap::len).sum();
+        if *total >= MAX_ENTRIES {
+            return Err(limited());
         }
     }
-    n.insert((dev, nonce), now);
+    let own = by_network.entry(net).or_default();
+    if own.len() >= MAX_NETWORK_NONCES {
+        let before = own.len();
+        own.retain(|_, ts| live(ts));
+        *total -= before - own.len();
+        if own.len() >= MAX_NETWORK_NONCES {
+            return Err(limited());
+        }
+    }
+    if own.insert((dev, nonce), now).is_none() {
+        *total += 1;
+    }
     Ok(())
 }
 
@@ -188,22 +218,31 @@ mod tests {
         assert_eq!(m.lock().unwrap().len(), MAX_ENTRIES);
     }
     #[test]
-    fn nonces_acotados_y_repeticion_rechazada() {
+    fn nonces_acotados_por_red_y_repeticion_rechazada() {
         let c = NonceCache::default();
-        let d = Uuid::new_v4();
-        assert!(claim_nonce(&c, d, [1; 16], 1000).is_ok());
+        let (a, b, d) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::new_v4());
+        let code = |r: Result<(), api::ApiError>| r.unwrap_err().1;
+        assert!(claim_nonce(&c, a, d, [1; 16], 1000).is_ok());
         assert_eq!(
-            claim_nonce(&c, d, [1; 16], 1000).unwrap_err().1,
+            code(claim_nonce(&c, a, d, [1; 16], 1000)),
             "invalid_signature"
         );
-        c.lock()
-            .unwrap()
-            .extend((0..MAX_ENTRIES as u32).map(|i| ((Uuid::from_u128(i.into()), [0; 16]), 1000)));
-        assert_eq!(
-            claim_nonce(&c, d, [2; 16], 1000).unwrap_err().1,
-            "rate_limited"
-        );
-        assert!(claim_nonce(&c, d, [2; 16], 2000).is_ok());
+        // Una red que agota su cuota no deja sin sitio a otra.
+        for i in 1..MAX_NETWORK_NONCES as u128 {
+            assert!(claim_nonce(&c, a, Uuid::from_u128(i), [0; 16], 1000).is_ok());
+        }
+        assert_eq!(code(claim_nonce(&c, a, d, [2; 16], 1000)), "rate_limited");
+        assert!(claim_nonce(&c, b, d, [2; 16], 1000).is_ok());
+        // Con la caché entera llena de vigentes se rechaza a todos; al caducar vuelve a haber sitio.
+        for net in 3..=5u128 {
+            for i in 0..MAX_NETWORK_NONCES as u128 {
+                let _ = claim_nonce(&c, Uuid::from_u128(net), Uuid::from_u128(i), [0; 16], 1000);
+            }
+        }
+        assert_eq!(c.lock().unwrap().total, MAX_ENTRIES);
+        assert_eq!(code(claim_nonce(&c, b, d, [3; 16], 1000)), "rate_limited");
+        assert!(claim_nonce(&c, a, d, [2; 16], 2000).is_ok());
+        assert_eq!(c.lock().unwrap().total, 1);
     }
 }
 
@@ -218,17 +257,23 @@ mod lleno {
             .extend((0..MAX_ENTRIES as u32).map(|k| (k, (5., Instant::now()))));
         assert!(take(&m, 0, 10).is_ok());
         assert!(take(&m, u32::MAX, 10).is_err());
+        // Red y caché llenas de vigentes: la repetición sigue siendo 401 (no 429) y no pisa el nonce.
         let c = NonceCache::default();
-        let d = Uuid::new_v4();
-        c.lock()
-            .unwrap()
-            .extend((0..MAX_ENTRIES as u32).map(|i| ((Uuid::from_u128(i.into()), [0; 16]), 1000)));
-        c.lock().unwrap().insert((d, [9; 16]), 1000);
+        let (net, d) = (Uuid::from_u128(1), Uuid::new_v4());
+        {
+            let mut n = c.lock().unwrap();
+            n.total = MAX_ENTRIES;
+            let own = n.by_network.entry(net).or_default();
+            own.extend(
+                (1..MAX_NETWORK_NONCES as u128).map(|i| ((Uuid::from_u128(i), [0; 16]), 1000)),
+            );
+            own.insert((d, [9; 16]), 1000);
+        }
         assert_eq!(
-            claim_nonce(&c, d, [9; 16], 1060).unwrap_err().1,
+            claim_nonce(&c, net, d, [9; 16], 1060).unwrap_err().1,
             "invalid_signature"
         );
-        assert_eq!(c.lock().unwrap()[&(d, [9; 16])], 1000);
-        assert!(claim_nonce(&c, d, [9; 16], 1121).is_ok());
+        assert_eq!(c.lock().unwrap().by_network[&net][&(d, [9; 16])], 1000);
+        assert!(claim_nonce(&c, net, d, [9; 16], 1121).is_ok());
     }
 }

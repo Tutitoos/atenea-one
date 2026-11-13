@@ -198,10 +198,11 @@ pub async fn status(
     )
     .map_err(|_| invalid())?;
     crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
-    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
+    // Un pendiente o revocado se rechaza sin ocupar la caché de nonces compartida.
     if row.get::<String, _>("status") != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
+    crate::claim_nonce(&s.nonces, row.get("network_id"), dev, signed.nonce, now)?;
     let report: Report =
         serde_json::from_slice(&body).map_err(|_| ApiError::bad("invalid_report"))?;
     let hostname = report
