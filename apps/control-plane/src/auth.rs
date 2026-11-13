@@ -144,7 +144,11 @@ pub async fn login(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let ip = crate::client_ip(&state.config, source.map(|a| a.0.0.ip()), &headers);
-    crate::take(&state.login_rate, ip, state.config.login_per_minute)?;
+    crate::take(
+        &state.login_rate,
+        crate::ip_group(ip),
+        state.config.login_per_minute,
+    )?;
     let pending: i64 =
         sqlx::query_scalar("SELECT count(*) FROM oidc_flows WHERE expires_at > now()")
             .fetch_one(&state.pool)
@@ -270,6 +274,11 @@ pub async fn callback(
     }
     let token = CsrfToken::new_random_len(32);
     let csrf = CsrfToken::new_random_len(32);
+    // Solo un correo verificado por el IdP puede servir de clave de membresía (`orgs::add_member`).
+    let email = claims
+        .email()
+        .filter(|_| claims.email_verified() == Some(true))
+        .map(|email| email.as_str());
     let mut tx = state.pool.begin().await?;
     let user_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (id, oidc_issuer, oidc_subject, email, display_name, created_at) \
@@ -280,7 +289,7 @@ pub async fn callback(
     .bind(Uuid::new_v4())
     .bind(claims.issuer().as_str())
     .bind(claims.subject().as_str())
-    .bind(claims.email().map(|email| email.as_str()))
+    .bind(email)
     .bind(
         claims
             .name()

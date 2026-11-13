@@ -489,3 +489,92 @@ async fn websocket_real_tcp_hello_approval_origin_and_connection_limits() {
     let _ = server.await;
     t.finish().await;
 }
+
+#[tokio::test]
+async fn websocket_seq_es_por_red_y_no_revela_la_actividad_de_otras() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let owner = t.user().await;
+    let (_, net) = network(&t, &owner).await;
+    let stranger = t.user().await;
+    let (_, other) = network(&t, &stranger).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = t.app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let url = format!("ws://{address}/api/v1/networks/{net}/events");
+    let mut socket = websocket(&url, &owner, "http://127.0.0.1:8080")
+        .await
+        .unwrap();
+    let base = event(&mut socket).await["seq"].as_u64().unwrap();
+    // Las escrituras de otra red no avanzan el contador de esta.
+    for n in 0..5 {
+        let renamed = t
+            .json(
+                "PATCH",
+                &format!("/api/v1/networks/{other}"),
+                Some(&stranger),
+                json!({"name":format!("otra-{n}")}),
+            )
+            .await;
+        assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json);
+    }
+    let renamed = t
+        .json(
+            "PATCH",
+            &format!("/api/v1/networks/{net}"),
+            Some(&owner),
+            json!({"name":"propia"}),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json);
+    // Los primeros eventos de la escritura siguen al hello sin saltos: la otra red no cuenta.
+    let first = event(&mut socket).await["seq"].as_u64();
+    let second = event(&mut socket).await["seq"].as_u64();
+    assert_eq!((first, second), (Some(base + 1), Some(base + 2)));
+    let _ = socket.close(None).await;
+    server.abort();
+    let _ = server.await;
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn retencion_de_versiones_conserva_la_ultima_de_cada_dispositivo() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let user = t.user().await;
+    let (_, net) = network(&t, &user).await;
+    let a = device(&t, &user, net, true).await;
+    let b = device(&t, &user, net, true).await;
+    let at = chrono::DateTime::from_timestamp(now() as i64, 0).unwrap();
+    // `a`: dos versiones caducadas hace más de 7 días y una vigente; `b`: una sola, también antigua.
+    for (dev, version, days) in [(a.id, 1_i64, 10), (a.id, 2, 9), (a.id, 3, 0), (b.id, 1, 20)] {
+        sqlx::query("INSERT INTO configuration_versions(device_id,version,config_hash,not_before,not_after,issuer_serial) VALUES($1,$2,'\\x00',$3,$3,1)")
+            .bind(dev)
+            .bind(version)
+            .bind(at - chrono::Duration::days(days))
+            .execute(&t.pool)
+            .await
+            .unwrap();
+    }
+    panel::purge_versions(&t.pool, at).await.unwrap();
+    let kept: Vec<(Uuid, i64)> =
+        sqlx::query_as("SELECT device_id,version FROM configuration_versions")
+            .fetch_all(&t.pool)
+            .await
+            .unwrap();
+    // Se conserva la última de cada dispositivo: de ella deriva `issue` la siguiente `config_version`.
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    assert!(kept.contains(&(a.id, 3)));
+    assert!(kept.contains(&(b.id, 1)));
+    t.finish().await;
+}

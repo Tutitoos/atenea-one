@@ -232,10 +232,34 @@ pub fn router(state: Arc<Coordinator>) -> Router {
             ApiError(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed")
         })
         .layer(axum::middleware::from_fn_with_state(
+            (REQUEST_TIMEOUT, EVENTS_TIMEOUT),
+            request_timeout,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             state.metrics.clone(),
             atenea_observability::record,
         ))
         .with_state(state)
+}
+/// Plazo de una petición, cuerpo incluido: el cuerpo se lee antes de autenticar y, sin plazo, un
+/// cliente lento retiene la conexión.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// El long-poll de eventos espera hasta 30 s por contrato: su plazo es mayor, no inexistente.
+const EVENTS_TIMEOUT: Duration = Duration::from_secs(40);
+async fn request_timeout(
+    State((general, events)): State<(Duration, Duration)>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let limit = if request.uri().path() == "/v1/events" {
+        events
+    } else {
+        general
+    };
+    match tokio::time::timeout(limit, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => ApiError(StatusCode::REQUEST_TIMEOUT, "request_timeout").into_response(),
+    }
 }
 async fn body(request: Request, max: usize) -> Result<(Method, Uri, HeaderMap, Bytes), ApiError> {
     let (parts, body) = request.into_parts();
@@ -566,5 +590,39 @@ async fn events(
         let remaining = Duration::from_secs(expires.saturating_sub((s.clock)()));
         let until = deadline.min(tokio::time::Instant::now() + remaining);
         tokio::select! { _=notified=>{}, _=tokio::time::sleep_until(until)=>{} }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn peticion_lenta_se_corta_con_408_y_el_long_poll_tiene_su_plazo() {
+        let app = Router::new()
+            .route("/lenta", get(std::future::pending::<&'static str>))
+            .route(
+                "/v1/events",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    "listo"
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                (Duration::from_millis(50), Duration::from_secs(5)),
+                request_timeout,
+            ));
+        let request = |path: &str| {
+            axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let cut = app.clone().oneshot(request("/lenta")).await.unwrap();
+        assert_eq!(cut.status(), StatusCode::REQUEST_TIMEOUT);
+        // Tarda más que el plazo general (50 ms) pero cabe en el suyo.
+        let poll = app.oneshot(request("/v1/events")).await.unwrap();
+        assert_eq!(poll.status(), StatusCode::OK);
     }
 }

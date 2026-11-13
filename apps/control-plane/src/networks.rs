@@ -335,6 +335,11 @@ pub async fn remove(
 ) -> Result<StatusCode, ApiError> {
     let (u, org) = access(&s, &h, net, true).await?;
     let mut tx = s.pool.begin().await?;
+    let name: String = sqlx::query_scalar("DELETE FROM networks WHERE id=$1 RETURNING name")
+        .bind(net)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
     audit::record(
         &mut tx,
         "user",
@@ -343,13 +348,9 @@ pub async fn remove(
         Some(net),
         "network.delete",
         net,
-        json!({}),
+        json!({"name":name}),
     )
     .await?;
-    sqlx::query("DELETE FROM networks WHERE id=$1")
-        .bind(net)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

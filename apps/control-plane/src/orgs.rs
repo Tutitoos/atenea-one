@@ -265,10 +265,12 @@ pub async fn remove(
 ) -> Result<axum::http::StatusCode, ApiError> {
     let u = auth::session(&s, &h, true).await?;
     let mut tx = s.pool.begin().await?;
-    sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
-        .bind(org)
-        .execute(&mut *tx)
-        .await?;
+    let name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1 FOR UPDATE")
+            .bind(org)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let name = name.ok_or_else(ApiError::not_found)?;
     let role: Option<String> =
         sqlx::query_scalar("SELECT role FROM memberships WHERE org_id=$1 AND user_id=$2")
             .bind(org)
@@ -288,7 +290,7 @@ pub async fn remove(
         None,
         "org.delete",
         org,
-        json!({}),
+        json!({"name":name}),
     )
     .await?;
     sqlx::query("DELETE FROM organizations WHERE id=$1")

@@ -17,10 +17,7 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::broadcast;
@@ -28,17 +25,17 @@ use uuid::Uuid;
 
 pub struct Live {
     tx: broadcast::Sender<(Uuid, Value)>,
-    seq: AtomicU64,
+    /// `seq` por red, no global: un miembro no debe ver la actividad de otras redes.
+    /// shortcut: una entrada por red con cambios y sin purga; purgarla al borrar la red.
+    seq: Mutex<HashMap<Uuid, u64>>,
     connections: Mutex<HashMap<Uuid, usize>>,
-    publish: Mutex<()>,
 }
 impl Default for Live {
     fn default() -> Self {
         Self {
             tx: broadcast::channel(256).0,
-            seq: AtomicU64::new(0),
+            seq: Mutex::new(HashMap::new()),
             connections: Mutex::new(HashMap::new()),
-            publish: Mutex::new(()),
         }
     }
 }
@@ -47,13 +44,20 @@ impl Live {
         self.connections.lock().expect("conexiones").values().sum()
     }
     pub fn changed(&self, net: Uuid, scope: &str) {
-        let Ok(_publish) = self.publish.lock() else {
+        let Ok(mut seqs) = self.seq.lock() else {
             return;
         };
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let seq = seqs.entry(net).or_default();
+        *seq += 1;
+        // Enviar con el cerrojo tomado mantiene el orden de `seq` dentro de la red.
         let _ = self
             .tx
-            .send((net, json!({"type":"changed","scope":scope,"seq":seq})));
+            .send((net, json!({"type":"changed","scope":scope,"seq":*seq})));
+    }
+    fn current_seq(&self, net: Uuid) -> u64 {
+        self.seq
+            .lock()
+            .map_or(0, |seqs| seqs.get(&net).copied().unwrap_or(0))
     }
 }
 #[derive(Deserialize, Serialize)]
@@ -317,6 +321,16 @@ pub async fn sample(s: &AppState, at: chrono::DateTime<chrono::Utc>) -> Result<(
     }
     Ok(())
 }
+/// Retención de `configuration_versions`: 7 días tras caducar el lease, salvo la última versión de
+/// cada dispositivo (de ella deriva `issue` la siguiente `config_version`). Por lotes: el primer
+/// barrido tras desplegar puede ser de millones de filas y no debe superar `statement_timeout`.
+pub async fn purge_versions(
+    pool: &sqlx::PgPool,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM configuration_versions WHERE id IN (SELECT c.id FROM configuration_versions c WHERE c.not_after<$1::timestamptz-interval '7 days' AND EXISTS(SELECT 1 FROM configuration_versions n WHERE n.device_id=c.device_id AND n.version>c.version) LIMIT 20000)").bind(at).execute(pool).await?;
+    Ok(())
+}
 pub async fn sampler(s: AppState, mut stop: tokio::sync::watch::Receiver<bool>) {
     let mut timer = tokio::time::interval(Duration::from_secs(60));
     let mut previous = chrono::Utc::now();
@@ -327,7 +341,9 @@ pub async fn sampler(s: AppState, mut stop: tokio::sync::watch::Receiver<bool>) 
                 let current = chrono::Utc::now();
                 if sample(&s,current).await.is_err(){tracing::warn!("No se pudo muestrear la red");}
                 if crate::auth::purge(&s.pool).await.is_err(){tracing::warn!("No se pudo purgar sesiones caducadas");}
-                let expired = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM (SELECT max(not_after) AS expires FROM configuration_versions GROUP BY device_id) leases WHERE expires > $1 AND expires <= $2")
+                if purge_versions(&s.pool,current).await.is_err(){tracing::warn!("No se pudo purgar versiones de configuración");}
+                // Solo las filas vigentes en `previous` (índice `configuration_versions_not_after`): no lee la tabla entera.
+                let expired = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM (SELECT max(not_after) AS expires FROM configuration_versions WHERE not_after > $1 GROUP BY device_id) leases WHERE expires <= $2")
                     .bind(previous).bind(current).fetch_one(&s.pool).await;
                 match expired {
                     Ok(count) => {
@@ -400,7 +416,7 @@ async fn stream(
     mut rx: broadcast::Receiver<(Uuid, Value)>,
     _guard: Connection,
 ) {
-    let initial_seq = s.panel.seq.load(Ordering::SeqCst);
+    let initial_seq = s.panel.current_seq(net);
     let hello = json!({"type":"hello","seq":initial_seq});
     if socket
         .send(Message::Text(hello.to_string().into()))
@@ -495,4 +511,26 @@ pub async fn static_content(State(s): State<AppState>, uri: Uri) -> Response {
         })
     });
     ([("content-type",content),("content-security-policy","default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"),("x-content-type-options","nosniff"),("referrer-policy","same-origin"),("cache-control",if ext=="html"||!hashed{"no-cache"}else{"public, max-age=31536000, immutable"})],bytes).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seq_cuenta_por_red_y_no_revela_otras_redes() {
+        let live = Live::default();
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut rx = live.tx.subscribe();
+        live.changed(a, "devices");
+        live.changed(b, "devices");
+        live.changed(b, "audit");
+        live.changed(a, "audit");
+        let seqs: Vec<(Uuid, u64)> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|(net, event)| (net, event["seq"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(seqs, vec![(a, 1), (b, 1), (b, 2), (a, 2)]);
+        assert_eq!((live.current_seq(a), live.current_seq(b)), (2, 2));
+        assert_eq!(live.current_seq(Uuid::from_u128(3)), 0);
+    }
 }

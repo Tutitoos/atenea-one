@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 mod common;
-use atenea_control_plane::config::Config;
+use atenea_control_plane::{AppState, config::Config, router};
 use atenea_identity::{generate_seed, signing_key};
 use axum::{
     body::Body,
@@ -9,6 +9,7 @@ use axum::{
 };
 use common::*;
 use serde_json::json;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 fn enroll_request(peer: &str, real_ip: Option<&str>) -> Request<Body> {
@@ -104,6 +105,44 @@ async fn login_limitado_por_ip_y_con_tope_de_flujos() {
     t.send(login())
         .await
         .error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn login_comparte_cubo_dentro_de_una_ipv6_64() {
+    let Some(t) = TestApp::configured(Config {
+        login_per_minute: 1,
+        ..Config::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let login = |ip: &str| {
+        let mut r = Request::builder()
+            .uri("/auth/login")
+            .body(Body::empty())
+            .unwrap();
+        r.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                ip.parse().unwrap(),
+                1,
+            )));
+        r
+    };
+    assert_ne!(
+        t.send(login("2001:db8:1:2::1")).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // Otra dirección de la misma /64 comparte el cubo; otra /64 tiene el suyo.
+    assert_eq!(
+        t.send(login("2001:db8:1:2:ffff::9")).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_ne!(
+        t.send(login("2001:db8:1:3::1")).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
     t.finish().await;
 }
 
@@ -635,5 +674,88 @@ async fn salida_respeta_limites_de_cuerpo_y_ritmo() {
     t.send(leave_request(&d, &d.key, [31; 16]))
         .await
         .error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    t.finish().await;
+}
+
+async fn setting(pool: &sqlx::PgPool, name: &str) -> String {
+    sqlx::query_scalar("SELECT current_setting($1)")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn pool_del_servicio_acota_espera_y_bloqueo_pero_no_las_migraciones() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let options = (*t.pool.connect_options()).clone();
+    let service = atenea_control_plane::db::pool(options.clone(), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.options().get_acquire_timeout(),
+        std::time::Duration::from_secs(5)
+    );
+    assert_eq!(setting(&service, "lock_timeout").await, "5s");
+    assert_eq!(setting(&service, "statement_timeout").await, "30s");
+    // Una migración (p. ej. un índice en una tabla grande) puede superar cualquier plazo.
+    let migrator = atenea_control_plane::db::pool(options, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        setting(&migrator, "statement_timeout").await,
+        setting(&t.pool, "statement_timeout").await
+    );
+    service.close().await;
+    migrator.close().await;
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn bloqueo_de_red_vence_por_lock_timeout_y_responde_500() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let (_, net, d) = approved(&t).await;
+    let service = atenea_control_plane::db::pool((*t.pool.connect_options()).clone(), true)
+        .await
+        .unwrap();
+    let app = router(AppState::new(
+        service.clone(),
+        Config::default(),
+        t.issuer.clone(),
+    ));
+    // Con la fila de la red bloqueada, la emisión no espera para siempre: vence `lock_timeout`.
+    let mut c = connection(&t.pool).await;
+    sqlx::query("BEGIN").execute(&mut c).await.unwrap();
+    sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
+        .bind(net)
+        .execute(&mut c)
+        .await
+        .unwrap();
+    let auth = atenea_identity::api_auth::sign_request(
+        &d.key,
+        *d.id.as_bytes(),
+        "GET",
+        "/api/v1/device/config",
+        b"",
+        now(),
+        *Uuid::new_v4().as_bytes(),
+    );
+    let request = Request::builder()
+        .uri("/api/v1/device/config")
+        .header("authorization", auth)
+        .body(Body::empty())
+        .unwrap();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(20), app.oneshot(request))
+        .await
+        .expect("el bloqueo debe vencer")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    sqlx::query("ROLLBACK").execute(&mut c).await.unwrap();
+    drop(c);
+    service.close().await;
     t.finish().await;
 }

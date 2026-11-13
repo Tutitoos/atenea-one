@@ -78,12 +78,16 @@ async fn token(
         URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
         flow.challenge
     );
-    let mut claims = json!({"iss":p.issuer,"sub":"subject-test","aud":"test-client","iat":now(),"exp":now()+300,"nonce":flow.nonce,"email":"oidc@example.test","name":"OIDC sintético"});
+    let mut claims = json!({"iss":p.issuer,"sub":"subject-test","aud":"test-client","iat":now(),"exp":now()+300,"nonce":flow.nonce,"email":"oidc@example.test","email_verified":true,"name":"OIDC sintético"});
     match flow.mode {
         "issuer" => claims["iss"] = json!("https://otro.example.test"),
         "audience" => claims["aud"] = json!("otro-cliente"),
         "nonce" => claims["nonce"] = json!("otro-nonce"),
         "expired" => claims["exp"] = json!(now() - 3600),
+        "email_no_verificado" => claims["email_verified"] = json!(false),
+        "email_sin_declaracion" => {
+            claims.as_object_mut().unwrap().remove("email_verified");
+        }
         _ => {}
     }
     let mut header = Header::new(Algorithm::RS256);
@@ -276,5 +280,31 @@ async fn oidc_rechaza_issuer_audience_nonce_caducidad_firma_state_y_cookie() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn oidc_guarda_el_correo_solo_si_el_proveedor_lo_verifica() {
+    let provider = Server::start().await;
+    let Some(t) = TestApp::configured(provider.config()).await else {
+        return;
+    };
+    // El mismo sujeto inicia sesión varias veces: el correo se reescribe en cada una.
+    for (mode, expected) in [
+        ("", Some("oidc@example.test")),
+        ("email_no_verificado", None),
+        ("", Some("oidc@example.test")),
+        ("email_sin_declaracion", None),
+    ] {
+        let (state, cookie) = provider.login(&t, mode).await;
+        let r = callback(&t, &state, Some(&cookie)).await;
+        assert!(r.status.is_redirection(), "{mode}: {}", r.json);
+        let email: Option<String> =
+            sqlx::query_scalar("SELECT email FROM users WHERE oidc_subject='subject-test'")
+                .fetch_one(&t.pool)
+                .await
+                .unwrap();
+        assert_eq!(email.as_deref(), expected, "{mode}");
+    }
     t.finish().await;
 }

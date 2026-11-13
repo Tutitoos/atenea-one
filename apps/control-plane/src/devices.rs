@@ -117,7 +117,7 @@ pub async fn enroll(
     Json(b): Json<Enrollment>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
-    crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
+    crate::take(&s.rate, crate::ip_group(ip), s.config.enroll_per_minute)?;
     let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
@@ -216,7 +216,7 @@ pub async fn request_join(
     Json(b): Json<JoinRequest>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let ip = crate::client_ip(&s.config, source.map(|a| a.0.0.ip()), &h);
-    crate::take(&s.rate, ip, s.config.enroll_per_minute)?;
+    crate::take(&s.rate, crate::ip_group(ip), s.config.enroll_per_minute)?;
     let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
@@ -331,6 +331,12 @@ pub async fn approve(
         .bind(dev)
         .execute(&mut *tx)
         .await?;
+    let addresses: Vec<String> = sqlx::query_scalar(
+        "SELECT host(addr) FROM ip_allocations WHERE device_id=$1 ORDER BY family",
+    )
+    .bind(dev)
+    .fetch_all(&mut *tx)
+    .await?;
     audit::record(
         &mut tx,
         "user",
@@ -339,7 +345,7 @@ pub async fn approve(
         Some(net),
         "device.approve",
         dev,
-        json!({}),
+        json!({"addresses":addresses}),
     )
     .await?;
     tx.commit().await?;
@@ -504,13 +510,15 @@ pub async fn update(
         .bind(net)
         .execute(&mut *tx)
         .await?;
-    let previous: String =
-        sqlx::query_scalar("SELECT role FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE")
-            .bind(dev)
-            .bind(net)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(ApiError::not_found)?;
+    let before = sqlx::query(
+        "SELECT role,name,endpoints FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE",
+    )
+    .bind(dev)
+    .bind(net)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(ApiError::not_found)?;
+    let previous: String = before.get("role");
     if b.use_system_name {
         let hostname: Option<Option<String>> = sqlx::query_scalar(
             "SELECT hostname FROM devices WHERE id=$1 AND network_id=$2 FOR UPDATE",
@@ -523,10 +531,7 @@ pub async fn update(
             return Err(ApiError::conflict("no_system_name"));
         }
     }
-    let result=sqlx::query("UPDATE devices SET name=CASE WHEN $5 THEN hostname ELSE COALESCE($3,name) END,name_source=CASE WHEN $5 THEN 'device' WHEN $3 IS NOT NULL THEN 'admin' ELSE name_source END,endpoints=COALESCE($4,endpoints),role=COALESCE($6,role) WHERE id=$1 AND network_id=$2").bind(dev).bind(net).bind(name).bind(endpoints).bind(b.use_system_name).bind(role).execute(&mut *tx).await?;
-    if result.rows_affected() == 0 {
-        return Err(ApiError::not_found());
-    }
+    let after = sqlx::query("UPDATE devices SET name=CASE WHEN $5 THEN hostname ELSE COALESCE($3,name) END,name_source=CASE WHEN $5 THEN 'device' WHEN $3 IS NOT NULL THEN 'admin' ELSE name_source END,endpoints=COALESCE($4,endpoints),role=COALESCE($6,role) WHERE id=$1 AND network_id=$2 RETURNING name,endpoints").bind(dev).bind(net).bind(name).bind(endpoints).bind(b.use_system_name).bind(role).fetch_optional(&mut *tx).await?.ok_or_else(ApiError::not_found)?;
     if let Some(role) = role.filter(|role| *role != previous) {
         audit::record(
             &mut tx,
@@ -548,7 +553,7 @@ pub async fn update(
         Some(net),
         "device.update",
         dev,
-        json!({}),
+        json!({"old":{"name":before.get::<String,_>("name"),"endpoints":before.get::<Value,_>("endpoints")},"new":{"name":after.get::<String,_>("name"),"endpoints":after.get::<Value,_>("endpoints")}}),
     )
     .await?;
     tx.commit().await?;

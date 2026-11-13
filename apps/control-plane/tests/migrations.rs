@@ -107,7 +107,7 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
             .fetch_all(&t.pool)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     // Reconstruye el estado 0006: redes y dispositivos previos quedan `cerrada` y `token`.
     t.pool
         .execute(
@@ -153,5 +153,59 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
     .await
     .unwrap();
     assert_eq!(empty, 10000);
+    t.finish().await;
+}
+
+fn assert_versions_without_seq_scan(plan: &Value) -> usize {
+    let mut scans = 0;
+    if plan["Relation Name"] == "configuration_versions" {
+        assert_ne!(
+            plan["Node Type"], "Seq Scan",
+            "barrido global de versiones: {plan}"
+        );
+        scans += 1;
+    }
+    if let Some(children) = plan["Plans"].as_array() {
+        for child in children {
+            scans += assert_versions_without_seq_scan(child);
+        }
+    }
+    scans
+}
+
+#[tokio::test]
+async fn migracion_indice_not_after_acota_el_recuento_de_leases_expirados() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    // 50 dispositivos y 200k versiones repartidas en 139 días: solo unas diez siguen vigentes.
+    // Los bytes sintéticos satisfacen SQL; no son identidades criptográficas.
+    t.pool.execute("INSERT INTO organizations(id,name) VALUES (md5('org')::uuid,'versions-test');
+        INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor)
+        VALUES (md5('net')::uuid,md5('org')::uuid,'net','10.90.0.0/16','fd90::/64',decode(repeat('00',32),'hex'));
+        INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle)
+        SELECT md5(i::text)::uuid,md5('net')::uuid,'device-' || i,'approved',decode(md5('n' || i) || md5('n' || i),'hex'),decode(md5('i' || i) || md5('i' || i),'hex'),decode(repeat('00',146),'hex') FROM generate_series(1,50) i;
+        INSERT INTO configuration_versions(device_id,version,config_hash,not_before,not_after,issuer_serial)
+        SELECT md5((i % 50 + 1)::text)::uuid,i,decode(repeat('00',32),'hex'),now()-make_interval(mins=>i),now()-make_interval(mins=>i)+interval '5 minutes',1 FROM generate_series(1,200000) i;
+        ANALYZE configuration_versions;")
+        .await.unwrap();
+    // SQL del muestreador de `panel::sampler`, con `now()` en lugar de los dos parámetros.
+    let row = sqlx::query("EXPLAIN (FORMAT JSON) SELECT count(*) FROM (SELECT max(not_after) AS expires FROM configuration_versions WHERE not_after > now()-interval '6 minutes' GROUP BY device_id) leases WHERE expires <= now()")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    let plan: Value = row.get(0);
+    assert_eq!(assert_versions_without_seq_scan(&plan[0]["Plan"]), 1);
+    let text = plan.to_string();
+    assert!(
+        text.contains("configuration_versions_not_after"),
+        "plan sin el índice: {text}"
+    );
+    let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='configuration_versions_not_after'")
+        .fetch_one(&t.pool).await.unwrap();
+    assert_eq!(
+        definition,
+        "CREATE INDEX configuration_versions_not_after ON public.configuration_versions USING btree (not_after)"
+    );
     t.finish().await;
 }

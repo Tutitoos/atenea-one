@@ -973,6 +973,11 @@ async fn limite_enrolamiento_separa_ips_de_origen() {
         ("192.0.2.10", StatusCode::UNAUTHORIZED),
         ("192.0.2.10", StatusCode::TOO_MANY_REQUESTS),
         ("192.0.2.11", StatusCode::UNAUTHORIZED),
+        // Direcciones de una misma /64 comparten cubo; otra /64 tiene el suyo.
+        ("2001:db8:1:2::1", StatusCode::UNAUTHORIZED),
+        ("2001:db8:1:2:ffff::9", StatusCode::UNAUTHORIZED),
+        ("2001:db8:1:2::2", StatusCode::TOO_MANY_REQUESTS),
+        ("2001:db8:1:3::1", StatusCode::UNAUTHORIZED),
     ] {
         let d = Device::new();
         let mut request=Request::builder().method("POST").uri("/api/v1/enroll").header("content-type","application/json")
@@ -986,5 +991,106 @@ async fn limite_enrolamiento_separa_ips_de_origen() {
         let r = t.send(request).await;
         assert_eq!(r.status, status, "origen {ip}: {}", r.json);
     }
+    t.finish().await;
+}
+
+async fn audit_detail(t: &TestApp, action: &str) -> serde_json::Value {
+    sqlx::query_scalar("SELECT detail FROM audit_events WHERE action=$1 ORDER BY id DESC LIMIT 1")
+        .bind(action)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn auditoria_guarda_el_contenido_de_politicas_dispositivos_redes_y_organizaciones() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let s = t.user().await;
+    let org = t.org(&s).await;
+    let root = signing_key(generate_seed());
+    let net = t.network(&s, org, &root, "10.9.0.0/24", "fd29::/64").await;
+    let token = t.token(&s, net, false).await;
+    let dev = Device::new();
+    assert_eq!(t.enroll(&token, &dev).await.status, StatusCode::CREATED);
+    assert_eq!(
+        t.action(&s, net, dev.id, "approve").await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        audit_detail(&t, "device.approve").await,
+        json!({"addresses":["10.9.0.1","fd29::1"]})
+    );
+    let r = t
+        .json(
+            "PATCH",
+            &format!("/api/v1/networks/{net}/devices/{}", dev.id),
+            Some(&s),
+            json!({"name":"renombrado","endpoints":["192.0.2.1:1234"]}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        audit_detail(&t, "device.update").await,
+        json!({"old":{"name":"dispositivo sintético","endpoints":[]},"new":{"name":"renombrado","endpoints":["192.0.2.1:1234"]}})
+    );
+    let created = t
+        .json(
+            "POST",
+            &format!("/api/v1/networks/{net}/policies"),
+            Some(&s),
+            json!({"src":{"kind":"device","device_id":dev.id},"dst":{"kind":"any"},"proto":6,"port_min":443,"port_max":443}),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.json);
+    let content = json!({"src":{"kind":"device","device_id":dev.id,"prefix":null},"dst":{"kind":"any","device_id":null,"prefix":null},"proto":6,"port_min":443,"port_max":443});
+    assert_eq!(audit_detail(&t, "policy.create").await, content);
+    let removed = t
+        .json(
+            "DELETE",
+            &format!("/api/v1/networks/{net}/policies/{}", id(&created.json)),
+            Some(&s),
+            json!(null),
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+    assert_eq!(audit_detail(&t, "policy.delete").await, content);
+    let net_name: String = sqlx::query_scalar("SELECT name FROM networks WHERE id=$1")
+        .bind(net)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    let org_name: String = sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1")
+        .bind(org)
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    let removed = t
+        .json(
+            "DELETE",
+            &format!("/api/v1/networks/{net}"),
+            Some(&s),
+            json!(null),
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        audit_detail(&t, "network.delete").await,
+        json!({"name":net_name})
+    );
+    let removed = t
+        .json(
+            "DELETE",
+            &format!("/api/v1/orgs/{org}"),
+            Some(&s),
+            json!(null),
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        audit_detail(&t, "org.delete").await,
+        json!({"name":org_name})
+    );
     t.finish().await;
 }

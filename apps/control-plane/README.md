@@ -20,10 +20,10 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 | `ISSUER_KEY_FILE` | Fichero regular **0400 o 0600**, sin permisos de grupo/otros, semilla hex del emisor (32 bytes) |
 | `CONFIG_VALIDITY_SECS` | `300`; máximo `3600`, coherente con el lease del agente |
 | `DEV_INSECURE_COOKIES` | `false`; `true` solo para HTTP local, emite aviso |
-| `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen |
+| `ENROLL_PER_MINUTE` | `10`; token bucket por IP de origen (IPv6 agrupado por /64) |
 | `MAX_PENDING_JOIN_REQUESTS` | `20`; solicitudes de unión pendientes (`POST …/join-requests`) admitidas a la vez por red; la siguiente recibe `429 too_many_pending` |
 | `JOIN_REQUEST_TTL_SECS` | `604800` (7 días); máximo `31536000`; las solicitudes pendientes de origen `request` más antiguas se eliminan de forma perezosa al recibir otra solicitud de la misma red. Nunca se tocan dispositivos aprobados, revocados ni pendientes creados con token |
-| `LOGIN_PER_MINUTE` | `20`; intentos de `GET /auth/login` por IP cliente (`429 rate_limited`); además máximo 10 000 flujos OIDC vigentes |
+| `LOGIN_PER_MINUTE` | `20`; intentos de `GET /auth/login` por IP cliente (IPv6 agrupado por /64; `429 rate_limited`); además máximo 10 000 flujos OIDC vigentes |
 | `DEVICE_PER_MINUTE` | `30`; peticiones firmadas por minuto y dispositivo (`config`, `peers`, `status`, `routes`), comprobado tras verificar firma y antes de bloquear filas |
 | `TRUSTED_PROXIES` | Lista de CIDR, p. ej. `["172.30.84.2/32"]`; vacía por defecto. Solo si el peer TCP pertenece a ella se usa `X-Real-IP` como IP cliente; en otro caso se ignora toda cabecera |
 | `APPLICATION_ROLE` | Rol que recibe permisos limitados al aplicar migraciones |
@@ -31,9 +31,11 @@ Puede usar un TOML indicado por `ATENEA_CP_CONFIG`; sus claves son los nombres d
 
 **IP cliente tras proxy.** El despliegue de referencia (HAProxy → Caddy → control plane) pasa la IP real con PROXY v2 y Caddy fija `X-Real-IP` con `header_up`, sustituyendo cualquier valor del cliente. La red interna dedicada `proxy` usa `172.30.84.0/29`: HAProxy ocupa `.3` (único origen PROXY v2 admitido por Caddy) y Caddy `.2` (único proxy admitido por el control plane). Los aliases `caddy-proxy` y `control-plane-proxy` pertenecen solo a esa red. Si el rango se solapa con el entorno, ajuste conjuntamente `ATENEA_PROXY_SUBNET`, `ATENEA_HAPROXY_PROXY_IP` y `ATENEA_CADDY_PROXY_IP` antes de actualizar el despliegue; las listas de confianza siguen esas direcciones exactas, no rangos privados completos. Fuera de compose configure `TRUSTED_PROXIES` con los peers concretos del proxy. Sin proxy confiable, todas sus peticiones comparten el cubo del peer TCP.
 
-**IdP y MFA.** MFA corresponde al proveedor OIDC: producción exige un IdP con MFA. El Dex del ejemplo usa contraseña estática de un factor y no demuestra MFA; el control plane no comprueba `amr`/`acr`.
+**IdP y MFA.** MFA corresponde al proveedor OIDC: producción exige un IdP con MFA. El Dex del ejemplo usa contraseña estática de un factor y no demuestra MFA; el control plane no comprueba `amr`/`acr`. El correo del ID token se guarda solo con `email_verified: true`; si el proveedor no lo declara o es `false`, `users.email` queda `NULL` y esa cuenta no puede añadirse a una organización por correo (sí por identificador de usuario).
 
-**Higiene en memoria y BD.** Cachés de nonces y cubos de tasa limitadas a 65 536 entradas (al llenarse se rechaza con `429`, sin expulsar nonces vigentes). El muestreador purga cada minuto `oidc_flows` y `sessions` caducados. `config.issue` se audita como máximo una vez por dispositivo y hora; cada emisión queda en `configuration_versions`.
+**Higiene en memoria y BD.** Cachés de nonces y cubos de tasa limitadas a 65 536 entradas (al llenarse se rechaza con `429`, sin expulsar nonces vigentes). El muestreador purga cada minuto `oidc_flows` y `sessions` caducados, y las versiones de `configuration_versions` cuyo lease caducó hace más de 7 días (por lotes de 20 000 filas; siempre se conserva la última de cada dispositivo, de la que `issue` deriva la siguiente `config_version`). `config.issue` se audita como máximo una vez por dispositivo y hora; cada emisión queda en `configuration_versions`.
+
+**Plazos.** El pool (20 conexiones) espera como máximo 5 s por una conexión libre y cada conexión del servicio lleva `lock_timeout` de 5 s y `statement_timeout` de 30 s; `--migrate` no los aplica. Un vencimiento se responde como cualquier fallo de base de datos (`500 internal`). Cada petición dispone además de 30 s desde que se leen las cabeceras, cuerpo incluido (`408 request_timeout`); el WebSocket de eventos solo queda sujeto hasta responder el `101`. El proceso no limita la lectura de cabeceras ni las conexiones inactivas (`axum::serve` no expone esos plazos).
 
 **CIDR de red (F7).** `0004_network_cidr_private.sql` añade CHECK `NOT VALID` (privados ADR-007, IPv4 ≥ /8, IPv6 ≥ /32): se aplica a altas, sin invalidar redes existentes. Para validar las existentes (ADR-009 §7) ejecute `ALTER TABLE networks VALIDATE CONSTRAINT networks_ipv4_private` y `networks_ipv6_private`; falla sin modificar datos si hay una red fuera de rango, que debe migrarse manualmente. Mientras tanto, la emisión rechaza con `409 invalid_network_prefix` una red heredada inválida.
 
@@ -66,7 +68,7 @@ cargo run -p atenea-control-plane -- --migrate
 
 `--migrate` aplica las migraciones y termina, sin arrancar el servidor. Arranque después el servicio con la URL del rol limitado. El servicio rechaza roles con permisos de modificación destructiva de auditoría. El administrador de PostgreSQL debe configurar separadamente la contraseña/autenticación del rol; no publique ese secreto. Las migraciones versionadas están en `migrations/`. Haga copia y ensaye restauración antes de actualizar producción.
 
-El release actual aplica **0001–0005**. Según ADR-009 §7, migre **antes de desplegar el binario nuevo**, con N todavía sobre el esquema ampliado de N+1; el rollback cambia binarios, no deshace el esquema. `0005_ip_allocations_device_family.sql` añade `ip_allocations_device_family(device_id,family) INCLUDE(addr)` mediante `CREATE INDEX IF NOT EXISTS` normal dentro de la transacción SQLx. La creación bloquea brevemente las escrituras de `ip_allocations`: reserve una ventana pequeña antes del despliegue. Se conservan ambos índices únicos anteriores; no cambia IPAM ni la API. No use `CREATE INDEX CONCURRENTLY` dentro de esa transacción.
+El release actual aplica **0001–0011**. Según ADR-009 §7, migre **antes de desplegar el binario nuevo**, con N todavía sobre el esquema ampliado de N+1; el rollback cambia binarios, no deshace el esquema. `0005_ip_allocations_device_family.sql` añade `ip_allocations_device_family(device_id,family) INCLUDE(addr)` mediante `CREATE INDEX IF NOT EXISTS` normal dentro de la transacción SQLx. La creación bloquea brevemente las escrituras de `ip_allocations`: reserve una ventana pequeña antes del despliegue. Se conservan ambos índices únicos anteriores; no cambia IPAM ni la API. No use `CREATE INDEX CONCURRENTLY` dentro de esa transacción. `0011_configuration_versions_not_after.sql` añade `configuration_versions_not_after(not_after)` por el mismo mecanismo y con el mismo efecto: bloquea las escrituras de `configuration_versions` mientras se crea; no cambia columnas ni la API.
 
 ## Emisor y certificado por red
 
@@ -177,10 +179,11 @@ Cobertura implementada de §8:
 - Fichero de configuración aceptado por `atenea_identity::verify_config` con claves y estado locales; versiones crecientes, políticas inversas, eliminación de pares revocados/pendientes y al borrar políticas; errores de emisor, firma, reloj y replay.
 - Fronteras adicionales: CIDR solapados, selectores y puertos inválidos, prefijos fuera de red, desbordamiento de reglas compiladas con rollback, certificados fuera de red/raíz/vigencia o con firma inválida y límite de tasa independiente por IP.
 - CSRF ausente/incorrecto, expiración absoluta, inactividad y logout.
-- Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso. La clave RSA de 2048 bits se genera en memoria una vez por proceso de pruebas; no se almacena ni se publica ninguna clave privada.
-- Eventos de todas las escrituras enumeradas y denegación real de UPDATE/DELETE con `SET ROLE` sobre el rol limitado.
+- Proveedor OIDC HTTP local con discovery, JWKS y token **firmado RS256 por jsonwebtoken**: PKCE S256, state/cookie de navegador, issuer, audience, nonce, expiración, firma y flujo de un uso; el correo solo se guarda con `email_verified: true`. La clave RSA de 2048 bits se genera en memoria una vez por proceso de pruebas; no se almacena ni se publica ninguna clave privada.
+- Eventos de todas las escrituras enumeradas, con el contenido del cambio en `detail` (políticas, dispositivos, direcciones asignadas, nombres), y denegación real de UPDATE/DELETE con `SET ROLE` sobre el rol limitado.
 - Igualdad del OpenAPI publicado con `openapi()` generado. Regeneración: `cargo run -p atenea-control-plane -- --openapi > docs/api/openapi.json` y después `pnpm --filter @atenea/api-client generate`.
-- Panel: inventario con IPs e informe firmado, validación y límite de tasa; muestreo/retención con reloj explícito; aislamiento de métricas y eventos; WebSocket TCP real con hello/cambios/Origin/límites; SPA, rutas reservadas, CSP y caché.
+- Panel: inventario con IPs e informe firmado, validación y límite de tasa; muestreo/retención con reloj explícito; aislamiento de métricas y eventos; WebSocket TCP real con hello/cambios/Origin/límites y `seq` por red; SPA, rutas reservadas, CSP y caché.
+- Límites: agrupación IPv6 por /64 en enrolamiento y login; plazos del pool (`lock_timeout` vence con la fila de red bloqueada y responde `500`); retención de `configuration_versions` conservando la última versión por dispositivo; índice `configuration_versions_not_after` en el plan del recuento de leases.
 
 ## E2E de laboratorio
 

@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
+use std::time::Duration;
 #[derive(Debug)]
 pub struct ApiError(pub StatusCode, pub &'static str);
 impl ApiError {
@@ -170,6 +171,10 @@ pub fn router(s: AppState) -> Router {
         .layer(axum::middleware::from_fn(read_only_token))
         .layer(axum::middleware::from_fn(uniform_errors))
         .layer(axum::middleware::from_fn_with_state(
+            REQUEST_TIMEOUT,
+            request_timeout,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             s.metrics.clone(),
             atenea_observability::record,
         ))
@@ -237,4 +242,45 @@ async fn uniform_errors(req: axum::extract::Request, next: axum::middleware::Nex
         return ApiError(response.status(), "invalid_request").into_response();
     }
     response
+}
+/// Plazo de una petición, cuerpo incluido: sin él, un cliente lento retiene la conexión y su
+/// permiso de base de datos. El WebSocket solo lo agota hasta responder el `101`: la sesión
+/// vive en otra tarea.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+async fn request_timeout(
+    axum::extract::State(limit): axum::extract::State<Duration>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    match tokio::time::timeout(limit, next.run(req)).await {
+        Ok(response) => response,
+        Err(_) => ApiError(StatusCode::REQUEST_TIMEOUT, "request_timeout").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn peticion_lenta_se_corta_con_408_json() {
+        let app = Router::new()
+            .route("/lenta", get(std::future::pending::<&'static str>))
+            .layer(axum::middleware::from_fn_with_state(
+                Duration::from_millis(50),
+                request_timeout,
+            ));
+        let request = axum::http::Request::builder()
+            .uri("/lenta")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "request_timeout");
+    }
 }
