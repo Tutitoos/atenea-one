@@ -560,3 +560,48 @@ async fn retencion_de_versiones_conserva_la_ultima_de_cada_dispositivo() {
     assert!(kept.contains(&(b.id, 1)));
     t.finish().await;
 }
+
+#[tokio::test]
+async fn el_informe_de_estado_no_se_interbloquea_con_la_emision() {
+    use sqlx::Executor;
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let user = t.user().await;
+    let (_, net) = network(&t, &user).await;
+    let d = device(&t, &user, net, true).await;
+    // Como la emisión: primero la fila de la red…
+    let mut c = common::connection(&t.pool).await;
+    c.execute("BEGIN").await.unwrap();
+    sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
+        .bind(net)
+        .execute(&mut c)
+        .await
+        .unwrap();
+    // …mientras el informe (nombre y servicios: dos escrituras del dispositivo) queda esperando esa fila.
+    let mut status = Box::pin(report(
+        &t,
+        &d,
+        json!({"paths":[],"hostname":"equipo-a","services":[]}),
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), &mut status)
+            .await
+            .is_err(),
+        "el informe debe esperar a la emisión"
+    );
+    // …y después la versión del dispositivo: no puede quedar esperando al informe.
+    tokio::time::timeout(
+        Duration::from_secs(4),
+        sqlx::query("INSERT INTO configuration_versions(device_id,version,config_hash,not_before,not_after,issuer_serial) VALUES($1,1,'\\x00',now(),now(),1)")
+            .bind(d.id)
+            .execute(&mut c),
+    )
+    .await
+    .expect("la emisión no espera al informe")
+    .unwrap();
+    c.execute("COMMIT").await.unwrap();
+    let reply = status.await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.json);
+    t.finish().await;
+}

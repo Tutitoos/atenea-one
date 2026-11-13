@@ -237,10 +237,13 @@ pub async fn status(
         return Err(ApiError::bad("invalid_report"));
     }
     let mut tx = s.pool.begin().await?;
-    let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1 FOR UPDATE")
-        .bind(dev)
-        .fetch_one(&mut *tx)
-        .await?;
+    // NO KEY UPDATE y no FOR UPDATE: la emisión bloquea primero la red y después referencia este dispositivo
+    // (clave ajena); con FOR UPDATE aquí y la comprobación de la red más abajo, las dos se interbloqueaban.
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM devices WHERE id=$1 FOR NO KEY UPDATE")
+            .bind(dev)
+            .fetch_one(&mut *tx)
+            .await?;
     if status != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
