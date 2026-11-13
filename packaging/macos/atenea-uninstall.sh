@@ -17,7 +17,7 @@ for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
         echo "No se toca un plist de red no reconocido: $plist" >&2
         continue
     fi
-    launchctl bootout "system/$label" 2>/dev/null || :
+    stop_service "$label"
     if [ -f "$config" ]; then
         /Library/Atenea/bin/atenea-agent cleanup --config "$config"
     fi
@@ -29,7 +29,7 @@ for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
     fi
 done
 config='/Library/Application Support/Atenea/agent.toml'
-launchctl bootout system/one.atenea.agent 2>/dev/null || :
+stop_service one.atenea.agent
 if [ -f "$config" ]; then
     /Library/Atenea/bin/atenea-agent cleanup --config "$config"
 fi

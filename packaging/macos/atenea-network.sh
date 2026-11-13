@@ -76,3 +76,16 @@ repair_run_dir() {
         return 0
     done
 }
+# `bootout` es asíncrono: el servicio sigue cargado hasta que su proceso sale. El `cleanup` fuera de línea que viene a continuación
+# competiría con la limpieza que hace el propio agente al pararse (retiran los mismos ficheros de resolver y sockets) y fallaba
+# a veces, abortando el desinstalador. Espera hasta 20 s (200 × 0,1 s; `STOP_SERVICE_TRIES` solo existe para probarlo); si el
+# servicio no se descarga, avisa y sigue: no bloquea la desinstalación.
+stop_service() {
+    launchctl bootout "system/$1" 2>/dev/null || :
+    stop_waited=0
+    while launchctl print "system/$1" >/dev/null 2>&1; do
+        stop_waited=$((stop_waited + 1))
+        [ "$stop_waited" -le "${STOP_SERVICE_TRIES:-200}" ] || { echo "$1 sigue cargado tras bootout" >&2; return 0; }
+        sleep 0.1
+    done
+}
