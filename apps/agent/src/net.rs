@@ -117,9 +117,36 @@ pub fn tunnel_routes(skip_iface: &str) -> Result<Vec<atenea_identity::Prefix>, S
     crate::platform::Platform::new(skip_iface.into(), Default::default()).tunnel_routes()
 }
 
+/// Plazo por nombre al resolver un servidor STUN: una resolución lenta no retrasa el refresco siguiente.
+const STUN_RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Resuelve los (hasta dos) servidores STUN. Va en una tarea aparte: `getaddrinfo` puede tardar
+/// segundos con el DNS caído y el bucle de paquetes no puede esperarlo.
+pub async fn resolve_stun(names: Vec<String>) -> [Option<SocketAddr>; 2] {
+    let mut out = [None, None];
+    for (slot, name) in out.iter_mut().zip(&names) {
+        let Ok(Ok(addrs)) =
+            tokio::time::timeout(STUN_RESOLVE_TIMEOUT, tokio::net::lookup_host(name.as_str()))
+                .await
+        else {
+            continue;
+        };
+        let addrs: Vec<SocketAddr> = addrs.collect();
+        // Preferencia por IPv4: es lo que ven la mayoría de los NAT domésticos.
+        *slot = addrs
+            .iter()
+            .find(|a| a.is_ipv4())
+            .or(addrs.first())
+            .copied();
+    }
+    out
+}
+
 /// Cliente STUN: dos consultas (dos puertos del mismo servidor) desde el socket de datos.
 pub struct Stun {
     names: Vec<String>,
+    /// Última dirección conocida de cada servidor: se conserva si una resolución falla.
+    addrs: [Option<SocketAddr>; 2],
     pending: HashMap<TxId, (usize, Instant)>,
     mapped: [Option<SocketAddr>; 2],
 }
@@ -128,30 +155,29 @@ impl Stun {
     pub fn new(names: Vec<String>) -> Stun {
         Stun {
             names,
+            addrs: [None, None],
             pending: HashMap::new(),
             mapped: [None, None],
         }
     }
 
-    /// Resuelve los servidores y lanza las dos consultas.
-    pub async fn start(&mut self, socket: &UdpSocket, dual: bool, now: Instant) {
+    pub fn names(&self) -> Vec<String> {
+        self.names.clone()
+    }
+
+    /// Lanza las dos consultas a las direcciones de `resolve_stun` (o a las últimas conocidas).
+    pub async fn start(
+        &mut self,
+        socket: &UdpSocket,
+        dual: bool,
+        now: Instant,
+        resolved: [Option<SocketAddr>; 2],
+    ) {
         self.pending.clear();
         self.mapped = [None, None];
-        for (i, name) in self.names.clone().iter().enumerate().take(2) {
-            let Ok(addrs) = tokio::net::lookup_host(name.as_str()).await else {
-                continue;
-            };
-            let addrs: Vec<SocketAddr> = addrs.collect();
-            // Preferencia por IPv4: es lo que ven la mayoría de los NAT domésticos.
-            let Some(addr) = addrs
-                .iter()
-                .find(|a| a.is_ipv4())
-                .or(addrs.first())
-                .copied()
-            else {
-                continue;
-            };
-            let Some(wire) = to_wire(addr, dual) else {
+        for (i, new) in resolved.into_iter().enumerate() {
+            self.addrs[i] = new.or(self.addrs[i]);
+            let Some(wire) = self.addrs[i].and_then(|addr| to_wire(addr, dual)) else {
                 continue;
             };
             let mut tx: TxId = [0; 12];
@@ -207,7 +233,7 @@ impl Stun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atenea_nat_traversal::encode_binding_success;
+    use atenea_nat_traversal::{encode_binding_success, looks_like_stun};
 
     fn sa(s: &str) -> SocketAddr {
         s.parse().unwrap()
@@ -305,5 +331,24 @@ mod tests {
         e.pending.insert([1; 12], (0, t0));
         e.expire(t0 + Duration::from_secs(5), Duration::from_secs(3));
         assert!(e.complete());
+    }
+
+    #[tokio::test]
+    async fn a_failed_stun_resolution_keeps_querying_the_last_known_address() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let name = server.local_addr().unwrap().to_string();
+        // «sin-puerto» no es resoluble: falla sin tocar la red.
+        let resolved = resolve_stun(vec![name.clone(), "sin-puerto".into()]).await;
+        assert_eq!(resolved, [Some(server.local_addr().unwrap()), None]);
+        let mut s = Stun::new(vec![name, "sin-puerto".into()]);
+        let mut buf = [0u8; 64];
+        for resolved in [resolved, [None, None]] {
+            s.start(&client, false, Instant::now(), resolved).await;
+            assert_eq!(s.pending.len(), 1);
+            let (n, from) = server.recv_from(&mut buf).await.unwrap();
+            assert_eq!(from, client.local_addr().unwrap());
+            assert!(looks_like_stun(&buf[..n]));
+        }
     }
 }
