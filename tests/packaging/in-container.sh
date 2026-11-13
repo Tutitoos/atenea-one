@@ -75,7 +75,7 @@ if getent passwd atenea; then fail 'usuario atenea inesperado: el servicio debe 
 if systemctl is-active --quiet atenea-agent; then fail 'arranque automático al instalar'; fi
 if systemctl is-enabled --quiet atenea-agent; then fail 'habilitación automática al instalar'; fi
 assert_mode /etc/atenea '750 root atenea'
-assert_mode /var/lib/atenea '700 root atenea'
+assert_mode /var/lib/atenea '711 root atenea'
 systemd-analyze verify /usr/lib/systemd/system/atenea-agent.service
 systemd-analyze security --offline=yes /usr/lib/systemd/system/atenea-agent.service
 # Claves sintéticas efímeras, generadas dentro del contenedor y nunca copiadas al repo.
@@ -146,6 +146,13 @@ useradd --no-create-home --shell /bin/sh --groups atenea lector
 if runuser -u ajeno -- atenea status --socket /run/atenea/status.sock; then fail 'estado accesible fuera del grupo'; fi
 runuser -u lector -- atenea status --socket /run/atenea/status.sock
 if runuser -u lector -- atenea status --socket /run/atenea/control.sock; then fail 'control accesible al grupo'; fi
+# El estado es atravesable sin root (para `network list`), pero ni se lista ni entrega claves o configuración.
+assert_mode /var/lib/atenea '711 root atenea'
+runuser -u ajeno -- test -x /var/lib/atenea || fail 'estado no atravesable sin root'
+if runuser -u ajeno -- ls /var/lib/atenea >/dev/null 2>&1; then fail 'estado listable sin root'; fi
+for secret in device/noise.key device/identity.key config.bin state/state.bin; do
+    if runuser -u ajeno -- cat "/var/lib/atenea/$secret" >/dev/null 2>&1; then fail "$secret legible sin root"; fi
+done
 # El socket de estado debe rechazar ambas mutaciones incluso para un miembro del grupo.
 runuser -u lector -- python3 - <<'PY'
 import socket

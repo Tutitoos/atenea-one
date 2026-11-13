@@ -20,7 +20,8 @@ RuntimeDirectoryMode=0750
 # El padre contiene también los sockets legacy; el dropin CLI gestiona solo atenea/id8.
 RuntimeDirectoryPreserve=yes
 StateDirectory=atenea
-StateDirectoryMode=0700
+# 0711 como en el postinst: systemd reaplica este modo en cada arranque.
+StateDirectoryMode=0711
 ReadWritePaths=/var/lib/atenea /run/atenea
 CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN

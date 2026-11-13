@@ -8,7 +8,9 @@ case "${1:-}" in
             groupadd --system atenea
         fi
         install -d -o root -g atenea -m 0750 /etc/atenea
-        install -d -o root -g atenea -m 0700 /var/lib/atenea
+        # 0711: atravesable (no listable) para que `atenea network list` y la aplicación lean
+        # `networks/<uuid>/network.json` sin root, como en macOS. Claves y estado conservan sus modos (0600/0700).
+        install -d -o root -g atenea -m 0711 /var/lib/atenea
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload
             restarted=no
