@@ -150,6 +150,57 @@ impl Default for Timing {
     }
 }
 
+/// Socket UDP dual-stack del hub. macOS asigna a veces a un `[::]:0` un puerto efímero que ya usa un socket IPv4 de otra
+/// aplicación (lo comprueba un `bind` explícito, no la elección del puerto) y desde entonces los datagramas IPv4 llegan a ese
+/// otro socket: el hub no recibiría nunca nada del relay. Antes de usarlo se comprueba que recibe un datagrama IPv4 de bucle
+/// local y, si no, se prueba otro puerto.
+async fn bind_hub_socket() -> Result<UdpSocket, &'static str> {
+    const TRIES: usize = 4;
+    for attempt in 1..=TRIES {
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .map_err(|_| "udp_socket")?;
+        socket.set_only_v6(false).map_err(|_| "udp_dual_stack")?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|_| "udp_nonblocking")?;
+        socket
+            .bind(&"[::]:0".parse::<SocketAddr>().unwrap().into())
+            .map_err(|_| "udp_bind")?;
+        let socket = UdpSocket::from_std(socket.into()).map_err(|_| "udp_socket")?;
+        // En el último intento se usa tal cual: sin un bucle local utilizable no se puede comprobar, y un hub sin
+        // comprobar es mejor que ninguno.
+        if attempt == TRIES || receives_ipv4(&socket).await {
+            return Ok(socket);
+        }
+    }
+    Err("udp_socket")
+}
+
+/// ¿Llega a `socket` un datagrama IPv4 enviado a su puerto desde el bucle local? Si la prueba no se puede hacer, sí.
+async fn receives_ipv4(socket: &UdpSocket) -> bool {
+    let Ok(local) = socket.local_addr() else {
+        return true;
+    };
+    let Ok(probe) = std::net::UdpSocket::bind("127.0.0.1:0") else {
+        return true;
+    };
+    if probe
+        .send_to(&[0], (std::net::Ipv4Addr::LOCALHOST, local.port()))
+        .is_err()
+    {
+        return true;
+    }
+    let mut buf = [0; 1];
+    matches!(
+        timeout(Duration::from_millis(100), socket.recv_from(&mut buf)).await,
+        Ok(Ok(_))
+    )
+}
+
 struct Route {
     addr: SocketAddr,
     id: Option<u64>,
@@ -520,21 +571,7 @@ impl Worker {
         let hub = self
             .hub
             .get_or_try_init(|| async {
-                let socket = socket2::Socket::new(
-                    socket2::Domain::IPV6,
-                    socket2::Type::DGRAM,
-                    Some(socket2::Protocol::UDP),
-                )
-                .map_err(|_| "udp_socket")?;
-                socket.set_only_v6(false).map_err(|_| "udp_dual_stack")?;
-                socket
-                    .set_nonblocking(true)
-                    .map_err(|_| "udp_nonblocking")?;
-                socket
-                    .bind(&"[::]:0".parse::<SocketAddr>().unwrap().into())
-                    .map_err(|_| "udp_bind")?;
-                let socket =
-                    Arc::new(UdpSocket::from_std(socket.into()).map_err(|_| "udp_socket")?);
+                let socket = Arc::new(bind_hub_socket().await?);
                 let routes: Arc<Mutex<HashMap<DeviceId, Route>>> =
                     Arc::new(Mutex::new(HashMap::new()));
                 let (s, r) = (socket.clone(), routes.clone());
@@ -1250,31 +1287,58 @@ mod tests {
         rx: &mut mpsc::Receiver<RelayEvent>,
         matches: impl Fn(&RelayEvent) -> bool,
     ) -> RelayEvent {
-        timeout(Duration::from_secs(4), async {
+        let mut seen = Vec::new();
+        let wanted = timeout(Duration::from_secs(4), async {
             loop {
                 let e = rx.recv().await.expect("event channel");
                 if matches(&e) {
                     return e;
                 }
+                seen.push(format!("{e:?}"));
             }
         })
-        .await
-        .expect("relay event timeout")
+        .await;
+        wanted.unwrap_or_else(|_| panic!("relay event timeout; eventos vistos: {seen:#?}"))
+    }
+
+    /// macOS asignaba al hub (`[::]:0`) el puerto efímero de un socket IPv4 ajeno y el hub se quedaba sordo: ≈0,8 % de las
+    /// pasadas de las pruebas del relay con unas decenas de sockets UDP abiertos en el equipo. Con 150 sockets IPv4 abiertos la
+    /// colisión es ≈0,9 % por hub: sin la comprobación, 600 hubs fallan varias veces; con ella, ninguna. En Linux y Windows pasa
+    /// siempre (el núcleo no mezcla las dos familias al elegir el puerto).
+    #[tokio::test]
+    async fn the_hub_socket_receives_ipv4_even_when_other_sockets_hold_ephemeral_ports() {
+        let others: Vec<std::net::UdpSocket> = (0..150)
+            .filter_map(|_| std::net::UdpSocket::bind("0.0.0.0:0").ok())
+            .collect();
+        let mut deaf = 0;
+        for _ in 0..600 {
+            let hub = bind_hub_socket().await.unwrap();
+            if !receives_ipv4(&hub).await {
+                deaf += 1;
+            }
+        }
+        drop(others);
+        assert_eq!(deaf, 0, "hubs que no reciben IPv4 de bucle local");
     }
 
     async fn udp_server(
         relay_id: [u8; 16],
         reject: bool,
     ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
-        udp_server_at("127.0.0.1:0", relay_id, reject).await
+        udp_server_on(
+            UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            relay_id,
+            reject,
+        )
     }
 
-    async fn udp_server_at(
-        bind: &str,
+    /// Servidor sobre un socket ya abierto: un puerto que no se suelta no puede ocupar otra prueba en paralelo (soltarlo y volver
+    /// a abrirlo daba `AddrInUse` de vez en cuando).
+    fn udp_server_on(
+        socket: UdpSocket,
         relay_id: [u8; 16],
         reject: bool,
     ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
-        let socket = UdpSocket::bind(bind).await.unwrap();
         let addr = socket.local_addr().unwrap().to_string();
         let allocations = Arc::new(AtomicUsize::new(0));
         let count = allocations.clone();
@@ -1676,8 +1740,7 @@ mod tests {
         .await;
         assert_eq!(client.status().entries[0].transport, RelayKind::Tls);
         // UDP vuelve: el mismo puerto pasa de mudo a servidor real.
-        drop(silent);
-        let (_, udp_allocations, udp) = udp_server_at(&udp_addr, [6; 16], false).await;
+        let (_, udp_allocations, udp) = udp_server_on(silent, [6; 16], false);
         event(&mut events, |e| {
             matches!(
                 e,
