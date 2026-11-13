@@ -71,6 +71,10 @@ fn backoff(failures: u32) -> Duration {
     Duration::from_secs((30u64 << failures.saturating_sub(1).min(4)).min(300))
 }
 
+/// Las pistas del coordinator levantan el retroceso de sondeo de un par como mucho una vez en este
+/// intervalo (el retroceso mínimo): un coordinator hostil no mantiene el sondeo continuo (T16).
+const HINT_LIFT_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Próximo reenvío del sondeo: 1 s ±25 %.
 fn next_probe(now: Instant, random: u32) -> Instant {
     now + Duration::from_millis(750 + u64::from(random % 501))
@@ -259,6 +263,8 @@ struct Peer {
     probe_failures: u32,
     /// Sin sondeo ciego hasta este instante; el tráfico pendiente permite pedir pistas y relay.
     hold_until: Option<Instant>,
+    /// Hasta este instante las pistas no vuelven a levantar el retroceso.
+    hint_lift_at: Option<Instant>,
     next_rendezvous: Option<Instant>,
     rendezvous_wanted: bool,
     relay_wanted: bool,
@@ -307,6 +313,7 @@ impl Peer {
             kprobe: None,
             probe_failures: 0,
             hold_until: None,
+            hint_lift_at: None,
             next_rendezvous: None,
             rendezvous_wanted: false,
             relay_wanted: false,
@@ -1998,6 +2005,14 @@ impl Engine {
             (source.as_bytes()[0] == 3 || direct_sources.contains(source))
                 && c.get(&peer.public, source, now).is_some()
         });
+        if peer.hold_until.is_some_and(|h| now < h) {
+            if peer.hint_lift_at.is_some_and(|t| now < t) {
+                // Pistas guardadas: se usarán al acabar el retroceso o con el siguiente aviso.
+                self.counters.inc("hint_lift_limited");
+                return out;
+            }
+            peer.hint_lift_at = Some(now + HINT_LIFT_INTERVAL);
+        }
         peer.hold_until = None;
         if peer.healthy(PathKind::Direct, now) {
             return out;
@@ -3210,6 +3225,35 @@ mod tests {
         l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
         l.a.on_peer_candidates(&[2; 16], vec![ep("10.77.0.2:51820")], l.now, l.unix);
         assert_eq!(l.a.peers[0].candidates, vec![ep(B_EP)]);
+    }
+
+    #[test]
+    fn recovery_hints_lift_the_probe_hold_at_most_once_per_interval() {
+        let mut l = without_static_endpoints();
+        let hold = |l: &mut Lab| {
+            l.a.peers[0].pending = None;
+            l.a.peers[0].probe = None;
+            l.a.peers[0].hold_until = Some(l.now + Duration::from_secs(240));
+        };
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        // Un par que vuelve: su aviso levanta el retroceso y se sondea al momento.
+        hold(&mut l);
+        let first =
+            l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
+        assert_eq!(udp_of(&first).len(), 1);
+        // Más avisos dentro del intervalo (coordinator hostil) no lo vuelven a levantar…
+        hold(&mut l);
+        l.now += Duration::from_secs(11);
+        let again =
+            l.a.on_peer_candidates(&[2; 16], vec![ep("203.0.113.9:7")], l.now, l.unix);
+        assert!(again.is_empty());
+        assert!(l.a.peers[0].hold_until.is_some());
+        assert_eq!(l.a.peers[0].candidates, vec![ep("203.0.113.9:7")]);
+        // …y pasado el intervalo, sí.
+        l.now += Duration::from_secs(19);
+        let later =
+            l.a.on_peer_candidates(&[2; 16], vec![ep(B_EP)], l.now, l.unix);
+        assert_eq!(udp_of(&later).len(), 1);
     }
 
     #[test]
