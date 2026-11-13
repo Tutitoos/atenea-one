@@ -327,8 +327,10 @@ impl HostNetwork for Network {
             ));
         }
         script.push_str(" }\n}\n");
+        // Declararla antes de borrarla: si otro la quitó (`nft flush ruleset`), `delete` de una tabla
+        // ausente haría fallar el lote entero y la configuración se rechazaría en bucle.
         let transaction = if replace {
-            format!("delete table inet {table}\n{script}")
+            format!("table inet {table}\ndelete table inet {table}\n{script}")
         } else {
             script
         };

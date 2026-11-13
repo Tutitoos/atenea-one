@@ -51,7 +51,16 @@ base=$(dirname "$0")
 printf '%s\n' "$*" >> "$base/nft.log"
 case "$1" in
     -j) cat "$base/tables.json" ;;
-    -f) printf '%s\n' '--- transaction ---' >> "$base/transactions"; cat >> "$base/transactions" ;;
+    -f)
+        printf '%s\n' '--- transaction ---' >> "$base/transactions"
+        cat > "$base/tx"
+        cat "$base/tx" >> "$base/transactions"
+        # Como nft: borrar una tabla que no existe (ni se declara antes en el lote) falla el lote entero.
+        first=$(head -n 1 "$base/tx")
+        case "$first" in
+            'delete table inet '*) grep -q "\"${first#delete table inet }\"" "$base/tables.json" || { echo 'Error: No such file or directory' >&2; exit 1; } ;;
+        esac
+        ;;
 esac
 "#,
         );
@@ -303,13 +312,12 @@ fn snat_uses_only_signed_true_flags_and_replaces_in_one_transaction() {
     ));
     assert!(first.contains("ip6 daddr fd50::/64 masquerade"));
     assert!(!first.contains("192.168.60.0"));
+    // La tabla ya no existe (p. ej. tras `nft flush ruleset`): el reemplazo no puede fallar por borrarla.
     cfg.advertised[0].snat = false;
     net.apply(&cfg, &[]).unwrap();
     let transactions = host.log("transactions");
     let replacement = transactions.strip_prefix(&first).unwrap();
-    assert!(replacement.starts_with(
-        "--- transaction ---\ndelete table inet atenea_atenea0\ntable inet atenea_atenea0"
-    ));
+    assert!(replacement.contains("\ndelete table inet atenea_atenea0\n"));
     assert!(!replacement.contains("192.168.50.0"));
     assert!(replacement.contains("fd50::/64 masquerade"));
     assert_eq!(
