@@ -217,6 +217,9 @@ func TestServicesPublishSetRunsTheExactCommandOnlyForAJoinedNetwork(t *testing.T
 	old := backend.Elevate
 	backend.Elevate = func(script, prompt string) (string, error) { scripts = append(scripts, script); return "", nil }
 	t.Cleanup(func() { backend.Elevate = old })
+	oldCheck := backend.CheckCLI
+	backend.CheckCLI = func(string) error { return nil } // el CLI falso vive en un directorio temporal del usuario
+	t.Cleanup(func() { backend.CheckCLI = oldCheck })
 	a := &App{}
 
 	if err := a.ServicesPublishSet(id1, true); err != nil {

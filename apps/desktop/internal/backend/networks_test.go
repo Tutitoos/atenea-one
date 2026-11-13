@@ -96,9 +96,19 @@ func TestInspectNormalizesTheCodeBeforeCallingTheCLI(t *testing.T) {
 	}
 }
 
+// trustAnyCLI sustituye la comprobación de confianza del CLI: los CLI falsos viven en un directorio temporal del usuario
+// y la real los rechaza (lo prueba TestElevatedOperationsRefuseACLIThatAnUnprivilegedUserCanReplace).
+func trustAnyCLI(t *testing.T) {
+	t.Helper()
+	old := CheckCLI
+	CheckCLI = func(string) error { return nil }
+	t.Cleanup(func() { CheckCLI = old })
+}
+
 // capture sustituye la elevación por un registro de lo que se habría ejecutado.
 func capture(t *testing.T) *[]string {
 	t.Helper()
+	trustAnyCLI(t)
 	var calls []string
 	old := Elevate
 	Elevate = func(script, prompt string) (string, error) {
@@ -347,5 +357,34 @@ func TestSetServicesPublishRunsTheExactClosedCommand(t *testing.T) {
 	}
 	if _, err := ServicesPublishScript("/usr/bin/atenea; id", testID, true); err == nil {
 		t.Error("una ruta de CLI con metacaracteres debía rechazarse")
+	}
+}
+
+func TestElevatedOperationsRefuseACLIThatAnUnprivilegedUserCanReplace(t *testing.T) {
+	args := fakeCLI(t, `echo '[]'`)
+	// Un directorio que cualquier usuario puede escribir, también si esta prueba corre como root.
+	if err := os.Chmod(filepath.Dir(CLIPath()), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	var elevated []string
+	old := Elevate
+	Elevate = func(script, prompt string) (string, error) { elevated = append(elevated, script); return "", nil }
+	t.Cleanup(func() { Elevate = old })
+
+	if _, err := Apply("up", testID, "", ""); err == nil || !strings.Contains(err.Error(), "ruta no confiable") {
+		t.Errorf("Apply: %v", err)
+	}
+	if err := SetServicesPublish(testID, true); err == nil || !strings.Contains(err.Error(), "ruta no confiable") {
+		t.Errorf("SetServicesPublish: %v", err)
+	}
+	if len(elevated) != 0 {
+		t.Errorf("no debe elevarse nada: %q", elevated)
+	}
+	// Las lecturas sin privilegios siguen usando ese mismo CLI.
+	if got, err := List(); err != nil || got != "[]" {
+		t.Errorf("List = %q, %v", got, err)
+	}
+	if got := readArgs(t, args); got != "network list --json" {
+		t.Errorf("argumentos = %q", got)
 	}
 }

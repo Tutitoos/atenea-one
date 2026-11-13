@@ -410,5 +410,5 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("dist/BUILD-INFO.json"))["version"])')
           python3 scripts/release/manifest.py create dist "$key" "$GITHUB_SHA" "$version" --registry-digests "$RUNNER_TEMP/registry-digests.json"
           bash scripts/release/verify.sh dist "$pub" "$GITHUB_SHA" "$version"
-          # Se firma y verifica todo dist/, pero solo se publican los instaladores y la verificación (sha256sum -c --ignore-missing SHA256SUMS).
+          # Se firma y verifica todo dist/, pero solo se publican los instaladores, SHA256SUMS (sin firmar), el manifiesto y su firma; lo publicado se verifica con `verify.sh --published`.
           gh release create "v$version" dist/*.pkg dist/*.dmg dist/*.deb dist/*.rpm dist/*.exe dist/SHA256SUMS dist/release-manifest.json dist/release-manifest.json.sig --target "$GITHUB_SHA" --verify-tag --title "Atenea $version" --notes 'Manifiesto Ed25519; verifique con la clave pública del responsable por canal independiente. PKG y paquetes de escritorio (DEB, RPM, DMG, EXE) sin firma de desarrollador ni notarización.'

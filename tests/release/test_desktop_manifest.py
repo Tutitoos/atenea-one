@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """El manifiesto firmado cubre los paquetes de la aplicación de escritorio (ADR-019, empaquetado): cada artefacto lleva el
 SBOM Go de su sistema operativo, el .deb de nfpm (control.tar.gz) se acepta y su identidad se comprueba, y cualquier
-alteración o fichero de más rompe la verificación. Sin Docker ni red; solo `openssl`."""
+alteración o fichero de más rompe la verificación. `verify.sh --published` verifica con ese mismo manifiesto lo que se
+descarga del release publicado (solo los instaladores). Sin Docker ni red; solo `openssl`."""
 import gzip
 import io
 import json
@@ -23,6 +24,7 @@ import sbom  # noqa: E402
 
 COMMIT = '0123456789abcdef0123456789abcdef01234567'
 VERSION = '0.1.12'
+VERIFY = ROOT / 'scripts' / 'release' / 'verify.sh'
 
 
 def deb(version, commit, control_name='control.tar.gz'):
@@ -73,6 +75,19 @@ class DesktopManifest(unittest.TestCase):
         manifest.create(self.dist, str(self.key), VERSION, COMMIT)
         return json.loads((self.dist / 'release-manifest.json').read_text())
 
+    def published(self):
+        """Lo que lleva el release de GitHub: solo los instaladores, SHA256SUMS, el manifiesto y su firma."""
+        self.create()
+        out = Path(self.tmp.name) / 'published'
+        out.mkdir()
+        for path in self.dist.iterdir():
+            if path.suffix in ('.deb', '.rpm', '.dmg', '.exe') or path.name in ('SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'):
+                shutil.copy(path, out / path.name)
+        return out
+
+    def verify(self, directory, *flags, pub=None, commit=COMMIT):
+        return subprocess.run(['bash', str(VERIFY), *flags, str(directory), str(pub or self.pub), commit, VERSION], capture_output=True, text=True)
+
     def test_each_package_is_tied_to_the_go_sbom_of_its_operating_system(self):
         by_name = {a['name']: a.get('sboms') for a in self.create()['artifacts']}
         self.assertEqual(by_name[f'atenea-desktop-{VERSION}-linux-amd64.deb'], ['go-desktop-Linux.cdx.json'])
@@ -111,6 +126,59 @@ class DesktopManifest(unittest.TestCase):
         (self.dist / 'intruso.exe').write_bytes(b'x')
         with self.assertRaises(AssertionError):
             manifest.check(self.dist, manifest_data, COMMIT, VERSION)
+
+    def test_a_published_subset_passes_and_what_was_not_downloaded_is_ignored(self):
+        out = self.published()
+        result = self.verify(out, '--published')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS', result.stdout)
+        # Una sola descarga también vale, sin SHA256SUMS ni los demás instaladores.
+        for path in list(out.iterdir()):
+            if path.suffix != '.dmg' and path.name not in ('release-manifest.json', 'release-manifest.json.sig'):
+                path.unlink()
+        result = self.verify(out, '--published')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_full_verification_still_rejects_the_published_subset(self):
+        self.assertNotEqual(self.verify(self.published()).returncode, 0)
+
+    def test_a_tampered_installer_fails_in_published_mode(self):
+        out = self.published()
+        (out / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'alterado')
+        result = self.verify(out, '--published')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'atenea-desktop-{VERSION}-macos-arm64.dmg', result.stderr)
+
+    def test_a_foreign_file_or_a_tampered_checksum_list_fails_in_published_mode(self):
+        out = self.published()
+        (out / 'intruso.exe').write_bytes(b'x')
+        result = self.verify(out, '--published')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Ficheros no inventariados: intruso.exe', result.stderr)
+        (out / 'intruso.exe').unlink()
+        self.assertEqual(self.verify(out, '--published').returncode, 0)
+        (out / 'SHA256SUMS').write_text('0' * 64 + '  atenea-desktop.exe\n')
+        result = self.verify(out, '--published')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('SHA256SUMS alterado', result.stderr)
+
+    def test_a_directory_without_any_manifest_artifact_fails_in_published_mode(self):
+        out = self.published()
+        for path in list(out.iterdir()):
+            if path.name not in ('release-manifest.json', 'release-manifest.json.sig'):
+                path.unlink()
+        result = self.verify(out, '--published')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artefacto del manifiesto', result.stderr)
+
+    def test_published_mode_still_demands_the_signing_key_and_the_expected_commit(self):
+        out = self.published()
+        key = Path(self.tmp.name) / 'otra.pem'
+        other = Path(self.tmp.name) / 'otra.pub'
+        subprocess.run(['openssl', 'genpkey', '-algorithm', 'ED25519', '-out', key], check=True, capture_output=True)
+        subprocess.run(['openssl', 'pkey', '-in', key, '-pubout', '-out', other], check=True, capture_output=True)
+        self.assertNotEqual(self.verify(out, '--published', pub=other).returncode, 0)
+        self.assertNotEqual(self.verify(out, '--published', commit='f' * 40).returncode, 0)
 
 
 class GoSbom(unittest.TestCase):

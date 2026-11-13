@@ -126,6 +126,23 @@ func TestCommandPerOS(t *testing.T) {
 	}
 }
 
+func TestLinuxBodyEscapesMarkupWhileTheNativeNoticeStaysPlainText(t *testing.T) {
+	// El nombre de un par es suyo: notify-send puede interpretar el cuerpo como marcado y enseñar un enlace.
+	_, a, ok := Command("linux", `<a href="https://evil.example/x">Renovar sesión</a> & <b>Co</b> a &lt; b`)
+	want := "&lt;a href=https://evil.example/x&gt;Renovar sesión&lt;/a&gt; &amp; &lt;b&gt;Co&lt;/b&gt; a &amp;lt; b"
+	if !ok || len(a) != 3 || a[2] != want {
+		t.Fatalf("%v %v", a, ok)
+	}
+
+	oldNative := Native
+	defer func() { Native = oldNative }()
+	var got string
+	Native = func(text string) error { got = text; return nil }
+	if err := Deliver(`<b>Co</b> & Co`); err != nil || got != "<b>Co</b> & Co" {
+		t.Errorf("macOS entrega texto plano: %v %q", err, got)
+	}
+}
+
 func TestDeliverPrefersNativeThenRun(t *testing.T) {
 	oldRun, oldNative := Run, Native
 	defer func() { Run, Native = oldRun, oldNative }()

@@ -121,6 +121,15 @@ describe("atenea_api_get", () => {
     const small = await apiGet({ get: async () => [1] } as never, { path: "/api/v1/orgs", query: { limit: 5 } });
     expect(small).toEqual({ truncated: false, data: [1] });
   });
+
+  it("api_get_cleans_every_string_like_atenea_get_before_truncating", async () => {
+    const hostile = "a\u202eb\u200fc\u061cd\u2067e\u0007f\u009fg";
+    const out = await apiGet({ get: async () => [{ name: hostile, nested: { list: [hostile, 7, null] } }] } as never, { path: "/api/v1/orgs" });
+    expect(out).toEqual({ truncated: false, data: [{ name: "abcdefg", nested: { list: ["abcdefg", 7, null] } }] });
+    // Lo que `clean` quita no cuenta para el tope: 30 000 marcas bidi son 90 000 bytes en bruto y quedan en nada.
+    const marks = await apiGet({ get: async () => ({ x: `${"\u200e".repeat(30_000)}ok` }) } as never, { path: "/api/v1/orgs" });
+    expect(marks).toEqual({ truncated: false, data: { x: "ok" } });
+  });
 });
 
 describe("loadConfig", () => {

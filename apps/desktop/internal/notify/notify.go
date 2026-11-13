@@ -166,11 +166,15 @@ func Sanitize(text string) string {
 	return b.String()
 }
 
+// markup escapa lo que el cuerpo de `notify-send` puede interpretar como marcado (<b>, <a href>…, según la especificación
+// de notificaciones). Sanitize no lo toca: el aviso de macOS es texto plano.
+var markup = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
 // Command devuelve el programa y argumentos que muestran el aviso en el SO dado (macOS usa Native).
 func Command(goos, text string) (program string, args []string, ok bool) {
 	text = Sanitize(text)
 	if goos == "linux" {
-		return "notify-send", []string{"--", "Atenea One", text}, true
+		return "notify-send", []string{"--", "Atenea One", markup.Replace(text)}, true
 	}
 	return "", nil, false
 }
