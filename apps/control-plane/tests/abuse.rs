@@ -195,13 +195,15 @@ async fn dispositivo_pendiente_no_toma_el_bloqueo_de_la_red() {
         .execute(&mut c)
         .await
         .unwrap();
-    let r = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        t.config(&d, now(), *Uuid::new_v4().as_bytes()),
-    )
-    .await
-    .expect("no debe esperar al bloqueo");
+    let (ts, nonce) = (now(), *Uuid::new_v4().as_bytes());
+    let r = tokio::time::timeout(std::time::Duration::from_secs(5), t.config(&d, ts, nonce))
+        .await
+        .expect("no debe esperar al bloqueo");
     r.error(StatusCode::FORBIDDEN, "device_not_approved");
+    // Tampoco ocupa la caché de nonces compartida: la misma petición repetida no es una repetición (401).
+    t.config(&d, ts, nonce)
+        .await
+        .error(StatusCode::FORBIDDEN, "device_not_approved");
     sqlx::query("ROLLBACK").execute(&mut c).await.unwrap();
     t.finish().await;
 }

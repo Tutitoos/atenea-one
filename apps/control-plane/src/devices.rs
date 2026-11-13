@@ -458,7 +458,8 @@ pub async fn leave(
     )
     .map_err(|_| invalid())?;
     crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
-    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
+    // `leave` admite cualquier estado: su consumo queda acotado por la cuota de nonces de su red.
+    crate::claim_nonce(&s.nonces, row.get("network_id"), dev, signed.nonce, now)?;
     if !body.is_empty() {
         return Err(ApiError::bad("invalid_request"));
     }

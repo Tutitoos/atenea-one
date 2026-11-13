@@ -208,11 +208,12 @@ async fn respond(
     )
     .map_err(|_| invalid())?;
     crate::take(&s.device_rate, dev, s.config.device_per_minute)?;
-    crate::claim_nonce(&s.nonces, dev, signed.nonce, now)?;
+    // Un pendiente o revocado se rechaza sin ocupar la caché de nonces compartida.
     if row.get::<String, _>("status") != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
     let net: Uuid = row.get("network_id");
+    crate::claim_nonce(&s.nonces, net, dev, signed.nonce, now)?;
     let mut tx = s.pool.begin().await?;
     let n=sqlx::query("SELECT org_id,issuer_cert,ipv4_cidr::text v4,ipv6_cidr::text v6 FROM networks WHERE id=$1 FOR UPDATE").bind(net).fetch_one(&mut *tx).await?;
     let status: String = sqlx::query_scalar("SELECT status FROM devices WHERE id=$1")
