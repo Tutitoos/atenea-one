@@ -53,6 +53,7 @@ El firewall del host es deny por defecto y solo abre los anteriores.
 
 - Una pieza más de infraestructura (HAProxy) en el camino de 443; si cae, caen panel y relay TLS. La HA de la entrada se trata en la fase 9 (segundo nodo).
 - Con PROXY v2 hay que impedir que un cliente externo lo envíe: backends solo en loopback y comprobación de origen.
+- La entrada es compartida (2048 conexiones en total para panel, API, coordinator y relay TLS): HAProxy limita a 128 las conexiones simultáneas de un mismo origen (IPv4 exacta, IPv6 por /64) para que una sola dirección no la ocupe entera. No protege de un ataque repartido entre muchas direcciones, y un sitio con muchos dispositivos tras una misma IP pública puede necesitar subir el tope.
 - Clientes sin SNI correcto no pueden usar el fallback; es intencionado.
 - No resuelve proxies HTTP ni inspección TLS que sustituya certificados: se documentan como redes no soportadas.
 - Relay-v2 exige `relay_id` persistente (16 bytes aleatorios del SO, 32 hex minúsculos no cero), obligatorio en cada relay y en su entrada del coordinator. Relays distintos usan IDs distintos y tokens por audiencia; certificados, DNS y reinicios no regeneran el ID. Actualizar binarios, configuración y ALPN conjuntamente; la evidencia histórica con `/1` no verifica este cutover.
