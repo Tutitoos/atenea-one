@@ -20,7 +20,8 @@ RuntimeDirectoryMode=0750
 # No retirar el padre compartido: otras redes pueden seguir activas.
 RuntimeDirectoryPreserve=yes
 StateDirectory=atenea
-StateDirectoryMode=0700
+# 0711 como en el postinst: systemd reaplica este modo en cada arranque.
+StateDirectoryMode=0711
 ReadWritePaths=/var/lib/atenea /run/atenea
 CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN
