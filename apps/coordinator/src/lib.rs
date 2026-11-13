@@ -75,7 +75,7 @@ struct Memory {
 pub struct Coordinator {
     config: Config,
     anchors: Vec<PublicKey>,
-    remote_anchors: RwLock<Vec<PublicKey>>,
+    remote_anchors: RwLock<HashMap<NetworkId, PublicKey>>,
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     memory: Mutex<Memory>,
     polls: Semaphore,
@@ -152,13 +152,17 @@ impl Coordinator {
             (self.clock)(),
         );
     }
-    /// Estáticas ∪ remotas (ADR-018 § 3.4).
-    fn all_anchors(&self) -> Vec<PublicKey> {
+    /// Estáticas (valen para cualquier red) ∪ la raíz remota de **esa** red (ADR-018 § 3.4 y § 4).
+    fn anchors_for(&self, network: &NetworkId) -> Vec<PublicKey> {
         let mut all = self.anchors.clone();
-        for k in self.remote_anchors.read().expect("anclas remotas").iter() {
-            if !all.contains(k) {
-                all.push(*k);
-            }
+        if let Some(k) = self
+            .remote_anchors
+            .read()
+            .expect("anclas remotas")
+            .get(network)
+            && !all.contains(k)
+        {
+            all.push(*k);
         }
         all
     }
@@ -272,13 +276,23 @@ async fn announce(
     let file = STANDARD
         .decode(data.config)
         .map_err(|_| ApiError::invalid())?;
-    let (_, config) = atenea_identity::inspect_config(&file, &s.all_anchors(), now)
+    // La red declarada elige las anclas; `inspect_config` comprueba después que es la del certificado firmado.
+    let network = atenea_identity::claimed_network(&file).ok_or_else(ApiError::invalid)?;
+    let (_, config) = atenea_identity::inspect_config(&file, &s.anchors_for(&network), now)
         .map_err(|_| ApiError::invalid())?;
     if config.device_id != req.device_id {
         return Err(ApiError::auth());
     }
     let candidates = atenea_nat_traversal::sanitize_candidates(data.candidates, 8);
     let mut m = s.memory.lock().expect("memoria");
+    presence::sweep(&mut m.presences, now);
+    // La presencia va por `device_id`: otra red no puede quedarse con la de un dispositivo conectado.
+    if m.presences
+        .get(&req.device_id)
+        .is_some_and(|p| p.config.network_id != config.network_id)
+    {
+        return Err(ApiError::invalid());
+    }
     m.nonces.verify(
         &req,
         config.network_id,
@@ -295,7 +309,6 @@ async fn announce(
     ) {
         return Err(ApiError::rate());
     }
-    presence::sweep(&mut m.presences, now);
     if !m.presences.contains_key(&req.device_id) && m.presences.len() >= s.config.max_presences {
         return Err(ApiError::rate());
     }

@@ -2,22 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Lectura de las raíces de las redes desde el control plane (ADR-018 § 3.4).
 use crate::config::{AnchorsSource, parse_anchor};
-use atenea_identity::PublicKey;
+use atenea_identity::{NetworkId, PublicKey};
 use serde::Deserialize;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-const MAX_BODY: u64 = 512 * 1024;
+const MAX_BODY: u64 = 1024 * 1024;
 const MAX_ANCHORS: usize = 4096;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reply {
-    anchors: Vec<String>,
+    anchors: Vec<Entry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {
+    network_id: String,
+    root_anchor: String,
 }
 
 /// Consulta bloqueante. Cualquier fallo (red, estado, JSON o una sola ancla inválida) descarta la respuesta entera:
 /// quien llama conserva la última lista buena.
-pub fn fetch(source: &AnchorsSource) -> Result<Vec<PublicKey>, &'static str> {
+pub fn fetch(source: &AnchorsSource) -> Result<HashMap<NetworkId, PublicKey>, &'static str> {
     let secret = source.secret()?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -42,10 +49,20 @@ pub fn fetch(source: &AnchorsSource) -> Result<Vec<PublicKey>, &'static str> {
     parse(&text)
 }
 
-pub fn parse(text: &str) -> Result<Vec<PublicKey>, &'static str> {
+/// Raíz de cada red: una raíz remota solo vale para la red con la que el control plane la registró.
+pub fn parse(text: &str) -> Result<HashMap<NetworkId, PublicKey>, &'static str> {
     let reply: Reply = serde_json::from_str(text).map_err(|_| "respuesta de anclas inválida")?;
     if reply.anchors.len() > MAX_ANCHORS {
         return Err("demasiadas anclas");
     }
-    reply.anchors.iter().map(|s| parse_anchor(s)).collect()
+    reply
+        .anchors
+        .iter()
+        .map(|e| {
+            let mut network = NetworkId::default();
+            hex::decode_to_slice(&e.network_id, &mut network)
+                .map_err(|_| "red de un ancla inválida")?;
+            Ok((network, parse_anchor(&e.root_anchor)?))
+        })
+        .collect()
 }

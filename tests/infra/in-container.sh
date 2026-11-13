@@ -270,7 +270,7 @@ def get(token):
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
 status, body = get('token-interno-de-ensayo-0123456789abcdef')
-assert status == 200 and root in json.loads(body)['anchors'], (status, body)
+assert status == 200 and {'network_id': '000000000000000000000000000000b1', 'root_anchor': root} in json.loads(body)['anchors'], (status, body)
 for bad in (None, 'otro-token-distinto-0123456789'):
     status, body = get(bad)
     assert status == 401 and 'anchors' not in body, (bad, status, body)
