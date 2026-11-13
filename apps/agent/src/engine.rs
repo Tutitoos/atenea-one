@@ -61,6 +61,10 @@ const RELAY_AFTER_PROBE: Duration = Duration::from_secs(4);
 const RELAY_REQUEST_INTERVAL: Duration = Duration::from_secs(5);
 /// El directo lleva sano este tiempo: se libera la asignación del relay.
 const RELEASE_AFTER_DIRECT: Duration = Duration::from_secs(30);
+/// Un par con un solo camino emite un keepalive cada `KEEPALIVE_INTERVAL` (15 s), más que `HEALTH_WINDOW` (9 s): un directo sano
+/// pero inactivo lleva hasta 15 s sin recibir y no por eso está caído. Mientras el relay lleve listo menos que esto, el par aún
+/// puede estar en keepalive lento, y el silencio del directo no basta para abandonarlo.
+const SLOW_KEEPALIVE_GRACE: Duration = Duration::from_secs(17);
 
 /// Retardo creciente tras un sondeo fallido: 30, 60, 120, 240 y 300 s como máximo.
 fn backoff(failures: u32) -> Duration {
@@ -223,6 +227,8 @@ struct PathStat {
     relay_id: Option<[u8; 16]>,
     last_rx: Option<Instant>,
     healthy_since: Option<Instant>,
+    /// Solo relays: desde cuándo está lista la asignación.
+    ready_since: Option<Instant>,
     last_tx: Option<Instant>,
     rtt_ms: Option<u32>,
 }
@@ -271,6 +277,8 @@ struct Peer {
     last_data: Option<Instant>,
     /// Último envío de datos de usuario (no keepalives).
     last_data_tx: Option<Instant>,
+    /// Primer dato de usuario enviado desde la última vez que el par contestó (nada autenticado recibido después).
+    data_pending_since: Option<Instant>,
     stat: [PathStat; 3],
     /// Camino por el que se envían los datos.
     active: PathKind,
@@ -312,6 +320,7 @@ impl Peer {
             last_handshake: None,
             last_data: None,
             last_data_tx: None,
+            data_pending_since: None,
             stat: Default::default(),
             active: PathKind::Direct,
             tx_bytes: 0,
@@ -445,6 +454,60 @@ impl Peer {
 
     fn last_rx_any(&self) -> Option<Instant> {
         self.stat.iter().filter_map(|s| s.last_rx).max()
+    }
+
+    /// Anota un dato de usuario enviado; si nada contestó aún, es el primero sin respuesta.
+    fn note_data_tx(&mut self, now: Instant) {
+        self.last_data_tx = Some(now);
+        self.data_pending_since.get_or_insert(now);
+    }
+
+    /// Cambia el camino activo; los datos sin respuesta lo eran por el anterior y dejan de contar.
+    fn set_active(&mut self, k: PathKind) {
+        self.active = k;
+        self.data_pending_since = None;
+    }
+
+    /// El camino activo recibió algo después del primer dato pendiente: ya tuvo respuesta. Los keepalives que llegan por otro
+    /// camino (el relay) no cuentan: no dicen nada de si el activo funciona.
+    fn clear_answered_data(&mut self) {
+        if self.data_pending_since.is_some_and(|p| {
+            self.stat[self.active.idx()]
+                .last_rx
+                .is_some_and(|rx| rx >= p)
+        }) {
+            self.data_pending_since = None;
+        }
+    }
+
+    /// ¿Hay que dejar el camino activo, que no figura sano, por `to`? Solo con evidencia de que el par vive por `to` y no por el
+    /// activo:
+    /// - `to` debe haber dado señales **claramente más recientes** (más de `FAST_KEEPALIVE`) que el activo. Si ambos llevan casi el
+    ///   mismo silencio el par está inactivo o ya soltó uno de los dos (la liberación del relay es independiente en cada extremo:
+    ///   quien lo soltó pasa a keepalive lento y el otro aún ve «sano» un relay sin asignación) y cambiar sería ir a ciegas.
+    /// - Y no si es solo inactividad: un directo que recibió hace menos de `SLOW_KEEPALIVE_GRACE`, con un relay recién listo y sin
+    ///   datos sin respuesta desde hace `SUSPECT_AFTER`, no ha fallado (el par puede estar aún en keepalive lento y la ventana de
+    ///   salud es más corta que él). Con datos sin contestar, o pasado ese margen, sí.
+    fn leave_active_for(&self, to: PathKind, now: Instant) -> bool {
+        let clearly_fresher = match (
+            self.stat[self.active.idx()].last_rx,
+            self.stat[to.idx()].last_rx,
+        ) {
+            (Some(active), Some(other)) => other > active + FAST_KEEPALIVE,
+            _ => true,
+        };
+        let direct_only_idle = self.active == PathKind::Direct
+            && self.stat[0]
+                .last_rx
+                .is_some_and(|rx| now.duration_since(rx) < SLOW_KEEPALIVE_GRACE);
+        let relay_is_new = to != PathKind::Direct
+            && self.stat[to.idx()]
+                .ready_since
+                .is_some_and(|t| now.duration_since(t) < SLOW_KEEPALIVE_GRACE);
+        let data_unanswered = self
+            .data_pending_since
+            .is_some_and(|p| now.duration_since(p) >= SUSPECT_AFTER);
+        clearly_fresher && !(direct_only_idle && relay_is_new && !data_unanswered)
     }
 
     fn path_name(&self, now: Instant) -> &'static str {
@@ -937,7 +1000,7 @@ impl Engine {
             match s.encrypt(pkt, now) {
                 Ok(dg) => {
                     peer.tx_bytes += pkt.len() as u64;
-                    peer.last_data_tx = Some(now);
+                    peer.note_data_tx(now);
                     peer.stat[k.idx()].last_tx = Some(now);
                     if let Some(o) = peer.out(k, dg) {
                         out.push(o);
@@ -1400,8 +1463,8 @@ impl Engine {
             peer.endpoint = Some(from);
         }
         peer.note_rx(kind, now);
-        if !peer.healthy(peer.active, now) {
-            peer.active = kind;
+        if !peer.healthy(peer.active, now) && peer.leave_active_for(kind, now) {
+            peer.set_active(kind);
         }
         peer.last_handshake = Some(now);
         peer.pending_dg = None;
@@ -1427,7 +1490,7 @@ impl Engine {
                 .encrypt(&pkt, now)
         {
             peer.tx_bytes += pkt.len() as u64;
-            peer.last_data_tx = Some(now);
+            peer.note_data_tx(now);
             out.push(peer.reply(via, dg));
         }
     }
@@ -1493,8 +1556,8 @@ impl Engine {
             self.counters.inc("endpoint_updates");
         }
         peer.note_rx(kind, now);
-        if !peer.healthy(peer.active, now) {
-            peer.active = kind;
+        if !peer.healthy(peer.active, now) && peer.leave_active_for(kind, now) {
+            peer.set_active(kind);
         }
         if kind == PathKind::Direct {
             peer.kprobe = None;
@@ -1513,7 +1576,7 @@ impl Engine {
             && let Ok(dg) = s.encrypt(&q, now)
         {
             peer.tx_bytes += q.len() as u64;
-            peer.last_data_tx = Some(now);
+            peer.note_data_tx(now);
             peer.stat[k.idx()].last_tx = Some(now);
             if let Some(o) = peer.out(k, dg) {
                 out.push(o);
@@ -1706,6 +1769,8 @@ impl Engine {
                 }
             }
             // Conmutación de caminos (docs/protocol/relay-v2.md §7).
+            // Los datos enviados ya tienen respuesta por el camino activo: nada pendiente.
+            peer.clear_answered_data();
             let healthy = PATHS.map(|k| peer.healthy(k, now));
             for k in PATHS {
                 if !healthy[k.idx()] {
@@ -1713,9 +1778,11 @@ impl Engine {
                 }
             }
             if !healthy[peer.active.idx()] {
-                // Conmutación a peor: inmediata si otro camino está sano.
-                if let Some(best) = PATHS.into_iter().find(|k| healthy[k.idx()]) {
-                    peer.active = best;
+                // Conmutación a peor: inmediata si otro camino está sano, salvo que sea solo inactividad (`leave_active_for`).
+                if let Some(best) = PATHS.into_iter().find(|k| healthy[k.idx()])
+                    && peer.leave_active_for(best, now)
+                {
+                    peer.set_active(best);
                     self.counters.inc("path_switches");
                 }
             } else if let Some(better) = PATHS.into_iter().find(|k| {
@@ -1726,7 +1793,7 @@ impl Engine {
                         .is_some_and(|t| now.duration_since(t) >= UPGRADE_HOLD)
             }) {
                 // Conmutación a mejor: solo tras estar sano de forma continua (histéresis).
-                peer.active = better;
+                peer.set_active(better);
                 self.counters.inc("path_switches");
             }
             // Sospecha: se envió tráfico por el camino activo y no llegó nada autenticado.
@@ -1832,7 +1899,10 @@ impl Engine {
             });
         }
         s.relay_id = Some(relay_id);
-        s.ready = ready;
+        let was_ready = std::mem::replace(&mut s.ready, ready);
+        if ready && !was_ready {
+            s.ready_since = Some(now);
+        }
         s.last_rx = None;
         s.healthy_since = None;
         if ready {
@@ -4136,5 +4206,122 @@ mod tests {
         assert_eq!(l.b.counters.0["mac2_accepted"], 1);
         assert!(!l.b.counters.0.contains_key("init_challenged"));
         assert!(!l.b.counters.0.contains_key("tx_cookie_reply"));
+    }
+
+    /// El directo es sano todo el tiempo y el tráfico llega a ráfagas con silencios de 2 a 40 s. El par contesta a los `reply_ms`
+    /// y el relay tarda `relay_ms` en estar listo en ambos lados, como lo pide el runtime ante la sospecha. Devuelve cuántos
+    /// cambios de camino hicieron los dos extremos: con un directo que nunca falla, ninguno.
+    fn path_switches_with_a_healthy_direct(reply_ms: u64, relay_ms: u64, hours: u64) -> u64 {
+        let mut l = lab();
+        let mut seed = 0x9e3779b97f4a7c15u64;
+        let mut rnd = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let mut next_burst = 5_000u64;
+        let mut reply_at: Option<u64> = None;
+        let mut relay_at: Option<u64> = None;
+        let total_ms = hours * 3600 * 1000;
+        let mut elapsed = 0u64;
+        while elapsed < total_ms {
+            l.now += Duration::from_millis(50);
+            elapsed += 50;
+            if elapsed.is_multiple_of(1000) {
+                l.unix += 1;
+            }
+            if elapsed >= next_burst {
+                let out = l.a.on_tun(&v4(1, 2, b"dato"), l.now, l.unix);
+                pump(&mut l, out, vec![]);
+                reply_at = Some(elapsed + reply_ms);
+                next_burst = elapsed + 2_000 + rnd(38_000);
+            }
+            if reply_at.is_some_and(|t| elapsed >= t) {
+                reply_at = None;
+                let out = l.b.on_tun(&v4(2, 1, b"ack"), l.now, l.unix);
+                pump(&mut l, vec![], out);
+            }
+            let (oa, ob) = (l.a.on_tick(l.now, l.unix), l.b.on_tick(l.now, l.unix));
+            pump(&mut l, oa, ob);
+            let (ra, rb) = (
+                l.a.take_relay_requests(l.now),
+                l.b.take_relay_requests(l.now),
+            );
+            if (!ra.is_empty() || !rb.is_empty()) && relay_at.is_none() {
+                relay_at = Some(elapsed + relay_ms);
+            }
+            if relay_at.is_some_and(|t| elapsed >= t) {
+                relay_at = None;
+                let (xa, xb) = (
+                    l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now),
+                    l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now),
+                );
+                pump(&mut l, xa, xb);
+            }
+            let _ = (
+                l.a.take_relay_releases(l.now),
+                l.b.take_relay_releases(l.now),
+            );
+            // El relay solo entrega mientras los dos extremos tienen abierta su asignación.
+            l.relay_ok = l.a.peers[0].stat[1].ready && l.b.peers[0].stat[1].ready;
+        }
+        ["path_switches"]
+            .iter()
+            .map(|k| {
+                l.a.counters.0.get(*k).copied().unwrap_or(0)
+                    + l.b.counters.0.get(*k).copied().unwrap_or(0)
+            })
+            .sum()
+    }
+
+    /// Un directo sano pero inactivo no se abandona: con un solo camino el par emite un keepalive cada 15 s, más que la ventana de
+    /// salud de 9 s, y un relay recién listo (por la sospecha de 4 s tras un silencio) parecía mejor que un directo «caído» antes
+    /// de que llegase la respuesta. Y tampoco hacia un relay que el otro extremo ya soltó (cada extremo libera el suyo por su
+    /// cuenta y quien lo suelta pasa a keepalive lento, de modo que el otro veía «sano» un relay sin asignación). Ocurría de 0,3 a
+    /// 3 veces por hora según lo que tardase el par en contestar, ≥ 5 s en relay cada vez (RTT mayor y tope de caudal del relay).
+    #[test]
+    fn a_healthy_idle_direct_path_is_not_abandoned_when_a_relay_becomes_ready() {
+        for reply_ms in [50, 150, 300, 1000] {
+            assert_eq!(
+                path_switches_with_a_healthy_direct(reply_ms, 100, 1),
+                0,
+                "el par contesta a los {reply_ms} ms"
+            );
+        }
+    }
+
+    /// La guarda anterior no retrasa una caída real: con datos sin respuesta, el directo que deja de llegar se abandona dentro de los
+    /// 10 s aunque el relay lleve listo solo unos segundos.
+    #[test]
+    fn a_real_direct_failure_still_fails_over_in_time_with_a_recent_relay() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        let (ra, rb) = (
+            l.a.set_relay_ready(&[2; 16], [17; 16], RelayKind::Udp, true, l.now),
+            l.b.set_relay_ready(&[1; 16], [17; 16], RelayKind::Udp, true, l.now),
+        );
+        pump(&mut l, ra, rb);
+        run(&mut l, 3);
+        assert_eq!(l.a.peers[0].active, PathKind::Direct);
+        l.direct_ok = false;
+        let mut switched_after = None;
+        for step in 0..60u64 {
+            l.now += Duration::from_millis(250);
+            if step % 4 == 0 {
+                let out = l.a.on_tun(&v4(1, 2, b"dato"), l.now, l.unix);
+                pump(&mut l, out, vec![]);
+            }
+            let (oa, ob) = (l.a.on_tick(l.now, l.unix), l.b.on_tick(l.now, l.unix));
+            pump(&mut l, oa, ob);
+            if switched_after.is_none() && l.a.peers[0].active == PathKind::RelayUdp {
+                switched_after = Some(step as f64 * 0.25);
+            }
+        }
+        let secs = switched_after.expect("no pasó al relay");
+        assert!(secs <= 10.0, "pasó al relay a los {secs} s");
     }
 }
