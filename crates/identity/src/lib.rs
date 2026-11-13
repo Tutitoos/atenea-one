@@ -14,7 +14,7 @@ use std::{
     fmt,
     net::{IpAddr, SocketAddr},
 };
-pub use verify::{inspect_config, verify_config};
+pub use verify::{claimed_network, inspect_config, verify_config};
 
 /// Dominio de enrutamiento DNS canónico (ASCII LDH, sin punto final).
 pub fn valid_domain(domain: &str) -> bool {

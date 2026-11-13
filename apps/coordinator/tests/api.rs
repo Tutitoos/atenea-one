@@ -1075,6 +1075,15 @@ fn root_hex(seed: u8) -> String {
     hex::encode(signing_key([seed; 32]).verifying_key().to_bytes())
 }
 
+/// Respuesta del control plane: cada raíz con su red (las de estas pruebas, en la red 9).
+fn anchors(roots: &[&str]) -> String {
+    let list: Vec<Value> = roots
+        .iter()
+        .map(|root| json!({"network_id":hex::encode([9u8; 16]),"root_anchor":root}))
+        .collect();
+    json!({ "anchors": list }).to_string()
+}
+
 async fn announce_with_root(l: &Lab, root: u8) -> StatusCode {
     // El anuncio tiene límite de tasa por dispositivo: se avanza el reloj entre llamadas.
     l.now.fetch_add(5, Ordering::SeqCst);
@@ -1091,7 +1100,7 @@ async fn announce_with_root(l: &Lab, root: u8) -> StatusCode {
 #[tokio::test]
 async fn anchors_source_accepts_new_network_without_restart_and_sends_secret() {
     let secret = "s3creto-de-prueba-0123456789";
-    let (port, server) = serve_anchors(vec![(200, json!({"anchors":[root_hex(5)]}).to_string())]);
+    let (port, server) = serve_anchors(vec![(200, anchors(&[&root_hex(5)]))]);
     let (l, dir) = anchors_lab(port, secret);
     assert_eq!(announce_with_root(&l, 5).await, StatusCode::FORBIDDEN);
     assert_eq!(l.state.refresh_anchors(), Ok(1));
@@ -1112,18 +1121,24 @@ async fn anchors_source_accepts_new_network_without_restart_and_sends_secret() {
 #[tokio::test]
 async fn anchors_source_failures_keep_last_good_list() {
     let (port, server) = serve_anchors(vec![
-        (200, json!({"anchors":[root_hex(5)]}).to_string()),
+        (200, anchors(&[&root_hex(5)])),
         (500, String::new()),
         (401, "{}".into()),
         (200, "no es json".into()),
         // Una sola ancla inválida invalida la respuesta entera, aunque la otra sea buena.
-        (200, json!({"anchors":[root_hex(8), "zz"]}).to_string()),
-        (200, json!({"anchors":[hex::encode([0u8; 32])]}).to_string()),
+        (200, anchors(&[&root_hex(8), "zz"])),
+        (200, anchors(&[&hex::encode([0u8; 32])])),
         (200, json!({"anchors":[], "extra":1}).to_string()),
+        // El formato anterior (raíces sin red) y una red ilegible tampoco se aceptan.
+        (200, json!({"anchors":[root_hex(8)]}).to_string()),
+        (
+            200,
+            json!({"anchors":[{"network_id":"zz","root_anchor":root_hex(8)}]}).to_string(),
+        ),
     ]);
     let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
     assert_eq!(l.state.refresh_anchors(), Ok(1));
-    for _ in 0..6 {
+    for _ in 0..8 {
         assert!(l.state.refresh_anchors().is_err());
         assert_eq!(announce_with_root(&l, 5).await, StatusCode::OK);
         assert_eq!(announce_with_root(&l, 8).await, StatusCode::FORBIDDEN);
@@ -1137,16 +1152,65 @@ async fn anchors_source_failures_keep_last_good_list() {
 
 #[tokio::test]
 async fn anchors_source_drops_networks_no_longer_listed_but_never_static() {
-    let (port, server) = serve_anchors(vec![
-        (200, json!({"anchors":[root_hex(5)]}).to_string()),
-        (200, json!({"anchors":[]}).to_string()),
-    ]);
+    let (port, server) = serve_anchors(vec![(200, anchors(&[&root_hex(5)])), (200, anchors(&[]))]);
     let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
     l.state.refresh_anchors().unwrap();
     l.state.refresh_anchors().unwrap();
     server.join().unwrap();
     assert_eq!(announce_with_root(&l, 5).await, StatusCode::FORBIDDEN);
     assert_eq!(announce_with_root(&l, 1).await, StatusCode::OK);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_remote_root_is_only_valid_for_its_own_network() {
+    let (port, server) = serve_anchors(vec![(200, anchors(&[&root_hex(5)]))]);
+    let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
+    l.state.refresh_anchors().unwrap();
+    server.join().unwrap();
+    assert_eq!(announce_with_root(&l, 5).await, StatusCode::OK);
+    // La misma raíz, registrada para la red 9, firma una configuración de la red 4: rechazada.
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(7, &[], 5, 4, 1200, "192.0.2.1:1"),
+            7,
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn another_network_cannot_replace_a_live_presence() {
+    let (port, server) = serve_anchors(vec![(200, anchors(&[&root_hex(5)]))]);
+    let (l, dir) = anchors_lab(port, "s3creto-de-prueba-0123456789");
+    l.state.refresh_anchors().unwrap();
+    server.join().unwrap();
+    assert_eq!(l.announce(3, &[4]).await.0, StatusCode::OK);
+    assert_eq!(l.announce(4, &[3]).await.0, StatusCode::OK);
+    // Con su propia raíz y su propia red, otro inquilino anuncia el `device_id` 3.
+    l.advance(30);
+    assert_eq!(
+        l.request(
+            "POST",
+            "/v1/announce",
+            announcement(3, &[], 5, 9, 1200, "198.51.100.66:6"),
+            3,
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // La presencia y la cuota de anuncio del dispositivo real siguen intactas.
+    assert_eq!(
+        l.request("POST", "/v1/rendezvous", peer(3), 4).await.1["candidates"],
+        json!(["192.0.2.1:443"])
+    );
+    assert_eq!(l.announce(3, &[4]).await.0, StatusCode::OK);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

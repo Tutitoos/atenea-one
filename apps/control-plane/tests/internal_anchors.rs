@@ -55,14 +55,21 @@ async fn lista_las_raices_de_las_redes_solo_con_el_secreto() {
     let s = t.user().await;
     let org = t.org(&s).await;
     let (a, b) = (generate_seed(), generate_seed());
-    t.network(&s, org, &signing_key(a), "10.77.0.0/24", "fd77::/64")
+    let na = t
+        .network(&s, org, &signing_key(a), "10.77.0.0/24", "fd77::/64")
         .await;
-    t.network(&s, org, &signing_key(b), "10.78.0.0/24", "fd78::/64")
+    let nb = t
+        .network(&s, org, &signing_key(b), "10.78.0.0/24", "fd78::/64")
         .await;
     let (status, body) = get(&internal, Some(&ok)).await;
     assert_eq!(status, StatusCode::OK);
-    let mut want = vec![root_hex(a), root_hex(b)];
+    // Cada raíz con su red: el coordinator solo la acepta para esa red.
+    let mut want = [(na, root_hex(a)), (nb, root_hex(b))];
     want.sort();
+    let want: Vec<Value> = want
+        .iter()
+        .map(|(net, root)| serde_json::json!({"network_id": hex::encode(net.as_bytes()), "root_anchor": root}))
+        .collect();
     assert_eq!(body["anchors"], serde_json::json!(want));
     // Sin cabecera, con otro secreto, con otro esquema o con el secreto sin «Bearer»: 401 sin datos.
     for auth in [

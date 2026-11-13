@@ -84,12 +84,18 @@ async fn root_anchors(
     if given != g.secret_hash {
         return Err(ApiError(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
-    let rows = sqlx::query("SELECT DISTINCT root_anchor FROM networks ORDER BY root_anchor")
+    // Cada raíz va con su red: el coordinator solo la acepta para esa red (ADR-018 § 4).
+    let rows = sqlx::query("SELECT id, root_anchor FROM networks ORDER BY id")
         .fetch_all(&g.state.pool)
         .await?;
-    let anchors: Vec<String> = rows
+    let anchors: Vec<_> = rows
         .iter()
-        .map(|r| hex::encode(r.get::<&[u8], _>("root_anchor")))
+        .map(|r| {
+            json!({
+                "network_id": hex::encode(r.get::<uuid::Uuid, _>("id").as_bytes()),
+                "root_anchor": hex::encode(r.get::<&[u8], _>("root_anchor")),
+            })
+        })
         .collect();
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

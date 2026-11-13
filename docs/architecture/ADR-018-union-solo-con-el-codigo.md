@@ -48,8 +48,8 @@ Lo que **no** es un hueco y se conserva: la aprobación del dispositivo por huel
 
 ### 3.4 Anclas automáticas en el coordinator
 
-- Nuevo punto de lectura **interno** en el control plane: `GET /internal/v1/root-anchors` (lista de `root_anchor` en hex de las redes existentes), en un **listener distinto y no publicado** (como `metrics_listen`), con `Authorization: Bearer` de un secreto de fichero compartido solo con el coordinator. **No se sirve por el Caddy/haproxy públicos** (hoy todo lo que no es `/v1/*` ni `/dex/*` va al control plane: una ruta `/internal/…` en el listener público quedaría expuesta).
-- El coordinator consulta ese punto cada 60 s con `anchors_source = { url, secret_file, interval_secs }`, y usa la **unión** de las estáticas y las remotas. Falla **estática**: si el control plane no responde, conserva la última lista buena; nunca baja a «sin anclas». Las estáticas siguen exigiéndose (≥ 1).
+- Nuevo punto de lectura **interno** en el control plane: `GET /internal/v1/root-anchors` (el `root_anchor` en hex de cada red existente, **con su `network_id`**), en un **listener distinto y no publicado** (como `metrics_listen`), con `Authorization: Bearer` de un secreto de fichero compartido solo con el coordinator. **No se sirve por el Caddy/haproxy públicos** (hoy todo lo que no es `/v1/*` ni `/dex/*` va al control plane: una ruta `/internal/…` en el listener público quedaría expuesta).
+- El coordinator consulta ese punto cada 60 s con `anchors_source = { url, secret_file, interval_secs }`, y valida cada anuncio contra las estáticas y **la raíz remota de la red que declara** (hasta la `0.1.25` usaba la unión de todas para cualquier red, lo que contradecía el § 4: quien registraba una red podía anunciar dispositivos de otra). Falla **estática**: si el control plane no responde, conserva la última lista buena; nunca baja a «sin anclas». Las estáticas siguen exigiéndose (≥ 1).
 - Si `anchors_source` no está configurado, el comportamiento es el actual.
 
 ## 4. Amenazas y por qué es aceptable

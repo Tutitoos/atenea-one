@@ -74,6 +74,12 @@ fn inspect_chain(
     Ok((root, cert, cfg))
 }
 
+/// Red que declara el certificado de emisor, **sin verificar**: solo para elegir las anclas con las que
+/// después se llama a `inspect_config`, que es quien la comprueba.
+pub fn claimed_network(file: &[u8]) -> Option<crate::NetworkId> {
+    Some(IssuerCert::parse(file.get(5..183)?).ok()?.network_id)
+}
+
 /// Inspecciona la cadena y el cuerpo sin identidad local, persistencia ni protección antirrollback.
 pub fn inspect_config(
     file: &[u8],
