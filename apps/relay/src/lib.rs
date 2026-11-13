@@ -31,6 +31,10 @@ pub(crate) fn now() -> u64 {
         .as_millis()
         .min(u128::from(u64::MAX)) as u64
 }
+
+/// Pausa tras un error de E/S de un listener (EMFILE, ECONNABORTED…): evita girar en vacío si persiste.
+const ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
+
 pub(crate) struct Shared {
     state: State,
     clients: HashMap<u64, (IpAddr, mpsc::Sender<Vec<u8>>)>,
@@ -243,15 +247,32 @@ impl Relay {
         let mut buf = [0; 2049];
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
         let mut next_id = 0u64;
+        // Tras un error de accept solo se pausan TCP y estado: el UDP se sigue sirviendo. Un error de
+        // recv_from, en cambio, pausa en línea: sin lectura UDP no hay datagramas que atender.
+        let accept_pause = tokio::time::sleep(ERROR_PAUSE);
+        tokio::pin!(accept_pause);
+        let mut accept_paused = false;
         loop {
             if *shutdown.borrow() {
                 break;
             }
             tokio::select! {
                 _ = shutdown.changed() => break,
-                result = self.runtime.udp.recv_from(&mut buf) => { let (n,a) = result?; self.runtime.message(Binding::Udp(a),&buf[..n]).await; },
-                result = self.tcp.accept() => {
-                    let (stream,addr) = result?;
+                result = self.runtime.udp.recv_from(&mut buf) => {
+                    match result {
+                        Ok((n,a)) => { self.runtime.message(Binding::Udp(a),&buf[..n]).await; }
+                        Err(error) => { tracing::warn!("recepción UDP: {error}"); tokio::time::sleep(ERROR_PAUSE).await; }
+                    }
+                },
+                _ = &mut accept_pause, if accept_paused => { accept_paused = false; },
+                result = self.tcp.accept(), if !accept_paused => {
+                    let (stream,addr) = match result {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            tracing::warn!("aceptación TCP: {error}");
+                            accept_pause.as_mut().reset(tokio::time::Instant::now() + ERROR_PAUSE); accept_paused = true; continue;
+                        }
+                    };
                     let mut s = self.runtime.shared.lock().unwrap(); let c = &s.state.config;
                     let group = limits::ip_group(addr.ip());
                     if s.clients.len() >= c.tcp_total || s.clients.values().filter(|(ip,_)| *ip == group).count() >= c.tcp_per_ip {
@@ -262,8 +283,15 @@ impl Relay {
                     let runtime = self.runtime.clone(); let tls = self.tls.clone(); let stop = shutdown.clone();
                     tasks.spawn(async move { tcp::connection(runtime,stream,addr,id,rx,tls,stop).await; });
                 },
-                result = self.status.accept() => {
-                    let (mut stream,_) = result?; let mut body = serde_json::to_vec(&self.runtime.snapshot())?; body.push(b'\n');
+                result = self.status.accept(), if !accept_paused => {
+                    let mut stream = match result {
+                        Ok((stream,_)) => stream,
+                        Err(error) => {
+                            tracing::warn!("aceptación de estado: {error}");
+                            accept_pause.as_mut().reset(tokio::time::Instant::now() + ERROR_PAUSE); accept_paused = true; continue;
+                        }
+                    };
+                    let mut body = serde_json::to_vec(&self.runtime.snapshot())?; body.push(b'\n');
                     // Una lectura lenta no ocupa una tarea ni bloquea el relay indefinidamente.
                     let _ = tokio::time::timeout(std::time::Duration::from_millis(100),stream.write_all(&body)).await;
                 },
@@ -323,5 +351,67 @@ mod tests {
             runtime.shared.lock().unwrap().state.counters.drops["tcp_queue"],
             1
         );
+    }
+
+    #[tokio::test]
+    async fn accept_errors_do_not_stop_the_relay() {
+        use std::{os::fd::OwnedFd, time::Duration};
+        let dir = std::env::temp_dir().join(format!("atenea-relay-test-{}", rand::random::<u64>()));
+        std::fs::create_dir(&dir).unwrap();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        std::fs::write(dir.join("cert.pem"), cert.cert.pem()).unwrap();
+        std::fs::write(dir.join("key.pem"), cert.signing_key.serialize_pem()).unwrap();
+        let mut relay = Relay::bind(Config {
+            relay_id: "11".repeat(16),
+            udp_listen: "127.0.0.1:0".parse().unwrap(),
+            tcp_listen: "127.0.0.1:0".parse().unwrap(),
+            metrics_listen: "127.0.0.1:0".into(),
+            coordinator_keys: vec![hex::encode(
+                atenea_identity::SigningKey::from_bytes(&[1; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            )],
+            tls_cert_file: dir.join("cert.pem").display().to_string(),
+            tls_key_file: dir.join("key.pem").display().to_string(),
+            status_socket: dir.join("status.sock").display().to_string(),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        let udp = relay.udp_addr().unwrap();
+        // Un socket ya conectado no es un listener: su accept() falla (EINVAL/ECONNABORTED) en cuanto
+        // es legible, es decir, al cerrar el otro extremo; el error persiste como con EMFILE.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_peer = std::net::TcpStream::connect(probe.local_addr().unwrap()).unwrap();
+        let not_a_listener = std::net::TcpListener::from(OwnedFd::from(probe.accept().unwrap().0));
+        not_a_listener.set_nonblocking(true).unwrap();
+        relay.tcp = TcpListener::from_std(not_a_listener).unwrap();
+        let (status_end, status_peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let not_a_listener = std::os::unix::net::UnixListener::from(OwnedFd::from(status_end));
+        not_a_listener.set_nonblocking(true).unwrap();
+        relay.status = UnixListener::from_std(not_a_listener).unwrap();
+        let (stop, shutdown) = watch::channel(false);
+        let task = tokio::spawn(relay.run(shutdown));
+        drop((tcp_peer, status_peer));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!task.is_finished());
+        // El UDP sigue sirviéndose mientras los accept fallan en bucle.
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client
+            .send_to(&atenea_relay_core::encode_cookie_req(&[0x11; 16]), udp)
+            .await
+            .unwrap();
+        let mut reply = [0; 64];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), client.recv_from(&mut reply))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            atenea_relay_core::parse(&reply[..n]),
+            Ok(atenea_relay_core::Message::Cookie { .. })
+        ));
+        stop.send(true).unwrap();
+        task.await.unwrap().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

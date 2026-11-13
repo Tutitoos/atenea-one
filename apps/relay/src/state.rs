@@ -33,7 +33,7 @@ pub struct State {
     relay_id: wire::RelayId,
     cookie: CookieMaker,
     rates: IpRates,
-    issuers: Vec<[u8; 32]>,
+    issuers: wire::Issuers,
 }
 impl State {
     pub fn new(config: Config, issuers: Vec<[u8; 32]>, secret: [u8; 32]) -> Self {
@@ -45,7 +45,8 @@ impl State {
             counters: Counters::default(),
             cookie: CookieMaker::new(secret, relay_id),
             rates: IpRates::default(),
-            issuers,
+            // Se descomprimen una sola vez aquí, no en cada ALLOC.
+            issuers: wire::Issuers::new(&issuers),
         }
     }
     pub fn drop_packet(&mut self, reason: &'static str) {
@@ -118,7 +119,7 @@ impl State {
                 if relay_id != self.relay_id || t.relay_id != relay_id {
                     return self.reject(b, ErrCode::WrongRelay);
                 }
-                if let Err(e) = t.verify(&self.issuers, sec) {
+                if let Err(e) = t.verify_with(&self.issuers, sec) {
                     return self.reject(
                         b,
                         match e {

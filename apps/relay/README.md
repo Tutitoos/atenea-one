@@ -71,7 +71,12 @@ directamente desactivando PROXY. Solo TLS 1.3, ALPN `atenea-relay/2`, sin 0-RTT.
 PROXY exige loopback, comando PROXY y familia TCP4/TCP6; rechaza LOCAL, UNSPEC y
 extensiones TLV. El plazo de handshake incluye la lectura de PROXY. La IP de esa
 cabecera se usa para límites de asignación, tasa y conexiones. El límite global de
-conexiones incluye sockets que todavía no han completado PROXY/TLS.
+conexiones incluye sockets que todavía no han completado PROXY/TLS. Un error de
+`accept` (p. ej. descriptores agotados, EMFILE) o de lectura UDP no detiene el
+proceso: se registra con `tracing` y se espera 50 ms antes de reintentar; tras un
+error de `accept` solo se pausan los listeners TCP y de estado, de modo que el UDP
+sigue sirviéndose. El límite de descriptores (`nofile`) del proceso debe cubrir
+TCP_TOTAL más los listeners; el relay no lo ajusta.
 
 ## Variables y límites
 
@@ -98,13 +103,19 @@ minúsculas. Listas de entorno usan sintaxis Figment, por ejemplo
 | `COOKIE_PER_SECOND` | 20 | Cubo COOKIE_REQ por IP |
 | `ALLOC_PER_SECOND` | 10 | Cubo ALLOC por IP |
 | `MAX_DATAGRAM` | 1530 | Tamaño máximo de carga DATA, no mayor que 1530 |
-| `TCP_QUEUE` | 256 | Mensajes pendientes por conexión, máximo 65536; descarta el nuevo |
+| `TCP_QUEUE` | 32 | Mensajes pendientes por conexión, máximo 65536; descarta el nuevo |
 | `IDLE_SECS` | 90 | Inactividad de lectura TCP, máximo 86400 |
 | `TCP_PER_IP` | 8 | Conexiones por IP, no mayor que TCP_TOTAL |
 | `TCP_TOTAL` | 2048 | Conexiones totales, máximo 65536 |
 | `HANDSHAKE_SECS` | 10 | Plazo PROXY+TLS, máximo 300 |
 | `ALLOC_SECS` | 5 | Primera asignación válida tras TLS, máximo 300 |
 | `MAX_RATE_ENTRIES` | 65536 | Entradas origen/tipo de petición, máximo 1.000.000 |
+
+Con todas las colas TCP llenas, la memoria retenida es como máximo
+`TCP_TOTAL × TCP_QUEUE × (11 + MAX_DATAGRAM)` bytes: con los valores por defecto,
+2048 × 32 × 1541 = 100 990 976 B (≈96 MiB), por debajo del `mem_limit: 256m` de los
+compose de producción y del relay secundario (no incluye sesiones TLS, tablas ni el
+resto del proceso). Subir TCP_QUEUE o TCP_TOTAL exige subir también ese límite.
 
 Todos los límites son positivos. Cubos con ráfaga de un segundo; la renovación
 no reinicia los cubos de DATA. Las cuotas por origen (tasas COOKIE/ALLOC,
@@ -120,7 +131,10 @@ instante de expiración aunque el barrido todavía no haya pasado. Las renovacio
 mantienen alloc_id y sustituyen la vinculación anterior; el tráfico no prolonga
 la vida autorizada. Solo un ALLOC nuevo puede renovarla (máximo 120 s y nunca más
 allá de not_after+30). Las lecturas TCP parciales están acotadas a una trama y un
-bloque de lectura de 2048 bytes. Longitudes 0 y >2048 cierran la conexión.
+bloque de lectura de 2048 bytes. Longitudes 0 y >2048 cierran la conexión. Las claves
+de COORDINATOR_KEYS se validan y descomprimen al arrancar, no en cada ALLOC; la
+verificación Ed25519 del token y de la prueba del dispositivo se ejecuta con el
+estado compartido bloqueado.
 
 ### Dimensionar varios dispositivos tras una IP
 
@@ -196,6 +210,8 @@ una audiencia; no hay compatibilidad v1 ni token compartido entre relays.
 | `per_ip_quota_covers_the_whole_ipv6_64` | MAX_PER_IP por /64 |
 | `tcp_frame_before_alloc_closes_connection` | Trama TCP no ALLOC previa a la asignación cierra la conexión |
 | `full_tcp_queue_drops_new_packet` | Cola llena descarta nuevo mensaje y cuenta sin crecer |
+| `default_tcp_queues_fit_inside_the_container_memory_limit` | Peor caso de las colas TCP (conexiones × cola × 1541 B) no supera la mitad del `mem_limit` de 256 MiB |
+| `accept_errors_do_not_stop_the_relay` | Listeners TCP y de estado con `accept` fallando de forma persistente: el relay sigue vivo y sirve UDP |
 
 El rechazo de PROXY externo se garantiza además por validación de configuración
 (listener solo loopback) y comprobación de la dirección del socket aceptado. La

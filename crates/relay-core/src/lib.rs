@@ -344,6 +344,21 @@ fn signed_message(domain: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     m
 }
 
+/// Claves del coordinator ya descomprimidas: se preparan una vez (al arrancar el relay) para no
+/// repetir la descompresión de cada punto en cada ALLOC.
+pub struct Issuers(Vec<VerifyingKey>);
+
+impl Issuers {
+    /// Una clave que no es un punto válido de la curva se omite: no cuenta como emisor conocido.
+    pub fn new(keys: &[PublicKey]) -> Issuers {
+        Issuers(
+            keys.iter()
+                .filter_map(|k| VerifyingKey::from_bytes(k).ok())
+                .collect(),
+        )
+    }
+}
+
 impl RelayToken {
     fn body(&self) -> Vec<u8> {
         let mut b = Vec::with_capacity(TOKEN_SIGNED_LEN);
@@ -423,23 +438,22 @@ impl RelayToken {
 
     /// Firma de alguna de las claves del coordinator, ventana de tiempo y vida máxima.
     pub fn verify(&self, issuers: &[PublicKey], now: u64) -> Result<(), TokenError> {
-        let msg = signed_message(TOKEN_DOMAIN, &[&self.body()]);
-        let sig = Signature::from_bytes(&self.signature);
-        let mut known = false;
-        let mut valid = false;
-        for k in issuers {
-            if let Ok(vk) = VerifyingKey::from_bytes(k) {
-                known = true;
-                if vk.verify_strict(&msg, &sig).is_ok() {
-                    valid = true;
-                    break;
-                }
-            }
-        }
-        if !known {
+        self.verify_with(&Issuers::new(issuers), now)
+    }
+
+    /// Como `verify`, con las claves ya descomprimidas: quien verifica muchos tokens llama a
+    /// `Issuers::new` una vez en vez de descomprimir cada clave en cada llamada.
+    pub fn verify_with(&self, issuers: &Issuers, now: u64) -> Result<(), TokenError> {
+        if issuers.0.is_empty() {
             return Err(TokenError::UnknownIssuer);
         }
-        if !valid {
+        let msg = signed_message(TOKEN_DOMAIN, &[&self.body()]);
+        let sig = Signature::from_bytes(&self.signature);
+        if !issuers
+            .0
+            .iter()
+            .any(|k| k.verify_strict(&msg, &sig).is_ok())
+        {
             return Err(TokenError::BadSignature);
         }
         if self.not_after <= self.not_before
@@ -844,6 +858,37 @@ mod tests {
             &coord, [0x11; 16], [7; 16], [1; 16], [2; 16], [0; 32], 1000, 1000, [0; 8],
         );
         assert_eq!(backwards.verify(&[key], 1000), Err(TokenError::TooLong));
+    }
+
+    #[test]
+    fn issuers_are_prepared_once_and_undecodable_keys_do_not_count() {
+        let (t, coord, _) = token(1000);
+        let key = coord.verifying_key().to_bytes();
+        // Cerca de la mitad de las codificaciones no es un punto de la curva: se busca una, sin azar.
+        let invalid = (0..=u8::MAX)
+            .map(|b| {
+                let mut k = [0u8; 32];
+                k[0] = b;
+                k
+            })
+            .find(|k| VerifyingKey::from_bytes(k).is_err())
+            .expect("alguna codificación no es un punto");
+        for now in [1000, 1000 - 30, 1330] {
+            assert_eq!(t.verify_with(&Issuers::new(&[invalid, key]), now), Ok(()));
+        }
+        assert_eq!(t.verify(&[invalid, key], 1000), Ok(()));
+        assert_eq!(
+            t.verify_with(&Issuers::new(&[invalid]), 1000),
+            Err(TokenError::UnknownIssuer)
+        );
+        assert_eq!(
+            t.verify_with(&Issuers::new(&[sk(3).verifying_key().to_bytes()]), 1000),
+            Err(TokenError::BadSignature)
+        );
+        assert_eq!(
+            t.verify_with(&Issuers::new(&[key]), 1331),
+            Err(TokenError::Expired)
+        );
     }
 
     #[test]
