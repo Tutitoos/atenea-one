@@ -343,6 +343,17 @@ async fn long_poll_delivery_bounded_queue_and_event_expiry() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn long_poll_outlives_the_request_timeout() {
+    let l = Lab::new(Config::default());
+    l.announce(3, &[]).await;
+    // `wait=30` supera el plazo general de petición (10 s): con tiempo virtual, si el long-poll
+    // no tuviera el suyo (40 s) el plazo general lo cortaría con 408 antes de acabar su espera.
+    let (status, value) = l.request("GET", "/v1/events?wait=30", Value::Null, 3).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value, json!({"events":[]}));
+}
+
 #[tokio::test]
 async fn rate_presence_nonce_body_and_poll_limits() {
     let l = Lab::new(Config {

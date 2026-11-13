@@ -1,6 +1,37 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-use sqlx::PgPool;
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
+use std::time::Duration;
+
+/// Espera máxima por una conexión (sqlx: 30 s): con las 20 ocupadas se responde `500`.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Espera máxima por un bloqueo: un inquilino no puede aparcar las 20 conexiones en su red.
+const LOCK_TIMEOUT: &str = "5s";
+/// Duración máxima de una sentencia; las migraciones quedan fuera (`timeouts = false`).
+const STATEMENT_TIMEOUT: &str = "30s";
+
+/// Pool de la aplicación. Con `timeouts`, cada conexión nace con `lock_timeout` y
+/// `statement_timeout`; sus fallos (y `PoolTimedOut`) llegan como `sqlx::Error` y `ApiError::from`
+/// los responde como cualquier otro fallo de base de datos.
+pub async fn pool(options: PgConnectOptions, timeouts: bool) -> Result<PgPool, sqlx::Error> {
+    let options = if timeouts {
+        options.options([
+            ("lock_timeout", LOCK_TIMEOUT),
+            ("statement_timeout", STATEMENT_TIMEOUT),
+        ])
+    } else {
+        options
+    };
+    PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .connect_with(options)
+        .await
+}
+
 pub async fn migrate(
     pool: &PgPool,
     role: Option<&str>,

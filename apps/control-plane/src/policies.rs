@@ -159,7 +159,7 @@ pub async fn create(
         Some(net),
         "policy.create",
         id,
-        json!({}),
+        json!({"src":b.src,"dst":b.dst,"proto":b.proto,"port_min":b.port_min,"port_max":b.port_max}),
     )
     .await?;
     tx.commit().await?;
@@ -176,14 +176,7 @@ pub async fn remove(
         .bind(net)
         .execute(&mut *tx)
         .await?;
-    let result = sqlx::query("DELETE FROM access_policies WHERE id=$1 AND network_id=$2")
-        .bind(id)
-        .bind(net)
-        .execute(&mut *tx)
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(ApiError::not_found());
-    }
+    let policy = sqlx::query("DELETE FROM access_policies WHERE id=$1 AND network_id=$2 RETURNING src,dst,proto,port_min,port_max").bind(id).bind(net).fetch_optional(&mut *tx).await?.ok_or_else(ApiError::not_found)?;
     audit::record(
         &mut tx,
         "user",
@@ -192,7 +185,7 @@ pub async fn remove(
         Some(net),
         "policy.delete",
         id,
-        json!({}),
+        json!({"src":policy.get::<Value,_>("src"),"dst":policy.get::<Value,_>("dst"),"proto":policy.get::<i16,_>("proto"),"port_min":policy.get::<i32,_>("port_min"),"port_max":policy.get::<i32,_>("port_max")}),
     )
     .await?;
     tx.commit().await?;

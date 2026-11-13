@@ -62,11 +62,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .map_err(|_| "Semilla de emisor inválida")?;
     use zeroize::Zeroize;
     seed.zeroize();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(20)
-        .connect(&config.database_url)
-        .await?;
-    if std::env::args().any(|a| a == "--migrate") {
+    let migrate = std::env::args().any(|a| a == "--migrate");
+    let options: sqlx::postgres::PgConnectOptions = config.database_url.parse()?;
+    let pool = atenea_control_plane::db::pool(options, !migrate).await?;
+    if migrate {
         atenea_control_plane::db::migrate(&pool, config.application_role.as_deref()).await?;
         return Ok(());
     }

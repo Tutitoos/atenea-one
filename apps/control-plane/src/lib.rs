@@ -170,6 +170,15 @@ pub fn client_ip(config: &config::Config, peer: Option<IpAddr>, headers: &Header
     peer
 }
 
+/// Clave de cuota por origen: IPv6 se agrupa por /64 (lo que se entrega a un solo cliente); sin
+/// agrupar, un cliente tendría 2^64 cubos y la cuota no limitaría nada.
+pub fn ip_group(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(v) & !0u128 << 64)),
+        v4 => v4,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +208,22 @@ mod tests {
             client_ip(&cfg, None, &h),
             "127.0.0.1".parse::<IpAddr>().unwrap()
         );
+    }
+    #[test]
+    fn ipv6_comparte_cubo_por_64() {
+        let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+        let c: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert_eq!(ip_group(a), ip_group(b));
+        assert_ne!(ip_group(a), ip_group(c));
+        assert_eq!(
+            ip_group("::ffff:192.0.2.1".parse().unwrap()),
+            "192.0.2.1".parse::<IpAddr>().unwrap()
+        );
+        let m: Mutex<HashMap<IpAddr, (f64, Instant)>> = Default::default();
+        assert!(take(&m, ip_group(a), 1).is_ok());
+        assert!(take(&m, ip_group(b), 1).is_err(), "misma /64, mismo cubo");
+        assert!(take(&m, ip_group(c), 1).is_ok());
     }
     #[test]
     fn cubo_acotado_no_bloquea_claves_nuevas_si_hay_repuestos() {
