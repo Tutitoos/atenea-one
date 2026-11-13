@@ -121,6 +121,10 @@ Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en
 
 `POST …/networks` exige CIDR privados (RFC 1918, 100.64/10, ULA), IPv4 ≥ /8 e IPv6 ≥ /32 (`400 invalid_cidr`), reforzado por CHECK `NOT VALID` (migración 0004). Una red heredada fuera de rango no se firma (`409 invalid_network_prefix`). `PATCH …/devices/{dev}` valida `endpoints` con `sanitize_candidates` (sin loopback, multicast, no especificadas, enlace local ni puerto 0; `400 invalid_endpoints`); al cargar los pares para emitir también se sanean los datos heredados, con máximo cuatro endpoints. `POST …/enrollment-tokens` responde con `Cache-Control: no-store` y `X-Content-Type-Options: nosniff`. `revoke` es idempotente: repetirlo no reescribe `revoked_at` ni duplica auditoría.
 
+**Dirección liberada.** Al revocar un dispositivo (o con su `leave`) sus direcciones quedan libres y la siguiente aprobación puede recibirlas. Para que el nuevo dispositivo no herede accesos, en la misma transacción se borran las políticas cuyo selector `prefix` es exactamente una de esas direcciones (`/32` o `/128`) y se retiran de `dns_servers`; cada cambio se audita (`policy.delete` y `dns.set` con `reason: "address_released"` y el `device_id` revocado). Los selectores por dispositivo ya dejan de emitirse al revocar; los prefijos más amplios no se tocan.
+
+**Tope de flujos OIDC.** Con 10 000 flujos vigentes, `GET /auth/login` ya no responde `429`: el flujo nuevo expulsa a los más antiguos. Una inundación anónima no impide iniciar sesión; solo acorta el tiempo disponible para completar un inicio (el que tarden en llegar otros 10 000). El límite por IP (`login_per_minute`) sigue igual.
+
 ## 6. Emisión de configuración
 
 `GET /api/v1/device/config`, solo para dispositivos `approved`. El servidor construye y firma una `DeviceConfig` del contrato `signed-config-v1` para ese dispositivo en cada petición:
