@@ -90,6 +90,9 @@ el `Retry-After` entero acotado anterior. Un 429 ya no obliga a esperar el tick
 de 20 s. HTTP conserva su timeout de 15 s; estos plazos de agenda no son un SLA
 de reconexión ni sustituyen autorización, cookie, frescura, `init_floor` o lease.
 
+Sin lease vigente en el motor no se anuncia: la tarea de presencia no hace peticiones (el coordinator rechazaría
+la configuración caducada) y retoma en cuanto el motor tiene un lease, al aplicarse una configuración válida.
+
 ## Aplicación por enlace
 
 Linux necesita `ip`, `nft` y, para DNS dividido, `resolvectl` con systemd-resolved activo, invocados por ruta absoluta (`/usr/sbin/ip`, `/usr/sbin/nft`, `/usr/bin/resolvectl`; sustituibles con `ATENEA_IP`, `ATENEA_NFT` y `ATENEA_RESOLVECTL`) y con entorno vacío; el ejecutable y su directorio deben ser de root o del proceso y sin escritura de grupo/otros. El servicio necesita `CAP_NET_ADMIN`; no necesita `CAP_NET_RAW`. No modifica `/etc/resolv.conf` ni sysctls globales. El administrador debe habilitar explícitamente el forwarding de las familias servidas; `forwarding_ok` lo lee de nuevo en cada consulta de estado y en cada informe, sin esperar una nueva configuración ni intentar repararlo. Es nulo cuando la configuración aplicada no anuncia subredes.
@@ -100,9 +103,18 @@ Los endpoints y candidatos de pares, y los destinos de relay concedidos por el c
 
 El servicio arranca aunque no pueda resolver los endpoints del control plane, coordinator o STUN. Mientras falte esa información, las rutas de subred quedan `pending` con motivo `endpoints_unresolved`; la TUN y las direcciones de la red del túnel siguen operativas. Reintenta cada diez segundos fuera del bucle de E/S, con una única resolución en vuelo (sin acumular hilos). Si tarda más de diez segundos, retira las rutas de subred hasta completar la resolución. Cambiar las IP resueltas vuelve a comprobar los conflictos.
 
+Si aplicar una configuración verificada falla (comprobar DNS o solapes, configurar la interfaz o las rutas), se
+reintenta con esperas crecientes de 1, 2, 4… hasta 30 s (redondeadas al sondeo de un segundo) en lugar de repetir
+el pase entero cada segundo. Un fichero de configuración nuevo o `reload` se aplican de inmediato y un éxito reinicia
+la espera. Cada intento sigue registrando el rechazo (`network_failed` o `interface_failed`).
+
 El DNS configura solo servidores por enlace y dominios `~lab.internal`, nunca `~.`. Se desactiva el uso del enlace como ruta DNS predeterminada. Un sistema sin resolved informa `unsupported`; una configuración sin servidores o dominios informa `none`. Los cambios de resolved desaparecen con el enlace.
 
 En macOS los resolutores de `/etc/resolver` se aíslan con `resolver_owner = "0000000a"` en el TOML local: ocho hexadecimales en minúsculas, los últimos del UUID canónico. Si falta el campo se conserva la marca legacy; no se deduce de `network_id`. Cada instancia limpia solo su marca, también en `cleanup --config …`; ni adopta ni sobrescribe resolutores ajenos. La marca por red es `# Atenea One: resolver administrado (0000000a)` y la legacy sigue siendo `# Atenea One: resolver administrado`. Antes de aplicar cada configuración verificada, incluso si solo cambia DNS, un dominio reclamado por otro resolutor se rechaza con `config.last_error = "dns_domain_conflict"` y `last_error_detail`, sin cambiar direcciones ni rutas. Un fallo al inspeccionar resolutores también impide aplicar. Linux mantiene el DNS por enlace de resolved.
+
+La orden de control `cleanup` retira los resolutores de macOS (y el DNS de Windows) y el agente olvida el DNS aplicado:
+la siguiente aplicación de la configuración, que `cleanup` fuerza, lo instala de nuevo. En Linux `cleanup` solo borra la
+tabla nft y el DNS por enlace de resolved no se toca.
 
 SNAT afecta exclusivamente al tráfico que entra por la TUN y sale hacia cada subred marcada `snat = true` en la configuración firmada. Las reglas se reemplazan en una transacción nftables en la tabla exclusiva `inet atenea_INTERFAZ`. Sin SNAT, la LAN necesita una ruta de retorno a la red del túnel. El agente elimina su tabla al arrancar y cerrar; tras una caída:
 
@@ -122,6 +134,11 @@ Este presupuesto no interrumpe la limpieza ni modifica los plazos HTTP durante e
 
 El socket de control tiene modo 0600 y comprueba las credenciales del proceso remoto (root o propietario del socket). Atiende `status`, `stop`, `reload`, `cleanup` y `services-reload`. El de estado es opcional, modo 0660 y grupo `status_gid`; únicamente acepta `status`. El directorio padre también debe limitar el acceso al grupo autorizado. Un comando enviado al socket equivocado devuelve un error.
 
+Si el proceso no puede asignar `status_gid` (sin `CAP_CHOWN` y con un grupo que no es el suyo: las unidades systemd
+solo conservan `CAP_NET_ADMIN`), el agente arranca igualmente, avisa en el registro y el socket de estado conserva el
+grupo del proceso (`atenea` en las unidades). Un grupo propio, o el arranque con privilegios completos (launchd), se
+aplican como antes.
+
 `services-reload` (ADR-024, fase 5) no acepta argumentos: vuelve a leer `agent.toml` con las mismas reglas de validación del arranque y adopta **solo** la sección `[services]`. No toca el túnel, las rutas, el DNS ni la configuración firmada. Si el fichero no valida, no cambia nada y se registra el rechazo. La respuesta `{"ok":true}` se envía antes de aplicarlo; el nuevo valor aparece en `services_publish` con la siguiente instantánea del estado (aprox. un segundo). Lo usa `atenea services publish on|off --network …`.
 
 Los listeners atienden clientes fuera del bucle TUN/UDP: como máximo 16 conexiones simultáneas por socket, órdenes de hasta 32 bytes y un segundo para toda la conexión (lectura y respuesta). El estado es una instantánea serializada renovada una vez por segundo, no un cálculo por cliente. La saturación del socket de estado no ocupa las plazas del control. Los paquetes rechazados como malformados por el backend TUN se descartan y cuentan en `tx_malformed`; los errores de E/S del dispositivo siguen siendo fatales.
@@ -133,6 +150,11 @@ atenea down --socket /run/atenea/control.sock
 ```
 
 El estado IPC y los informes autenticados al control plane incluyen `routes` (`prefix`, `state` y motivo opcional), `dns` (`applied`, `unsupported`, `none`) y `forwarding_ok` (nulo si no sirve subredes). El estado es declarado por el agente, no una prueba de conectividad de la LAN.
+
+Los textos del informe que vienen de fuera —el nombre de un relay concedido por el coordinator y el motivo de una
+ruta, que puede ser el error de una orden del sistema— se reducen a su primera línea, sin caracteres de control y a
+255 bytes como máximo, el límite del control plane: este rechaza el informe entero (`400 invalid_report`) si uno solo
+lo supera. Un texto que queda vacío se omite.
 
 ### Servicios TCP del equipo (solo estado local)
 

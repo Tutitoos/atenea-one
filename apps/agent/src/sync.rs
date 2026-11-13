@@ -149,7 +149,16 @@ impl Report {
     pub fn network(&mut self, status: &crate::netconf::Status) {
         self.forwarding_ok = status.forwarding_ok;
         self.dns = Some(status.dns);
-        self.routes = Some(status.routes.clone());
+        self.routes = Some(
+            status
+                .routes
+                .iter()
+                .map(|route| crate::netconf::RouteStatus {
+                    reason: route.reason.as_deref().and_then(report_text),
+                    ..route.clone()
+                })
+                .collect(),
+        );
     }
 }
 
@@ -160,6 +169,21 @@ struct ReportPath {
     last_rx_secs: Option<u64>,
     rtt_ms: Option<u32>,
     relay: Option<String>,
+}
+
+/// El control plane rechaza el informe ENTERO si un texto pasa de 255 bytes o lleva controles
+/// (`apps/control-plane/src/panel.rs`). Los nombres de relay y los errores de las órdenes del sistema
+/// vienen de fuera: se envía su primera línea con contenido, sin controles y recortada a ese límite.
+fn report_text(raw: &str) -> Option<String> {
+    let line = raw
+        .split(char::is_control)
+        .map(str::trim)
+        .find(|s| !s.is_empty())?;
+    let end = (0..=line.len().min(255))
+        .rev()
+        .find(|&i| line.is_char_boundary(i))
+        .unwrap_or(0);
+    Some(line[..end].to_owned())
 }
 
 /// Lista blanca: el estado IPC también contiene claves públicas y direcciones que no se envían.
@@ -214,7 +238,7 @@ pub fn build_report(
                                         | ("relay-tls", crate::relay::RelayKind::Tls)
                                 )
                         })
-                        .map(|entry| entry.relay.clone()),
+                        .and_then(|entry| report_text(&entry.relay)),
                 }
             })
             .collect(),
@@ -545,6 +569,76 @@ mod tests {
             serde_json::to_value(build_report(&status, &relays, &off).unwrap()).unwrap(),
             serde_json::json!({"nat_mapping": null, "paths": [], "hostname": "equipo de prueba"})
         );
+    }
+
+    #[test]
+    fn report_texts_from_outside_fit_what_the_control_plane_accepts() {
+        for (raw, expected) in [
+            ("principal", Some("principal")),
+            ("  eu-1\n", Some("eu-1")),
+            ("error: x\nAt line:1 char:1\n+ ...", Some("error: x")),
+            ("a\u{1b}[2Jb", Some("a")),
+            ("\u{0}\n\t", None),
+            ("", None),
+        ] {
+            assert_eq!(report_text(raw).as_deref(), expected, "{raw:?}");
+        }
+        // 150 `ñ` ocupan 300 bytes: se corta en un límite de carácter, sin pasar de 255.
+        let long = report_text(&"ñ".repeat(150)).unwrap();
+        assert_eq!((long.len(), long.chars().count()), (254, 127));
+
+        // Por los dos caminos reales del informe: nombre de relay y motivo de una ruta.
+        let mut status = services_status();
+        status.peers.push(crate::engine::PeerStatus {
+            device_id: [0xab; 16],
+            public_key: String::new(),
+            addrs: vec![],
+            name: None,
+            services: vec![],
+            role: None,
+            endpoint: None,
+            session: None,
+            last_handshake_secs_ago: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            path: "relay-udp",
+            candidates: 0,
+            last_rx_secs: None,
+            paths: vec![],
+            probe: Default::default(),
+        });
+        let mut relays = crate::relay::RelayStatus::default();
+        relays.entries.push(crate::relay::AllocationStatus {
+            peer: "ab".repeat(16),
+            relay_id: "11".repeat(16),
+            transport: crate::relay::RelayKind::Udp,
+            relay: "x".repeat(300),
+            state: "ready".into(),
+            peer_ready: true,
+            rtt_ms: None,
+            pings_sent: 0,
+            pings_lost: 0,
+            tx_bytes: 0,
+            tx_packets: 0,
+            rx_bytes: 0,
+            rx_packets: 0,
+            drops: Default::default(),
+            last_error: None,
+            renew_at: u64::MAX,
+        });
+        let mut report = build_report(&status, &relays, &Default::default()).unwrap();
+        report.network(&crate::netconf::Status {
+            routes: vec![crate::netconf::RouteStatus {
+                prefix: "192.0.2.0/24".into(),
+                state: "conflict",
+                reason: Some("ip route add: File exists\nsegunda línea".into()),
+            }],
+            dns: "none",
+            forwarding_ok: None,
+        });
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["paths"][0]["relay"], "x".repeat(255));
+        assert_eq!(json["routes"][0]["reason"], "ip route add: File exists");
     }
 
     fn services_status() -> crate::engine::Status {

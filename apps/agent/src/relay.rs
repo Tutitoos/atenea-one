@@ -220,6 +220,59 @@ impl Drop for Hub {
     }
 }
 
+/// Lector del socket compartido por las asignaciones UDP: entrega cada datagrama a la ruta que lo espera.
+async fn read_hub(
+    socket: Arc<UdpSocket>,
+    routes: Arc<Mutex<HashMap<DeviceId, Route>>>,
+    drops: Arc<Mutex<BTreeMap<String, u64>>>,
+) {
+    let mut buf = [0; wire::MAX_FRAME + 1];
+    loop {
+        let (n, src) = match socket.recv_from(&mut buf).await {
+            Ok(received) => received,
+            Err(e) => {
+                // Un error de recepción no es fatal: en Windows el ICMP «puerto inalcanzable» de un envío anterior
+                // llega así (WSAECONNRESET). La pausa evita girar en vacío si el error persiste.
+                tracing::debug!("recv_from del hub: {e}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        let msg = wire::parse(&buf[..n]);
+        let id = match &msg {
+            Ok(
+                wire::Message::Data { alloc_id, .. }
+                | wire::Message::Pong { alloc_id, .. }
+                | wire::Message::PeerState { alloc_id, .. },
+            ) => Some(*alloc_id),
+            _ => None,
+        };
+        let table = routes.lock().unwrap();
+        let route = table.values().find(|route| {
+            route.addr == src
+                && if let Some(id) = id {
+                    route.id == Some(id)
+                } else {
+                    route.awaiting
+                }
+        });
+        if let Some(route) = route {
+            if route.input.try_send(buf[..n].to_vec()).is_err() {
+                count(&mut route.status.lock().unwrap().drops, "input_queue_full");
+            }
+        } else {
+            count(
+                &mut drops.lock().unwrap(),
+                if msg.is_err() {
+                    "malformed"
+                } else {
+                    "unknown_origin_or_allocation"
+                },
+            );
+        }
+    }
+}
+
 pub struct RelayClient {
     identity: SigningKey,
     device: DeviceId,
@@ -574,44 +627,7 @@ impl Worker {
                 let socket = Arc::new(bind_hub_socket().await?);
                 let routes: Arc<Mutex<HashMap<DeviceId, Route>>> =
                     Arc::new(Mutex::new(HashMap::new()));
-                let (s, r) = (socket.clone(), routes.clone());
-                let reader = tokio::spawn(async move {
-                    let mut buf = [0; wire::MAX_FRAME + 1];
-                    while let Ok((n, src)) = s.recv_from(&mut buf).await {
-                        let msg = wire::parse(&buf[..n]);
-                        let id = match &msg {
-                            Ok(
-                                wire::Message::Data { alloc_id, .. }
-                                | wire::Message::Pong { alloc_id, .. }
-                                | wire::Message::PeerState { alloc_id, .. },
-                            ) => Some(*alloc_id),
-                            _ => None,
-                        };
-                        let routes = r.lock().unwrap();
-                        let route = routes.values().find(|route| {
-                            route.addr == src
-                                && if let Some(id) = id {
-                                    route.id == Some(id)
-                                } else {
-                                    route.awaiting
-                                }
-                        });
-                        if let Some(route) = route {
-                            if route.input.try_send(buf[..n].to_vec()).is_err() {
-                                count(&mut route.status.lock().unwrap().drops, "input_queue_full");
-                            }
-                        } else {
-                            count(
-                                &mut drops.lock().unwrap(),
-                                if msg.is_err() {
-                                    "malformed"
-                                } else {
-                                    "unknown_origin_or_allocation"
-                                },
-                            );
-                        }
-                    }
-                });
+                let reader = tokio::spawn(read_hub(socket.clone(), routes.clone(), drops));
                 Ok::<_, &'static str>(Hub {
                     socket,
                     routes,
@@ -1319,6 +1335,29 @@ mod tests {
         }
         drop(others);
         assert_eq!(deaf, 0, "hubs que no reciben IPv4 de bucle local");
+    }
+
+    /// Un error de recepción no puede terminar el lector del hub: sin él, toda negociación UDP posterior acabaría en
+    /// `udp_timeout` hasta reiniciar el agente. En Windows el ICMP «puerto inalcanzable» llega así; aquí lo provoca un
+    /// socket conectado a un puerto cerrado.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_hub_reader_survives_receive_errors() {
+        let closed = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        socket.connect(closed).await.unwrap();
+        let reader = tokio::spawn(read_hub(
+            socket.clone(),
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(BTreeMap::new())),
+        ));
+        socket.send(&[0]).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!reader.is_finished());
+        reader.abort();
     }
 
     async fn udp_server(
