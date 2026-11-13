@@ -411,6 +411,30 @@ async fn ipam_concurrente_libera_y_agota_red() {
     .fetch_all(&t.pool)
     .await
     .unwrap();
+    // Una regla y el servidor DNS apuntan a la dirección que se va a liberar; otra regla no.
+    for policy in [
+        json!({"src":{"kind":"prefix","prefix":format!("{}/32", freed[0])},"dst":{"kind":"any"},"proto":0}),
+        json!({"src":{"kind":"any"},"dst":{"kind":"any"},"proto":0}),
+    ] {
+        let created = t
+            .json(
+                "POST",
+                &format!("/api/v1/networks/{net}/policies"),
+                Some(&s),
+                policy,
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.json);
+    }
+    let dns = t
+        .json(
+            "PUT",
+            &format!("/api/v1/networks/{net}/dns"),
+            Some(&s),
+            json!({"servers":[freed[0]],"domains":["lab.internal"]}),
+        )
+        .await;
+    assert_eq!(dns.status, StatusCode::NO_CONTENT, "{}", dns.json);
     assert!(
         t.action(&s, net, devices[0].id, "revoke")
             .await
@@ -431,6 +455,18 @@ async fn ipam_concurrente_libera_y_agota_red() {
     .await
     .unwrap();
     assert_eq!(freed, reused);
+    // El dispositivo que hereda la dirección no hereda ni la regla ni el papel de servidor DNS.
+    let (policies, dns, audited): (i64, String, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM access_policies WHERE network_id=$1),(SELECT dns_servers::text||dns_domains::text FROM networks WHERE id=$1),(SELECT count(*) FROM audit_events WHERE network_id=$1 AND action IN ('policy.delete','dns.set') AND detail->>'reason'='address_released')",
+    )
+    .bind(net)
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (policies, dns.as_str(), audited),
+        (1, r#"[]["lab.internal"]"#, 2)
+    );
     t.finish().await;
 }
 

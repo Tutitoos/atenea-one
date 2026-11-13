@@ -92,7 +92,9 @@ async fn discover(state: &AppState) -> Result<(CoreProviderMetadata, reqwest::Cl
 /// Tope de flujos OIDC vigentes; evita crecimiento ilimitado por llamadas anónimas.
 const MAX_PENDING_FLOWS: i64 = 10_000;
 
-/// Tope duro: recuento e inserción serializados en una transacción corta.
+/// Tope duro: recuento e inserción serializados en una transacción corta. Lleno, se expulsan los
+/// flujos más antiguos en vez de rechazar el nuevo: una inundación anónima ya no deja a nadie sin
+/// iniciar sesión, solo acorta el tiempo que tiene cada inicio para completarse.
 pub async fn insert_flow(
     pool: &sqlx::PgPool,
     state_hash: &[u8],
@@ -108,7 +110,13 @@ pub async fn insert_flow(
             .fetch_one(&mut *tx)
             .await?;
     if pending >= MAX_PENDING_FLOWS {
-        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+        sqlx::query(
+            "DELETE FROM oidc_flows WHERE state_hash IN (SELECT state_hash FROM oidc_flows \
+             WHERE expires_at > now() ORDER BY created_at, state_hash LIMIT $1)",
+        )
+        .bind(pending - MAX_PENDING_FLOWS + 1)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query(
         "INSERT INTO oidc_flows (state_hash, pkce_verifier, nonce, created_at, expires_at) \
@@ -149,13 +157,6 @@ pub async fn login(
         crate::ip_group(ip),
         state.config.login_per_minute,
     )?;
-    let pending: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM oidc_flows WHERE expires_at > now()")
-            .fetch_one(&state.pool)
-            .await?;
-    if pending >= MAX_PENDING_FLOWS {
-        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
-    }
     let (metadata, _) = discover(&state).await?;
     let client = CoreClient::from_provider_metadata(
         metadata,

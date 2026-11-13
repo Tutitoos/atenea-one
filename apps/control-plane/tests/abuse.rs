@@ -94,7 +94,7 @@ async fn login_limitado_por_ip_y_con_tope_de_flujos() {
     assert_eq!(t.send(login()).await.status, StatusCode::TOO_MANY_REQUESTS);
     t.finish().await;
 
-    // Tope: con los flujos vigentes llenos se rechaza antes de consultar al IdP.
+    // Tope: con los flujos vigentes llenos ya no se rechaza a quien llega (se expulsa el más antiguo).
     let Some(t) = TestApp::new().await else {
         return;
     };
@@ -102,9 +102,7 @@ async fn login_limitado_por_ip_y_con_tope_de_flujos() {
         .execute(&t.pool)
         .await
         .unwrap();
-    t.send(login())
-        .await
-        .error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    assert_ne!(t.send(login()).await.status, StatusCode::TOO_MANY_REQUESTS);
     t.finish().await;
 }
 
@@ -407,11 +405,11 @@ async fn token_sin_cache_y_revocacion_idempotente() {
 }
 
 #[tokio::test]
-async fn tope_de_flujos_oidc_es_duro_bajo_concurrencia() {
+async fn tope_de_flujos_oidc_expulsa_los_mas_antiguos_sin_rechazar() {
     let Some(t) = TestApp::new().await else {
         return;
     };
-    sqlx::query("INSERT INTO oidc_flows(state_hash,pkce_verifier,nonce,expires_at) SELECT sha256(convert_to(g::text,'UTF8')),'v','n',now()+interval '5 minutes' FROM generate_series(1,9990) g")
+    sqlx::query("INSERT INTO oidc_flows(state_hash,pkce_verifier,nonce,created_at,expires_at) SELECT sha256(convert_to(g::text,'UTF8')),'v','n',now()-interval '1 minute',now()+interval '5 minutes' FROM generate_series(1,9990) g")
         .execute(&t.pool)
         .await
         .unwrap();
@@ -429,12 +427,15 @@ async fn tope_de_flujos_oidc_es_duro_bajo_concurrencia() {
     for task in tasks {
         ok += usize::from(task.await.unwrap());
     }
-    assert_eq!(ok, 10);
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM oidc_flows")
-        .fetch_one(&t.pool)
-        .await
-        .unwrap();
-    assert_eq!(total, 10_000);
+    // Entran los 40 y el total no pasa del tope: salen 30 de los antiguos, ninguno de los nuevos.
+    assert_eq!(ok, 40);
+    let (total, fresh): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE length(state_hash)=4) FROM oidc_flows",
+    )
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!((total, fresh), (10_000, 40));
     t.finish().await;
 }
 

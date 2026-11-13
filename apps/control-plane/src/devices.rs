@@ -394,10 +394,11 @@ async fn revoke_device(
             Err(ApiError::not_found())
         };
     }
-    sqlx::query("DELETE FROM ip_allocations WHERE device_id=$1")
-        .bind(dev)
-        .execute(&mut *tx)
-        .await?;
+    let freed: Vec<String> =
+        sqlx::query_scalar("DELETE FROM ip_allocations WHERE device_id=$1 RETURNING host(addr)")
+            .bind(dev)
+            .fetch_all(&mut *tx)
+            .await?;
     let (actor_kind, actor, org, action) = match admin {
         Some((user, org)) => ("user", user, org, "device.revoke"),
         None => {
@@ -409,6 +410,43 @@ async fn revoke_device(
         }
     };
     sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind(admin.map(|(user, _)| user)).execute(&mut *tx).await?;
+    // La dirección liberada se reasigna al siguiente dispositivo aprobado: lo que apuntaba a ella (reglas
+    // con ese /32 o /128 exacto, servidor DNS) se retira aquí para que no lo herede.
+    let orphans = sqlx::query("DELETE FROM access_policies WHERE network_id=$1 AND ((src->>'kind'='prefix' AND (src->>'prefix')::inet = ANY($2::inet[])) OR (dst->>'kind'='prefix' AND (dst->>'prefix')::inet = ANY($2::inet[]))) RETURNING id,src,dst,proto,port_min,port_max").bind(net).bind(&freed).fetch_all(&mut *tx).await?;
+    for policy in &orphans {
+        audit::record(
+            &mut tx,
+            actor_kind,
+            actor,
+            Some(org),
+            Some(net),
+            "policy.delete",
+            policy.get::<Uuid, _>("id"),
+            json!({"reason":"address_released","device_id":dev,"src":policy.get::<Value,_>("src"),"dst":policy.get::<Value,_>("dst"),"proto":policy.get::<i16,_>("proto"),"port_min":policy.get::<i32,_>("port_min"),"port_max":policy.get::<i32,_>("port_max")}),
+        )
+        .await?;
+    }
+    let mut dns = crate::dns::load(&mut tx, net).await?;
+    let servers = dns.servers.len();
+    dns.servers.retain(|a| !freed.contains(&a.to_string()));
+    if dns.servers.len() != servers {
+        sqlx::query("UPDATE networks SET dns_servers=$2 WHERE id=$1")
+            .bind(net)
+            .bind(json!(dns.servers))
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut tx,
+            actor_kind,
+            actor,
+            Some(org),
+            Some(net),
+            "dns.set",
+            net,
+            json!({"reason":"address_released","device_id":dev,"servers":dns.servers,"domains":dns.domains}),
+        )
+        .await?;
+    }
     audit::record(
         &mut tx,
         actor_kind,
