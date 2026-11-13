@@ -36,24 +36,38 @@ def identity(info, version, commit):
     assert info['version'] == version and info['commit'] == commit, 'Identidad no coincide'
 
 
-def check(dist, manifest, commit, version):
+def check(dist, manifest, commit, version, published=False):
+    """Con `published`, `dist` es lo que se descarga del release (instaladores, SHA256SUMS, manifiesto y firma): se verifica
+    lo presente contra el manifiesto firmado, se ignora lo ausente y se devuelven los nombres verificados."""
     assert re.fullmatch(r'[0-9a-f]{40}', manifest['commit'])
     assert re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', manifest['version'])
     identity(manifest, version, commit)
     assert manifest['toolchain'] and manifest['date']
     listed = set()
+    verified = []
     for entry in manifest['artifacts'] + manifest['sboms']:
         name = entry['name']
         assert name not in listed and Path(name).name == name and name not in ('.', '..')
         listed.add(name)
         path = dist / name
+        if published and not os.path.lexists(path):
+            continue  # no se descargó
         assert path.is_file() and not path.is_symlink()
         assert path.stat().st_size == entry['size'] and digest(path) == entry['sha256'], name
+        verified.append(name)
         if entry in manifest['sboms']:
             bom = json.loads(path.read_text())
             validate(bom)
             assert bom['metadata']['component']['version'] == version
             assert {'name': 'atenea:commit', 'value': commit} in bom['metadata']['properties']
+    expected = ''.join(f"{e['sha256']}  {e['name']}\n" for e in sorted(manifest['artifacts'] + manifest['sboms'], key=lambda e: e['name']))
+    if published:
+        # Lo publicado son los instaladores, SHA256SUMS (derivado de los hashes firmados), el manifiesto y su firma; nada más.
+        extra = {p.name for p in dist.iterdir()} - set(verified) - {'SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'}
+        assert not extra, 'Ficheros no inventariados: ' + ', '.join(sorted(extra))
+        assert any(e['name'] in verified for e in manifest['artifacts']), 'Ningún artefacto del manifiesto está en el directorio'
+        assert not (dist / 'SHA256SUMS').exists() or (dist / 'SHA256SUMS').read_text() == expected, 'SHA256SUMS alterado'
+        return verified
     assert 'BUILD-INFO.json' in listed
     identity(json.loads((dist / 'BUILD-INFO.json').read_text()), version, commit)
     for entry in manifest['artifacts']:
@@ -85,7 +99,6 @@ def check(dist, manifest, commit, version):
             with tarfile.open(fileobj=io.BytesIO(control)) as archive:
                 fields = dict(line.split(': ', 1) for line in archive.extractfile('./control').read().decode().splitlines() if ': ' in line and not line.startswith(' '))
                 identity({'version': fields['Version'], 'commit': fields['X-Atenea-Commit']}, version, commit)
-    expected = ''.join(f"{e['sha256']}  {e['name']}\n" for e in sorted(manifest['artifacts'] + manifest['sboms'], key=lambda e: e['name']))
     assert (dist / 'SHA256SUMS').read_text() == expected, 'SHA256SUMS alterado'
     assert {p.name for p in dist.iterdir()} == listed | {'SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'}, 'Ficheros no inventariados'
     for image in manifest['images']:
@@ -148,12 +161,18 @@ if __name__ == '__main__':
     parser.add_argument('commit')
     parser.add_argument('version')
     parser.add_argument('--registry-digests', type=Path, help='JSON nombre→digest de GHCR (solo create); no modifica dist/')
+    parser.add_argument('--published', action='store_true', help='solo verify: release publicado (instaladores, SHA256SUMS, manifiesto y firma); lo ausente se ignora')
     args = parser.parse_args()
+    if args.published and args.mode == 'create':
+        parser.error('--published solo existe en verify')
     if args.mode == 'create':
         create(args.dist, args.key, args.version, args.commit, json.loads(args.registry_digests.read_text()) if args.registry_digests else None)
     else:
         target = args.dist / 'release-manifest.json'
         ed25519(args.key, public=True)
         subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-rawin', '-inkey', args.key, '-in', str(target), '-sigfile', str(target) + '.sig'], check=True)
-        check(args.dist, json.loads(target.read_text()), args.commit, args.version)
-        print('PASS firma Ed25519, identidad, artefactos, SBOM y SHA256SUMS')
+        verified = check(args.dist, json.loads(target.read_text()), args.commit, args.version, args.published)
+        if args.published:
+            print('PASS firma Ed25519, identidad y ' + ', '.join(sorted(verified)) + ' (bytes y SHA-256)')
+        else:
+            print('PASS firma Ed25519, identidad, artefactos, SBOM y SHA256SUMS')

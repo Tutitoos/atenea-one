@@ -109,6 +109,16 @@ móvil de GitHub sin comprobar ningún hash y el sandbox de Ubuntu 24.04 la afec
 fijar esa cadena. Sin firma de desarrollador, sin
 notarización y sin actualizador (ADR-019, decisión 9).
 
+**Ruta del CLI en las operaciones con privilegios.** Unirse, conectar, desconectar, salir, importar la instalación heredada y
+publicar servicios ejecutan el CLI con `osascript` o `pkexec`. Antes de pedir la autorización, la aplicación exige que esa
+ruta (`/Library/Atenea/bin/atenea` o `/usr/bin/atenea`) no pueda sustituirla un usuario sin privilegios: un fichero regular
+de root, sin enlaces simbólicos y sin escritura de grupo ni de otros, y lo mismo para cada directorio hasta `/` (la regla de
+`network_service::trusted` del CLI). Si no se cumple, la operación falla sin abrir el diálogo. `ATENEA_CLI` (desarrollo y
+pruebas) sigue sustituyendo la ruta en las lecturas (`list`, `inspect`, `legacy` y el estado del cliente), pero en una
+operación con privilegios solo vale si cumple esa misma regla: un CLI simulado debe instalarse como root bajo directorios de
+root, no en `/tmp`, en `$HOME` ni bajo un enlace simbólico (en macOS `/tmp` y `/var` lo son). En Windows no hay operación con
+privilegios (ADR-017 sin implementar).
+
 **Límite conocido: el diálogo de autorización de macOS no enseña el texto de la aplicación.** La aplicación pasa a
 `osascript` un texto propio («Atenea One quiere desconectar este equipo de una red.», «…unir este equipo a la red «nombre».»,
 etc.), pero en macOS 27 (comprobado el 2026-11-04, con el sistema en español) el diálogo solo dice «¿Permitir el acceso de

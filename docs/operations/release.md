@@ -142,9 +142,10 @@ manifiesto OCI real** de la plataforma y las capas observadas en Docker. Disting
 Hasta la 0.1.20 `publish` reescribía `images.json` con los digests, así que el
 del artefacto no coincidía con el firmado (su SHA-256 y su contenido diferían
 solo en `registry_digest`) y había que reconstruirlo a mano. Desde esta
-corrección, para verificar un release publicado basta descargar `release-unsigned`
+corrección, para verificar con `verify.sh` el `dist/` completo basta descargar `release-unsigned`
 y añadir `release-manifest.json`, su `.sig` y `SHA256SUMS` del release, sin
-reconstruir nada.
+reconstruir nada. Ese artefacto del workflow caduca (90 días por defecto); lo que se descarga del propio release se verifica
+con `--published` (ver «Verificar un release publicado»).
 
 ## Firmar y verificar con clave aportada
 
@@ -180,6 +181,32 @@ de elección por el responsable (ADR-005). El fichero actual no se sustituye por
 una clave de raíz, ni se inventa un provider PKCS#11: tras elegir token/provider
 se deberá adaptar exclusivamente la operación de firma y ensayar su semántica
 raw Ed25519. La verificación por clave pública seguirá siendo independiente.
+
+## Verificar un release publicado
+
+El release de GitHub solo lleva los instaladores (`.pkg`, `.dmg`, `.deb`, `.rpm`, `.exe`), `SHA256SUMS`, `release-manifest.json`
+y su firma. `SHA256SUMS` **no va firmado**: quien sustituya un instalador en el release sustituye también ese fichero, así que
+`sha256sum -c SHA256SUMS` no prueba procedencia. Lo firmado es `release-manifest.json`, que lista el tamaño y el SHA-256 de cada
+fichero del release; `--published` lo usa sin necesitar los ficheros que no se publican (SBOM, imágenes, `BUILD-INFO.json`):
+
+```sh
+# DESCARGAS: un directorio que contenga solo lo descargado (los instaladores elegidos, release-manifest.json y su .sig).
+bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub COMMIT_DEL_TAG VERSION
+```
+
+Con `--published`, `verify.sh` verifica la firma Ed25519 del manifiesto y su identidad (commit y versión esperados) igual que
+sin ella; después comprueba el tamaño y el SHA-256 de cada fichero del manifiesto que esté en el directorio e ignora los que
+faltan (no se descargaron). Falla si hay algún fichero que no figure en el manifiesto (salvo `SHA256SUMS`, el propio manifiesto y
+su firma), si `SHA256SUMS` difiere del derivado del manifiesto o si no se verificó ningún artefacto. Imprime los ficheros
+verificados.
+
+Los datos de confianza deben obtenerse fuera del release: la clave pública del responsable, por un canal independiente (la que
+viaja junto al instalador no es confianza), el commit del tag (`git rev-parse vVERSION^{commit}` en una copia del repositorio) y
+la versión. El script sale del mismo tag (`scripts/release/`, con `sbom.py`) si ese tag ya incluye `--published`; en un release
+anterior a este modo sirve el de `main`, porque el manifiesto no cambia de formato. Hacen falta Python 3.11 o posterior y
+OpenSSL 3 con Ed25519. Lo que `--published` no comprueba (SBOM, identidad de `BUILD-INFO.json`, imágenes y sus digests) sigue
+exigiendo el `dist/` completo, que solo existe en el artefacto `release-unsigned` del workflow.
+`tests/release/test_desktop_manifest.py` cubre el modo con un release sintético; no se ha probado con un release publicado real.
 
 ## Workflow, aprobación y publicación
 

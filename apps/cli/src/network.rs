@@ -833,10 +833,24 @@ mod imp {
         Unknown(String),
     }
 
+    fn no_permission() -> State {
+        State::Unknown("sin permiso para leer el estado: ejecuta con sudo".into())
+    }
+
+    /// Sin `status.sock` la red está detenida; si este usuario no puede atravesar el directorio de ejecución (EACCES: el
+    /// lanzador lo deja en 0700 de root sin `status_gid`) no puede saberlo, y `exists()` lo confundía con «no existe».
+    fn sock_unreachable(found: std::io::Result<std::fs::Metadata>) -> Option<State> {
+        match found {
+            Ok(_) => None,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Some(no_permission()),
+            Err(_) => Some(State::Stopped),
+        }
+    }
+
     fn probe(ctx: &Ctx, m: &Meta) -> State {
         let sock = ctx.run_dir(&m.network_id).join("status.sock");
-        if !sock.exists() {
-            return State::Stopped;
+        if let Some(state) = sock_unreachable(std::fs::symlink_metadata(&sock)) {
+            return state;
         }
         match crate::ask(&sock, "status") {
             Ok(text) => {
@@ -859,9 +873,7 @@ mod imp {
                     State::NoConfig
                 }
             }
-            Err(e) if e.contains("Permission denied") => {
-                State::Unknown("sin permiso para leer el estado: ejecuta con sudo".into())
-            }
+            Err(e) if e.contains("Permission denied") => no_permission(),
             Err(_) => State::Stopped,
         }
     }
@@ -2788,6 +2800,37 @@ mod imp {
                 });
                 assert_eq!(list_json(&c).unwrap()[0]["state"], expected);
                 h.join().unwrap();
+            }
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn an_untraversable_run_dir_is_unknown_not_stopped() {
+            use std::io::{Error, ErrorKind};
+            let denied = sock_unreachable(Err(Error::from(ErrorKind::PermissionDenied)));
+            assert!(matches!(denied, Some(State::Unknown(_))));
+            let missing = sock_unreachable(Err(Error::from(ErrorKind::NotFound)));
+            assert!(matches!(missing, Some(State::Stopped)));
+            let d = temp("sock-accesible");
+            assert!(sock_unreachable(std::fs::symlink_metadata(&d)).is_none());
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn list_reports_unknown_when_the_run_dir_is_not_traversable() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp("sin-acceso");
+            let c = ctx(&d);
+            put_meta(&c, &fake_meta(A, "Casa", "atenea0", 51820, 1));
+            let run = c.run_dir(A);
+            std::fs::create_dir_all(&run).unwrap();
+            std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // Root atraviesa cualquier directorio: sin EACCES no hay nada que comprobar.
+            let blocked = std::fs::read_dir(&run).is_err();
+            let list = list_json(&c).unwrap();
+            std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
+            if blocked {
+                assert_eq!(list[0]["state"], "desconocida");
             }
             std::fs::remove_dir_all(d).unwrap();
         }

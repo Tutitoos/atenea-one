@@ -173,6 +173,13 @@ jobs:
           go mod verify
           go vet ./...
           go test ./...
+      - name: Vulnerabilidades conocidas de las dependencias Go (solo Linux)
+        if: runner.os == 'Linux'
+        # Versión fijada a mano: Dependabot no vigila `go install`. Analiza con la toolchain que fija go.mod, así que las
+        # advisories de la biblioteca estándar corregidas en un parche posterior también fallan el paso hasta subir `go`.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" -tags production ./...
       - name: Compilar
         run: go build -trimpath -o atenea-desktop${{ runner.os == 'Windows' && '.exe' || '' }} .
       - name: Prueba de humo (interfaz embebida, CSP, filtro y puente)

@@ -6,6 +6,17 @@ Para estar en varias redes a la vez y unirse con un código (`atenea network joi
 
 Desde ADR-013 fase 3, el `.deb` instala la plantilla `atenea-network@<UUID>.service`. `sudo atenea network up <UUID> --backend system` la habilita y arranca para que vuelva tras reiniciar; `down` la deshabilita y para. La unidad heredada `atenea-agent.service` y `/etc/atenea/agent.toml` continúan igual y pueden coexistir con las redes nuevas. Durante una actualización `dpkg -i` vuelven únicamente las instancias previamente activas. Desinstalar/purgar para todas las instancias y limpia sus recursos, pero conserva claves, configuraciones y directorios de red; solo `network leave` borra una identidad. Véanse los [servicios por red](redes-multiples-cli.md#servicios-por-red-y-compatibilidad).
 
+## Verificar la descarga
+
+El `.deb` que se descarga de GitHub Releases debe comprobarse **antes** de instalarlo: `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.deb` en el release sustituye también ese fichero). La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.deb`, `release-manifest.json` y `release-manifest.json.sig`):
+
+```sh
+bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub COMMIT_DEL_TAG VERSION
+sudo apt install ./DESCARGAS/atenea-cli-*-linux-*.deb
+```
+
+La clave pública del responsable, el commit del tag y la versión se obtienen por un canal independiente del release; la clave que viaja junto al instalador no es confianza. La verificación pasa solo si la firma es válida, el commit y la versión coinciden y cada fichero descargado figura en el manifiesto con su tamaño y SHA-256; un fichero alterado o ajeno la hace fallar. Requiere Python 3.11 o posterior y OpenSSL 3 con Ed25519. Detalle y límites: [release.md](release.md#verificar-un-release-publicado).
+
 ## Construcción e instalación
 
 La compilación se hace fuera del empaquetador. `packaging/deb/build.sh` recibe un directorio con los ejecutables Linux `atenea` y `atenea-agent`, la versión Debian, la arquitectura y el fichero de salida:

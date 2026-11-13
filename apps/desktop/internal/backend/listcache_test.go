@@ -61,6 +61,7 @@ func TestListIsCachedWithinTTLInvalidatedAndErrorsAreNotCached(t *testing.T) {
 
 func TestApplyInvalidatesTheListEvenWhenElevationFails(t *testing.T) {
 	runs := countingCLI(t, "echo '[]'")
+	trustAnyCLI(t)
 	old := Elevate
 	Elevate = func(string, string) (string, error) { return "", os.ErrPermission }
 	t.Cleanup(func() { Elevate = old })

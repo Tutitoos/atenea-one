@@ -20,6 +20,17 @@ El script usa `pkgbuild --root` y `productbuild`, un directorio temporal y la sa
 
 El `.pkg` no está firmado ni notarizado. La distribución fuera de pruebas requiere Apple Developer ID Application para firmar ejecutables y Developer ID Installer para el paquete, hardened runtime según el proceso de firma elegido, envío con `xcrun notarytool submit --wait`, `xcrun stapler staple` y validación con Gatekeeper. La cuenta, certificados, perfiles y política de distribución son **decisión pendiente del responsable**; no se simulan ni se incluyen credenciales en CI. No se debe eludir Gatekeeper como estrategia de distribución.
 
+## Verificar la descarga
+
+El `.pkg` que se descarga de GitHub Releases (`atenea-one-<v>-macos-<arq>.pkg`) debe comprobarse **antes** de instalarlo: `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.pkg` en el release sustituye también ese fichero), y el instalador no lleva firma de Apple. La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.pkg`, `release-manifest.json` y `release-manifest.json.sig`):
+
+```sh
+bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub COMMIT_DEL_TAG VERSION
+sudo installer -pkg DESCARGAS/atenea-one-*-macos-*.pkg -target /
+```
+
+La clave pública del responsable, el commit del tag y la versión se obtienen por un canal independiente del release; la clave que viaja junto al instalador no es confianza. La verificación pasa solo si la firma es válida, el commit y la versión coinciden y cada fichero descargado figura en el manifiesto con su tamaño y SHA-256; un fichero alterado o ajeno la hace fallar. Requiere Python 3.11 o posterior y OpenSSL 3 con Ed25519. Detalle y límites: [release.md](release.md#verificar-un-release-publicado).
+
 ## Instalación y configuración (administrador, máquina de pruebas)
 
 Estos comandos **sí cambian el host**. No ejecutarlos para comprobar únicamente la construcción:

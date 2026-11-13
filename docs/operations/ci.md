@@ -21,7 +21,7 @@ Los jobs de plataforma corren en paralelo: la ejecución completa tarda lo del m
 ## Riesgos de no lanzarla en cada push (aceptados por el responsable)
 
 - **Un push directo a `main` no se comprueba.** Solo se comprueba lo que pasa por un pull request. Hay que ejecutarla **antes de publicar un release** y siempre que se toque código nativo fuera de un PR.
-- **Advisories nuevas.** La ejecución semanal que las detectaba sin que cambiara el repositorio ya no existe: `cargo deny` y `pnpm audit` solo corren en pull requests y a demanda. Lanzar la CI de vez en cuando por este motivo.
+- **Advisories nuevas.** La ejecución semanal que las detectaba sin que cambiara el repositorio ya no existe: `cargo deny`, `pnpm audit` y `govulncheck` (el job `desktop` de Linux, para el módulo Go) solo corren en pull requests y a demanda. Lanzar la CI de vez en cuando por este motivo.
 - **Protección de `main`.** El check requerido `check` lo publica el pull request. Con `strict` activado, un PR atrasado respecto a `main` debe actualizarse (y la CI vuelve a correr) antes de integrarse.
 - **`release.yml` no cambia:** se dispara por tag `v*` y construye por su cuenta; no depende de esta CI, así que un release no prueba lo que la CI no hubiese comprobado antes.
 - Comprobación local equivalente a `check`: `scripts/check.sh`.

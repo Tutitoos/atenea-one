@@ -45,10 +45,11 @@ export async function getResource(client: Getter, { kind, id }: { kind: Kind; id
   return { kind: r.kind, network: r.network ?? null, declared: r.declared, resource };
 }
 
-/** GET libre sobre la lista permitida (la valida el cliente); respuesta acotada a 64 KiB. */
+/** GET libre sobre la lista permitida (la valida el cliente); textos saneados y respuesta acotada a 64 KiB. */
 export async function apiGet(client: Getter, { path, query }: { path: string; query?: Record<string, string | number> }) {
   const qs = query ? new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)])).toString() : "";
-  const body = JSON.stringify(await client.get(qs ? `${path}?${qs}` : path));
+  const data = await client.get(qs ? `${path}?${qs}` : path);
+  const body = JSON.stringify(data, (_k, v: unknown) => (typeof v === "string" ? clean(v) : v));
   const bytes = Buffer.from(body);
   if (bytes.length <= MAX_RESPONSE) return { truncated: false as const, data: JSON.parse(body) as unknown };
   return { truncated: true as const, text: bytes.subarray(0, MAX_RESPONSE).toString() };

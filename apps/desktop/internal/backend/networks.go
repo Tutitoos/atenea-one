@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// CLIPath es el binario del CLI que instala el paquete. ATENEA_CLI lo sustituye (desarrollo y pruebas).
+// CLIPath es el binario del CLI que instala el paquete. ATENEA_CLI lo sustituye (desarrollo y pruebas), pero una operación
+// con privilegios solo lo ejecuta si pasa CheckCLI.
 func CLIPath() string {
 	if p := os.Getenv("ATENEA_CLI"); p != "" {
 		return p
@@ -173,17 +174,34 @@ func Inspect(raw string) (string, error) {
 	return "", errors.New("`atenea network inspect` devolvió una respuesta inesperada")
 }
 
+// errNoElevation es lo que devuelve toda operación con privilegios en Windows (ADR-017, sin implementar).
+var errNoElevation = errors.New("Unirse a redes todavía no está soportado en Windows")
+
 // Elevate ejecuta la orden con el diálogo de autorización del sistema. Es una variable para que las pruebas la
 // sustituyan: ninguna prueba abre un diálogo real.
 var Elevate = func(script, prompt string) (string, error) {
 	if runtime.GOOS == "windows" {
-		return "", errors.New("Unirse a redes todavía no está soportado en Windows")
+		return "", errNoElevation
 	}
 	program, args, err := ElevationCommand(runtime.GOOS, script, prompt)
 	if err != nil {
 		return "", err
 	}
 	return RunElevated(program, args...)
+}
+
+// CheckCLI comprueba, antes de una operación con privilegios, que ningún usuario sin privilegios puede sustituir el CLI
+// (ver trustedPath): vale igual para la ruta fija del paquete que para ATENEA_CLI. Es una variable para que las pruebas,
+// con un CLI falso en un directorio temporal del usuario, la sustituyan.
+var CheckCLI = trustedPath
+
+// elevatedCLI es la ruta del CLI para una operación con privilegios, o por qué no se puede confiar en ella.
+func elevatedCLI() (string, error) {
+	cli := CLIPath()
+	if err := CheckCLI(cli); err != nil {
+		return "", err
+	}
+	return cli, nil
 }
 
 // safePromptName admite el nombre de la red en el texto del diálogo solo si no puede romper su cita: el texto del diálogo
@@ -250,7 +268,11 @@ func Apply(op, network, code, name string) (string, error) {
 		gid = uint32(os.Getgid())
 		joinName, _ = info["name"].(string)
 	}
-	script, err := Script(CLIPath(), o, network, code, name, gid)
+	cli, err := elevatedCLI()
+	if err != nil {
+		return "", err
+	}
+	script, err := Script(cli, o, network, code, name, gid)
 	if err != nil {
 		return "", err
 	}
@@ -261,7 +283,11 @@ func Apply(op, network, code, name string) (string, error) {
 // SetServicesPublish activa o apaga la publicación de servicios de ESA red (ADR-024, fase 5) con el diálogo de
 // autorización del sistema. Es la única orden elevada con argumentos fijos: `services publish on|off --network <uuid>`.
 func SetServicesPublish(network string, on bool) error {
-	script, err := ServicesPublishScript(CLIPath(), network, on)
+	cli, err := elevatedCLI()
+	if err != nil {
+		return err
+	}
+	script, err := ServicesPublishScript(cli, network, on)
 	if err != nil {
 		return err
 	}

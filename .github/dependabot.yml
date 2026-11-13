@@ -15,10 +15,20 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
     ignore:
-      # El runtime JS debe ir en la misma versión que github.com/wailsapp/wails/v3 (apps/desktop/go.mod). Dependabot
-      # no vigila ese módulo Go (no hay entrada gomod), así que subir solo el JS los desalinea sin que la CI lo note.
-      # Se actualizan juntos, a mano, con la prueba de humo de la aplicación.
+      # El runtime JS debe ir en la misma versión que github.com/wailsapp/wails/v3 (apps/desktop/go.mod). Por eso se ignoran
+      # los dos (aquí y en la entrada gomod): subir solo uno los desalinea sin que la CI lo note. Se actualizan juntos, a
+      # mano, con la prueba de humo de la aplicación.
       - dependency-name: "@wailsio/runtime"
+  - package-ecosystem: gomod
+    directory: /apps/desktop
+    schedule:
+      interval: weekly
+    groups:
+      gomod-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Va con @wailsio/runtime (ver la entrada npm).
+      - dependency-name: "github.com/wailsapp/wails/v3"
   - package-ecosystem: github-actions
     directory: /
     schedule:

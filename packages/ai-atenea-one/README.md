@@ -8,7 +8,7 @@ Plugin de IA (omp, Claude Code y Codex) de **solo lectura** para Atenea One: un 
 | --- | --- |
 | `atenea_search` | Busca en organizaciones, redes, dispositivos, rutas, políticas y DNS. Todos los términos deben coincidir; máximo 50 resultados. |
 | `atenea_get` | Recurso completo por `kind` e `id`. |
-| `atenea_api_get` | `GET` libre sobre la lista permitida de `/api/v1` (auditoría, métricas…); respuesta truncada a 64 KiB. |
+| `atenea_api_get` | `GET` libre sobre la lista permitida de `/api/v1` (auditoría, métricas…); textos saneados como en `atenea_get` y respuesta truncada a 64 KiB. |
 | `atenea_probe` | Verifica **un** dispositivo del inventario: `ping`, `tcp`, `ssh-banner` (sin autenticar) o `dns` (solo servidores DNS de la red). |
 
 Ninguna tool escribe: el cliente solo emite `GET` y rechaza cualquier ruta fuera de la lista derivada de `docs/api/openapi.json` (sin `join-code`, `events`, `session`, `device/*` ni `service-tokens`).
