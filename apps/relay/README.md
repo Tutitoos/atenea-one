@@ -136,6 +136,16 @@ de COORDINATOR_KEYS se validan y descomprimen al arrancar, no en cada ALLOC; la
 verificación Ed25519 del token y de la prueba del dispositivo se ejecuta con el
 estado compartido bloqueado.
 
+**Límite conocido (decisión del 2026-11-14).** Cada ALLOC que supera la cookie, la cuota de su
+origen y el `relay_id` cuesta una verificación Ed25519 por clave de coordinator, y el reenvío UDP
+espera mientras tanto: un origen queda limitado por `alloc_per_second`, pero muchos orígenes
+distintos (por ejemplo, prefijos IPv6 /64 de una /48) pueden gastar la CPU del relay en firmas
+inválidas. No se saca la verificación del cerrojo ni se añade un presupuesto global de ALLOC:
+con un solo hilo de trabajo (`cpus: 0.5` en los Compose) lo primero no libera CPU, y lo segundo
+cambiaría la saturación de CPU por el rechazo de las asignaciones legítimas. La defensa es de
+despliegue: más CPU o un segundo relay, y el filtrado de red delante. Corresponde al residual de
+T20 del modelo de amenazas («fuentes independientes pueden consumir capacidad global»).
+
 ### Dimensionar varios dispositivos tras una IP
 
 Una asignación es **dirigida**, no un par completo: una malla de N agentes requiere
