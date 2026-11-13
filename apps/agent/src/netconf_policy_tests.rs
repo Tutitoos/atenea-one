@@ -143,6 +143,47 @@ fn windows_cleanup_forgets_removed_routes_and_nrpt_before_reload() {
     assert!(net.host.routes.borrow().contains("192.168.40.0/24"));
     assert!(net.host.dns.borrow().is_some());
 }
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn cleanup_forgets_the_dns_so_the_next_apply_installs_it_again() {
+    let mut net = NetConf::with_host(MemoryHost::default());
+    let mut cfg = config();
+    cfg.dns = DnsConfig {
+        servers: vec!["10.77.0.53".parse().unwrap()],
+        domains: vec!["internal.example".into()],
+    };
+    net.apply(&cfg, &[]).unwrap();
+    // `cleanup` retira el DNS del host (los resolutores de /etc/resolver en macOS); sin olvidarlo, `apply` no lo reinstala.
+    net.host.dns.replace(None);
+    net.cleanup().unwrap();
+    net.apply(&cfg, &[]).unwrap();
+    assert_eq!(net.status().dns, "applied");
+    assert_eq!(net.host.dns.borrow().as_ref(), Some(&cfg.dns));
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn dropping_snat_runs_cleanup_without_forgetting_the_dns_linux_leaves_installed() {
+    let mut net = NetConf::with_host(MemoryHost {
+        subnet_routing: true,
+        ..MemoryHost::default()
+    });
+    let mut cfg = config();
+    cfg.dns = DnsConfig {
+        servers: vec!["10.77.0.53".parse().unwrap()],
+        domains: vec!["internal.example".into()],
+    };
+    cfg.advertised.push(AdvertisedRoute {
+        prefix: prefix("172.16.0.0/16"),
+        snat: true,
+    });
+    net.apply(&cfg, &[]).unwrap();
+    assert!(net.host.dns.borrow().is_some());
+    // Retirar SNAT pasa por `cleanup`, que en Linux solo toca nft: el DNS sigue en resolved y debe revertirse.
+    cfg.advertised.clear();
+    cfg.dns = DnsConfig::default();
+    net.apply(&cfg, &[]).unwrap();
+    assert!(net.host.dns.borrow().is_none());
+}
 #[test]
 fn host_conflict_pending_and_recovery_without_commands() {
     let mut net = NetConf::with_host(MemoryHost::default());

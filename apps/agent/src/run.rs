@@ -166,6 +166,8 @@ struct Runtime {
     engine: Engine,
     /// (mtime, longitud) del último fichero de configuración procesado, para no reprocesarlo.
     seen: Option<(SystemTime, u64)>,
+    /// Esperas entre reintentos cuando aplicar la configuración de `seen` falla.
+    retry: ApplyRetry,
     /// MTU y direcciones ya instaladas en la interfaz.
     iface: Option<(usize, Vec<(IpAddr, u8)>)>,
     netconf: crate::netconf::NetConf,
@@ -178,13 +180,14 @@ struct Runtime {
 
 impl Runtime {
     /// Lee, verifica, persiste y aplica la configuración firmada si el fichero cambió.
-    /// Un rechazo no revoca la vigente: sigue hasta que caduque su lease.
+    /// Un rechazo no revoca la vigente: sigue hasta que caduque su lease. Si aplicarla falla, reintenta
+    /// con espera creciente (`ApplyRetry`) en lugar de repetir el pase entero cada segundo.
     fn poll_config(&mut self, unix: u64) {
         let Ok(meta) = std::fs::metadata(&self.cfg.config_file) else {
             return;
         };
         let key = (meta.modified().unwrap_or(UNIX_EPOCH), meta.len());
-        if self.seen == Some(key) {
+        if self.seen == Some(key) && !self.retry.due(key, Instant::now()) {
             return;
         }
         self.seen = Some(key);
@@ -196,7 +199,7 @@ impl Runtime {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("configuración ilegible: {e}");
-                self.seen = None; // reintentar en el siguiente ciclo
+                self.retry.failed(key, Instant::now());
                 return;
             }
         };
@@ -241,7 +244,7 @@ impl Runtime {
             Err(e) => {
                 tracing::error!("no se pudo comprobar conflictos DNS: {e}");
                 self.reject("network_failed");
-                self.seen = None;
+                self.retry.failed(key, Instant::now());
                 return;
             }
         }
@@ -258,14 +261,14 @@ impl Runtime {
                 Err(e) => {
                     tracing::error!("no se pudo comprobar solapes de red: {e}");
                     self.reject("network_failed");
-                    self.seen = None;
+                    self.retry.failed(key, Instant::now());
                     return;
                 }
             }
             if let Err(e) = self.netconf.configure_link(wanted.0, &wanted.1) {
                 tracing::error!("configurando la interfaz: {e}");
                 self.reject("interface_failed");
-                self.seen = None;
+                self.retry.failed(key, Instant::now());
                 return;
             }
             self.iface = Some(wanted);
@@ -276,9 +279,10 @@ impl Runtime {
         if let Err(e) = self.netconf.apply(&v.config, &protected) {
             tracing::error!("configurando la red: {e}");
             self.reject("network_failed");
-            self.seen = None;
+            self.retry.failed(key, Instant::now());
             return;
         }
+        self.retry.succeeded();
         self.routes_changed = true;
         self.candidate_exclusions = v
             .config
@@ -309,6 +313,41 @@ impl Runtime {
     /// Mantiene la hora máxima observada (anti-rollback de reloj), acotada por el lease validado.
     fn housekeeping(&mut self, unix: u64) {
         self.store.tick(unix, self.horizon);
+    }
+}
+
+/// Reintentos de la configuración que no se pudo aplicar (comprobar la red, configurar el enlace o las
+/// rutas): 1, 2, 4… hasta 30 s entre intentos mientras el fichero sea el mismo; uno nuevo no espera.
+#[derive(Default)]
+struct ApplyRetry {
+    file: Option<(SystemTime, u64)>,
+    failures: u32,
+    /// Instante del próximo intento; `None` si no hay ninguno pendiente.
+    at: Option<Instant>,
+}
+
+impl ApplyRetry {
+    /// ¿Toca reintentar `file`? Consume la espera: si el intento vuelve a fallar, `failed` programa otra.
+    fn due(&mut self, file: (SystemTime, u64), now: Instant) -> bool {
+        let due = self.file == Some(file) && self.at.is_some_and(|at| now >= at);
+        if due {
+            self.at = None;
+        }
+        due
+    }
+
+    fn failed(&mut self, file: (SystemTime, u64), now: Instant) {
+        self.failures = if self.file == Some(file) {
+            self.failures.saturating_add(1)
+        } else {
+            1
+        };
+        self.file = Some(file);
+        self.at = Some(now + Duration::from_secs((1u64 << (self.failures - 1).min(5)).min(30)));
+    }
+
+    fn succeeded(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -472,6 +511,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let vet_slots = Arc::new(tokio::sync::Semaphore::new(4));
     let (cand_tx, cand_rx) = tokio::sync::watch::channel::<Vec<SocketAddr>>(Vec::new());
     let announce_now = Arc::new(Notify::new());
+    // Sin lease no se anuncia (coordinator-v1 §4): el bucle principal lo actualiza y la tarea de presencia lo lee.
+    let (lease_tx, lease_rx) = tokio::sync::watch::channel(false);
     let mut relay_requests = RelayRequests::default();
     let (coord_tx, coord_rx) =
         tokio::sync::watch::channel(cfg.coordinator.as_ref().map(|c| CoordStatus {
@@ -480,13 +521,14 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         }));
     let mut coord_tasks = Vec::new();
     if let Some(c) = cfg.coordinator.clone() {
-        let (c1, id1, path1, rx1, n1, tx1) = (
+        let (c1, id1, path1, rx1, n1, tx1, lease1) = (
             c.clone(),
             identity.clone(),
             cfg.config_file.clone(),
             cand_rx.clone(),
             announce_now.clone(),
             coord_tx.clone(),
+            lease_rx,
         );
         coord_tasks.push(tokio::spawn(async move {
             let mut agenda = AnnounceAgenda::new(Instant::now());
@@ -496,7 +538,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     _ = n1.notified() => agenda.changed(),
                 }
                 let now = Instant::now();
-                if !agenda.due(now) {
+                if !agenda.due(now, *lease1.borrow()) {
                     continue;
                 }
                 let Ok(bytes) = std::fs::read(&path1) else {
@@ -594,6 +636,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         tun,
         engine,
         seen: None,
+        retry: ApplyRetry::default(),
         iface: None,
         netconf,
         resolved_endpoints,
@@ -771,6 +814,12 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                             }
                         }));
                     }
+                }
+                // Sin lease no se anuncia (coordinator-v1 §4): la tarea de presencia lo lee y despierta al cambiar.
+                let lease = rt.engine.lease_active(unix);
+                if *lease_tx.borrow() != lease {
+                    lease_tx.send_replace(lease);
+                    announce_now.notify_one();
                 }
                 // STUN: tras la respuesta (o 3 s), recalcula candidatos y NAT y anuncia si cambian.
                 if let (Some(s), Some(started)) = (stun.as_mut(), stun_started) {
@@ -1061,10 +1110,15 @@ impl AnnounceAgenda {
             self.periodic
         }
     }
-    fn due(&mut self, now: Instant) -> bool {
+    /// Sin lease no se anuncia (coordinator-v1 §4): se descarta lo pendiente y `changed()` lo reactiva al
+    /// llegar uno, de modo que la tarea no consulta a la red ni da vueltas en vacío mientras tanto.
+    fn due(&mut self, now: Instant, lease: bool) -> bool {
         if now >= self.periodic {
             self.pending = true;
             self.periodic = now + Duration::from_secs(20);
+        }
+        if !lease {
+            self.pending = false;
         }
         self.pending && now >= self.next
     }
@@ -1304,16 +1358,16 @@ mod tests {
     fn announce_retries_quota_and_coalesces_candidate_bursts() {
         let start = Instant::now();
         let mut agenda = super::AnnounceAgenda::new(start);
-        assert!(agenda.due(start));
+        assert!(agenda.due(start, true));
         agenda.finished(start, false, None);
         for millis in 1..2000 {
             agenda.changed();
-            assert!(!agenda.due(start + Duration::from_millis(millis)));
+            assert!(!agenda.due(start + Duration::from_millis(millis), true));
         }
-        assert!(agenda.due(start + Duration::from_millis(2510)));
+        assert!(agenda.due(start + Duration::from_millis(2510), true));
         agenda.finished(start + Duration::from_millis(2510), true, None);
-        assert!(!agenda.due(start + Duration::from_secs(19)));
-        assert!(agenda.due(start + Duration::from_secs(20)));
+        assert!(!agenda.due(start + Duration::from_secs(19), true));
+        assert!(agenda.due(start + Duration::from_secs(20), true));
     }
 
     #[test]
@@ -1323,14 +1377,14 @@ mod tests {
         agenda.finished(start, false, Some(Duration::from_secs(7)));
         for millis in 0..7000 {
             agenda.changed();
-            assert!(!agenda.due(start + Duration::from_millis(millis)));
+            assert!(!agenda.due(start + Duration::from_millis(millis), true));
         }
-        assert!(agenda.due(start + Duration::from_millis(7510)));
+        assert!(agenda.due(start + Duration::from_millis(7510), true));
         let mut attempts = Vec::new();
         for millis in 7510..60_000 {
             let now = start + Duration::from_millis(millis);
             agenda.changed();
-            if agenda.due(now) {
+            if agenda.due(now, true) {
                 attempts.push(now);
                 agenda.finished(now, true, None);
             }
@@ -1341,6 +1395,49 @@ mod tests {
                 .windows(2)
                 .all(|w| w[1].duration_since(w[0]) >= Duration::from_secs(2))
         );
+    }
+
+    #[test]
+    fn announce_waits_for_a_lease_without_polling_and_resumes_when_one_arrives() {
+        let start = Instant::now();
+        let mut agenda = super::AnnounceAgenda::new(start);
+        // Sin lease no se anuncia (ni al arrancar, ni ante cambios, ni en el tick periódico) y la tarea no
+        // da vueltas en vacío: el siguiente despertar queda siempre en el futuro.
+        for secs in 0..=65 {
+            let now = start + Duration::from_secs(secs);
+            agenda.changed();
+            assert!(!agenda.due(now, false), "secs={secs}");
+            assert!(agenda.wake() > now, "secs={secs}");
+        }
+        // Al llegar un lease, el aviso del bucle principal lo hace exigible de inmediato.
+        agenda.changed();
+        assert!(agenda.due(start + Duration::from_secs(66), true));
+    }
+
+    #[test]
+    fn apply_retries_back_off_to_30_seconds_and_a_new_file_does_not_wait() {
+        let start = Instant::now();
+        let (file, other) = ((std::time::UNIX_EPOCH, 10), (std::time::UNIX_EPOCH, 11));
+        let mut retry = super::ApplyRetry::default();
+        assert!(!retry.due(file, start), "sin fallo previo no hay reintento");
+        let mut at = start;
+        for wait in [1, 2, 4, 8, 16, 30, 30] {
+            retry.failed(file, at);
+            let wait = Duration::from_secs(wait);
+            assert!(!retry.due(file, at + wait - Duration::from_millis(1)));
+            at += wait;
+            assert!(retry.due(file, at));
+            assert!(!retry.due(file, at), "cada espera se consume una sola vez");
+        }
+        // Otro fichero no hereda la racha ni espera; un éxito la reinicia.
+        assert!(!retry.due(other, at));
+        retry.failed(other, at);
+        retry.failed(other, at);
+        assert!(!retry.due(other, at + Duration::from_secs(1)));
+        assert!(retry.due(other, at + Duration::from_secs(2)));
+        retry.succeeded();
+        retry.failed(other, at);
+        assert!(retry.due(other, at + Duration::from_secs(1)));
     }
 
     #[test]
@@ -1512,12 +1609,12 @@ mod tests {
         for _ in 0..100 {
             agenda.changed();
         }
-        assert!(!agenda.due(start + Duration::from_millis(1999)));
-        assert!(agenda.due(start + Duration::from_millis(2510)));
+        assert!(!agenda.due(start + Duration::from_millis(1999), true));
+        assert!(agenda.due(start + Duration::from_millis(2510), true));
         unix.store(102, Ordering::SeqCst);
         publish(&["192.0.2.1:99".parse().unwrap()]).unwrap();
         agenda.finished(start + Duration::from_millis(2510), true, None);
-        assert!(!agenda.due(start + Duration::from_secs(19)));
+        assert!(!agenda.due(start + Duration::from_secs(19), true));
         let accepted = server.join().unwrap();
         assert_eq!(accepted.len(), 2);
         assert!(accepted[1].contains("192.0.2.1:99"));

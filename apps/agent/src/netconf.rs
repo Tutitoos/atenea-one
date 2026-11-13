@@ -154,11 +154,16 @@ impl<H: HostNetwork> NetConf<H> {
     pub fn cleanup(&mut self) -> Result<(), String> {
         self.host.cleanup()?;
         self.snat = None;
+        // macOS y Windows retiran el DNS aquí: una recarga debe volver a instalarlo. En Linux `cleanup` solo
+        // toca nft (el DNS sigue en resolved) y `apply_snat` también pasa por aquí: olvidarlo lo dejaría huérfano.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            self.dns = None;
+        }
+        // Windows además retira las rutas.
         #[cfg(target_os = "windows")]
         {
-            // Windows retira rutas y NRPT; una recarga debe volver a instalarlos.
             self.installed.clear();
-            self.dns = None;
         }
         Ok(())
     }

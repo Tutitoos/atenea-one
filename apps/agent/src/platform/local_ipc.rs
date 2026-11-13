@@ -22,6 +22,7 @@ mod unix {
     impl LocalIpc {
         /// Crea el socket en un directorio privado recién creado junto al destino (sin `umask` ni
         /// `unsafe`), fija modo/grupo allí y lo renombra atómicamente; luego verifica el resultado.
+        /// Sin permiso para asignar `status_gid` (sin CAP_CHOWN y grupo ajeno) avisa y conserva el grupo del proceso.
         /// El directorio padre debe ser de root o del proceso y no escribible por grupo/otros.
         pub fn bind(
             path: &Path,
@@ -78,18 +79,34 @@ mod unix {
             let mode = if read_only { 0o660 } else { 0o600 };
             let listener =
                 Listener::bind(&tmp).map_err(|e| format!("IPC {}: {e}", path.display()))?;
-            let prepared = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
-                .and_then(|()| match status_gid {
-                    Some(gid) if read_only => std::os::unix::fs::chown(&tmp, None, Some(gid)),
-                    _ => Ok(()),
-                })
-                .and_then(|()| std::fs::rename(&tmp, path));
+            let mut prepared =
+                std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode));
+            // Grupo que de verdad se asignó al socket de estado.
+            let mut group = None;
+            if prepared.is_ok()
+                && read_only
+                && let Some(gid) = status_gid
+            {
+                match std::os::unix::fs::chown(&tmp, None, Some(gid)) {
+                    Ok(()) => group = Some(gid),
+                    // Sin CAP_CHOWN (unidades systemd) solo se puede asignar un grupo del propio proceso. Con otro,
+                    // el socket conserva el del proceso: arrancar sin ese acceso es mejor que no arrancar.
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        tracing::warn!(
+                            gid,
+                            "status_gid no asignable ({e}): el socket de estado conserva el grupo del proceso"
+                        );
+                    }
+                    Err(e) => prepared = Err(e),
+                }
+            }
+            let prepared = prepared.and_then(|()| std::fs::rename(&tmp, path));
             if let Err(e) = prepared {
                 let _ = std::fs::remove_file(&tmp);
                 return Err(format!("IPC {}: {e}", path.display()));
             }
             let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-            let gid_ok = !read_only || status_gid.is_none_or(|gid| meta.gid() == gid);
+            let gid_ok = group.is_none_or(|gid| meta.gid() == gid);
             if !meta.file_type().is_socket()
                 || meta.uid() != me
                 || meta.mode() & 0o777 != mode
@@ -177,6 +194,21 @@ mod unix {
             drop(listener);
             // No quedan directorios temporales.
             assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+
+        #[tokio::test]
+        async fn a_status_group_the_process_cannot_assign_does_not_prevent_binding() {
+            let dir = private_dir("gid");
+            let path = dir.join("status.sock");
+            let own = std::fs::metadata(&dir).unwrap().gid();
+            // Un grupo ajeno: sin CAP_CHOWN (usuario normal, unidades systemd) el núcleo responde EPERM y el socket
+            // debe crearse igualmente con el grupo del proceso; con privilegios `chown` acierta y se respeta el pedido.
+            let listener = LocalIpc::bind(&path, Some(own + 1), true).unwrap();
+            let meta = std::fs::metadata(&path).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o660);
+            assert!([own, own + 1].contains(&meta.gid()));
+            drop(listener);
             std::fs::remove_dir_all(dir).unwrap();
         }
 
