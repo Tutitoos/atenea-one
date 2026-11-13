@@ -54,7 +54,8 @@ impl Default for Config {
             cookie_per_second: 20,
             alloc_per_second: 10,
             max_datagram: 1530,
-            tcp_queue: 256,
+            // Peor caso de las colas TCP: tcp_total × tcp_queue × 1541 B ≈ 96 MiB (mem_limit de los compose: 256 MiB).
+            tcp_queue: 32,
             idle_secs: 90,
             tcp_per_ip: 8,
             tcp_total: 2048,
@@ -235,5 +236,13 @@ mod tests {
             .id(),
             Ok([0x11; 16])
         );
+    }
+
+    #[test]
+    fn default_tcp_queues_fit_inside_the_container_memory_limit() {
+        let c = Config::default();
+        let worst = c.tcp_total * c.tcp_queue * (atenea_relay_core::DATA_OVERHEAD + c.max_datagram);
+        // mem_limit de ambos compose: 256 MiB; con todas las colas llenas no pueden pasar de la mitad.
+        assert!(worst <= 128 << 20, "{worst} B");
     }
 }

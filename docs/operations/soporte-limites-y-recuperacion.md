@@ -33,7 +33,7 @@ Valores **configurados**, no throughput garantizado; fuente: [tabla del relay](.
 | Asignaciones relay | `MAX_ALLOCATIONS=4096`, `MAX_PER_NETWORK=1024`, `MAX_PER_IP=32`; valores positivos y por red/IP no mayores que el total |
 | DATA por asignación | **2000 paquetes/s**, **24 000 000 bit/s**, ráfaga de un segundo; renovar no reinicia cubos |
 | Peticiones relay por origen | COOKIE **20/s**, ALLOC **10/s**; tabla de tasas **65536** entradas |
-| TLS | **8 conexiones/IP**, **2048** totales; plazo PROXY+TLS **10 s**, primera asignación **5 s**, inactividad de lectura **90 s**; cola **256** mensajes/conexión |
+| TLS | **8 conexiones/IP**, **2048** totales; plazo PROXY+TLS **10 s**, primera asignación **5 s**, inactividad de lectura **90 s**; cola **32** mensajes/conexión (peor caso ≈96 MiB con 2048 conexiones) |
 | Tamaño | MTU predeterminada **1400**, rango firmado **1280–1500**; wire DATA máximo **1530 bytes**; cola llena descarta, no crece ilimitadamente |
 | Origen para cuotas | IPv4 exacta/IPv4-mapped normalizada; IPv6 agrupado por **/64**; compartir NAT o /64 comparte presupuesto |
 | Coordinator | **4096** presencias, **256** long-polls totales, máximo **2** por dispositivo; cola **16** eventos/**30 s**, hasta **8** candidatos; rendezvous **1/s por par**, **10/min por dispositivo** |
