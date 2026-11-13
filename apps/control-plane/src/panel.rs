@@ -237,8 +237,14 @@ pub async fn status(
         return Err(ApiError::bad("invalid_report"));
     }
     let mut tx = s.pool.begin().await?;
-    // NO KEY UPDATE y no FOR UPDATE: la emisión bloquea primero la red y después referencia este dispositivo
-    // (clave ajena); con FOR UPDATE aquí y la comprobación de la red más abajo, las dos se interbloqueaban.
+    // Mismo orden que la emisión (red y después dispositivo), o las dos se interbloquean: la emisión
+    // tiene la red y escribe en este dispositivo, y las escrituras de aquí comprueban la red (clave ajena).
+    // KEY SHARE basta: no frena los informes de otros dispositivos, solo espera a quien tenga la red.
+    let net: Uuid = row.get("network_id");
+    sqlx::query("SELECT 1 FROM networks WHERE id=$1 FOR KEY SHARE")
+        .bind(net)
+        .execute(&mut *tx)
+        .await?;
     let status: String =
         sqlx::query_scalar("SELECT status FROM devices WHERE id=$1 FOR NO KEY UPDATE")
             .bind(dev)
@@ -247,7 +253,6 @@ pub async fn status(
     if status != "approved" {
         return Err(ApiError::forbidden("device_not_approved"));
     }
-    let net: Uuid = row.get("network_id");
     let peers: Vec<Uuid> = report.paths.iter().map(|p| p.peer).collect();
     let valid:bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM unnest($1::uuid[]) p WHERE NOT EXISTS(SELECT 1 FROM devices d WHERE d.id=p AND d.network_id=$2))").bind(peers).bind(net).fetch_one(&mut *tx).await?;
     if !valid {
