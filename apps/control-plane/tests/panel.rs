@@ -516,30 +516,12 @@ async fn websocket_seq_es_por_red_y_no_revela_la_actividad_de_otras() {
         .unwrap();
     let base = event(&mut socket).await["seq"].as_u64().unwrap();
     // Las escrituras de otra red no avanzan el contador de esta.
-    for n in 0..5 {
-        let renamed = t
-            .json(
-                "PATCH",
-                &format!("/api/v1/networks/{other}"),
-                Some(&stranger),
-                json!({"name":format!("otra-{n}")}),
-            )
-            .await;
-        assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json);
+    for _ in 0..3 {
+        device(&t, &stranger, other, true).await;
     }
-    let renamed = t
-        .json(
-            "PATCH",
-            &format!("/api/v1/networks/{net}"),
-            Some(&owner),
-            json!({"name":"propia"}),
-        )
-        .await;
-    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json);
-    // Los primeros eventos de la escritura siguen al hello sin saltos: la otra red no cuenta.
-    let first = event(&mut socket).await["seq"].as_u64();
-    let second = event(&mut socket).await["seq"].as_u64();
-    assert_eq!((first, second), (Some(base + 1), Some(base + 2)));
+    device(&t, &owner, net, true).await;
+    // El primer evento propio sigue al hello sin salto: la otra red no cuenta.
+    assert_eq!(event(&mut socket).await["seq"].as_u64(), Some(base + 1));
     let _ = socket.close(None).await;
     server.abort();
     let _ = server.await;
