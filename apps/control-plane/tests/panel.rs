@@ -590,16 +590,20 @@ async fn el_informe_de_estado_no_se_interbloquea_con_la_emision() {
             .is_err(),
         "el informe debe esperar a la emisión"
     );
-    // …y después la versión del dispositivo: no puede quedar esperando al informe.
-    tokio::time::timeout(
-        Duration::from_secs(4),
-        sqlx::query("INSERT INTO configuration_versions(device_id,version,config_hash,not_before,not_after,issuer_serial) VALUES($1,1,'\\x00',now(),now(),1)")
-            .bind(d.id)
-            .execute(&mut c),
-    )
-    .await
-    .expect("la emisión no espera al informe")
-    .unwrap();
+    // …y después lo que hace la emisión con el dispositivo: referenciarlo y escribir en su fila. Ninguna
+    // de las dos puede quedar esperando al informe.
+    for emission in [
+        "INSERT INTO configuration_versions(device_id,version,config_hash,not_before,not_after,issuer_serial) VALUES($1,1,'\\x00',now(),now(),1)",
+        "UPDATE devices SET last_config_at=now() WHERE id=$1",
+    ] {
+        tokio::time::timeout(
+            Duration::from_secs(4),
+            sqlx::query(emission).bind(d.id).execute(&mut c),
+        )
+        .await
+        .expect("la emisión no espera al informe")
+        .unwrap();
+    }
     c.execute("COMMIT").await.unwrap();
     let reply = status.await;
     assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.json);
