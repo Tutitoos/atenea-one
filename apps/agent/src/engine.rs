@@ -662,6 +662,9 @@ pub struct Engine {
     policy: Option<Policy>,
     /// Ventana (not_before, not_after) de la configuración vigente; sin ella todo se deniega.
     lease: Option<(u64, u64)>,
+    /// Hora máxima vista con el lease vigente, sin pasar de su fin: un reloj que retrocede más que
+    /// la tolerancia no alarga ni revive el lease (ADR-002 §3; al reiniciar lo cubre `verify_config`).
+    clock_high: u64,
     config_version: u64,
     last_config_error: Option<&'static str>,
     last_config_error_detail: Option<String>,
@@ -705,6 +708,7 @@ impl Engine {
             counters: Counters::default(),
             policy: None,
             lease: None,
+            clock_high: 0,
             config_version: 0,
             last_config_error: None,
             last_config_error_detail: None,
@@ -887,9 +891,10 @@ impl Engine {
 
     /// Dentro de `[not_before - 30, not_after + 30)` (ADR-002).
     pub fn lease_active(&self, unix: u64) -> bool {
-        self.lease.is_some_and(|(nb, na)| {
-            unix + CLOCK_TOLERANCE_SECS >= nb && unix < na + CLOCK_TOLERANCE_SECS
-        })
+        unix + CLOCK_TOLERANCE_SECS >= self.clock_high
+            && self.lease.is_some_and(|(nb, na)| {
+                unix + CLOCK_TOLERANCE_SECS >= nb && unix < na + CLOCK_TOLERANCE_SECS
+            })
     }
 
     fn reindex(&mut self) {
@@ -1615,6 +1620,9 @@ impl Engine {
     /// Temporizador (~250 ms): caducidad, sondeo, keepalive, conmutación de caminos, reintentos y rekey.
     pub fn on_tick(&mut self, now: Instant, unix: u64) -> Vec<Out> {
         let mut out = Vec::new();
+        if let Some((_, na)) = self.lease {
+            self.clock_high = self.clock_high.max(unix.min(na));
+        }
         if !self.lease_active(unix) {
             // Lease caducado: fail-closed, sin sesiones hasta recibir una configuración vigente.
             if self.deny_all() {
@@ -3060,6 +3068,26 @@ mod tests {
         let out = l.a.on_tun(&v4(1, 2, b"3"), l.now, l.unix);
         let (_, tun_b) = pump(&mut l, out, vec![]);
         assert_eq!(tun_b.len(), 1);
+    }
+
+    #[test]
+    fn a_clock_stepped_back_neither_extends_nor_revives_the_lease() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        // Antes de caducar: retroceder más que la tolerancia deniega; volver a la hora real lo recupera.
+        l.a.on_tick(l.now, NOT_AFTER - 10);
+        assert!(l.a.lease_active(NOT_AFTER - 40));
+        assert!(!l.a.lease_active(NOT_AFTER - 41));
+        assert!(l.a.on_tick(l.now, NOT_AFTER - 200).is_empty());
+        assert!(l.a.peers[0].current.is_none());
+        assert!(l.a.lease_active(NOT_AFTER - 10));
+        // Caducado: atrasar el reloj a cuando el lease valía no lo revive.
+        l.a.on_tick(l.now, NOT_AFTER + 30);
+        for unix in [NOT_AFTER - 31, NOT_AFTER - 200, NOT_BEFORE] {
+            assert!(!l.a.lease_active(unix), "{unix}");
+            assert!(l.a.on_tun(&v4(1, 2, b"2"), l.now, unix).is_empty());
+        }
     }
 
     #[test]
