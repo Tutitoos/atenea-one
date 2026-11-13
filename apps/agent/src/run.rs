@@ -880,13 +880,23 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 Vec::new()
             },
             _ = stun_refresh.tick(), if stun.is_some() => {
-                if let Some(s) = stun.as_mut() {
-                    s.start(&udp, dual, Instant::now()).await;
-                    stun_started = Some(Instant::now());
+                // El DNS se resuelve fuera del bucle: aquí pararía el plano de datos lo que tarde.
+                if let Some(s) = stun.as_ref() {
+                    let (names, tx) = (s.names(), msg_tx.clone());
+                    tokio::spawn(async move {
+                        let _ = tx.send(CoordMsg::StunResolved(net::resolve_stun(names).await)).await;
+                    });
                 }
                 Vec::new()
             },
             Some(msg) = msg_rx.recv() => match msg {
+                CoordMsg::StunResolved(addrs) => {
+                    if let Some(s) = stun.as_mut() {
+                        s.start(&udp, dual, Instant::now(), addrs).await;
+                        stun_started = Some(Instant::now());
+                    }
+                    Vec::new()
+                }
                 CoordMsg::RelayRequestFinished(peer, success, retry_after) => {
                     relay_requests.finished(peer, Instant::now(), success, retry_after);
                     Vec::new()
@@ -1206,6 +1216,8 @@ enum CoordMsg {
     /// Relays de una concesión ya resueltos y verificados (IP literal).
     RelayVetted(atenea_identity::DeviceId, Vec<crate::relay::RelayEndpoint>),
     RelayRequestFinished(atenea_identity::DeviceId, bool, Option<Duration>),
+    /// Direcciones de los servidores STUN, resueltas fuera del bucle principal.
+    StunResolved([Option<SocketAddr>; 2]),
 }
 
 #[derive(Clone, Default, serde::Serialize)]
