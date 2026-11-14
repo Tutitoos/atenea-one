@@ -90,6 +90,33 @@ docker cp "$caddy:/data/caddy/pki/authorities/local/root.crt" /lab/caddy-root.cr
 curl --fail --silent --show-error --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 https://panel.stack.test/ > /lab/panel.html
 test -s /lab/panel.html
 echo 'PASS panel HTTPS tras HAProxy/Caddy con CA interna'
+# Cabecera enviada byte a byte (no inactiva, solo lenta): Caddy debe cerrar la conexión a los 10 s (read_header) en vez
+# de mantenerla y ocupar una de las conexiones de la entrada.
+python3 - <<'PY'
+import socket, ssl, time
+ctx = ssl.create_default_context(cafile='/lab/caddy-root.crt')
+s = ctx.wrap_socket(socket.create_connection(('127.0.0.1', 443)), server_hostname='panel.stack.test')
+s.sendall(b'GET / HTTP/1.1\r\nHost: panel.stack.test\r\nX-Lento: ')
+start = time.monotonic()
+s.settimeout(0.5)
+closed = None
+while time.monotonic() - start < 30 and closed is None:
+    try:
+        if s.recv(200) == b'':
+            closed = time.monotonic() - start
+        else:
+            closed = time.monotonic() - start  # 408 u otra respuesta: el servidor ya no espera la cabecera
+    except (socket.timeout, ssl.SSLWantReadError):
+        try:
+            s.sendall(b'a')
+        except OSError:
+            closed = time.monotonic() - start
+    except (OSError, ssl.SSLError):
+        closed = time.monotonic() - start
+assert closed is not None, 'la cabecera lenta mantuvo la conexión abierta 30 s'
+assert 8 <= closed <= 20, f'cerrada a los {closed:.1f} s, esperado ~10 s'
+print(f'PASS cabecera lenta cerrada por Caddy a los {closed:.1f} s')
+PY
 # Nuevo digest real de la misma aplicación: solo metadatos de imagen, sin compilación/red.
 docker create --pull never --network none --name infra-next-build "$(image coordinator)" >/dev/null
 docker commit --change 'LABEL atenea.infra.upgrade=next' infra-next-build atenea-infra-next >/dev/null
