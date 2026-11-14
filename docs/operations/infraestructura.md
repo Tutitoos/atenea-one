@@ -175,7 +175,12 @@ son secretos; guardar el del proveedor elegido tras resolverlo y revisar hashes.
 
 Ejecutar `upgrade.yml` serialmente con `atenea_backup_verified=true` únicamente
 tras verificar una copia restaurable y precargar los nuevos digests de
-`atenea_stack_images`. Guarda `.env` y `compose.override.yaml` realmente desplegados.
+`atenea_stack_images`. Guarda en memoria del controlador todo lo desplegado que el rol
+sobrescribe (distribución, `.env`, `compose.override.yaml`, `config/` y `certs/`) con su
+propietario y sus permisos; los secretos no, porque salen del fichero cifrado.
+El rol instala la distribución con modo `0644` sea cual sea el del controlador: un
+árbol creado con `umask 077` dejaba `haproxy.cfg` y `Caddyfile` ilegibles para sus
+servicios y la entrada en bucle de reinicio (incidente del despliegue de la 0.1.27).
 Arranca PostgreSQL, ejecuta un contenedor efímero `control-plane --migrate` con
 `migration-database-url` montado y `ATENEA_CP_APPLICATION_ROLE=atenea_app`, igual que
 `deploy/compose/prod/migrate.sh`, **antes** de sustituir las aplicaciones.
@@ -207,10 +212,13 @@ montarse), no se atribuye el fallo a overlay2. `live-restore=false` se usó solo
 para forzar una restauración fría en diagnóstico; el rol conserva `true`, que
 no sustituye la reconvergencia tras reboot/primer cambio del daemon.
 
-Si falla, restaura ambos ficheros, vuelve a arrancar los digests anteriores,
-comprueba todos sus healthchecks y termina **con error**, aunque el rollback
-haya recuperado salud. No exige un puerto HTTP público adicional para medir salud.
-El rollback cambia **digests**, no deshace datos, configuración pública ni secretos.
+Si falla, restaura esos ficheros con su contenido, propietario y permisos, vuelve a
+arrancar los digests anteriores (recreando los contenedores si cambió algún fichero
+montado, porque siguen viendo el inodo antiguo), comprueba todos sus healthchecks y
+termina **con error**, aunque el rollback haya recuperado salud. No exige un puerto
+HTTP público adicional para medir salud.
+El rollback no deshace datos, migraciones ni secretos, y no borra los ficheros que la
+versión nueva haya añadido.
 No combinar una rotación incompatible con un cambio de versión. Respetar
 expand/contract; no borrar columnas hasta retirar la versión anterior.
 La salud Compose no demuestra compatibilidad de datos: el ensayo específico de

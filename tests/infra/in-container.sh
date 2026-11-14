@@ -96,25 +96,43 @@ docker commit --change 'LABEL atenea.infra.upgrade=next' infra-next-build atenea
 docker rm infra-next-build >/dev/null
 next=$(docker image inspect atenea-infra-next --format '{{.Id}}')
 test "$next" != "$(image coordinator)"
+# La distribución llega con modo 0600 (árbol del controlador creado con umask 077): el rol debe dejarla legible.
+cp -r /src/deploy/compose/prod /lab/dist-next
+printf '# ensayo-distribucion-nueva\n' >> /lab/dist-next/haproxy.cfg
+chmod 600 /lab/dist-next/*
 python3 - "$next" <<'PY'
 import sys, yaml
 from pathlib import Path
 inv = yaml.safe_load(Path('/lab/inventory.yml').read_text())
 inv['all']['vars']['atenea_stack_images']['coordinator'] = sys.argv[1]
 inv['all']['vars']['atenea_backup_verified'] = True
+inv['all']['vars']['atenea_compose_source'] = '/lab/dist-next'
 Path('/lab/upgrade.yml').write_text(yaml.safe_dump(inv))
 PY
 ansible-playbook -i /lab/upgrade.yml upgrade.yml
 python3 /src/tests/infra/check.py principal
+test "$(stat -c %a /opt/atenea/haproxy.cfg /opt/atenea/Caddyfile /opt/atenea/compose.yaml | sort -u)" = 644
+echo 'PASS distribución 0600 en el controlador desplegada como 0644'
 cp /opt/atenea/compose.override.yaml /lab/previous-map
 cp /opt/atenea/.env /lab/previous-env
+# Todo lo que el rol sobrescribe salvo secretos: contenido, permisos y propietario.
+deployed() { (cd /opt/atenea && find . -path ./secrets -prune -o -type f -exec stat -c '%a %u:%g %n' {} + -exec sha256sum {} + | sort); }
+in_haproxy() { cat "/proc/$(docker inspect -f '{{.State.Pid}}' "$(docker compose --project-directory /opt/atenea ps -q haproxy)")/root/usr/local/etc/haproxy/haproxy.cfg"; }
+deployed > /lab/previous-files
 # Caddy existe localmente pero no puede arrancar como coordinator; falla salud, no pull.
+# El intento fallido trae además distribución y configuración distintas, que el rescue debe deshacer.
+cp -r /lab/dist-next /lab/dist-fail
+printf '# ensayo-distribucion-fallida\n' >> /lab/dist-fail/haproxy.cfg
+cp -r /lab/public /lab/public-fail
+printf '# ensayo-configuracion-fallida\n' >> /lab/public-fail/config/relay.toml
 python3 - "$(image caddy)" <<'PY'
 import sys, yaml
 from pathlib import Path
 inv = yaml.safe_load(Path('/lab/upgrade.yml').read_text())
 inv['all']['vars']['atenea_stack_images']['coordinator'] = sys.argv[1]
 inv['all']['vars']['atenea_stack_health_timeout'] = 25
+inv['all']['vars']['atenea_compose_source'] = '/lab/dist-fail'
+inv['all']['vars']['atenea_config_source'] = '/lab/public-fail'
 Path('/lab/failure.yml').write_text(yaml.safe_dump(inv))
 PY
 if ansible-playbook -i /lab/failure.yml upgrade.yml | tee /lab/failure.log; then
@@ -128,8 +146,11 @@ assert 'El stack no alcanzó salud' in text, text
 PY
 cmp /lab/previous-map /opt/atenea/compose.override.yaml
 cmp /lab/previous-env /opt/atenea/.env
+deployed | diff /lab/previous-files -
+in_haproxy | grep -q ensayo-distribucion-nueva
+if in_haproxy | grep -q ensayo-distribucion-fallida; then echo 'ERROR: HAProxy sigue con la distribución fallida' >&2; exit 1; fi
 python3 /src/tests/infra/check.py principal
-echo 'PASS upgrade feliz y upgrade fallido con rollback al mapa anterior'
+echo 'PASS upgrade feliz y upgrade fallido con rollback a mapa, distribución, configuración y permisos anteriores'
 if [ -f /tmp/infra-next-images ]; then
   # Ensayo entre dos revisiones reales (N = imágenes con que convergió el nodo; N+1 = /tmp/infra-next-images).
   # 1) baseline N, 2) testigos, 3) upgrade que falla DESPUÉS de migrar 0008 y rescue a N, 4) reintento correcto.

@@ -1,0 +1,15 @@
+---
+# Tras una actualización fallida: devuelve cada fichero de snapshot.yml a su contenido, propietario y permisos.
+# Los ficheros que la actualización haya añadido no se borran.
+- name: Restaurar contenido y permisos anteriores
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ item.item.path }}"
+    owner: "{{ item.item.uid | string }}"
+    group: "{{ item.item.gid | string }}"
+    mode: "{{ item.item.mode }}"
+  loop: "{{ atenea_previous_contents.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  register: atenea_restored
+  no_log: true
