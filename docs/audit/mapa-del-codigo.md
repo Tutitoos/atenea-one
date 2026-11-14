@@ -1,14 +1,14 @@
 # Mapa del código
 
-**Actualizado el 2026-10-29 al commit 8d975a6**.
+**Actualizado el 2026-10-29 al commit 8d975a6; recuentos recalculados el 2026-11-14 sobre `4abf91b`** (véase la referencia).
 
-**Referencia:** `8d975a6`. Complementa la [arquitectura para auditores](arquitectura-para-auditores.md). **No apto para datos sensibles hasta la auditoría**; no afirma auditoría realizada ni aptitud para producción. Convención de etiquetas: [README del paquete](README.md#convención-de-evidencia). Cifras e inventario textual: **VERIFICADO — lectura**; no se ejecutaron compilaciones, pruebas ni fuzz.
+**Referencia:** `8d975a6`; los recuentos de §1 y §2 (Rust, no Rust y ficheros más largos) y el inventario de fuzz se recalcularon el 2026-11-14 sobre `4abf91b` con el script de §1; el resto (puntos de entrada, tablas `unsafe`, referencias de línea y juicios de riesgo) **conserva su referencia anterior y no se ha revisado**. Complementa la [arquitectura para auditores](arquitectura-para-auditores.md). **No apto para datos sensibles hasta la auditoría**; no afirma auditoría realizada ni aptitud para producción. Convención de etiquetas: [README del paquete](README.md#convención-de-evidencia). Cifras e inventario textual: **VERIFICADO — lectura**; no se ejecutaron compilaciones, pruebas ni fuzz.
 
 **Referencias históricas de línea — commit a0f8ac7.** Todas las referencias `Lnn` conservadas aquí, incluidos enlaces `#Lnn` de las tablas `unsafe`, se refieren al **commit a0f8ac7**, no a HEAD. No basta con sumar las cabeceras de copyright: hay cambios funcionales posteriores. Consulte `git show a0f8ac7:<ruta>`; para HEAD localice el símbolo en el fichero enlazado. No se recalculan aquí las referencias históricas.
 
 ## 1. Criterio de las métricas
 
-- **Universo:** ficheros versionados (`git ls-files`) del árbol de trabajo; excluye ficheros sin versionar. Total: **654 ficheros**, **135 `.rs`**, **46 140 líneas Rust**. Describe fuentes locales, no acredita identidad byte a byte con HEAD.
+- **Universo:** ficheros versionados (`git ls-files`) del árbol de trabajo; excluye ficheros sin versionar. Total: **851 ficheros**, **139 `.rs`**, **52 056 líneas Rust** (sumando `fuzz` y `deploy/images/healthcheck.rs`). Describe fuentes locales, no acredita identidad byte a byte con HEAD.
 - **LOC = líneas físicas**, como `wc -l`; incluye blancos y comentarios, no es SLOC. Reproducible con `git ls-files '*.rs' | xargs wc -l`; por componente, por ejemplo `git ls-files 'apps/agent/*.rs' | xargs wc -l` (el pathspec de Git incluye subdirectorios). Agregación por `crates/<x>` y `apps/<x>`; incluye `build.rs` y pruebas versionadas, no fuentes generadas.
 - **Clasificación de tests:** *ext.* = rutas con `/tests/`, ficheros `tests.rs`, `*_tests.rs`, `testutil.rs` y `vectors.rs`. *Inline* = desde `#[cfg(test)]` hasta el cierre de su `mod`, contando llaves por línea (**aproximación**: llaves dentro de cadenas/comentarios pueden desplazar el límite). Se admiten blancos/atributos entre `cfg` y `mod`; no se descuentan funciones `#[cfg(test)]` sueltas. *Prod.* = total − ext. − inline.
 - **`#[test]`** cuenta atributos `#[test]` y `#[tokio::test]` por expresión regular, no casos ejecutados ni cobertura; `proptest!` no cuenta como atributo.
@@ -58,23 +58,23 @@ La columna «Riesgo» es un **juicio del autor (INFERIDO)** basado en exposició
 | Componente | Ficheros `.rs` | LOC total | LOC prod. | LOC tests (ext.) | LOC tests (inline) | `#[test]` | Responsabilidad | Riesgo (INFERIDO) | Tests / fuzz |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | [`crates/protocol`](../../crates/protocol) | 1 | 332 | 203 | 0 | 129 | 7 | Datagramas v2 y parser. | Alto: entrada no autenticada | Inline + `proptest`; fuzz `datagram_parse` |
-| [`crates/crypto`](../../crates/crypto) | 6 | 1542 | 861 | 401 | 280 | 25 | Noise IK, sesión, antirreplay, rekey, cookies. | Alto: nonce/replay/cookie propios | Externos, vectores, inline, `proptest`; fuzz crypto y `agent_engine` |
-| [`crates/identity`](../../crates/identity) | 9 | 2652 | 1524 | 795 | 333 | 31 | Configuración firmada, estado, `api_auth`, código de unión. | Alto: confianza y anti-rollback | Externos, inline, `proptest`; fuzz identity y `join_code_parse` |
+| [`crates/crypto`](../../crates/crypto) | 6 | 1539 | 858 | 401 | 280 | 25 | Noise IK, sesión, antirreplay, rekey, cookies. | Alto: nonce/replay/cookie propios | Externos, vectores, inline, `proptest`; fuzz crypto y `agent_engine` |
+| [`crates/identity`](../../crates/identity) | 9 | 2976 | 1607 | 795 | 574 | 38 | Configuración firmada, estado, `api_auth`, código de unión. | Alto: confianza y anti-rollback | Externos, inline, `proptest`; fuzz identity, `join_code_parse` y `authorization_parse` |
 | [`crates/policies`](../../crates/policies) | 1 | 476 | 154 | 0 | 322 | 12 | Clasificación IP y ACL deny-by-default. | Alto: autorización por paquete | Inline + `proptest`; fuzz `ip_classify` |
-| [`crates/nat-traversal`](../../crates/nat-traversal) | 1 | 425 | 229 | 0 | 196 | 10 | STUN y candidatos. | Medio: parser UDP | Inline + `proptest`; fuzz `stun_parse` |
-| [`crates/relay-core`](../../crates/relay-core) | 1 | 1137 | 629 | 0 | 508 | 15 | Relay-v2, tokens, cookie, tramas. | Alto: autorización de asignaciones | Inline + `proptest`, vectores; fuzz `relay_parse` |
+| [`crates/nat-traversal`](../../crates/nat-traversal) | 1 | 515 | 251 | 0 | 264 | 13 | STUN y candidatos. | Medio: parser UDP | Inline + `proptest`; fuzz `stun_parse` |
+| [`crates/relay-core`](../../crates/relay-core) | 1 | 1182 | 643 | 0 | 539 | 16 | Relay-v2, tokens, cookie, tramas. | Alto: autorización de asignaciones | Inline + `proptest`, vectores; fuzz `relay_parse` |
 | [`crates/observability`](../../crates/observability) | 1 | 242 | 198 | 0 | 44 | 1 | Métricas Prometheus acotadas. | Bajo | Inline; sin fuzz |
 | [`crates/tunnel`](../../crates/tunnel) | 4 | 672 | 606 | 0 | 66 | 3 | TUN L3 Linux/macOS/Windows (FFI). | Alto: `unsafe`, paquetes del SO | Inline; sin fuzz; cada backend solo en su SO |
 | [`crates/windows`](../../crates/windows) | 3 | 1098 | 676 | 0 | 422 | 6 | DACL, pipes, impersonación, SCM (FFI). | Alto: privilegios locales, `unsafe` | Inline, solo Windows; sin fuzz |
 | [`crates/testpeer`](../../crates/testpeer) | 5 | 986 | 665 | 321 | 0 | 9 | Par de pruebas y carga. | Bajo (pruebas) | `peer/tests.rs` |
-| [`apps/agent`](../../apps/agent) | 30 | 14380 | 8216 | 1399 | 4765 | 170 | Motor, sync, coord/relay, IPC, nombres, rutas y estado por red. | Alto: privilegios y aislamiento de redes | Inline, `netconf*_tests.rs`, `testutil.rs`; fuzz `agent_engine` |
-| [`apps/control-plane`](../../apps/control-plane) | 28 | 10444 | 4682 | 5523 | 239 | 73 | API/OIDC/RBAC/IPAM, unión pública, emisión, políticas y panel. | Alto: autenticación, abuso y multi-organización | PostgreSQL real en `tests/`; sin fuzz HTTP |
-| [`apps/coordinator`](../../apps/coordinator) | 8 | 2280 | 1105 | 1030 | 145 | 18 | Presencia, rendezvous, STUN, tokens. | Medio-alto: tokens y cuotas | `tests/api.rs`; sin fuzz del servidor |
-| [`apps/relay`](../../apps/relay) | 8 | 2319 | 1107 | 629 | 583 | 23 | Reenvío UDP/TLS opaco. | Alto: DoS, audiencia, TLS | `tests/relay.rs`, inline; fuzz solo del parser |
-| [`apps/cli`](../../apps/cli) | 6 | 4327 | 2973 | 0 | 1354 | 40 | Claves, emisión, enrolamiento y ciclo de vida multirred. | Alto: claves y servicios privilegiados | Inline; código de unión con fuzz en identity |
-| **Total Rust del workspace raíz** | 112 | 43312 | 23828 | 10098 | 9386 | 443 | | | |
+| [`apps/agent`](../../apps/agent) | 31 | 16488 | 9152 | 1503 | 5833 | 211 | Motor, sync, coord/relay, IPC, nombres, rutas y estado por red. | Alto: privilegios y aislamiento de redes | Inline, `netconf*_tests.rs`, `testutil.rs`; fuzz `agent_engine` |
+| [`apps/control-plane`](../../apps/control-plane) | 35 | 13406 | 5613 | 7330 | 463 | 113 | API/OIDC/RBAC/IPAM, unión pública, emisión, políticas y panel. | Alto: autenticación, abuso y multi-organización | PostgreSQL real en `tests/`; sin fuzz HTTP |
+| [`apps/coordinator`](../../apps/coordinator) | 9 | 2761 | 1320 | 1263 | 178 | 25 | Presencia, rendezvous, STUN, tokens. | Medio-alto: tokens y cuotas | `tests/api.rs`; sin fuzz del servidor |
+| [`apps/relay`](../../apps/relay) | 8 | 2428 | 1146 | 629 | 653 | 25 | Reenvío UDP/TLS opaco. | Alto: DoS, audiencia, TLS | `tests/relay.rs`, inline; fuzz de la cabecera PROXY v2 (`proxy_v2_parse`) y de la máquina de estados (`relay_state`); parser en relay-core |
+| [`apps/cli`](../../apps/cli) | 6 | 5777 | 3490 | 0 | 2287 | 70 | Claves, emisión, enrolamiento y ciclo de vida multirred. | Alto: claves y servicios privilegiados | Inline; código de unión con fuzz en identity |
+| **Total Rust del workspace raíz** | 121 | 50878 | 26582 | 12242 | 12054 | 574 | | | |
 | [`apps/desktop`](../../apps/desktop) (**módulo Go propio**, Wails v3; no es Rust) | — | — | — | — | — | — | Servicio vinculado de doce métodos (once más `ClientStatus`, de solo lectura, [ADR-021](../architecture/ADR-021-asistente-de-primera-ejecucion.md)), estado por socket, elevación del CLI y autostart de usuario ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)). Recuento Go SIN COMPROBAR. | Alto: frontera frontend/CLI elevado | `go test` por paquete y frontend Vitest; humo con la interfaz embebida |
-| [`fuzz`](../../fuzz) (fuera del workspace raíz) | 14 | 727 | 727 | 0 | 0 | 0 | 14 objetivos `cargo-fuzz` | — | Semillas; ejecución SIN COMPROBAR |
+| [`fuzz`](../../fuzz) (fuera del workspace raíz) | 17 | 1059 | 1059 | 0 | 0 | 0 | 17 objetivos `cargo-fuzz` | — | Semillas; pasada corta de los tres objetivos nuevos, resto SIN COMPROBAR |
 | [`deploy/images/healthcheck.rs`](../../deploy/images/healthcheck.rs) | 1 | 119 | 71 | 0 | 48 | 2 | Sonda de salud de imágenes | Bajo | Inline |
 
 Notas:
@@ -83,11 +83,11 @@ Notas:
 
 | Componente | Ficheros / extensiones contadas | LOC | Responsabilidad | Riesgo (INFERIDO) | Tests asociados |
 | --- | --- | ---: | --- | --- | --- |
-| [Panel web](../../apps/web) | 16 `.ts` + 29 `.tsx` | **609 + 2843 = 3452** | Administración y sesión/CSRF; rediseño bloques A/B | Alto: operaciones administrativas en navegador | Vitest en `app/`; [Playwright](../../tests/e2e-panel/run.sh) |
-| [Escritorio frontend](../../apps/desktop/app) | 16 `.ts` + 15 `.tsx` | **501 + 1485 = 1986** (recuento previo al cambio de puente) | React/Router, redes, estado y acciones por el puente de Wails | Alto: entrada a órdenes elevadas | Vitest; no acredita elevación real |
+| [Panel web](../../apps/web) | 16 `.ts` + 31 `.tsx` | **617 + 3154 = 3771** | Administración y sesión/CSRF; rediseño bloques A/B | Alto: operaciones administrativas en navegador | Vitest en `app/`; [Playwright](../../tests/e2e-panel/run.sh) |
+| [Escritorio frontend](../../apps/desktop/app) | 22 `.ts` + 38 `.tsx` | **1100 + 3966 = 5066** | React/Router, redes, estado y acciones por el puente de Wails | Alto: entrada a órdenes elevadas | Vitest; no acredita elevación real |
 | [API cliente](../../packages/api-client) | 2 `.ts` | **58** | Peticiones del panel al control plane | Medio-alto: autorización/errores | [client.test.ts](../../packages/api-client/src/client.test.ts) |
-| [Laboratorios](../../tests) | 40 `.py`, 47 `.sh`, 5 `.ps1` | **5930 / 4896 / 364** respectivamente | Integración y reproducción; 168 ficheros versionados de todas las clases | Alto al ejecutarlos | [Guía](como-reproducir.md#6-laboratorios-docker-y-privilegios) |
-| [Empaquetado](../../packaging) | 19 ficheros, todas las extensiones | **745** | `.deb`, `.pkg`, ZIP, postinstall y servicios por red | Alto: instalación/migración privilegiada | `tests/packaging`, `tests/macos`, `tests/windows` |
+| [Laboratorios](../../tests) | 46 `.py`, 50 `.sh`, 5 `.ps1` | **6704 / 6034 / 364** respectivamente | Integración y reproducción; 177 ficheros versionados de todas las clases | Alto al ejecutarlos | [Guía](como-reproducir.md#6-laboratorios-docker-y-privilegios) |
+| [Empaquetado](../../packaging) | 32 ficheros, todas las extensiones | **1405** | `.deb`, `.pkg`, ZIP, postinstall y servicios por red | Alto: instalación/migración privilegiada | `tests/packaging`, `tests/macos`, `tests/windows` |
 
 - Reproducción no Rust: `git ls-files 'apps/web/*.ts' 'apps/web/*.tsx' | xargs wc -l`, análogamente `apps/desktop` y `packages/api-client`; `git ls-files 'tests/*.py' | xargs wc -l` (repetir `.sh`/`.ps1`); `git ls-files packaging | xargs wc -l`. No se cuentan CSS/JSON/lockfiles en TS; empaquetado sí incluye todos sus ficheros.
 - [Infraestructura](../../infra) y [despliegue](../../deploy) quedan fuera de esos recuentos no Rust; permisos y cadena de suministro siguen en el [alcance propuesto](alcance-y-preguntas.md).
@@ -95,17 +95,18 @@ Notas:
 
 | Fichero | Líneas |
 | --- | ---: |
-| [`apps/agent/src/engine.rs`](../../apps/agent/src/engine.rs) | 3985 |
-| [`apps/cli/src/network.rs`](../../apps/cli/src/network.rs) | 2426 |
-| [`apps/agent/src/relay.rs`](../../apps/agent/src/relay.rs) | 1800 |
-| [`apps/agent/src/run.rs`](../../apps/agent/src/run.rs) | 1499 |
-| [`crates/relay-core/src/lib.rs`](../../crates/relay-core/src/lib.rs) | 1137 |
-| [`apps/control-plane/src/openapi.rs`](../../apps/control-plane/src/openapi.rs) | 1054 |
-| [`apps/coordinator/tests/api.rs`](../../apps/coordinator/tests/api.rs) | 1030 |
+| [`apps/agent/src/engine.rs`](../../apps/agent/src/engine.rs) | 4399 |
+| [`apps/cli/src/network.rs`](../../apps/cli/src/network.rs) | 3419 |
+| [`apps/agent/src/relay.rs`](../../apps/agent/src/relay.rs) | 2124 |
+| [`apps/agent/src/run.rs`](../../apps/agent/src/run.rs) | 1662 |
+| [`apps/coordinator/tests/api.rs`](../../apps/coordinator/tests/api.rs) | 1263 |
+| [`apps/control-plane/src/openapi.rs`](../../apps/control-plane/src/openapi.rs) | 1185 |
+| [`crates/relay-core/src/lib.rs`](../../crates/relay-core/src/lib.rs) | 1182 |
+| [`apps/control-plane/tests/integration.rs`](../../apps/control-plane/tests/integration.rs) | 1132 |
+| [`apps/agent/src/sync.rs`](../../apps/agent/src/sync.rs) | 1003 |
+| [`apps/cli/src/enroll.rs`](../../apps/cli/src/enroll.rs) | 946 |
 | [`crates/windows/src/security.rs`](../../crates/windows/src/security.rs) | 930 |
-| [`apps/control-plane/tests/integration.rs`](../../apps/control-plane/tests/integration.rs) | 904 |
-| [`apps/agent/src/sync.rs`](../../apps/agent/src/sync.rs) | 703 |
-| [`apps/control-plane/tests/device_names.rs`](../../apps/control-plane/tests/device_names.rs) | 667 |
+| [`crates/identity/src/join_code.rs`](../../crates/identity/src/join_code.rs) | 795 |
 
 ## 3. Puntos de entrada
 
@@ -131,9 +132,9 @@ Historia y delta comprobados con `git log --oneline a0f8ac7..HEAD -- apps packag
 
 ## 4. Fuzzing y su alcance
 
-**14 objetivos** en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets) (**VERIFICADO — lectura**): `datagram_parse` (protocol), `handshake_init`, `session_decrypt`, `replay_window`, `hex_decode` (crypto), `signed_config_verify`, `device_config_parse`, `config_v2_parse`, `cert_bundle_state_parse` y **`join_code_parse`** (identity), `ip_classify` (policies), `relay_parse` (relay-core), `stun_parse` (nat-traversal), `agent_engine` (motor con pares simulados). `join_code_parse` es nuevo desde a0f8ac7. `fuzz` está excluido del workspace raíz y tiene `Cargo.lock` propio; desktop es otro workspace independiente.
+**17 objetivos** en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets) (**VERIFICADO — lectura**): `datagram_parse` (protocol), `handshake_init`, `session_decrypt`, `replay_window`, `hex_decode` (crypto), `signed_config_verify`, `device_config_parse`, `config_v2_parse`, `cert_bundle_state_parse` y **`join_code_parse`** (identity), `ip_classify` (policies), `relay_parse` (relay-core), `stun_parse` (nat-traversal), `agent_engine` (motor con pares simulados). `join_code_parse` es nuevo desde a0f8ac7. Después de la auditoría de 2026-11-13 se añadieron `authorization_parse` (identity), `proxy_v2_parse` y `relay_state` (relay: cabecera PROXY v2 y máquina de estados, funciones reales del relay). `fuzz` está excluido del workspace raíz y tiene `Cargo.lock` propio; desktop es otro workspace independiente.
 
-**Sin objetivo específico de fuzz** (**VERIFICADO — lectura** del inventario): handlers HTTP de control plane/coordinator, estado y sockets del relay, IPC, elevación/autostart del escritorio, `crates/windows`, `crates/tunnel`, JSON de `coord.rs`. `ci.yml` no ejecuta fuzz. La CI ordinaria corre en pull requests contra `main` y a demanda (`workflow_dispatch`), no al hacer push. Ejecución/resultados de fuzz actual y campañas prolongadas: **SIN COMPROBAR**.
+**Sin objetivo específico de fuzz** (**VERIFICADO — lectura** del inventario): handlers HTTP de control plane/coordinator, sockets y TLS del relay (su máquina de estados y la cabecera PROXY v2 sí tienen objetivo), IPC, elevación/autostart del escritorio, `crates/windows`, `crates/tunnel`, JSON de `coord.rs`. `ci.yml` no ejecuta fuzz. La CI ordinaria corre en pull requests contra `main` y a demanda (`workflow_dispatch`), no al hacer push. Los tres objetivos posteriores a la auditoría tuvieron una pasada corta el 2026-11-14 sin fallos ([`fuzz/README.md`](../../fuzz/README.md)); ejecución del resto y campañas prolongadas: **SIN COMPROBAR**.
 
 ## 5. Inventario de bloques `unsafe`
 
