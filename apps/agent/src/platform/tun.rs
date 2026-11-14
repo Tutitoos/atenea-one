@@ -14,15 +14,20 @@ pub struct TunDevice {
 pub enum TunDevice {}
 
 impl TunDevice {
-    /// Abre el adaptador dentro del runtime Tokio.
-    pub fn open(name: &str) -> io::Result<Self> {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    /// Abre el adaptador dentro del runtime Tokio. En Windows su GUID es el UUID de la red (ADR-017 §3).
+    pub fn open(name: &str, network: [u8; 16]) -> io::Result<Self> {
+        #[cfg(target_os = "windows")]
         {
+            atenea_tunnel::Tun::create_with_guid(name, network).map(|inner| Self { inner })
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let _ = network;
             atenea_tunnel::Tun::create(name).map(|inner| Self { inner })
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
-            let _ = name;
+            let _ = (name, network);
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(
@@ -79,7 +84,9 @@ mod tests {
 
     #[test]
     fn unsupported_platform_has_no_tun_device() {
-        let err = TunDevice::open("atenea0").err().expect("sin backend TUN");
+        let err = TunDevice::open("atenea0", [0; 16])
+            .err()
+            .expect("sin backend TUN");
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
         assert!(err.to_string().contains(std::env::consts::OS));
     }

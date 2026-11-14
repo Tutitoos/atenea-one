@@ -309,7 +309,30 @@ impl HostNetwork for Network {
     fn remove_route(&self, p: &str) -> Result<(), String> {
         self.route(p, false)
     }
+    /// Solo lectura: un dominio con una regla NRPT que no es de esta instancia (ajena u otra red de Atenea).
+    fn dns_domain_conflict(&self, dns: &DnsConfig) -> Result<Option<String>, String> {
+        if dns.domains.iter().any(|d| !domain_ok(d)) {
+            return Err("dominio DNS de enrutamiento inválido".into());
+        }
+        if dns.domains.is_empty() {
+            return Ok(None);
+        }
+        let mut script = "$rules = @(Get-DnsClientNrptRule); $claimed = @(); ".to_string();
+        for domain in &dns.domains {
+            script.push_str(&format!("if (@($rules | Where-Object {{ $_.Comment -cne {} -and $_.Namespace -contains {} }}).Count -ne 0) {{ $claimed += {} }}; ", quote(&self.owner()), quote(&format!(".{domain}")), quote(domain)));
+        }
+        script.push_str("Write-Output ($claimed -join ',')");
+        let out = run(&self.bins.powershell, &script)?;
+        Ok(String::from_utf8_lossy(&out)
+            .trim()
+            .split(',')
+            .find(|d| !d.is_empty())
+            .map(|d| format!("dominio DNS {d} reclamado por otro resolutor")))
+    }
     fn set_dns(&self, dns: &DnsConfig) -> Result<(), String> {
+        if let Some(detail) = self.dns_domain_conflict(dns)? {
+            return Err(detail);
+        }
         if dns.domains.iter().any(|d| !domain_ok(d))
             || (!dns.domains.is_empty() && dns.servers.is_empty())
         {
@@ -620,6 +643,43 @@ mod command_tests {
         assert_eq!(
             std::fs::read_to_string(log).unwrap(),
             "/remove-device\nSWD\\Wintun\\{abc}\n"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn dns_domain_conflict_is_read_only_and_blocks_set_dns() {
+        let dir = std::env::temp_dir().join(format!("atenea-windows-dns-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let bin = dir.join("powershell");
+        let log = dir.join("args");
+        // Las reglas ajenas se «ven» solo en la consulta de solo lectura (la que escribe `$claimed`).
+        crate::testutil::fake_binary(
+            &bin,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\ncase \"$*\" in *claimed*) printf 'lab.internal\\n';; esac\n",
+                log.display()
+            ),
+        );
+        let host = Network::new(
+            "atn_0000000a".into(),
+            Binaries {
+                powershell: bin,
+                ..Default::default()
+            },
+        );
+        let dns = DnsConfig {
+            servers: vec!["10.77.0.1".parse().unwrap()],
+            domains: vec!["lab.internal".into()],
+        };
+        assert_eq!(
+            host.dns_domain_conflict(&dns).unwrap().as_deref(),
+            Some("dominio DNS lab.internal reclamado por otro resolutor")
+        );
+        assert!(host.set_dns(&dns).is_err());
+        let calls = std::fs::read_to_string(log).unwrap();
+        assert!(
+            !calls.contains("Add-DnsClientNrptRule"),
+            "no debe escribir NRPT"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

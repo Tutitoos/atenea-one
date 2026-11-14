@@ -380,7 +380,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     // Antes de crear TUN, sockets o DNS: una parada que llegue durante el arranque (la primera aplicación de la
     // configuración puede tardar más de un segundo) debe esperar al bucle y limpiar, no matar el proceso a medias.
     let mut lifecycle = Lifecycle::new().map_err(|e| e.to_string())?;
-    let tun = TunDevice::open(&cfg.interface).map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
+    let tun = TunDevice::open(&cfg.interface, cfg.network_id)
+        .map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
     let udp = UdpSocket::bind(cfg.listen)
         .await
         .map_err(|e| format!("UDP {}: {e}", cfg.listen))?;
