@@ -13,6 +13,13 @@ trusted_path() {
         [ -n "$checked" ] || checked=/
     done
 }
+# Directorio real (no enlace) del propietario indicado y no escribible por grupo ni por otros. Es la regla que el lanzador
+# aplica a /var/run/atenea: ahí no sirve `trusted_path`, que sube hasta / y en macOS encuentra /private/var/run con
+# root:daemon 0775. El uid es parámetro solo para poder probarlo sin root.
+trusted_dir() {
+    [ ! -L "$1" ] && [ -d "$1" ] || return 1
+    case "$(/usr/bin/stat -f '%u %Sp' "$1")" in "${2:-0} "d????-??-*) ;; *) return 1 ;; esac
+}
 network_paths() {
     network=$1
     case "$network" in

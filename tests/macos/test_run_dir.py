@@ -141,5 +141,47 @@ class RepairRunDir(unittest.TestCase):
         self.assertFalse(self.dir.exists())
 
 
+class TrustedDir(unittest.TestCase):
+    """`trusted_dir`: el desinstalador solo borra sockets dentro de directorios reales del propietario y cerrados a otros."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name) / "atenea"
+
+    def trusted(self, path, uid=None):
+        uid = os.getuid() if uid is None else uid
+        return subprocess.run(["/bin/sh", "-c", f'. "{HELPER}" && trusted_dir "{path}" {uid}']).returncode == 0
+
+    def test_the_modes_left_by_the_launchers_are_trusted(self):
+        # El padre del directorio temporal es escribible por más gente, como /private/var/run: no debe importar.
+        for wanted in (0o700, 0o750, 0o711, 0o755):
+            with self.subTest(mode=oct(wanted)):
+                self.dir.mkdir()
+                self.dir.chmod(wanted)
+                self.assertTrue(self.trusted(self.dir))
+                self.dir.rmdir()
+
+    def test_a_directory_writable_by_group_or_others_is_rejected(self):
+        for wanted in (0o770, 0o757, 0o777):
+            with self.subTest(mode=oct(wanted)):
+                self.dir.mkdir()
+                self.dir.chmod(wanted)
+                self.assertFalse(self.trusted(self.dir))
+                self.dir.rmdir()
+
+    def test_a_symlink_a_file_another_owner_and_a_missing_path_are_rejected(self):
+        self.assertFalse(self.trusted(self.dir))
+        self.dir.mkdir(mode=0o755)
+        self.assertFalse(self.trusted(self.dir, uid=os.getuid() + 1))
+        link = Path(self.tmp.name) / "enlace"
+        link.symlink_to(self.dir)
+        self.assertFalse(self.trusted(link))
+        regular = Path(self.tmp.name) / "fichero"
+        regular.write_text("")
+        regular.chmod(0o644)
+        self.assertFalse(self.trusted(regular))
+
+
 if __name__ == "__main__":
     unittest.main()
