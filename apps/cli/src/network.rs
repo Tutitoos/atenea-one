@@ -833,8 +833,20 @@ mod imp {
         Unknown(String),
     }
 
+    /// En Linux el directorio de runtime de cada red es 0750 root:atenea y el agente, con solo CAP_NET_ADMIN, no puede
+    /// dar el socket de estado a otro grupo (`status_gid` se ignora con un aviso): leerlo sin root exige estar en `atenea`.
+    /// En macOS el grupo lo fija el lanzador con `status_gid`, así que solo queda sudo.
+    fn no_permission_text(linux: bool) -> &'static str {
+        if linux {
+            "sin permiso para leer el estado: este usuario no está en el grupo atenea \
+             (`sudo usermod -aG atenea USUARIO` y volver a iniciar sesión) o ejecuta con sudo"
+        } else {
+            "sin permiso para leer el estado: ejecuta con sudo"
+        }
+    }
+
     fn no_permission() -> State {
-        State::Unknown("sin permiso para leer el estado: ejecuta con sudo".into())
+        State::Unknown(no_permission_text(cfg!(target_os = "linux")).into())
     }
 
     /// Sin `status.sock` la red está detenida; si este usuario no puede atravesar el directorio de ejecución (EACCES: el
@@ -2811,6 +2823,8 @@ mod imp {
             assert!(matches!(denied, Some(State::Unknown(_))));
             let missing = sock_unreachable(Err(Error::from(ErrorKind::NotFound)));
             assert!(matches!(missing, Some(State::Stopped)));
+            assert!(no_permission_text(true).contains("grupo atenea"));
+            assert!(!no_permission_text(false).contains("atenea"));
             let d = temp("sock-accesible");
             assert!(sock_unreachable(std::fs::symlink_metadata(&d)).is_none());
             std::fs::remove_dir_all(d).unwrap();
