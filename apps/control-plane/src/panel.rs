@@ -98,6 +98,7 @@ pub enum RouteState {
     Installed,
     Conflict,
     Pending,
+    Unsupported,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

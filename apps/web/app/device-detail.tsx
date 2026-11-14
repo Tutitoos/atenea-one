@@ -27,7 +27,7 @@ export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, r
       {report.forwarding_ok === false && routes.some(route => route.device_id === device.id && route.status === 'approved') &&
         <p className="warning" role="status">Este router tiene rutas aprobadas pero declara forwarding desactivado; no puede reenviar tráfico de la LAN.</p>}
       {report.routes?.map(route => <p key={route.prefix}><code>{route.prefix}</code>: {' '}
-        {route.state === 'installed' ? 'instalada' : route.state === 'conflict' ? 'conflicto' : 'pendiente'}
+        {{ installed: 'instalada', conflict: 'conflicto', pending: 'pendiente', unsupported: 'no soportada' }[route.state]}
         {route.reason && ` · ${route.reason}`}</p>)}
       {!report.routes?.length && <p>Sin rutas informadas</p>}
       <small>Declarado por el agente hace {report.age_secs + elapsed} s; no verificado independientemente.</small>
