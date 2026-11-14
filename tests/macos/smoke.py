@@ -611,6 +611,20 @@ dst = "any"
         phase("parada limpia del agente")
         call(CLI, "down", "--socket", work / "control.sock")
         assert agent.wait(timeout=10) == 0
+        # Parada durante el arranque: el socket ya existe y la v4 (rutas y DNS) aún se está aplicando.
+        phase("SIGTERM durante el arranque")
+        issue(4, True)
+        agent = start()
+        deadline = time.monotonic() + 30
+        while not (work / "control.sock").exists():
+            assert agent.poll() is None and time.monotonic() < deadline
+            time.sleep(0.005)
+        agent.terminate()
+        assert agent.wait(timeout=20) == 0, agent.returncode
+        assert not (work / "control.sock").exists()
+        assert not (work / "status.sock").exists()
+        assert not RESOLVER.exists()
+        assert defaults() == before
         print("macOS: utun, v1/v2, IPv4/IPv6 Noise, rutas, DNS, IPC y limpieza correctos")
     except BaseException:
         # Volcar mientras el agente sigue vivo; trap repetirá el diagnóstico si aquí hay otro fallo.
