@@ -121,6 +121,12 @@ Aceptadas todas con la opción indicada entre paréntesis.
 - Aparece un nuevo límite de confianza: un CLI elevado que crea servicios LocalSystem. Su mitigación es el §7; es lo primero que debe revisar un auditor de esta fase.
 - Las identidades de varias redes conviven en `%ProgramData%\Atenea\networks`: `-Purge` deja de ser inocuo y el §9 lo trata.
 
+## Estado de la implementación
+
+- **Fase 1 (parcial).** Hecho: `Tun::create_with_guid` y el GUID del adaptador igual al UUID de la red (§3); `dns_domain_conflict` en Windows, de solo lectura y previo a `set_dns` (§6); ensayo de dos adaptadores simultáneos con GUID propio en el runner (`crates/tunnel/examples/two_adapters.rs`). Las tuberías por red (§5) no necesitan código nuevo: el agente ya recibe `ipc_socket`/`status_socket` por configuración; las fija la fase 2.
+- **Despachador por nombre (§1): sin cambio de código previsto.** Con un servicio de tipo propio (`SERVICE_WIN32_OWN_PROCESS`, el que usa `ServiceType::OWN_PROCESS`) el SCM ignora el nombre pasado al despachador y al registrar el manejador de control, por lo que la constante `NAME` no impide un servicio `AteneaNetwork-<id8>`. Es una lectura de la documentación de Windows, **no comprobada**: la aceptación de la fase 2 (servicio con ese nombre en el runner) la confirma o la desmiente.
+- **Fases 2 y 3: sin código.** La fase 3 (aplicación, UAC) depende de los comandos `atenea network` de la fase 2 en Windows.
+
 ## Límites de esta evidencia
 
 Todo lo anterior se leyó en el código y la documentación; **no se ha ejecutado nada en Windows** para este ADR. En particular quedan sin comprobar: que Wintun admita varios adaptadores simultáneos con GUID propios, que la API de `windows-service` 0.8 baste, el comportamiento de UAC y de `Start-Process -Verb RunAs`, el arranque automático retrasado tras un reinicio real, ARM64 físico, suspensión/Wi-Fi y la matriz entre sistemas. La CI es solo manual y su smoke de Windows cubre una instancia.

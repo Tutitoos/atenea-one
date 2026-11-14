@@ -135,6 +135,13 @@ jobs:
           $version = (Select-String -Path apps/cli/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version $version -OutDir "$PWD/target/windows-installer"
           packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version 0.0.1 -OutDir "$PWD/target/windows-installer-older"
+      - name: Dos adaptadores Wintun simultáneos con GUID propio (ADR-017)
+        timeout-minutes: 5
+        run: |
+          packaging/windows/get-wintun.ps1 -Destination "$env:RUNNER_TEMP/wintun"
+          $env:ATENEA_WINTUN_DLL = "$env:RUNNER_TEMP/wintun/wintun.dll"
+          cargo run -p atenea-tunnel --example two_adapters
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Aceptación elevada en VM desechable
         timeout-minutes: 12
         run: tests/windows/run.ps1

@@ -82,6 +82,16 @@ fn validate(packet: &[u8]) -> io::Result<()> {
         _ => Err(invalid()),
     }
 }
+fn guid_from_uuid(uuid: [u8; 16]) -> windows_sys::core::GUID {
+    windows_sys::core::GUID {
+        data1: u32::from_be_bytes([uuid[0], uuid[1], uuid[2], uuid[3]]),
+        data2: u16::from_be_bytes([uuid[4], uuid[5]]),
+        data3: u16::from_be_bytes([uuid[6], uuid[7]]),
+        data4: [
+            uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15],
+        ],
+    }
+}
 fn dll_path() -> io::Result<PathBuf> {
     if let Some(path) = std::env::var_os("ATENEA_WINTUN_DLL") {
         let path = PathBuf::from(path);
@@ -109,7 +119,16 @@ fn wide(text: &str) -> io::Result<Vec<u16>> {
     Ok(text.encode_utf16().chain(Some(0)).collect())
 }
 impl Tun {
+    /// Adaptador con GUID aleatorio (el de Wintun).
     pub fn create(name: &str) -> io::Result<Self> {
+        Self::open(name, None)
+    }
+    /// El GUID es el UUID de la red (bytes en el orden del texto canónico): identidad estable entre
+    /// reinicios y sin acumular un perfil de red nuevo por arranque. Es un identificador público.
+    pub fn create_with_guid(name: &str, uuid: [u8; 16]) -> io::Result<Self> {
+        Self::open(name, Some(guid_from_uuid(uuid)))
+    }
+    fn open(name: &str, guid: Option<windows_sys::core::GUID>) -> io::Result<Self> {
         let adapter_name = wide(name)?;
         let tunnel_type = wide("Atenea")?;
         let path = dll_path()?;
@@ -147,7 +166,7 @@ impl Tun {
             let adapter = create(
                 adapter_name.as_ptr(),
                 tunnel_type.as_ptr(),
-                std::ptr::null(),
+                guid.as_ref().map_or(std::ptr::null(), std::ptr::from_ref),
             );
             if adapter.is_null() {
                 let error = io::Error::last_os_error();
@@ -280,6 +299,21 @@ impl Drop for Tun {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+#[cfg(test)]
+mod guid_tests {
+    #[test]
+    fn guid_keeps_the_textual_byte_order_of_the_uuid() {
+        let uuid = [
+            0x6c, 0xfa, 0xcd, 0x61, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x01, 0x23,
+            0x45, 0x67,
+        ];
+        let guid = super::guid_from_uuid(uuid);
+        assert_eq!(guid.data1, 0x6cfa_cd61);
+        assert_eq!(guid.data2, 0x1234);
+        assert_eq!(guid.data3, 0x5678);
+        assert_eq!(guid.data4, [0x9a, 0xbc, 0xde, 0xf0, 0x01, 0x23, 0x45, 0x67]);
     }
 }
 #[cfg(test)]
