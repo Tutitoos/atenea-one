@@ -22,8 +22,8 @@ for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
         /Library/Atenea/bin/atenea-agent cleanup --config "$config"
     fi
     rm -f "$plist"
-    # Nunca recorrer un runtime sustituido ni borrar identidades.
-    if [ -d "$runtime" ] && trusted_path "/private/var/run/atenea/$id8"; then
+    # Nunca recorrer un runtime sustituido ni borrar identidades. Si el agente murió sin limpiar, sus sockets siguen aquí.
+    if trusted_dir /var/run/atenea && trusted_dir "$runtime"; then
         rm -f "$runtime/control.sock" "$runtime/status.sock"
         rmdir "$runtime" 2>/dev/null || :
     fi
