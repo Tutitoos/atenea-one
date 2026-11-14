@@ -11,31 +11,31 @@
       ansible.builtin.assert:
         that:
           - atenea_backup_verified | default(false) | bool
-    - name: Guardar manifiesto y entorno realmente desplegados
-      ansible.builtin.slurp:
-        src: "{{ atenea_stack_dir }}/{{ item }}"
-      loop: [.env, compose.override.yaml]
-      register: atenea_previous_manifest
-      no_log: true
+    - name: Guardar ficheros y permisos realmente desplegados
+      ansible.builtin.include_tasks: roles/atenea_stack/tasks/snapshot.yml
     - name: Desplegar y comprobar salud
       block:
         - name: Aplicar nueva distribución y migraciones
           ansible.builtin.include_role:
             name: atenea_stack
       rescue:
-        - name: Recuperar referencias por digest y entorno anteriores
-          ansible.builtin.copy:
-            content: "{{ item.content | b64decode }}"
-            dest: "{{ atenea_stack_dir }}/{{ item.item }}"
-            mode: '0600'
-          loop: "{{ atenea_previous_manifest.results }}"
-          no_log: true
+        - name: Recuperar distribución, configuración, digests y entorno anteriores
+          ansible.builtin.include_tasks: roles/atenea_stack/tasks/restore.yml
         - name: Arrancar digests anteriores sin deshacer migraciones
+          # Compose relee su entorno y sus *.yaml. Un fichero montado que se restaura tiene inodo nuevo y el
+          # contenedor sigue viendo el antiguo: en ese caso hay que recrear, como hace el rol al aplicar.
           ansible.builtin.command:
-            argv: [docker, compose, --project-directory, "{{ atenea_stack_dir }}", up, -d, --wait, --wait-timeout, "{{ atenea_stack_health_timeout | string }}"]
+            argv: >-
+              {{ ['docker', 'compose', '--project-directory', atenea_stack_dir, 'up', '-d']
+                 + (['--force-recreate'] if atenea_restored.results | selectattr('changed')
+                    | rejectattr('item.item.path', 'match', atenea_stack_dir ~ '/([.]env|[^/]+[.]yaml)$')
+                    | list | length > 0 else [])
+                 + ['--wait', '--wait-timeout', atenea_stack_health_timeout | string] }}
           changed_when: true
         - name: Comprobar salud recuperada de todos los servicios
           ansible.builtin.include_tasks: roles/atenea_stack/tasks/health.yml
         - name: Informar fallo aunque rollback haya terminado
           ansible.builtin.fail:
-            msg: Actualización fallida; rollback al mapa de digests anterior saludable. Revisar el fallo y las migraciones expand/contract.
+            msg: >-
+              Actualización fallida; rollback al mapa de digests anterior saludable, con la distribución y la
+              configuración anteriores. Revisar el fallo y las migraciones expand/contract.

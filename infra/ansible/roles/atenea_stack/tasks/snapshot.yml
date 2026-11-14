@@ -1,0 +1,18 @@
+---
+# Antes de actualizar: lo que el rol sobrescribe (distribución, mapa de imágenes, entorno, configuración y
+# certificados públicos), con contenido, propietario y permisos. Los secretos no: salen del fichero cifrado.
+- name: Localizar ficheros desplegados que la actualización sustituye
+  ansible.builtin.find:
+    paths: "{{ atenea_stack_dir }}"
+    file_type: file
+    hidden: true
+    recurse: true
+  register: atenea_previous_files
+- name: Guardar contenido de los ficheros desplegados
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ atenea_previous_files.files | rejectattr('path', 'match', atenea_stack_dir ~ '/secrets/') }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: atenea_previous_contents
+  no_log: true

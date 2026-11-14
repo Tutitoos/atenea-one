@@ -22,7 +22,9 @@
   ansible.builtin.copy:
     src: "{{ item }}"
     dest: "{{ atenea_stack_dir }}/"
-    mode: preserve
+    # Son ficheros públicos que leen servicios sin privilegios (HAProxy, Caddy): preservar el modo del
+    # controlador los dejaría 0600 si su árbol se creó con umask 077, y la entrada no arrancaría.
+    mode: '0644'
   with_fileglob:
     - "{{ atenea_stack_source }}/*.yaml"
     - "{{ atenea_stack_source }}/*.cfg"
