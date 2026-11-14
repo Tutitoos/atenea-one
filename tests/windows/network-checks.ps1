@@ -33,6 +33,7 @@ function Invoke-Cli {
     if ($code) { throw "atenea $args salió con ${code}: $out" }
     return $out
 }
+function Service-Info { Get-CimInstance Win32_Service -Filter "Name='$svc'" }
 
 try {
     Assert-True (-not (Service-Info)) 'el servicio de prueba ya existe'
