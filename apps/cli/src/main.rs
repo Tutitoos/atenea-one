@@ -8,7 +8,10 @@ mod enroll;
 mod ipc;
 mod issue;
 mod network;
+mod network_common;
 mod network_service;
+#[cfg(any(windows, test))]
+mod network_windows;
 // Mismo código que el agente: el nombre del sistema se lee igual al enrolar y al informar.
 #[path = "../../agent/src/names.rs"]
 mod names;

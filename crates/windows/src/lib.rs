@@ -10,3 +10,6 @@ pub use security::*;
 #[allow(unsafe_code)]
 mod service;
 pub use service::{dispatch_service, service_stop_receiver};
+// La API del SCM de `windows-service` es segura: sin `unsafe` en este módulo.
+mod scm;
+pub use scm::{ServiceStatus, service_status};

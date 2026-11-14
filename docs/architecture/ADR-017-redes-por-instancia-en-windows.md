@@ -125,7 +125,8 @@ Aceptadas todas con la opción indicada entre paréntesis.
 
 - **Fase 1 (parcial).** Hecho: `Tun::create_with_guid` y el GUID del adaptador igual al UUID de la red (§3); `dns_domain_conflict` en Windows, de solo lectura y previo a `set_dns` (§6); ensayo de dos adaptadores simultáneos con GUID propio en el runner (`crates/tunnel/examples/two_adapters.rs`). Las tuberías por red (§5) no necesitan código nuevo: el agente ya recibe `ipc_socket`/`status_socket` por configuración; las fija la fase 2.
 - **Despachador por nombre (§1): sin cambio de código previsto.** Con un servicio de tipo propio (`SERVICE_WIN32_OWN_PROCESS`, el que usa `ServiceType::OWN_PROCESS`) el SCM ignora el nombre pasado al despachador y al registrar el manejador de control, por lo que la constante `NAME` no impide un servicio `AteneaNetwork-<id8>`. Es una lectura de la documentación de Windows, **no comprobada**: la aceptación de la fase 2 (servicio con ese nombre en el runner) la confirma o la desmiente.
-- **Fases 2 y 3: sin código.** La fase 3 (aplicación, UAC) depende de los comandos `atenea network` de la fase 2 en Windows.
+- **Fase 2 (parcial).** Hecho en Windows: `atenea network inspect`, `list` y `legacy` (solo lectura). `list` lee el índice público `%ProgramData%\Atenea\public\<UUID>.json` y pregunta al SCM (`AteneaNetwork-<id8>`) antes de abrir la tubería de estado `\\.\pipe\atenea-<id8>-status`. Los elementos comunes con Unix (metadatos, resolución por prefijo, estado, examen del código) viven en `apps/cli/src/network_common.rs`. Falta: `join`, `up`, `down`, `leave`, el asignador de puerto, la creación de servicios por red con comprobación de confianza del binario, los metadatos públicos escritos por `join`, el instalador/desinstalador y la aceptación de dos redes a la vez.
+- **Fase 3: sin código.** La aplicación (UAC, canal de resultado) depende de los comandos de la fase 2.
 
 ## Límites de esta evidencia
 

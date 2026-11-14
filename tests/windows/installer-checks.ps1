@@ -52,6 +52,22 @@ $failure = & "$env:SystemRoot/System32/sc.exe" qfailure AteneaAgent | Out-String
 Assert-True ($failure -match '5000' -and $failure -match '15000' -and $failure -match '60000') "recuperación SCM: $failure"
 Assert-True ((Get-ItemProperty $key).DisplayVersion -ne $null) 'falta la entrada de desinstalación'
 
+# `atenea network` (ADR-017): sin redes, `list` lo dice; con un índice público, lo lista como detenida (sin servicio);
+# el servicio AteneaAgent instalado cuenta como instalación heredada.
+$cli = Join-Path $bin 'atenea.exe'
+Assert-True ((& $cli network list) -match 'No hay redes unidas') '`network list` sin redes'
+$public = Join-Path $data 'public'
+$netId = '00000000-0000-4000-8000-00001111aaaa'
+New-Item -ItemType Directory -Force -Path $public | Out-Null
+$index = @{ network_id = $netId; name = 'prueba'; server = 'control.example.test'; url = 'https://control.example.test'; root_anchor_fingerprint = 'f'; device_id = 'd'; device_fingerprint = 'p'; interface = 'atn_1111aaaa'; listen_port = 51820; created = 1; join_status = 'aprobada' } | ConvertTo-Json
+# Sin BOM: el lector JSON del CLI no lo admite y Set-Content -Encoding utf8 lo escribe en PowerShell 5.1.
+[IO.File]::WriteAllText((Join-Path $public "$netId.json"), $index, [Text.UTF8Encoding]::new($false))
+$listed = @(& $cli network list --json | ConvertFrom-Json)
+$first = @($listed)[0]
+Assert-True ($first.name -eq 'prueba' -and $first.state -eq 'detenida' -and $first.backend -eq 'scm') "`network list --json`: $($first | ConvertTo-Json -Compress)"
+Remove-Item $public -Recurse -Force
+Assert-True ((& $cli network legacy --json) -match '"present":true') '`network legacy` no vio el servicio AteneaAgent'
+
 # Una versión anterior no sustituye a la instalada.
 $before = (Get-ItemProperty $key).DisplayVersion
 Assert-True ((Install $OlderInstaller) -eq 2) 'debía rechazar el retroceso de versión'
