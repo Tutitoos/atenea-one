@@ -107,9 +107,25 @@ pub fn services(root: Option<PathBuf>, cmd: ServicesCmd) -> Result<(), String> {
 pub fn run(
     _root: Option<PathBuf>,
     _backend: crate::network_service::Backend,
-    _cmd: NetworkCmd,
+    cmd: NetworkCmd,
 ) -> Result<(), String> {
-    Err("`atenea network` no está soportado todavía en Windows".into())
+    #[cfg(windows)]
+    {
+        use crate::network_windows as win;
+        match cmd {
+            NetworkCmd::Inspect { code, json } => {
+                crate::network_common::inspect(&code, json, &mut std::io::stdout().lock())
+            }
+            NetworkCmd::List { json } => win::list(&win::Ctx::new()?, json),
+            NetworkCmd::Legacy { json } => win::legacy(json, &mut std::io::stdout().lock()),
+            _ => Err("esta orden de `atenea network` no está soportada todavía en Windows (ADR-017, fase 2 en curso)".into()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+        Err("`atenea network` no está soportado en esta plataforma".into())
+    }
 }
 
 #[cfg(unix)]
@@ -121,7 +137,7 @@ pub fn run(
     use std::io::IsTerminal;
     let cmd = match cmd {
         NetworkCmd::Inspect { code, json } => {
-            return imp::inspect(&code, json, &mut std::io::stdout().lock());
+            return crate::network_common::inspect(&code, json, &mut std::io::stdout().lock());
         }
         cmd => cmd,
     };
@@ -172,39 +188,22 @@ pub fn run(
 
 #[cfg(unix)]
 mod imp {
+    use crate::network_common::{
+        Meta, State, code_info, confirm, is_uuid_name, now, resolve, server_of, short,
+        state_from_status, uuid, write_code_info,
+    };
     use crate::network_service::{self, Backend, Service};
     use crate::{enroll, issue};
     use atenea_crypto::hex;
     use atenea_identity::anchor_fingerprint;
     use atenea_identity::join_code::JoinCode;
-    use serde::{Deserialize, Serialize};
     use std::io::{BufRead, Write};
     use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    /// Metadatos NO secretos de una red unida (`network.json`). Nunca contienen el token.
-    #[derive(Serialize, Deserialize, Clone, Debug)]
-    pub struct Meta {
-        pub network_id: String,
-        pub name: String,
-        pub server: String,
-        pub url: String,
-        pub root_anchor_fingerprint: String,
-        pub device_id: String,
-        pub device_fingerprint: String,
-        pub interface: String,
-        pub listen_port: u16,
-        /// Segundos Unix.
-        pub created: u64,
-        /// `pendiente_de_aprobacion` o `aprobada` (lo que el CLI supo al unirse).
-        pub join_status: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub service_backend: Option<Service>,
-    }
+    use std::time::Duration;
 
     pub struct Ctx {
         root: PathBuf,
@@ -286,31 +285,6 @@ mod imp {
         std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode))
             .map_err(|e| io_err(path, &e))
     }
-    /// Id corto de una red (últimos 8 hex del UUID): los UUIDv7 comparten el prefijo temporal.
-    fn short(id: &str) -> &str {
-        &id[28..]
-    }
-
-    fn uuid(b: &[u8; 16]) -> String {
-        let h = hex::encode(b);
-        format!(
-            "{}-{}-{}-{}-{}",
-            &h[..8],
-            &h[8..12],
-            &h[12..16],
-            &h[16..20],
-            &h[20..]
-        )
-    }
-
-    fn is_uuid_name(s: &str) -> bool {
-        s.len() == 36
-            && s.bytes().enumerate().all(|(i, b)| match i {
-                8 | 13 | 18 | 23 => b == b'-',
-                _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
-            })
-    }
-
     /// Redes unidas según `network.json`; un directorio ilegible se avisa y se omite.
     pub fn read_metas(ctx: &Ctx) -> Result<Vec<Meta>, String> {
         let entries = match std::fs::read_dir(&ctx.root) {
@@ -384,60 +358,6 @@ mod imp {
         Ok((interface, port))
     }
 
-    /// Id completo, prefijo único (≥ 4 caracteres) o nombre único.
-    pub fn resolve<'a>(metas: &'a [Meta], query: &str) -> Result<&'a Meta, String> {
-        let q = query.trim().to_lowercase();
-        if let Some(m) = metas.iter().find(|m| m.network_id == q) {
-            return Ok(m);
-        }
-        let found: Vec<&Meta> = metas
-            .iter()
-            .filter(|m| {
-                (q.len() >= 4 && (m.network_id.starts_with(&q) || m.network_id.ends_with(&q)))
-                    || m.name.to_lowercase() == q
-            })
-            .collect();
-        match found.as_slice() {
-            [m] => Ok(m),
-            [] => Err(format!(
-                "ninguna red coincide con «{query}» (usa `atenea network list`)"
-            )),
-            many => Err(format!(
-                "«{query}» es ambiguo; candidatas:\n{}",
-                many.iter()
-                    .map(|m| format!("  {} {}", m.network_id, m.name))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )),
-        }
-    }
-
-    fn confirm(
-        prompt: &str,
-        yes: bool,
-        interactive: bool,
-        input: &mut dyn BufRead,
-    ) -> Result<(), String> {
-        if yes {
-            return Ok(());
-        }
-        if !interactive {
-            return Err("hace falta confirmación y no hay terminal interactiva: revisa los datos y repite con --yes".into());
-        }
-        print!("{prompt} [escribe «sí» para continuar]: ");
-        std::io::stdout().flush().map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        input.read_line(&mut line).map_err(|e| e.to_string())?;
-        if matches!(
-            line.trim().to_lowercase().as_str(),
-            "sí" | "si" | "s" | "yes" | "y"
-        ) {
-            Ok(())
-        } else {
-            Err("cancelado: no se ha cambiado nada".into())
-        }
-    }
-
     pub struct JoinOpts {
         pub code: String,
         pub name: Option<String>,
@@ -454,12 +374,6 @@ mod imp {
     struct ConnectivityPlan {
         coordinator: enroll::Coordinator,
         relay_ca_pem: Option<String>,
-    }
-
-    fn now() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
     }
 
     /// Crea claves, `agent.toml`, registra el dispositivo y escribe `network.json`.
@@ -551,84 +465,6 @@ mod imp {
         };
         write_meta(ctx, &meta).map_err(accepted)?;
         Ok(meta)
-    }
-
-    fn server_of(url: &str) -> String {
-        url.strip_prefix("https://")
-            .unwrap_or(url)
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .into()
-    }
-
-    #[derive(Serialize)]
-    struct ConnectivityInfo {
-        stun_host: String,
-        relay_ca_sha256: Option<String>,
-    }
-
-    #[derive(Serialize)]
-    struct CodeInfo<'a> {
-        name: &'a str,
-        server: String,
-        network_id: String,
-        root_fingerprint: String,
-        has_token: bool,
-        /// Lo que el código anuncia para llegar al STUN y al relay (ADR-018); `null` si no lleva bloque.
-        connectivity: Option<ConnectivityInfo>,
-    }
-
-    fn code_info(code: &JoinCode) -> CodeInfo<'_> {
-        CodeInfo {
-            name: &code.name,
-            server: server_of(&code.url),
-            network_id: uuid(&code.network_id),
-            root_fingerprint: anchor_fingerprint(&code.root_anchor),
-            has_token: code.token.is_some(),
-            connectivity: code.connectivity.as_ref().map(|c| ConnectivityInfo {
-                stun_host: c.stun_host.clone(),
-                relay_ca_sha256: c.relay_ca_sha256.as_ref().map(|h| hex::encode(h)),
-            }),
-        }
-    }
-
-    fn write_code_info(info: &CodeInfo<'_>, output: &mut dyn Write) -> Result<(), String> {
-        writeln!(
-            output,
-            "Red:            {}\nServidor:       {}\nId de la red:   {}\nHuella de la raíz: {}",
-            info.name, info.server, info.network_id, info.root_fingerprint
-        )
-        .map_err(|e| e.to_string())?;
-        if let Some(c) = &info.connectivity {
-            let ca = match &c.relay_ca_sha256 {
-                Some(h) => format!("SHA-256 {}…", &h[..16]),
-                None => "pública (el código no lleva hash)".into(),
-            };
-            writeln!(
-                output,
-                "Conectividad:   STUN {} (puertos 3478 y 3479); CA del relay: {ca}",
-                c.stun_host
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
-    pub fn inspect(text: &str, json: bool, output: &mut dyn Write) -> Result<(), String> {
-        let code = JoinCode::decode(text).map_err(|e| format!("código no válido: {e}"))?;
-        let info = code_info(&code);
-        if json {
-            writeln!(
-                output,
-                "{}",
-                serde_json::to_string(&info).map_err(|e| e.to_string())?
-            )
-            .map_err(|e| e.to_string())
-        } else {
-            write_code_info(&info, output)?;
-            writeln!(output, "Lleva token:    {}", info.has_token).map_err(|e| e.to_string())
-        }
     }
 
     fn write_meta(ctx: &Ctx, meta: &Meta) -> Result<(), String> {
@@ -825,14 +661,6 @@ mod imp {
         }
     }
 
-    enum State {
-        Stopped,
-        NoConfig,
-        Connected,
-        Conflict(String),
-        Unknown(String),
-    }
-
     /// En Linux el directorio de runtime de cada red es 0750 root:atenea y el agente, con solo CAP_NET_ADMIN, no puede
     /// dar el socket de estado a otro grupo (`status_gid` se ignora con un aviso): leerlo sin root exige estar en `atenea`.
     /// En macOS el grupo lo fija el lanzador con `status_gid`, así que solo queda sudo.
@@ -865,49 +693,9 @@ mod imp {
             return state;
         }
         match crate::ask(&sock, "status") {
-            Ok(text) => {
-                let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-                let cfg = &v["config"];
-                if matches!(
-                    cfg["last_error"].as_str(),
-                    Some("network_overlap" | "dns_domain_conflict")
-                ) {
-                    State::Conflict(format!(
-                        "{}: {}",
-                        cfg["last_error"].as_str().unwrap_or("conflicto"),
-                        cfg["last_error_detail"]
-                            .as_str()
-                            .unwrap_or("solapa con otra red o ruta local")
-                    ))
-                } else if cfg["version"].as_u64().unwrap_or(0) > 0 {
-                    State::Connected
-                } else {
-                    State::NoConfig
-                }
-            }
+            Ok(text) => state_from_status(&text),
             Err(e) if e.contains("Permission denied") => no_permission(),
             Err(_) => State::Stopped,
-        }
-    }
-
-    impl State {
-        fn code(&self) -> &'static str {
-            match self {
-                Self::Stopped => "detenida",
-                Self::NoConfig => "iniciada_sin_configuracion",
-                Self::Connected => "conectada",
-                Self::Conflict(_) => "conflicto",
-                Self::Unknown(_) => "desconocida",
-            }
-        }
-        fn text(&self) -> String {
-            match self {
-                Self::Stopped => "detenida".into(),
-                Self::NoConfig => "iniciada, sin configuración".into(),
-                Self::Connected => "conectada".into(),
-                Self::Conflict(d) => format!("conflicto: {d}"),
-                Self::Unknown(d) => format!("desconocida ({d})"),
-            }
         }
     }
 
@@ -1741,8 +1529,10 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::network_common::inspect;
         use std::io::{Cursor, Read};
         use std::net::TcpListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
         const SERVER_ANCHOR: [u8; 32] = [9; 32];
 

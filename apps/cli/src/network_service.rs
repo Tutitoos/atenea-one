@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Servicios por red. No se reutiliza ni se modifica la instancia heredada.
 use clap::ValueEnum;
-#[cfg(unix)]
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -375,3 +374,13 @@ mod unix {
 
 #[cfg(unix)]
 pub use unix::*;
+
+/// En Windows cada red es un servicio del SCM (`AteneaNetwork-<id8>`, ADR-017 §1): no hay otro gestor.
+/// Aún no se construye: lo hacen `up`/`down` (siguiente entrega).
+#[cfg(windows)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Service {
+    Scm,
+}
