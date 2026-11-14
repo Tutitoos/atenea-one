@@ -47,17 +47,17 @@ existe. La base de infraestructura no incluye systemd-resolved; no se descarga.
 Este modo no sustituye el ensayo completo de DNS/TUN de `tests/packaging/run.sh`
 sin argumentos, ni afirma haberlo repetido.
 
-**No se fabrican `.pkg` ni ZIP de Windows en local.** Esos instaladores se
+**No se fabrican `.pkg` ni el instalador de Windows en local.** Esos instaladores se
 construyen en sus runners. El `.pkg` contiene
-`/usr/local/share/atenea/BUILD-INFO.json`; el ZIP contiene `BUILD-INFO.json`.
+`/usr/local/share/atenea/BUILD-INFO.json`; el `.exe` de Windows lleva `BUILD-INFO.json` en `%ProgramFiles%\Atenea`.
 Los runners comprueban `--version` antes de empaquetar y adjuntan binarios,
 metadatos y SBOM de cada plataforma. Es posible aportar esos ficheros a `dist/`
 antes de generar el manifiesto. No copiar paquetes de otro commit ni añadir
 ficheros después de firmar.
 
 **Nombres de los artefactos publicados:** `atenea-<componente>-<versión>-<os>-<arq>.<ext>` con `os` en `linux`, `macos`
-o `windows` y `arq` en `amd64` o `arm64` (`atenea-cli-<v>-linux-<arq>.deb`, `atenea-cli-<v>-macos-<arq>.pkg`,
-`atenea-cli-<v>-windows-<arq>.exe`, `atenea-agent-<v>-windows-<arq>.exe`). `atenea.deb` se mantiene como alias del
+o `windows` y `arq` en `amd64` o `arm64` (`atenea-cli-<v>-linux-<arq>.deb`, `atenea-one-<v>-macos-<arq>.pkg`,
+`atenea-one-<v>-windows-amd64.exe`: instalador único de Windows con cliente, agente y Wintun, ADR-023). `atenea.deb` se mantiene como alias del
 `.deb` del CLI para no romper descargas existentes; entra en el manifiesto y en la atestación como cualquier otro fichero.
 
 **Paquetes de escritorio** (`packaging/desktop/`, ver [instalacion-escritorio.md](instalacion-escritorio.md)): el job

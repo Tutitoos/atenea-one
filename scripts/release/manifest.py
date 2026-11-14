@@ -11,7 +11,6 @@ import os
 import re
 import subprocess
 import tarfile
-import zipfile
 from pathlib import Path
 from sbom import validate
 
@@ -79,9 +78,6 @@ def check(dist, manifest, commit, version, published=False):
     assert json.loads((dist / 'images.json').read_text()) == [{**i, 'registry_digest': None} for i in manifest['images']]
     for entry in manifest['artifacts']:
         path = dist / entry['name']
-        if path.suffix == '.zip':
-            with zipfile.ZipFile(path) as archive:
-                identity(json.loads(archive.read('BUILD-INFO.json').decode('utf-8-sig')), version, commit)
         if path.suffix == '.deb':
             with path.open('rb') as archive:
                 assert archive.read(8) == b'!<arch>\n'
@@ -143,7 +139,7 @@ def create(dist, key, version, commit, registry_digests=None):
             entry['sboms'] = ['rust-macOS.cdx.json', 'go-desktop-macOS.cdx.json']
         elif name.endswith(('.pkg', '-macOS')):
             entry['sboms'] = ['rust-macOS.cdx.json']
-        elif name.endswith(('.zip', '.exe')):
+        elif name.endswith('.exe'):
             entry['sboms'] = ['rust-Windows.cdx.json']
         elif name.endswith(('-linux', '.deb')):
             entry['sboms'] = ['rust.cdx.json']

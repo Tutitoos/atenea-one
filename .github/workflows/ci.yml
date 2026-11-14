@@ -126,8 +126,15 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Compilar cliente y par real de pruebas
         run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
-      - name: Construir ZIP sin firmar y sin DLL
-        run: packaging/windows/build-zip.ps1 -BinDir "$PWD/target/debug"
+      - name: Instalar NSIS a versión fija
+        run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Construir el instalador único y uno de versión anterior (prueba de retroceso)
+        env:
+          ATENEA_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          $version = (Select-String -Path apps/cli/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version $version -OutDir "$PWD/target/windows-installer"
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version 0.0.1 -OutDir "$PWD/target/windows-installer-older"
       - name: Aceptación elevada en VM desechable
         timeout-minutes: 12
         run: tests/windows/run.ps1
