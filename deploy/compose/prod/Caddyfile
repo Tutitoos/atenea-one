@@ -3,6 +3,12 @@
   auto_https disable_redirects
   # La dirección de HAProxy pertenece a una red interna dedicada.
   servers {
+    # Caddy no pone plazo a la lectura de las cabeceras: una conexión que las envía byte a byte ocupa para siempre
+    # una de las 2048 de HAProxy (HAProxy solo corta las inactivas, a los 90 s). El control plane y el coordinator
+    # solo reciben peticiones ya completas a través de Caddy.
+    timeouts {
+      read_header 10s
+    }
     listener_wrappers {
       proxy_protocol {
         timeout 5s
