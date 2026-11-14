@@ -139,20 +139,20 @@ Python=Rust para vectores wire1–5 y transporte bidireccional.
 El generador relay confirma aquí Python=tabla; este paso no vuelve a ejecutar
 la prueba Rust relay de la tabla anterior. No sustituye revisión criptográfica externa.
 
-## 5. Fuzzing (14 objetivos)
+## 5. Fuzzing (17 objetivos)
 
 Fuente: [`fuzz/README.md`](../../fuzz/README.md), [`fuzz/run.sh`](../../fuzz/run.sh), [`fuzz/Dockerfile`](../../fuzz/Dockerfile).
 
 ```sh
-fuzz/run.sh                  # 14 objetivos, 60 s cada uno
+fuzz/run.sh                  # 17 objetivos, 60 s cada uno
 fuzz/run.sh 300              # 300 s cada uno
 fuzz/run.sh 60 hex_decode    # un objetivo
 ```
 
-Objetivos en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets) (14 ficheros, **VERIFICADO — lectura**): `agent_engine`, `cert_bundle_state_parse`, `config_v2_parse`, `datagram_parse`, `device_config_parse`, `handshake_init`, `hex_decode`, `ip_classify`, **`join_code_parse`**, `relay_parse`, `replay_window`, `session_decrypt`, `signed_config_verify`, `stun_parse`. `join_code_parse` cubre decodificación del código de unión en identity; es nuevo desde a0f8ac7. El README conserva antecedentes de campañas de 13 objetivos, no resultados del inventario actual.
+Objetivos en [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets) (17 ficheros, **VERIFICADO — lectura**): `agent_engine`, `cert_bundle_state_parse`, `config_v2_parse`, `datagram_parse`, `device_config_parse`, `handshake_init`, `hex_decode`, `ip_classify`, **`join_code_parse`**, `relay_parse`, `replay_window`, `session_decrypt`, `signed_config_verify`, `stun_parse`, **`authorization_parse`**, **`proxy_v2_parse`**, **`relay_state`**. Los tres últimos son posteriores a la auditoría de 2026-11-13 (cabecera `Authorization`, PROXY v2 y máquina de estados del relay). `join_code_parse` cubre decodificación del código de unión en identity; es nuevo desde a0f8ac7. El README conserva antecedentes de campañas de 13 objetivos, no resultados del inventario actual.
 
 - Requiere Docker; nightly + `cargo-fuzz` dentro de la imagen `atenea-fuzz`. `run.sh` construye la imagen (el `Dockerfile` hace `FROM rust:1.99-bookworm` y `cargo install cargo-fuzz`: **ese paso necesita red**, INFERIDO) y ejecuta los objetivos con `--network none` y `CARGO_NET_OFFLINE=true`, dependiendo de los volúmenes `atenea-fuzz-target` y `atenea-fuzz-cargo`. El repositorio no documenta cómo se llena `atenea-fuzz-cargo`; sin esa caché el arranque offline falla (INFERIDO de «falla en vez de descargar»).
-- Salida ≠ 0 si falla un objetivo o regresión versionada. Semillas en `fuzz/seeds/`; `fuzz/regressions/` contiene su README, no reproductores versionados. Ejecución de los 14 objetivos actuales: **SIN COMPROBAR**.
+- Salida ≠ 0 si falla un objetivo o regresión versionada. Semillas en `fuzz/seeds/`; `fuzz/regressions/` contiene su README, no reproductores versionados. Ejecución de los 14 objetivos anteriores: **SIN COMPROBAR**; los tres nuevos tuvieron una pasada corta el 2026-11-14 sin fallos (`fuzz/README.md`).
 - Reproducir un fallo: comando del README (`cargo +nightly fuzz run <objetivo> regressions/<objetivo>/<fichero>`).
 - Estado: la última ejecución completa informada (90 s × 13, Docker Mac arm64, 0 fallos) es **histórica y anterior al cutover wire-v2/relay-v2**; el propio README dice que no verifica los objetivos/semillas v2 y que no se ejecutó fuzzing en esa integración. Para v2: **SIN COMPROBAR**. No hay campaña de horas/días con corpus persistente (corpus no versionado).
 

@@ -32,6 +32,9 @@ en `fuzz/regressions/<objetivo>/` (procedimiento en `fuzz/regressions/README.md`
 | `relay_parse` | Relay (`parse`, `RelayToken::parse`, `FrameDecoder`): sin pánico; un token aceptado se recodifica idéntico y el decodificador no acumula de más |
 | `agent_engine` | Máquina de estados wire-v2 (ADR-003): dos motores reales de `apps/agent/src/engine.rs` sobre red simulada, pérdida/duplicado/reordenación/corrupción, relojes, INIT con MAC1 válido/inválido, desafío bajo carga, COOKIE_REPLY válido/corrupto e identidad de ruta relay UDP/TLS. La TUN solo recibe una vez lo enviado por el par; sin lease no entrega ni emite datos; todo lo emitido es un datagrama válido y MAC1 inválido no genera respuesta |
 | `join_code_parse` | `JoinCode::decode` (join-code-v1) con texto UTF-8 arbitrario: sin pánico; lo aceptado respeta el máximo de 512 caracteres, se re-codifica y vuelve a decodificar al mismo valor |
+| `authorization_parse` | `parse_authorization` (cabecera `Authorization: AtDevice v1 …`, control-plane-v1 §3.3) con texto UTF-8 arbitrario: sin pánico; lo aceptado tiene una única representación canónica (salvo mayúsculas del hex) y se parsea al mismo valor |
+| `proxy_v2_parse` | Cabecera PROXY v2 del relay: la función real (`apps/relay/src/tcp.rs::proxy`) leyendo de un `&[u8]`. Sin pánico; solo se acepta desde loopback, con comando PROXY y TCP4 (12 bytes) o TCP6 (36), sin TLV, LOCAL ni UNSPEC; la IP es la del cuerpo y se consumen exactamente 16 + longitud bytes; un origen no loopback no lee nada |
+| `relay_state` | Máquina de estados del relay (`State::process`, `remove`, `sweep`) con secuencias de operaciones firmadas por el arnés: sin pánico; todo lo emitido es un mensaje válido; sin amplificación hacia un origen UDP; sin salida hacia terceros desde un origen sin asignación; DATA solo a la pareja de la misma red; PEER_STATE a la asignación correcta; topes total, por red y por origen |
 
 ## Notas de los objetivos estructurados
 
@@ -49,6 +52,9 @@ en `fuzz/regressions/<objetivo>/` (procedimiento en `fuzz/regressions/README.md`
   son envoltorios con MAC1 válido, no handshakes Noise autenticados; los intentos reales proceden de TUN.
   Los COOKIE_REPLY se cifran en ejecución con el índice/MAC1 del INIT pendiente, sin fijar claves secretas
   de producción ni depender de un índice aleatorio concreto.
+- `authorization_parse`: las semillas (`fuzz/seeds/authorization_parse/`) son sintéticas (claves y firmas inventadas): una cabecera válida, el hex en mayúsculas, `ts=0`, `ts` con cero a la izquierda y un campo extra. Sin ellas el objetivo no alcanza un parseo correcto: la longitud exacta de los campos hex es difícil de adivinar a ciegas.
+- `proxy_v2_parse`: el primer byte decide si el origen es loopback (bit 0 = 0) y el resto es el flujo. Semillas sintéticas: TCP4 y TCP6 desde loopback, TCP4 desde un origen no loopback, LOCAL, TLV y cabecera truncada. Para probarlo se hizo `proxy` genérica sobre el lector (`AsyncRead`) y se reexportó oculta (`#[doc(hidden)]`) junto con `State`; el relay en ejecución no cambia.
+- `relay_state`: el arnés tiene claves fijas y públicas (coordinator y dispositivos): **solo** para fuzzing. Las banderas de la operación ALLOC alteran relay, token (caducado, vida excesiva, bytes), cookie, `ts` y firma de la prueba de posesión. Es lento (firma Ed25519 por ALLOC): unas 370 ejecuciones/s. Control negativo hecho: con una mutación del relay que envía PEER_STATE al origen en vez de a la pareja, otra con el tope por origen desplazado en uno y otra con el origen loopback sin comprobar en PROXY, el fuzzing las detecta en segundos; sin ellas, 0 fallos.
 - `join_code_parse`: las semillas (`fuzz/seeds/join_code_parse/`) son sintéticas: los dos vectores fijos de
   `docs/protocol/join-code-v1.md` §5 (con y sin token), variantes válidas normalizadas (minúsculas, sin guiones)
   y entradas inválidas (truncadas, un carácter alterado, prefijo incorrecto, más de 512 caracteres, solo
@@ -74,3 +80,7 @@ las semillas v2 modificados. Esta integración no ejecutó compilación, fuzzing
 docker run --rm -v "$PWD":/work -v atenea-fuzz-target:/work/fuzz/target atenea-fuzz \
   cargo +nightly fuzz run <objetivo> regressions/<objetivo>/<fichero>
 ```
+
+## Objetivos añadidos tras la auditoría de 2026-11-13
+
+`authorization_parse`, `proxy_v2_parse` y `relay_state` (2026-11-14, `fuzz/run.sh` con las semillas): 90 s, 90 s y 400 s sin fallos (16,3 M, 18,8 M y 0,15 M ejecuciones). Es una pasada corta, no una campaña; la anterior sigue siendo histórica.

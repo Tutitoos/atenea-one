@@ -19,6 +19,8 @@ atenea-identity = { path = "../crates/identity" }
 atenea-policies = { path = "../crates/policies" }
 atenea-nat-traversal = { path = "../crates/nat-traversal" }
 atenea-relay-core = { path = "../crates/relay-core" }
+# La máquina de estados y el parser PROXY v2 reales del relay (`relay_state`, `proxy_v2_parse`).
+atenea-relay = { path = "../apps/relay" }
 # Solo para firmar con claves fijas de fuzz (signed_config_verify) y compilar el motor del agente.
 ed25519-dalek = "3.0.0"
 serde = { version = "1", features = ["derive"] }
@@ -117,6 +119,27 @@ bench = false
 [[bin]]
 name = "join_code_parse"
 path = "fuzz_targets/join_code_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authorization_parse"
+path = "fuzz_targets/authorization_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proxy_v2_parse"
+path = "fuzz_targets/proxy_v2_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relay_state"
+path = "fuzz_targets/relay_state.rs"
 test = false
 doc = false
 bench = false

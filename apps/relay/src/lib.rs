@@ -6,10 +6,15 @@ pub mod limits;
 mod state;
 mod tcp;
 
+// Solo para los objetivos de fuzzing (`fuzz/fuzz_targets/{proxy_v2_parse,relay_state}.rs`): no es API del relay.
+#[doc(hidden)]
+pub use state::{Output, State};
+#[doc(hidden)]
+pub use tcp::proxy as proxy_v2;
+
 use alloc::Binding;
 use config::Config;
 use rand::RngCore;
-use state::{Output, State};
 use std::{
     collections::HashMap,
     io,
