@@ -44,7 +44,11 @@ pub fn tls_config(c: &Config) -> io::Result<TlsAcceptor> {
     config.max_early_data_size = 0;
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
-async fn proxy(stream: &mut TcpStream, source: SocketAddr) -> io::Result<IpAddr> {
+/// Lee la cabecera PROXY v2 de `stream` y devuelve la IP de origen. Genérico sobre el lector para poder fuzzearlo con un `&[u8]`.
+pub async fn proxy<R: tokio::io::AsyncRead + Unpin>(
+    stream: &mut R,
+    source: SocketAddr,
+) -> io::Result<IpAddr> {
     if !source.ip().is_loopback() {
         return Err(io::Error::other("PROXY no loopback"));
     }
