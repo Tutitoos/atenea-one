@@ -377,6 +377,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         }
     };
     let store = state::Store::new(cfg.state_dir.clone(), state, unix_now());
+    // Antes de crear TUN, sockets o DNS: una parada que llegue durante el arranque (la primera aplicación de la
+    // configuración puede tardar más de un segundo) debe esperar al bucle y limpiar, no matar el proceso a medias.
+    let mut lifecycle = Lifecycle::new().map_err(|e| e.to_string())?;
     let tun = TunDevice::open(&cfg.interface).map_err(|e| format!("TUN {}: {e}", cfg.interface))?;
     let udp = UdpSocket::bind(cfg.listen)
         .await
@@ -647,7 +650,6 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     tracing::info!(interface = %rt.tun.name(), listen = %rt.cfg.listen, "agente en marcha; sin tráfico hasta cargar una configuración vigente");
     rt.poll_config(unix_now());
 
-    let mut lifecycle = Lifecycle::new().map_err(|e| e.to_string())?;
     // Paso fino (250 ms) para el sondeo con jitter; lo caro (configuración, estado) cada segundo.
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     let mut stun_refresh = tokio::time::interval(Duration::from_secs(30));
