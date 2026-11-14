@@ -18,6 +18,8 @@ $key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AteneaOne'
 function Invoke-Setup([string]$Path, [string[]]$Arguments) {
     # `_?=` hace que el desinstalador espere en lugar de copiarse a %TEMP% y volver al instante.
     $p = Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru
+    $log = Join-Path $env:TEMP 'atenea-one-installer.log'
+    if ($p.ExitCode -ne 0 -and (Test-Path $log)) { Write-Host "Salida $($p.ExitCode) de $Path; registro:"; Write-Host ((Get-Content $log) -join "`n"); Remove-Item $log }
     return $p.ExitCode
 }
 function Assert-True($Condition, [string]$Message) { if (-not $Condition) { throw "FALLO: $Message" } }

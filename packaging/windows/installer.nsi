@@ -43,6 +43,12 @@ Var Existing
 ; Muestra el motivo (nada en modo silencioso, pero sí código de salida 2) y detiene la instalación.
 !macro Fail text
     MessageBox MB_OK|MB_ICONSTOP "${text}" /SD IDOK
+    ; En silencio no hay ventana: el motivo queda en %TEMP% (de quien lanzó el instalador) para quien lo automatiza.
+    ${If} ${Silent}
+        FileOpen $9 "$TEMP\atenea-one-installer.log" a
+        FileWrite $9 "${text}$\r$\n"
+        FileClose $9
+    ${EndIf}
     SetErrorLevel 2
     Abort
 !macroend
