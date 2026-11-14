@@ -24,7 +24,7 @@ function Invoke-Sc([string]$Arguments) {
     $info.UseShellExecute = $false
     $process = [Diagnostics.Process]::Start($info)
     try {
-        if (-not $process.WaitForExit(15000)) { $process.Kill(); throw "sc $Arguments: plazo agotado" }
+        if (-not $process.WaitForExit(15000)) { $process.Kill(); throw "sc ${Arguments}: plazo agotado" }
         if ($process.ExitCode -ne 0) { throw "sc $Arguments falló ($($process.ExitCode))" }
     } finally { $process.Dispose() }
 }
