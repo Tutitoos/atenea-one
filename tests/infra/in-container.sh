@@ -153,7 +153,10 @@ python3 /src/tests/infra/check.py principal
 echo 'PASS upgrade feliz y upgrade fallido con rollback a mapa, distribución, configuración y permisos anteriores'
 if [ -f /tmp/infra-next-images ]; then
   # Ensayo entre dos revisiones reales (N = imágenes con que convergió el nodo; N+1 = /tmp/infra-next-images).
-  # 1) baseline N, 2) testigos, 3) upgrade que falla DESPUÉS de migrar 0008 y rescue a N, 4) reintento correcto.
+  # 1) baseline N, 2) testigos, 3) upgrade que falla DESPUÉS de migrar y rescue a N, 4) reintento correcto.
+  # Por defecto 0.1.5 → 0.1.6 (migración 0008). Para otro par: INFRA_N_MIGRATIONS, INFRA_N_ROLES e
+  # INFRA_NEXT_MIGRATIONS; p. ej. 0.1.25 → 0.1.26 (migración 0011): 1,…,10, 2 y 1,…,11.
+  next_migrations=${INFRA_NEXT_MIGRATIONS:-1,2,3,4,5,6,7,8}
   next_image() { while read -r service digest; do [[ $service != "$1" ]] || { echo "$digest"; return; }; done < /tmp/infra-next-images; return 1; }
   stack() { docker compose --project-directory /opt/atenea "$@"; }
   running() { docker inspect -f '{{.Image}}' "$(stack ps -q "$1")"; }
@@ -177,7 +180,6 @@ PY
   }
   ansible-playbook -i /lab/inventory.yml site.yml
   for s in control-plane coordinator relay; do expect "N: $s con la imagen de la revisión anterior" "$(running "$s")" "$(image "$s")"; done
-  # Por defecto N es 0.1.5 (migraciones 1–7, sin columnas role); para N = 0.1.6 → INFRA_N_MIGRATIONS=1,…,8 e INFRA_N_ROLES=2.
   expect "N: historial de migraciones ${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}" "$(versions)" "${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}"
   expect "N: columnas role (${INFRA_N_ROLES:-0})" "$(roles)" "${INFRA_N_ROLES:-0}"
   if [ -n "${INFRA_N_COMMIT:-}" ]; then
@@ -205,25 +207,25 @@ PY
   echo 'PASS rescue restauró mapa de digests y entorno byte a byte'
   python3 /src/tests/infra/check.py principal
   for s in control-plane coordinator relay; do expect "rescue: $s vuelve a la imagen de la revisión anterior" "$(running "$s")" "$(image "$s")"; done
-  expect 'rescue: 0008 sigue aplicada (el rescue no deshace migraciones)' "$(versions)" '1,2,3,4,5,6,7,8'
+  expect "rescue: historial $next_migrations (el rescue no deshace migraciones)" "$(versions)" "$next_migrations"
   expect 'rescue: columnas role presentes bajo el binario anterior' "$(roles)" 2
   expect 'rescue: datos sembrados intactos' "$(fingerprint)" "$witness"
   if [ -n "${INFRA_N_COMMIT:-}" ]; then
     expect 'rescue: control-plane en ejecución es el de la revisión anterior' "$(commit_of control-plane | sed 's/.*(\(.*\))/\1/')" "$INFRA_N_COMMIT"
   fi
-  # Reintento correcto con 0008 ya aplicada (la migración debe ser idempotente).
+  # Reintento correcto con la migración ya aplicada (debe ser idempotente).
   inventory /lab/rehearsal-next.yml "$(next_image control-plane)" "$(next_image coordinator)" "$(next_image relay)"
   ansible-playbook -i /lab/rehearsal-next.yml upgrade.yml
   python3 /src/tests/infra/check.py principal
   for s in control-plane coordinator relay; do expect "N+1: $s con la imagen nueva" "$(running "$s")" "$(next_image "$s")"; done
-  expect 'N+1: historial 1–8' "$(versions)" '1,2,3,4,5,6,7,8'
+  expect "N+1: historial $next_migrations" "$(versions)" "$next_migrations"
   expect 'N+1: datos sembrados intactos' "$(fingerprint)" "$witness"
   if [ -n "${INFRA_NEXT_COMMIT:-}" ]; then
     for s in control-plane coordinator relay; do expect "N+1: $s informa el commit nuevo" "$(commit_of "$s" | sed 's/.*(\(.*\))/\1/')" "$INFRA_NEXT_COMMIT"; done
   fi
   curl --fail --silent --show-error --noproxy '*' --cacert /lab/caddy-root.crt --resolve panel.stack.test:443:127.0.0.1 https://panel.stack.test/ >/dev/null
   echo 'PASS N+1: panel HTTPS tras el upgrade'
-  echo 'PASS ensayo N -> fallo tras migrar 0008 -> rescue a N -> N+1 con coordinator y relay reales'
+  echo 'PASS ensayo N -> fallo tras migrar -> rescue a N -> N+1 con coordinator y relay reales'
 fi
 # ADR-018: overlays opcionales con Ansible y Compose reales, en dos etapas independientes.
 #  1) union-codigo.yaml: solo la conectividad del código (STUN y CA pública). No abre ningún listener interno.

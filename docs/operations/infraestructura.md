@@ -284,15 +284,20 @@ upgrade/rollback anterior. Sin esas variables el comportamiento no cambia.
    `INFRA_NEXT_CONTROL_PLANE_IMAGE`, `INFRA_NEXT_COORDINATOR_IMAGE` e
    `INFRA_NEXT_RELAY_IMAGE`, N+1; `INFRA_N_COMMIT` e `INFRA_NEXT_COMMIT` activan la
    comprobación del commit que informa cada binario en ejecución.
+3. `INFRA_N_MIGRATIONS`, `INFRA_N_ROLES` e `INFRA_NEXT_MIGRATIONS` describen el par: el
+   historial de migraciones y el número de columnas `role` de N, y el historial tras
+   migrar a N+1. Por defecto son los de 0.1.5 → 0.1.6 (`1,…,7`, `0` y `1,…,8`); para
+   0.1.25 → 0.1.26, `1,…,10`, `2` y `1,…,11`. Con el mismo historial en ambos, el fallo
+   forzado no ocurre después de una migración.
 
 La fase reconverge con N, siembra dos usuarios sintéticos, ejecuta `upgrade.yml` con
 control-plane N+1 y un coordinator que no puede llegar a `healthy` (**el fallo ocurre
 después de aplicar la migración**) y comprueba: mensaje de rescue, mapa de digests y
 `.env` restaurados byte a byte, los tres servicios otra vez en la imagen N, historial
-`1..8` (el rescue no deshace migraciones), columnas `role` presentes bajo el binario
+de N+1 (el rescue no deshace migraciones), columnas `role` presentes bajo el binario
 N, datos sembrados intactos y salud completa. Después repite `upgrade.yml` con
 N+1 en los tres servicios (migración ya aplicada), con identidad de imagen, commit,
-historial `1..8`, datos y panel HTTPS.
+el mismo historial, datos y panel HTTPS.
 
 El contenedor exterior y sus volúmenes anónimos se eliminan al salir; todos
 los contenedores/redes/volúmenes del Docker anidado desaparecen con él. No se

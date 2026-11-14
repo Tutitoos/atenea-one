@@ -76,4 +76,5 @@ if ((${#next[@]})); then
 fi
 docker exec -e INFRA_N_COMMIT="${INFRA_N_COMMIT:-}" -e INFRA_NEXT_COMMIT="${INFRA_NEXT_COMMIT:-}" \
     -e INFRA_N_MIGRATIONS="${INFRA_N_MIGRATIONS:-1,2,3,4,5,6,7}" -e INFRA_N_ROLES="${INFRA_N_ROLES:-0}" \
+    -e INFRA_NEXT_MIGRATIONS="${INFRA_NEXT_MIGRATIONS:-1,2,3,4,5,6,7,8}" \
     "$name" bash /src/tests/infra/in-container.sh
