@@ -76,12 +76,12 @@ class DesktopManifest(unittest.TestCase):
         return json.loads((self.dist / 'release-manifest.json').read_text())
 
     def published(self):
-        """Lo que lleva el release de GitHub: solo los instaladores, SHA256SUMS, el manifiesto y su firma."""
+        """Lo que lleva el release de GitHub: solo los instaladores, SHA256SUMS y su firma, el manifiesto y su firma."""
         self.create()
         out = Path(self.tmp.name) / 'published'
         out.mkdir()
         for path in self.dist.iterdir():
-            if path.suffix in ('.deb', '.rpm', '.dmg', '.exe') or path.name in ('SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'):
+            if path.suffix in ('.deb', '.rpm', '.dmg', '.exe') or path.name in ('SHA256SUMS', 'SHA256SUMS.sig', 'release-manifest.json', 'release-manifest.json.sig'):
                 shutil.copy(path, out / path.name)
         return out
 
@@ -142,6 +142,39 @@ class DesktopManifest(unittest.TestCase):
     def test_the_full_verification_still_rejects_the_published_subset(self):
         self.assertNotEqual(self.verify(self.published()).returncode, 0)
 
+    def test_sha256sums_carries_its_own_signature_that_openssl_checks_without_the_manifest(self):
+        self.create()
+        manifest.verify_signature(str(self.pub), self.dist / 'SHA256SUMS')
+        # Es la firma de ese fichero, no la del manifiesto copiada.
+        self.assertNotEqual((self.dist / 'SHA256SUMS.sig').read_bytes(), (self.dist / 'release-manifest.json.sig').read_bytes())
+        sums = self.dist / 'SHA256SUMS'
+        sums.write_text(sums.read_text() + '\n')
+        with self.assertRaises(subprocess.CalledProcessError):
+            manifest.verify_signature(str(self.pub), sums)
+
+    def test_the_full_verification_demands_the_sha256sums_signature(self):
+        self.create()
+        self.assertEqual(self.verify(self.dist).returncode, 0)
+        (self.dist / 'SHA256SUMS.sig').unlink()
+        self.assertNotEqual(self.verify(self.dist).returncode, 0)
+
+    def test_a_published_release_without_the_sha256sums_signature_still_passes(self):
+        # Las versiones anteriores a la firma de SHA256SUMS: la lista se comprueba contra el manifiesto firmado.
+        out = self.published()
+        (out / 'SHA256SUMS.sig').unlink()
+        result = self.verify(out, '--published')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_published_sha256sums_signature_must_be_valid(self):
+        out = self.published()
+        shutil.copy(out / 'release-manifest.json.sig', out / 'SHA256SUMS.sig')
+        self.assertNotEqual(self.verify(out, '--published').returncode, 0)
+        # Ni la de otra clave.
+        key = Path(self.tmp.name) / 'otra.pem'
+        subprocess.run(['openssl', 'genpkey', '-algorithm', 'ED25519', '-out', key], check=True, capture_output=True)
+        manifest.sign(str(key), out / 'SHA256SUMS')
+        self.assertNotEqual(self.verify(out, '--published').returncode, 0)
+
     def test_a_tampered_installer_fails_in_published_mode(self):
         out = self.published()
         (out / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'alterado')
@@ -157,6 +190,8 @@ class DesktopManifest(unittest.TestCase):
         self.assertIn('Ficheros no inventariados: intruso.exe', result.stderr)
         (out / 'intruso.exe').unlink()
         self.assertEqual(self.verify(out, '--published').returncode, 0)
+        # Un release anterior no lleva SHA256SUMS.sig: la lista alterada sigue cayendo por no coincidir con el manifiesto firmado.
+        (out / 'SHA256SUMS.sig').unlink()
         (out / 'SHA256SUMS').write_text('0' * 64 + '  atenea-desktop.exe\n')
         result = self.verify(out, '--published')
         self.assertNotEqual(result.returncode, 0)

@@ -8,7 +8,7 @@ Desde ADR-013 fase 3, el `.deb` instala la plantilla `atenea-network@<UUID>.serv
 
 ## Verificar la descarga
 
-El `.deb` que se descarga de GitHub Releases debe comprobarse **antes** de instalarlo: `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.deb` en el release sustituye también ese fichero). La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.deb`, `release-manifest.json` y `release-manifest.json.sig`):
+El `.deb` que se descarga de GitHub Releases debe comprobarse **antes** de instalarlo: hasta la `0.1.29`, `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.deb` en el release sustituye también ese fichero); las versiones posteriores añaden `SHA256SUMS.sig`, que `--published` comprueba si se descarga junto a él. La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.deb`, `release-manifest.json` y `release-manifest.json.sig`):
 
 ```sh
 bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub COMMIT_DEL_TAG VERSION

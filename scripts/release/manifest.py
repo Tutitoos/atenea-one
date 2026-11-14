@@ -37,8 +37,8 @@ def identity(info, version, commit):
 
 
 def check(dist, manifest, commit, version, published=False):
-    """Con `published`, `dist` es lo que se descarga del release (instaladores, SHA256SUMS, manifiesto y firma): se verifica
-    lo presente contra el manifiesto firmado, se ignora lo ausente y se devuelven los nombres verificados."""
+    """Con `published`, `dist` es lo que se descarga del release (instaladores, SHA256SUMS y su firma, manifiesto y su firma):
+    se verifica lo presente contra el manifiesto firmado, se ignora lo ausente y se devuelven los nombres verificados."""
     assert re.fullmatch(r'[0-9a-f]{40}', manifest['commit'])
     assert re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', manifest['version'])
     identity(manifest, version, commit)
@@ -62,8 +62,8 @@ def check(dist, manifest, commit, version, published=False):
             assert {'name': 'atenea:commit', 'value': commit} in bom['metadata']['properties']
     expected = ''.join(f"{e['sha256']}  {e['name']}\n" for e in sorted(manifest['artifacts'] + manifest['sboms'], key=lambda e: e['name']))
     if published:
-        # Lo publicado son los instaladores, SHA256SUMS (derivado de los hashes firmados), el manifiesto y su firma; nada más.
-        extra = {p.name for p in dist.iterdir()} - set(verified) - {'SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'}
+        # Lo publicado son los instaladores, SHA256SUMS (derivado de los hashes firmados) y su firma, el manifiesto y su firma; nada más.
+        extra = {p.name for p in dist.iterdir()} - set(verified) - {'SHA256SUMS', 'SHA256SUMS.sig', 'release-manifest.json', 'release-manifest.json.sig'}
         assert not extra, 'Ficheros no inventariados: ' + ', '.join(sorted(extra))
         assert any(e['name'] in verified for e in manifest['artifacts']), 'Ningún artefacto del manifiesto está en el directorio'
         assert not (dist / 'SHA256SUMS').exists() or (dist / 'SHA256SUMS').read_text() == expected, 'SHA256SUMS alterado'
@@ -100,7 +100,7 @@ def check(dist, manifest, commit, version, published=False):
                 fields = dict(line.split(': ', 1) for line in archive.extractfile('./control').read().decode().splitlines() if ': ' in line and not line.startswith(' '))
                 identity({'version': fields['Version'], 'commit': fields['X-Atenea-Commit']}, version, commit)
     assert (dist / 'SHA256SUMS').read_text() == expected, 'SHA256SUMS alterado'
-    assert {p.name for p in dist.iterdir()} == listed | {'SHA256SUMS', 'release-manifest.json', 'release-manifest.json.sig'}, 'Ficheros no inventariados'
+    assert {p.name for p in dist.iterdir()} == listed | {'SHA256SUMS', 'SHA256SUMS.sig', 'release-manifest.json', 'release-manifest.json.sig'}, 'Ficheros no inventariados'
     for image in manifest['images']:
         identity(image, version, commit)
         assert image['id'].startswith('sha256:')
@@ -110,13 +110,21 @@ def check(dist, manifest, commit, version, published=False):
         assert 'sha256:' + digest(dist / image['manifest']) == image['manifest_digest']
 
 
+def sign(key, target):
+    subprocess.run(['openssl', 'pkeyutl', '-sign', '-rawin', '-inkey', key, '-in', str(target), '-out', str(target) + '.sig'], check=True)
+
+
+def verify_signature(public_key, target):
+    subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-rawin', '-inkey', public_key, '-in', str(target), '-sigfile', str(target) + '.sig'], check=True)
+
+
 def create(dist, key, version, commit, registry_digests=None):
     assert re.fullmatch(r'[0-9a-f]{40}', commit)
     ed25519(key)
     date = datetime.datetime.fromtimestamp(int(os.environ['SOURCE_DATE_EPOCH']), datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
     entries = []
     for path in sorted(dist.iterdir()):
-        if path.name not in ('release-manifest.json', 'release-manifest.json.sig', 'SHA256SUMS'):
+        if path.name not in ('release-manifest.json', 'release-manifest.json.sig', 'SHA256SUMS', 'SHA256SUMS.sig'):
             assert path.is_file() and not path.is_symlink()
             entries.append({'name': path.name, 'size': path.stat().st_size, 'sha256': digest(path)})
     manifest = {'version': version, 'commit': commit, 'date': date,
@@ -149,7 +157,8 @@ def create(dist, key, version, commit, registry_digests=None):
     (dist / 'SHA256SUMS').write_text(''.join(f"{e['sha256']}  {e['name']}\n" for e in entries))
     target = dist / 'release-manifest.json'
     target.write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
-    subprocess.run(['openssl', 'pkeyutl', '-sign', '-rawin', '-inkey', key, '-in', str(target), '-out', str(target) + '.sig'], check=True)
+    sign(key, target)
+    sign(key, dist / 'SHA256SUMS')
     check(dist, manifest, commit, version)
 
 
@@ -170,7 +179,13 @@ if __name__ == '__main__':
     else:
         target = args.dist / 'release-manifest.json'
         ed25519(args.key, public=True)
-        subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-rawin', '-inkey', args.key, '-in', str(target), '-sigfile', str(target) + '.sig'], check=True)
+        verify_signature(args.key, target)
+        # SHA256SUMS lleva firma propia desde la versión posterior a la 0.1.29, para quien lo use sin el manifiesto. Completo: obligatoria.
+        # Publicado: las versiones anteriores no la tienen (y SHA256SUMS ya se compara byte a byte con el manifiesto firmado);
+        # si SHA256SUMS y su firma están, la firma ha de ser válida.
+        sums = args.dist / 'SHA256SUMS'
+        if not args.published or (os.path.lexists(sums) and os.path.lexists(str(sums) + '.sig')):
+            verify_signature(args.key, sums)
         verified = check(args.dist, json.loads(target.read_text()), args.commit, args.version, args.published)
         if args.published:
             print('PASS firma Ed25519, identidad y ' + ', '.join(sorted(verified)) + ' (bytes y SHA-256)')
