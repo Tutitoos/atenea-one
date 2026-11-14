@@ -33,9 +33,11 @@ python3 scripts/release/manifest.py create "$dist" "$keys/signing.key" "$ATENEA_
 bash scripts/release/verify.sh "$dist" "$keys/signing.pub" "$ATENEA_BUILD_COMMIT" "$ATENEA_VERSION"
 cp "$dist/release-manifest.json" "$keys/manifest.json"
 cp "$dist/release-manifest.json.sig" "$keys/manifest.sig"
+cp "$dist/SHA256SUMS.sig" "$keys/sums.sig"
 python3 scripts/release/manifest.py create "$dist" "$keys/signing.key" "$ATENEA_BUILD_COMMIT" "$ATENEA_VERSION"
 cmp "$dist/release-manifest.json" "$keys/manifest.json"
 cmp "$dist/release-manifest.json.sig" "$keys/manifest.sig"
+cmp "$dist/SHA256SUMS.sig" "$keys/sums.sig"
 echo 'PASS manifiesto y firma reproducibles con SOURCE_DATE_EPOCH'
 python3 - "$dist" <<'PY'
 import json, pathlib, sys

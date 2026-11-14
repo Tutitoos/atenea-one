@@ -22,7 +22,7 @@ El `.pkg` no está firmado ni notarizado. La distribución fuera de pruebas requ
 
 ## Verificar la descarga
 
-El `.pkg` que se descarga de GitHub Releases (`atenea-one-<v>-macos-<arq>.pkg`) debe comprobarse **antes** de instalarlo: `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.pkg` en el release sustituye también ese fichero), y el instalador no lleva firma de Apple. La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.pkg`, `release-manifest.json` y `release-manifest.json.sig`):
+El `.pkg` que se descarga de GitHub Releases (`atenea-one-<v>-macos-<arq>.pkg`) debe comprobarse **antes** de instalarlo: hasta la `0.1.29`, `SHA256SUMS` no va firmado, así que no prueba procedencia (quien sustituya el `.pkg` en el release sustituye también ese fichero); las versiones posteriores añaden `SHA256SUMS.sig`, que `--published` comprueba si se descarga junto a él. El instalador no lleva firma de Apple. La comprobación válida es la del manifiesto firmado (Ed25519), con `scripts/release/` del repositorio (el del tag del release, si ya incluye `--published`), en un directorio que contenga solo lo descargado (el `.pkg`, `release-manifest.json` y `release-manifest.json.sig`):
 
 ```sh
 bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub COMMIT_DEL_TAG VERSION

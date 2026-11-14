@@ -143,7 +143,7 @@ Hasta la 0.1.20 `publish` reescribía `images.json` con los digests, así que el
 del artefacto no coincidía con el firmado (su SHA-256 y su contenido diferían
 solo en `registry_digest`) y había que reconstruirlo a mano. Desde esta
 corrección, para verificar con `verify.sh` el `dist/` completo basta descargar `release-unsigned`
-y añadir `release-manifest.json`, su `.sig` y `SHA256SUMS` del release, sin
+y añadir `release-manifest.json`, su `.sig`, `SHA256SUMS` y su `.sig` del release, sin
 reconstruir nada. Ese artefacto del workflow caduca (90 días por defecto); lo que se descarga del propio release se verifica
 con `--published` (ver «Verificar un release publicado»).
 
@@ -173,8 +173,19 @@ No ejecute Python con `-O`/`PYTHONOPTIMIZE`: el comprobador lo rechaza.
 
 `SHA256SUMS` se deriva de los hashes firmados; no incluye el propio manifiesto ni
 su firma (evita una referencia circular). Cambiarlo también hace fallar la
-verificación. La clave pública recibida junto al artefacto **no es confianza**:
-obtenga su huella por un canal independiente controlado por el responsable.
+verificación. Desde la versión posterior a la 0.1.29 lleva además su propia firma,
+`SHA256SUMS.sig` (Ed25519, la misma clave y la misma operación `openssl pkeyutl -rawin`
+que el manifiesto), para quien compruebe sumas sin ejecutar `verify.sh`:
+
+```sh
+openssl pkeyutl -verify -pubin -rawin -inkey /ruta/confiable/release.pub -in SHA256SUMS -sigfile SHA256SUMS.sig
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+La clave es la misma para los dos ficheros: el contenido de un fichero de sumas no puede ser un manifiesto JSON válido
+ni al revés, así que una firma no sirve para el otro. `verify.sh` sin `--published` exige ambas firmas. La clave
+pública recibida junto al artefacto **no es confianza**: obtenga su huella por un canal independiente controlado por el
+responsable.
 
 La integración de un token hardware compatible con Ed25519 queda **pendiente**
 de elección por el responsable (ADR-005). El fichero actual no se sustituye por
@@ -184,9 +195,11 @@ raw Ed25519. La verificación por clave pública seguirá siendo independiente.
 
 ## Verificar un release publicado
 
-El release de GitHub solo lleva los instaladores (`.pkg`, `.dmg`, `.deb`, `.rpm`, `.exe`), `SHA256SUMS`, `release-manifest.json`
-y su firma. `SHA256SUMS` **no va firmado**: quien sustituya un instalador en el release sustituye también ese fichero, así que
-`sha256sum -c SHA256SUMS` no prueba procedencia. Lo firmado es `release-manifest.json`, que lista el tamaño y el SHA-256 de cada
+El release de GitHub solo lleva los instaladores (`.pkg`, `.dmg`, `.deb`, `.rpm`, `.exe`), `SHA256SUMS` y su firma
+(desde la versión posterior a la 0.1.29), `release-manifest.json` y su firma. En las versiones anteriores `SHA256SUMS`
+**no iba firmado**: quien sustituya un instalador en el release sustituye también ese fichero, así que
+`sha256sum -c SHA256SUMS` no prueba procedencia sin la firma de arriba. Lo firmado desde siempre es `release-manifest.json`,
+que lista el tamaño y el SHA-256 de cada
 fichero del release; `--published` lo usa sin necesitar los ficheros que no se publican (SBOM, imágenes, `BUILD-INFO.json`):
 
 ```sh
@@ -196,8 +209,9 @@ bash scripts/release/verify.sh --published DESCARGAS /ruta/confiable/release.pub
 
 Con `--published`, `verify.sh` verifica la firma Ed25519 del manifiesto y su identidad (commit y versión esperados) igual que
 sin ella; después comprueba el tamaño y el SHA-256 de cada fichero del manifiesto que esté en el directorio e ignora los que
-faltan (no se descargaron). Falla si hay algún fichero que no figure en el manifiesto (salvo `SHA256SUMS`, el propio manifiesto y
-su firma), si `SHA256SUMS` difiere del derivado del manifiesto o si no se verificó ningún artefacto. Imprime los ficheros
+faltan (no se descargaron). Falla si hay algún fichero que no figure en el manifiesto (salvo `SHA256SUMS`, su firma, el propio
+manifiesto y su firma), si `SHA256SUMS` difiere del derivado del manifiesto, si `SHA256SUMS.sig` está y no es válida (las
+versiones anteriores no la tienen y se aceptan sin ella) o si no se verificó ningún artefacto. Imprime los ficheros
 verificados.
 
 Los datos de confianza deben obtenerse fuera del release: la clave pública del responsable, por un canal independiente (la que
