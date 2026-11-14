@@ -91,5 +91,5 @@ docker build --pull=false --network none -t "$ref" "$work/postgres-backup"
 image_args+=("postgres-backup=$ref")
 python3 scripts/release/images.py "$dist" "$ATENEA_BUILD_COMMIT" "$ATENEA_VERSION" "${image_args[@]}"
 complete=true
-echo 'PASS ensamblado local sin red; macOS .pkg y Windows ZIP NO construidos (solo runners)'
+echo 'PASS ensamblado local sin red; macOS .pkg e instalador de Windows NO construidos (solo runners)'
 echo 'Las imágenes nuevas figuran en images.json; el ensayo las elimina al terminar.'

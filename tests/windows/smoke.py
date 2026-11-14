@@ -16,7 +16,6 @@ from smoke_support import (
     ask, call, free_udp_ports, parse_count, parse_nrpt, parse_private_principals,
     parse_service, parse_snapshot, parse_strings, ps,
 )
-import zipfile
 
 def pipe_sddl(pipe):
     # Propietario, DACL y etiqueta MIC: READ_CONTROL basta, sin leer la SACL completa.
@@ -84,11 +83,6 @@ NETWORK = '77777777777777777777777777777777'
 assert os.environ.get('GITHUB_ACTIONS') == 'true'
 assert ctypes.windll.shell32.IsUserAnAdmin()
 
-
-with zipfile.ZipFile(REPO / 'target/windows-package/atenea-client-unsigned.zip') as package:
-    names = package.namelist()
-    assert not any(name.lower().endswith('.dll') for name in names), names
-    assert {'atenea.exe', 'atenea-agent.exe', 'install.ps1', 'uninstall.ps1', 'get-wintun.ps1'} <= set(names), names
 
 
 

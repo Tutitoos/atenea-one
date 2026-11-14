@@ -118,13 +118,11 @@ jobs:
           mkdir dist
           suffix=''
           if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
-          case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; x86_64 | AMD64) arch=amd64 ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
+          case "$(uname -m)" in arm64 | aarch64 | x86_64 | AMD64) ;; *) echo 'Arquitectura no admitida' >&2; exit 2 ;; esac
           for name in atenea atenea-agent; do
             test "$(target/release/$name$suffix --version | tr -d '\r')" = "$name $ATENEA_VERSION ($GITHUB_SHA)"
-            # Windows publica el binario tal cual, con el nombre estándar; los de macOS solo viajan dentro del .pkg.
-            dest="$name-$RUNNER_OS"
-            if [ "$RUNNER_OS" = Windows ]; then component=${name#atenea}; component=${component#-}; dest="atenea-${component:-cli}-$ATENEA_VERSION-windows-$arch"; fi
-            cp "target/release/$name$suffix" "dist/$dest$suffix"
+            # Los binarios de macOS y Windows solo viajan dentro de su instalador (.pkg, .exe de NSIS).
+            if [ "$RUNNER_OS" = macOS ]; then cp "target/release/$name" "dist/$name-$RUNNER_OS"; fi
           done
           host=$(rustc -vV | sed -n 's/^host: //p')
           cargo metadata --offline --locked --format-version 1 --filter-platform "$host" > "$RUNNER_TEMP/native-metadata.json"
@@ -139,12 +137,14 @@ jobs:
           packaging/macos/build-pkg.sh
           pkgutil --payload-files target/macos-package/atenea-cli-*.pkg
           cp target/macos-package/*.pkg dist/
-      - name: Construir ZIP sin firmar
+      - name: Instalar NSIS a versión fija (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          packaging/windows/build-zip.ps1
-          Copy-Item target/windows-package/*.zip dist/
+        run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Construir el instalador único de Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: packaging/windows/build-installer.ps1 -BinDir "$PWD/target/release" -Version $env:ATENEA_VERSION -OutDir "$PWD/dist"
       - name: Atestar procedencia de los artefactos
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
