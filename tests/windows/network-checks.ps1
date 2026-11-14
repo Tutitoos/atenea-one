@@ -101,7 +101,8 @@ trust_anchor = "$anchor"
     # Un servicio con ese nombre y otra línea de órdenes no se toca.
     & "$env:SystemRoot/System32/sc.exe" config $svc binPath= "`"$env:SystemRoot\System32\cmd.exe`"" | Out-Null
     $refused = $false
-    try { Invoke-Cli network up $short | Out-Null } catch { $refused = $_.Exception.Message -match 'otra línea de órdenes' }
+    # Solo texto ASCII: la consola de PowerShell 5.1 decodifica la salida UTF-8 del CLI con la página OEM.
+    try { Invoke-Cli network up $short | Out-Null } catch { $refused = $_.Exception.Message -match 'ya existe con otra' }
     Assert-True $refused 'up debía rechazar un servicio con otra línea de órdenes'
     Write-Output 'NETWORK UP/DOWN: OK'
 } finally {
