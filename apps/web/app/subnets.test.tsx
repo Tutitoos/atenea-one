@@ -81,12 +81,13 @@ it('muestra el error autoritativo de alcance DNS', async () => {
   expect(await screen.findByText('Servidor fuera de una ruta aprobada.')).toBeVisible();
 });
 it('distingue informe ausente, fallo de forwarding y conflicto declarado con antigüedad', async () => {
-  const reported: Model<'Device'> = { ...device, report: { reported_at: '2026-01-01T00:00:00Z', age_secs: 20, nat_mapping: null, paths: [], forwarding_ok: false, dns: 'unsupported', routes: [{ prefix: route.prefix, state: 'conflict', reason: 'Se solapa con la LAN local' }] } };
+  const reported: Model<'Device'> = { ...device, report: { reported_at: '2026-01-01T00:00:00Z', age_secs: 20, nat_mapping: null, paths: [], forwarding_ok: false, dns: 'unsupported', routes: [{ prefix: route.prefix, state: 'conflict', reason: 'Se solapa con la LAN local' }, { prefix: '192.168.60.0/24', state: 'unsupported', reason: 'esta plataforma no admite servir subredes' }] } };
   const { rerender } = render(<Devices devices={[reported]} accessRole="member" net="red" elapsed={5} refresh={async () => {}} routes={[{ ...route, status: 'approved', snat: false }]}/>);
   await userEvent.setup().click(screen.getByRole('button', { name: `Ver detalle de ${device.name}` }));
   expect(screen.getByText(/Este router tiene rutas aprobadas/)).toBeVisible();
   expect(screen.getByText('DNS: unsupported')).toBeVisible();
   expect(screen.getByText(/conflicto · Se solapa con la LAN local/)).toBeVisible();
+  expect(screen.getByText(/no soportada · esta plataforma no admite servir subredes/)).toBeVisible();
   expect(screen.getByText(/Declarado por el agente hace 25 s/)).toBeVisible();
   rerender(<Devices devices={[{ ...reported, report: { ...reported.report!, forwarding_ok: true } }]} accessRole="member" net="red" elapsed={5} refresh={async () => {}} routes={[{ ...route, status: 'approved' }]}/>);
   expect(screen.queryByText(/Este router tiene rutas aprobadas/)).not.toBeInTheDocument();

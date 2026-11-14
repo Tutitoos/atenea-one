@@ -252,7 +252,7 @@ async fn rutas_dns_emision_y_autorizacion() {
     let cfg = verify(&issued.body, net, &router, &root);
     assert_eq!(cfg.advertised.len(), 1);
     assert!(cfg.advertised[0].snat);
-    let status = json!({"paths":[],"forwarding_ok":true,"dns":"applied","routes":[{"prefix":"192.168.50.0/24","state":"installed"}]});
+    let status = json!({"paths":[],"forwarding_ok":true,"dns":"applied","routes":[{"prefix":"192.168.50.0/24","state":"installed"},{"prefix":"192.168.60.0/24","state":"unsupported","reason":"esta plataforma no admite servir subredes"}]});
     assert_eq!(
         signed(&t, &router, "/api/v1/device/status", status)
             .await
@@ -277,6 +277,7 @@ async fn rutas_dns_emision_y_autorizacion() {
     assert_eq!(report["forwarding_ok"], true);
     assert_eq!(report["dns"], "applied");
     assert_eq!(report["routes"][0]["state"], "installed");
+    assert_eq!(report["routes"][1]["state"], "unsupported");
     assert_eq!(
         t.json(
             "POST",
