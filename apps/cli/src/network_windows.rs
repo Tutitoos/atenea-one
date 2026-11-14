@@ -49,8 +49,11 @@ pub use system::*;
 #[cfg(windows)]
 mod system {
     use super::read_metas;
-    use crate::network_common::{Meta, State, short, state_from_status};
-    use atenea_windows::{ServiceStatus, service_status};
+    use crate::network_common::{Meta, State, resolve, short, state_from_status};
+    use atenea_windows::{
+        NetworkService, ServiceStatus, check_trusted_binary, is_elevated, service_status,
+        start_network_service, stop_network_service,
+    };
     use std::io::Write;
     use std::path::PathBuf;
 
@@ -59,20 +62,90 @@ mod system {
 
     pub struct Ctx {
         public: PathBuf,
+        /// `%ProgramData%\Atenea\networks`: claves y configuración por red, solo SYSTEM y Administradores.
+        networks: PathBuf,
     }
 
     impl Ctx {
         pub fn new() -> Result<Self, String> {
+            let data = PathBuf::from(
+                std::env::var_os("ProgramData").ok_or("falta la variable ProgramData")?,
+            )
+            .join("Atenea");
+            // Solo el índice público (lectura) admite sustituir la ruta; la de las redes, de la que sale la
+            // configuración que ejecutará un servicio LocalSystem, es fija.
             let public = match std::env::var_os("ATENEA_PUBLIC_DIR") {
                 Some(dir) => PathBuf::from(dir),
-                None => PathBuf::from(
-                    std::env::var_os("ProgramData").ok_or("falta la variable ProgramData")?,
-                )
-                .join("Atenea")
-                .join("public"),
+                None => data.join("public"),
             };
-            Ok(Self { public })
+            Ok(Self {
+                public,
+                networks: data.join("networks"),
+            })
         }
+
+        /// El servicio de una red, con el binario fijo `%ProgramFiles%\Atenea\atenea-agent.exe` (ADR-017 §7).
+        fn service_spec(&self, m: &Meta) -> Result<NetworkService, String> {
+            let program_files =
+                std::env::var_os("ProgramFiles").ok_or("falta la variable ProgramFiles")?;
+            let config = self
+                .networks
+                .join(&m.network_id)
+                .join("device")
+                .join("agent.toml");
+            if !config.is_file() {
+                return Err(format!(
+                    "falta {}: la red no está completa; únete de nuevo",
+                    config.display()
+                ));
+            }
+            Ok(NetworkService {
+                name: service_name(&m.network_id),
+                display_name: format!("Atenea One ({})", short(&m.network_id)),
+                executable: PathBuf::from(program_files)
+                    .join("Atenea")
+                    .join("atenea-agent.exe"),
+                config,
+            })
+        }
+    }
+
+    fn require_elevated() -> Result<(), String> {
+        if is_elevated().map_err(|e| e.to_string())? {
+            Ok(())
+        } else {
+            Err("administrar servicios requiere una consola de Administrador elevada".into())
+        }
+    }
+
+    pub fn up(ctx: &Ctx, query: &str) -> Result<(), String> {
+        require_elevated()?;
+        let metas = read_metas(&ctx.public)?;
+        let m = resolve(&metas, query)?;
+        let spec = ctx.service_spec(m)?;
+        check_trusted_binary(&spec.executable)
+            .map_err(|e| format!("binario del servicio no confiable: {e}"))?;
+        start_network_service(&spec).map_err(|e| format!("{}: {e}", spec.name))?;
+        println!("red «{}» iniciada mediante scm", m.name);
+        Ok(())
+    }
+
+    pub fn down(ctx: &Ctx, query: &str) -> Result<(), String> {
+        require_elevated()?;
+        let metas = read_metas(&ctx.public)?;
+        let m = resolve(&metas, query)?;
+        let spec = ctx.service_spec(m)?;
+        let stopped = stop_network_service(&spec).map_err(|e| format!("{}: {e}", spec.name))?;
+        println!(
+            "red «{}» {}",
+            m.name,
+            if stopped {
+                "detenida"
+            } else {
+                "ya estaba detenida"
+            }
+        );
+        Ok(())
     }
 
     /// `AteneaNetwork-<id8>`: el nombre de la red (entrada no confiable) nunca entra en él.

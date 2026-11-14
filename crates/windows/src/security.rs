@@ -354,6 +354,147 @@ pub fn replace_private(path: &Path, body: &[u8]) -> io::Result<()> {
     result
 }
 
+/// `true` si este proceso es SYSTEM o tiene el grupo Administradores activo (token elevado).
+pub fn is_elevated() -> io::Result<bool> {
+    privileged(process_token(unsafe { GetCurrentProcess() })?.0)
+}
+
+const TRUSTED_SIDS: [&str; 3] = [
+    "S-1-5-18",
+    "S-1-5-32-544",
+    // NT SERVICE\TrustedInstaller, propietario de «Archivos de programa».
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+];
+// Derechos que permiten sustituir o mover un objeto: DELETE, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE/ALL y
+// FILE_DELETE_CHILD. En el propio fichero y su directorio también crear (FILE_ADD_FILE/ADD_SUBDIRECTORY o
+// FILE_WRITE_DATA/APPEND_DATA): un usuario sin privilegios podría plantar una DLL junto al servicio.
+const REPLACE_MASK: u32 =
+    0x0001_0000 | 0x0004_0000 | 0x0008_0000 | 0x4000_0000 | 0x1000_0000 | 0x40;
+const CREATE_MASK: u32 = 0x2 | 0x4;
+
+fn check_trusted_object(path: &Path, strict: bool) -> io::Result<()> {
+    let reject = |why: String| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{}: {why}", path.display()),
+        )
+    };
+    let wide_path = wide(path.as_os_str())?;
+    let handle = unsafe {
+        CreateFileW(
+            wide_path.as_ptr(),
+            READ_CONTROL | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(last());
+    }
+    let file = unsafe { File::from_raw_handle(handle) };
+    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(last());
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(reject("es un enlace o punto de reanálisis".into()));
+    }
+    let mut acl = null_mut();
+    let mut sd = null_mut();
+    let mut owner = null_mut();
+    let code = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            &mut acl,
+            null_mut(),
+            &mut sd,
+        )
+    };
+    if code != 0 {
+        return Err(io::Error::from_raw_os_error(code as i32));
+    }
+    let _sd = Local(sd);
+    if owner.is_null() || acl.is_null() {
+        return Err(reject("sin propietario o sin DACL".into()));
+    }
+    let owner = sid_string(owner)?;
+    if !TRUSTED_SIDS.contains(&owner.as_str()) {
+        return Err(reject(format!(
+            "el propietario {owner} no es SYSTEM, Administradores ni TrustedInstaller"
+        )));
+    }
+    let denied = if strict {
+        REPLACE_MASK | CREATE_MASK
+    } else {
+        REPLACE_MASK
+    };
+    for index in 0..unsafe { (*acl).AceCount } {
+        let mut ace = null_mut();
+        if unsafe { GetAce(acl, u32::from(index), &mut ace) } == 0 {
+            return Err(last());
+        }
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        // Las denegaciones solo restan permisos.
+        if header.AceType == 1 {
+            continue;
+        }
+        if header.AceType != 0 {
+            return Err(reject(format!(
+                "ACE de tipo {} no admitido",
+                header.AceType
+            )));
+        }
+        // INHERIT_ONLY_ACE: solo afecta a los hijos, no a este objeto.
+        if header.AceFlags & 0x08 != 0 {
+            continue;
+        }
+        let allow = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        let sid = sid_string(std::ptr::addr_of!(allow.SidStart).cast_mut().cast())?;
+        if !TRUSTED_SIDS.contains(&sid.as_str()) && allow.Mask & denied != 0 {
+            return Err(reject(format!(
+                "{sid} puede modificarlo o sustituirlo (máscara 0x{:08x})",
+                allow.Mask
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// El binario de un servicio LocalSystem no puede ser sustituible por un usuario sin privilegios (ADR-017 §7):
+/// ruta absoluta de disco sin `.`/`..`; ni el fichero, ni ningún directorio hasta la raíz, es un enlace;
+/// todos pertenecen a SYSTEM, Administradores o TrustedInstaller; y ningún otro principal puede borrarlos,
+/// moverlos ni cambiar su ACL (ni, en el fichero y su directorio, crear contenido).
+pub fn check_trusted_binary(path: &Path) -> io::Result<()> {
+    use std::path::{Component, Prefix};
+    let invalid = |why: &str| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {why}", path.display()),
+        )
+    };
+    let mut parts = path.components();
+    match parts.next() {
+        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_)) => {}
+        _ => return Err(invalid("se exige una ruta absoluta de disco local")),
+    }
+    if !matches!(parts.next(), Some(Component::RootDir))
+        || parts.any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err(invalid("se exige una ruta absoluta sin . ni .."));
+    }
+    for (index, ancestor) in path.ancestors().enumerate() {
+        check_trusted_object(ancestor, index <= 1)?;
+    }
+    Ok(())
+}
+
 pub fn validate_pipe_path(path: &Path) -> io::Result<()> {
     let text = path
         .to_str()
@@ -926,5 +1067,43 @@ mod tests {
             io::ErrorKind::PermissionDenied
         );
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod trusted_binary_tests {
+    use super::*;
+
+    #[test]
+    fn a_system_binary_is_trusted() {
+        let system = std::env::var_os("SystemRoot").expect("SystemRoot");
+        let cmd = Path::new(&system).join("System32").join("cmd.exe");
+        check_trusted_binary(&cmd).unwrap();
+    }
+
+    #[test]
+    fn a_binary_in_a_user_writable_directory_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("atenea-trust-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("atenea-agent.exe");
+        std::fs::write(&exe, b"x").unwrap();
+        let error = check_trusted_binary(&exe).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+    }
+
+    #[test]
+    fn relative_and_dotted_paths_are_rejected() {
+        for path in [
+            r"atenea-agent.exe",
+            r"C:\Windows\..\Windows\System32\cmd.exe",
+            r"\\server\share\a.exe",
+        ] {
+            assert_eq!(
+                check_trusted_binary(Path::new(path)).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "{path}"
+            );
+        }
     }
 }
