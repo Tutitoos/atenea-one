@@ -136,6 +136,11 @@ enum Cmd {
         /// Selección del gestor: auto (systemd/launchd si existe), process o system.
         #[arg(long, global = true, value_enum, default_value = "auto")]
         backend: network_service::Backend,
+        /// Solo Windows (la usa la aplicación): deja el resultado en
+        /// `%ProgramData%\Atenea\ui-results\<nonce>\result.json`, porque la salida de una orden elevada con UAC no se
+        /// puede capturar (ADR-017 §8). El nonce son 32 dígitos hex en minúsculas.
+        #[arg(long, global = true, hide = true)]
+        result: Option<String>,
         #[command(subcommand)]
         cmd: network::NetworkCmd,
     },
@@ -211,7 +216,12 @@ fn run(cmd: Cmd) -> Result<(), String> {
             spec,
             out,
         } => issue::issue(&issuer_key, &issuer_cert, &spec, &out),
-        Cmd::Network { root, backend, cmd } => network::run(root, backend, cmd),
+        Cmd::Network {
+            root,
+            backend,
+            result,
+            cmd,
+        } => network::run(root, backend, result, cmd),
         Cmd::Services { root, cmd } => network::services(root, cmd),
         Cmd::Up { config, agent, log } => up(&config, agent, &log),
         Cmd::Status { socket } => {

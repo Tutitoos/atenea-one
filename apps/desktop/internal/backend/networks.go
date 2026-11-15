@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,8 +20,11 @@ func CLIPath() string {
 	if p := os.Getenv("ATENEA_CLI"); p != "" {
 		return p
 	}
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return "/Library/Atenea/bin/atenea"
+	case "windows":
+		return windowsCLIPath()
 	}
 	return "/usr/bin/atenea"
 }
@@ -37,8 +41,8 @@ func RunDir() string {
 }
 
 // ClientInfo es lo único que la interfaz sabe del cliente instalado (ADR-021): el sistema, si la aplicación puede
-// VER redes en él (Supported), si además puede unir y gestionarlas (CanJoin) y si el cliente está. En Windows
-// «instalado» es que la tubería de estado del agente responde. Sin rutas, versiones ni texto del sistema.
+// VER redes en él (Supported), si además puede unir y gestionarlas (CanJoin) y si el cliente está. Sin rutas,
+// versiones ni texto del sistema.
 type ClientInfo struct {
 	OS        string `json:"os"`
 	Supported bool   `json:"supported"`
@@ -46,43 +50,38 @@ type ClientInfo struct {
 	Installed bool   `json:"installed"`
 }
 
-// Client comprueba si el CLI está en su ruta fija (en Windows, si responde la tubería del agente).
+// Client comprueba si el CLI está en su ruta fija.
 func Client() ClientInfo { return clientFor(runtime.GOOS, CLIPath()) }
 
 func clientFor(goos, cli string) ClientInfo {
 	unix := goos == "darwin" || goos == "linux"
-	info := ClientInfo{OS: goos, Supported: unix || goos == "windows", CanJoin: unix}
+	windows := goos == "windows"
+	info := ClientInfo{OS: goos, Supported: unix || windows, CanJoin: unix || windows}
+	st, err := os.Stat(cli)
 	switch {
 	case unix:
-		st, err := os.Stat(cli)
 		info.Installed = err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
-	case goos == "windows":
-		info.Installed = windowsAgentResponds()
+	case windows:
+		// Windows no tiene bits de ejecución: basta un fichero normal en la ruta fija.
+		info.Installed = err == nil && st.Mode().IsRegular()
 	}
 	return info
 }
 
 // NetworkSocket es el socket de estado de una red unida: <run>/<id8>/status.sock, el mismo que usa el CLI.
 func NetworkSocket(id string) (string, error) {
-	if runtime.GOOS == "windows" {
-		if id != WindowsNetworkID {
-			return "", errors.New("identificador de red no válido")
-		}
-		return WindowsStatusPipe, nil
-	}
 	if !ValidUUID(id) {
 		return "", errors.New("identificador de red no válido")
+	}
+	if runtime.GOOS == "windows" {
+		return `\\.\pipe\atenea-` + ShortID(id) + `-status`, nil
 	}
 	return filepath.Join(RunDir(), ShortID(id), "status.sock"), nil
 }
 
-// List devuelve `atenea network list --json` (sin privilegios). Sin CLI es una lista vacía. En Windows es la red
-// única del equipo leída de la tubería de estado (windowsList). Rechaza cualquier salida que no sea un array JSON
-// antes de entregarla.
+// List devuelve `atenea network list --json` (sin privilegios), también en Windows. Sin CLI es una lista vacía.
+// Rechaza cualquier salida que no sea un array JSON antes de entregarla.
 func List() (string, error) {
-	if runtime.GOOS == "windows" {
-		return windowsList(Ask), nil
-	}
 	cli := CLIPath()
 	if _, err := os.Stat(cli); err != nil {
 		return "[]", nil
@@ -174,15 +173,9 @@ func Inspect(raw string) (string, error) {
 	return "", errors.New("`atenea network inspect` devolvió una respuesta inesperada")
 }
 
-// errNoElevation es lo que devuelve toda operación con privilegios en Windows (ADR-017, sin implementar).
-var errNoElevation = errors.New("Unirse a redes todavía no está soportado en Windows")
-
 // Elevate ejecuta la orden con el diálogo de autorización del sistema. Es una variable para que las pruebas la
 // sustituyan: ninguna prueba abre un diálogo real.
 var Elevate = func(script, prompt string) (string, error) {
-	if runtime.GOOS == "windows" {
-		return "", errNoElevation
-	}
 	program, args, err := ElevationCommand(runtime.GOOS, script, prompt)
 	if err != nil {
 		return "", err
@@ -272,17 +265,51 @@ func Apply(op, network, code, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer InvalidateList() // aunque falle o se cancele, el estado pudo cambiar a medias
+	if runtime.GOOS == "windows" {
+		return applyWindows(cli, o, network, code, joinName)
+	}
 	script, err := Script(cli, o, network, code, name, gid)
 	if err != nil {
 		return "", err
 	}
-	defer InvalidateList() // aunque falle o se cancele, el estado pudo cambiar a medias
 	return Elevate(script, prompt(o, joinName))
+}
+
+// applyWindows ejecuta la operación con UAC y recoge su resultado del canal result.json (ADR-017 §8): la salida del
+// proceso elevado no se puede capturar. Un fallo trae el mensaje que dejó el CLI; el éxito no necesita más que el estado
+// que la interfaz relee con `network list`.
+func applyWindows(cli string, o Op, network, code, joinName string) (string, error) {
+	nonce, err := newNonce()
+	if err != nil {
+		return "", err
+	}
+	script, err := WindowsScript(cli, o, network, code, nonce)
+	if err != nil {
+		return "", err
+	}
+	_, runErr := Elevate(script, prompt(o, joinName))
+	if runErr != nil && strings.HasPrefix(runErr.Error(), "Cancelado") {
+		return "", runErr
+	}
+	res, readErr := readResult(resultsDir(), nonce)
+	switch {
+	case readErr == nil && !res.OK:
+		return "", errors.New(res.Message)
+	case runErr != nil:
+		return "", runErr
+	case readErr != nil:
+		return "", errors.New("la operación terminó sin dejar resultado: comprueba el estado de la red")
+	}
+	return "", nil
 }
 
 // SetServicesPublish activa o apaga la publicación de servicios de ESA red (ADR-024, fase 5) con el diálogo de
 // autorización del sistema. Es la única orden elevada con argumentos fijos: `services publish on|off --network <uuid>`.
 func SetServicesPublish(network string, on bool) error {
+	if runtime.GOOS == "windows" {
+		return errors.New("Publicar servicios todavía no está soportado en Windows")
+	}
 	cli, err := elevatedCLI()
 	if err != nil {
 		return err

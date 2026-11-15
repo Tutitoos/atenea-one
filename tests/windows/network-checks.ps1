@@ -195,6 +195,47 @@ trust_anchor = "$anchor"
     Assert-True ((Invoke-Cli network list) -match 'No hay redes unidas') 'quedaron redes tras los leave'
     Write-Output 'NETWORK JOIN/LEAVE: OK'
 
+    # ---- la aplicación (ADR-017 §8): canal de resultado del CLI y elevación real de la app ----
+    $resultDir = Join-Path $data 'ui-results'
+    $nonceOk = [guid]::NewGuid().ToString('N')
+    Invoke-Cli network list --result $nonceOk | Out-Null
+    $resultFile = Join-Path $resultDir "$nonceOk\result.json"
+    $ok = Get-Content -LiteralPath $resultFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($ok.ok -eq $true) "result.json de una orden correcta: $(Get-Content -LiteralPath $resultFile -Raw)"
+    # Lo escribe el lado elevado: solo SYSTEM y Administradores escriben, los usuarios leen.
+    foreach ($p in @($resultFile, (Split-Path $resultFile))) {
+        $sddl = (Get-Acl -LiteralPath $p).Sddl
+        Assert-True ($sddl -match 'D:P' -and $sddl -match ';;;BU\)' -and $sddl -notmatch '(FA|FW|GA|GW|0x1f01ff)[^;]*;;;BU\)') "DACL de ${p}: $sddl"
+    }
+    $nonceBad = [guid]::NewGuid().ToString('N')
+    $failed = $false
+    try { Invoke-Cli network up 00000000-0000-4000-8000-00000000dead --result $nonceBad | Out-Null } catch { $failed = $true }
+    Assert-True $failed 'up de una red inexistente debía fallar'
+    $bad = Get-Content -LiteralPath (Join-Path $resultDir "$nonceBad\result.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($bad.ok -eq $false -and $bad.message -match 'ninguna red') "result.json de un fallo: $($bad | ConvertTo-Json -Compress)"
+    $invalid = $false
+    try { Invoke-Cli network list --result ABC | Out-Null } catch { $invalid = $true }
+    Assert-True ($invalid -and -not (Test-Path (Join-Path $resultDir 'ABC'))) 'un nonce inválido debía rechazarse sin crear nada'
+
+    # La app de verdad (Go): comprobación del CLI, powershell Start-Process -Verb RunAs y result.json. En el runner UAC no
+    # pide confirmación; el diálogo y su cancelación solo se pueden probar en un Windows real.
+    $acc = $nets[0]
+    $accCode = (& $maker "https://127.0.0.1:$($acc.Port)" $acc.Id.Replace('-', '') "red-$($acc.Short)" 'token-sintetico' | Out-String).Trim()
+    Invoke-Cli network join $accCode --yes --insecure-http --name equipo-prueba | Out-Null
+    Push-Location (Join-Path $repo 'apps\desktop')
+    try {
+        $env:ATENEA_ACCEPTANCE_NETWORK = $acc.Id
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $goOut = & go test ./internal/backend -run TestWindowsElevationAcceptance -count=1 -v 2>&1 | Out-String; $goCode = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    } finally {
+        Remove-Item Env:ATENEA_ACCEPTANCE_NETWORK -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+    Assert-True ($goCode -eq 0 -and $goOut -match 'PASS: TestWindowsElevationAcceptance') "go test: $goOut"
+    Assert-True ((Invoke-Cli network list) -match 'No hay redes unidas') 'la prueba de la aplicación dejó redes unidas'
+    Write-Output 'NETWORK APLICACION: OK'
+
     # ---- actualizar y desinstalar con redes unidas (ADR-017 §9, ADR-023) ----
     function Setup([string]$Path, [string[]]$Arguments) {
         $p = Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru

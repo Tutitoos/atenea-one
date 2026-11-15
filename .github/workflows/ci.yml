@@ -105,7 +105,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     defaults:
       run:
         shell: pwsh
@@ -146,8 +146,13 @@ jobs:
           $env:ATENEA_WINTUN_DLL = "$env:RUNNER_TEMP/wintun/wintun.dll"
           cargo run -p atenea-tunnel --example two_adapters
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      # La aceptación de la aplicación (tests/windows/network-checks.ps1) ejecuta una prueba de Go contra el cliente instalado.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: apps/desktop/go.mod
+          cache-dependency-path: apps/desktop/go.sum
       - name: Aceptación elevada en VM desechable
-        timeout-minutes: 30
+        timeout-minutes: 35
         run: tests/windows/run.ps1
   # Aplicación de escritorio (Go + Wails v3, módulo propio): solo si cambia ella o crates/windows.
   desktop:
