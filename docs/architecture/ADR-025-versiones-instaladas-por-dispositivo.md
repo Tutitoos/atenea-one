@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-025: Versiones instaladas de cada dispositivo (agente, CLI y aplicación)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-16: alcance (agente, CLI y aplicación de cada dispositivo), visibilidad (todos los miembros de la red, entendida como en D2) y las tres propuestas P1 a P3 tal como se redactaron. **Implementación por fases**; sin código todavía en el momento de aceptarlo. Nada probado fuera de la lectura del código de `main`.
+- **Estado:** **Aceptado** por el responsable el 2026-11-16: alcance (agente, CLI y aplicación de cada dispositivo), visibilidad (todos los miembros de la red, entendida como en D2) y las tres propuestas P1 a P3 tal como se redactaron. **Implementación por fases.** **Fase 2 implementada** (`atenea-desktop --version`): probada con pruebas unitarias y con el binario de producción en macOS (imprime la línea por una tubería sin abrir ventana); el comportamiento en Windows (binario del subsistema gráfico) y en Linux sin pantalla lo comprueba la CI y **no se ha visto aún en un Windows real**. Fases 3 a 6 sin código.
 - **Relacionados:** [ADR-024](ADR-024-servicios-expuestos-por-dispositivo.md) (el canal de informe y de pares que se reutiliza, y su regla «servidor antes que agentes»), [ADR-012](ADR-012-nombres-de-dispositivo.md) (metadatos de presentación), [ADR-016](ADR-016-politicas-de-acceso-minimas.md) (quién ve a quién), [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md) y [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (la aplicación no tiene privilegios y su superficie es una lista cerrada), [ADR-022](ADR-022-instalar-el-cliente-con-la-aplicacion.md) y [ADR-023](ADR-023-instalador-unico-de-windows.md) (los instaladores únicos).
 
 ## Contexto
