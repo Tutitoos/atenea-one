@@ -94,7 +94,7 @@ pub use system::*;
 
 #[cfg(windows)]
 mod system {
-    use super::{allocate_port, legacy_port, read_metas};
+    use super::{allocate_port, legacy_port, read_metas, result_json, valid_nonce};
     use crate::network_common::{
         Meta, State, code_info, confirm, now, offline_warning, resolve, server_of, short,
         state_from_status, write_code_info,
