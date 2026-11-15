@@ -118,6 +118,8 @@ pub fn run(
             }
             NetworkCmd::List { json } => win::list(&win::Ctx::new()?, json),
             NetworkCmd::Legacy { json } => win::legacy(json, &mut std::io::stdout().lock()),
+            NetworkCmd::Up { network } => win::up(&win::Ctx::new()?, &network),
+            NetworkCmd::Down { network } => win::down(&win::Ctx::new()?, &network),
             _ => Err("esta orden de `atenea network` no está soportada todavía en Windows (ADR-017, fase 2 en curso)".into()),
         }
     }
