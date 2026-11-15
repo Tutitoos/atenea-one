@@ -33,7 +33,9 @@ function Invoke-Cli {
     if ($code) { throw "atenea $args salió con ${code}: $out" }
     return $out
 }
-function Service-Info { Get-CimInstance Win32_Service -Filter "Name='$svc'" }
+function Service-Info-Of([string]$Name) { Get-CimInstance Win32_Service -Filter "Name='$Name'" }
+function Service-Info { Service-Info-Of $svc }
+$script:servers = @()
 
 try {
     Assert-True (-not (Service-Info)) 'el servicio de prueba ya existe'
@@ -105,11 +107,101 @@ trust_anchor = "$anchor"
     try { Invoke-Cli network up $short | Out-Null } catch { $refused = $_.Exception.Message -match 'ya existe con otra' }
     Assert-True $refused 'up debía rechazar un servicio con otra línea de órdenes'
     Write-Output 'NETWORK UP/DOWN: OK'
-} finally {
-    if (Service-Info) {
-        & "$env:SystemRoot/System32/sc.exe" stop $svc | Out-Null
-        [void](Wait-Until { (Service-Info).State -eq 'Stopped' } 40)
-        & "$env:SystemRoot/System32/sc.exe" delete $svc | Out-Null
+
+    # ---- join / leave contra un control plane falso, con DOS redes a la vez (aceptación de la fase 2) ----
+    # Se retira la red de prueba manual: este bloque parte de un cliente sin redes.
+    & "$env:SystemRoot/System32/sc.exe" delete $svc | Out-Null
+    Remove-Item $dir, $public -Recurse -Force
+    Assert-True ((Invoke-Cli network list) -match 'No hay redes unidas') 'quedaron redes tras retirar la de prueba'
+    $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $maker = Join-Path $repo 'target\debug\examples\make_join_code.exe'
+    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    $nets = @(
+        @{ Id = '00000000-0000-4000-8000-0000aaaa1111'; Short = 'aaaa1111'; Port = 18091 },
+        @{ Id = '00000000-0000-4000-8000-0000bbbb2222'; Short = 'bbbb2222'; Port = 18092 })
+    foreach ($n in $nets) {
+        $n.Log = Join-Path $env:RUNNER_TEMP "fake-control-$($n.Short).log"
+        $script:servers += @(Start-Process -FilePath $python -ArgumentList @((Join-Path $PSScriptRoot 'fake_control.py'), $n.Port, $n.Id.Replace('-', ''), $n.Log) -PassThru -WindowStyle Hidden)
+        $n.Alias = "atn_$($n.Short)"
+        $n.Service = "AteneaNetwork-$($n.Short)"
+        $n.Pipe = "\\.\pipe\atenea-$($n.Short)-status"
     }
-    Remove-Item $dir, $public -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($n in $nets) {
+        $port = $n.Port
+        Assert-True (Wait-Until { try { $c = [Net.Sockets.TcpClient]::new('127.0.0.1', $port); $c.Close(); $true } catch { $false } }) "el control plane falso no escucha en $port"
+    }
+    $sddlSids = { param($path) ((Get-Acl -LiteralPath $path).Sddl | Select-String -AllMatches '\(A;[^)]*;;;([^;)]+)\)').Matches | ForEach-Object { $_.Groups[1].Value } | Sort-Object }
+
+    foreach ($n in $nets) {
+        $code = (& $maker "https://127.0.0.1:$($n.Port)" $n.Id.Replace('-', '') "red-$($n.Short)" 'token-sintetico' | Out-String).Trim()
+        $out = Invoke-Cli network join $code --yes --insecure-http --name equipo-prueba
+        Assert-True ($out -match 'estado=aprobada') "join $($n.Short): $out"
+        $cfg = Join-Path $data "networks\$($n.Id)\device\agent.toml"
+        $toml = Get-Content -LiteralPath $cfg -Raw
+        Assert-True ($toml -match "atenea-$($n.Short)-control" -and $toml -match "atenea-$($n.Short)-status" -and $toml -match "interface = `"$($n.Alias)`"") "agent.toml de $($n.Short): $toml"
+        Assert-True (((& $sddlSids $cfg) -join ',') -eq 'BA,SY' -and (Get-Acl -LiteralPath $cfg).Sddl -match 'D:P') "DACL de agent.toml de $($n.Short): $((Get-Acl -LiteralPath $cfg).Sddl)"
+        $index = Join-Path $public "$($n.Id).json"
+        Assert-True ((Get-Acl -LiteralPath $index).Sddl -match 'D:P.*FR;;;BU\)') "DACL del índice público: $((Get-Acl -LiteralPath $index).Sddl)"
+        Assert-True ((Get-Content -LiteralPath $n.Log -Raw) -match 'POST /api/v1/enroll') "el control plane falso no recibió el enrolamiento de $($n.Short)"
+        $text = (Get-Content -LiteralPath $index -Raw)
+        Assert-True ($text -notmatch 'token-sintetico') 'el índice público no debe contener el token'
+    }
+    # Repetir la unión no cambia nada; el puerto de cada red es distinto.
+    $again = (& $maker "https://127.0.0.1:$($nets[0].Port)" $nets[0].Id.Replace('-', '') 'otra' 'token-sintetico' | Out-String).Trim()
+    $refused = $false
+    try { Invoke-Cli network join $again --yes --insecure-http --name equipo-prueba | Out-Null } catch { $refused = $_.Exception.Message -match 'unido a la red' }
+    Assert-True $refused 'una segunda unión a la misma red debía rechazarse'
+    # PowerShell 5.1 entrega la lista JSON como un único objeto array: sin @(...) para no envolverla otra vez.
+    $listed = Invoke-Cli network list --json | ConvertFrom-Json
+    Assert-True (@($listed).Count -eq 2) "list: se esperaban 2 redes: $(Invoke-Cli network list)"
+    $ports = @($listed | ForEach-Object { $_.listen_port })
+    Assert-True ($ports[0] -ne $ports[1] -and @($ports | Where-Object { $_ -lt 51820 }).Count -eq 0) "puertos: $ports"
+    foreach ($n in $nets) { Assert-True (-not (Service-Info-Of $n.Service)) "el servicio $($n.Service) existe antes de up" }
+
+    # Las dos redes a la vez: dos servicios, dos adaptadores con su GUID, dos tuberías.
+    foreach ($n in $nets) { Invoke-Cli network up $n.Short | Out-Null }
+    foreach ($n in $nets) {
+        $s = Service-Info-Of $n.Service
+        Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Auto') "servicio $($n.Service): $($s.State)/$($s.StartMode)"
+        $pipe = $n.Pipe
+        Assert-True (Wait-Until { try { Invoke-Cli status --socket $pipe | Out-Null; $true } catch { $false } }) "la tubería $pipe no responde"
+        $nic = Get-NetAdapter -Name $n.Alias -IncludeHidden -ErrorAction SilentlyContinue
+        Assert-True ($null -ne $nic -and $nic.InterfaceGuid -ieq "{$($n.Id)}") "adaptador de $($n.Short): $($nic | Out-String)"
+    }
+    # down de una red no toca la otra.
+    Invoke-Cli network down $nets[0].Short | Out-Null
+    $a = Service-Info-Of $nets[0].Service
+    $b = Service-Info-Of $nets[1].Service
+    Assert-True ($a.State -eq 'Stopped' -and $a.StartMode -eq 'Disabled' -and $b.State -eq 'Running') "tras down de A: $($a.State)/$($a.StartMode) y B $($b.State)"
+    Assert-True (-not (Get-NetAdapter -Name $nets[0].Alias -IncludeHidden -ErrorAction SilentlyContinue)) 'down de A dejó su adaptador'
+    Assert-True ($null -ne (Get-NetAdapter -Name $nets[1].Alias -IncludeHidden -ErrorAction SilentlyContinue)) 'down de A quitó el adaptador de B'
+    $pipeB = $nets[1].Pipe
+    Invoke-Cli status --socket $pipeB | Out-Null
+    Invoke-Cli network up $nets[0].Short | Out-Null
+
+    # leave de B (con revocación en el servidor) no toca A.
+    Invoke-Cli network leave $nets[1].Short --yes | Out-Null
+    Assert-True ((Get-Content -LiteralPath $nets[1].Log -Raw) -match 'POST /api/v1/device/leave') 'leave no revocó el dispositivo en el servidor'
+    Assert-True (-not (Service-Info-Of $nets[1].Service)) 'leave dejó el servicio de B'
+    Assert-True (-not (Test-Path (Join-Path $data "networks\$($nets[1].Id)"))) 'leave dejó las claves de B'
+    Assert-True (-not (Test-Path (Join-Path $public "$($nets[1].Id).json"))) 'leave dejó el índice de B'
+    Assert-True (-not (Get-NetAdapter -Name $nets[1].Alias -IncludeHidden -ErrorAction SilentlyContinue)) 'leave dejó el adaptador de B'
+    Assert-True ((Service-Info-Of $nets[0].Service).State -eq 'Running') 'leave de B paró A'
+    # leave --offline de A estando en marcha: la para, limpia y borra; no habla con el servidor.
+    $before = (Get-Content -LiteralPath $nets[0].Log -Raw)
+    Invoke-Cli network leave $nets[0].Short --yes --offline | Out-Null
+    Assert-True ((Get-Content -LiteralPath $nets[0].Log -Raw) -eq $before) 'leave --offline contactó con el servidor'
+    Assert-True (-not (Service-Info-Of $nets[0].Service) -and -not (Test-Path (Join-Path $data "networks\$($nets[0].Id)"))) 'leave --offline dejó restos de A'
+    Assert-True ((Invoke-Cli network list) -match 'No hay redes unidas') 'quedaron redes tras los leave'
+    Write-Output 'NETWORK JOIN/LEAVE: OK'
+} finally {
+    foreach ($p in $script:servers) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {} }
+    foreach ($name in @($svc) + @(Get-CimInstance Win32_Service -Filter "Name LIKE 'AteneaNetwork-%'" | ForEach-Object { $_.Name })) {
+        if (Service-Info-Of $name) {
+            & "$env:SystemRoot/System32/sc.exe" stop $name | Out-Null
+            [void](Wait-Until { (Service-Info-Of $name).State -eq 'Stopped' } 40)
+            & "$env:SystemRoot/System32/sc.exe" delete $name | Out-Null
+        }
+    }
+    Remove-Item $dir, $public, (Join-Path $data 'networks') -Recurse -Force -ErrorAction SilentlyContinue
 }

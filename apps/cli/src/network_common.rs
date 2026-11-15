@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Lo que `atenea network` comparte entre Unix y Windows: metadatos públicos de una red, resolución por
 //! prefijo o nombre, confirmación interactiva y el examen de un código de unión (sin disco ni red).
-// En Windows aún no se usan `confirm`, `now` ni `resolve`: los consumen `join`, `up`, `down` y `leave`
-// (ADR-017 fase 2, siguientes entregas). Se retira este permiso cuando lleguen.
-#![cfg_attr(windows, allow(dead_code))]
 use crate::network_service::Service;
 use atenea_crypto::hex;
 use atenea_identity::anchor_fingerprint;
@@ -246,4 +243,11 @@ pub fn state_from_status(text: &str) -> State {
     } else {
         State::NoConfig
     }
+}
+
+pub fn offline_warning(m: &Meta) -> String {
+    format!(
+        "AVISO --offline: el dispositivo SIGUE registrado en el servidor; un administrador debe revocarlo. Huella del dispositivo: {} (id {}).",
+        m.device_fingerprint, m.device_id
+    )
 }

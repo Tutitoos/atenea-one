@@ -125,7 +125,11 @@ jobs:
           cargo test -p atenea-tunnel -p atenea-windows -p atenea-agent -p atenea-cli -p atenea-testpeer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Compilar cliente y par real de pruebas
-        run: cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+        run: |
+          cargo build -p atenea-agent -p atenea-cli -p atenea-testpeer --bins
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build -p atenea-cli --example make_join_code
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Instalar NSIS a versión fija
         run: choco install nsis --version=3.11 --yes --no-progress
       - name: Construir el instalador único y uno de versión anterior (prueba de retroceso)
@@ -143,7 +147,7 @@ jobs:
           cargo run -p atenea-tunnel --example two_adapters
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Aceptación elevada en VM desechable
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: tests/windows/run.ps1
   # Aplicación de escritorio (Go + Wails v3, módulo propio): solo si cambia ella o crates/windows.
   desktop:

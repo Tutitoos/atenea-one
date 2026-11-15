@@ -120,7 +120,53 @@ pub fn run(
             NetworkCmd::Legacy { json } => win::legacy(json, &mut std::io::stdout().lock()),
             NetworkCmd::Up { network } => win::up(&win::Ctx::new()?, &network),
             NetworkCmd::Down { network } => win::down(&win::Ctx::new()?, &network),
-            _ => Err("esta orden de `atenea network` no está soportada todavía en Windows (ADR-017, fase 2 en curso)".into()),
+            NetworkCmd::Join {
+                code,
+                name,
+                status_gid,
+                yes,
+                insecure_http,
+                stun_host,
+                relay_ca,
+                up,
+            } => {
+                if status_gid.is_some() {
+                    return Err("--status-gid no existe en Windows: el estado lo lee el grupo Users".into());
+                }
+                use std::io::IsTerminal;
+                win::join(
+                    &win::Ctx::new()?,
+                    &win::JoinOpts {
+                        code,
+                        name,
+                        yes,
+                        insecure_http,
+                        stun_host,
+                        relay_ca,
+                        up,
+                    },
+                    &mut std::io::stdin().lock(),
+                    std::io::stdin().is_terminal(),
+                )
+            }
+            NetworkCmd::Leave {
+                network,
+                yes,
+                offline,
+            } => {
+                use std::io::IsTerminal;
+                win::leave(
+                    &win::Ctx::new()?,
+                    &network,
+                    yes,
+                    offline,
+                    &mut std::io::stdin().lock(),
+                    std::io::stdin().is_terminal(),
+                )
+            }
+            NetworkCmd::MigrateLegacy { .. } => Err(
+                "Windows no migra la instalación heredada (ADR-017 §10): desinstálala, reinstala y únete con `atenea network join`".into(),
+            ),
         }
     }
     #[cfg(not(windows))]
@@ -191,8 +237,8 @@ pub fn run(
 #[cfg(unix)]
 mod imp {
     use crate::network_common::{
-        Meta, State, code_info, confirm, is_uuid_name, now, resolve, server_of, short,
-        state_from_status, uuid, write_code_info,
+        Meta, State, code_info, confirm, is_uuid_name, now, offline_warning, resolve, server_of,
+        short, state_from_status, uuid, write_code_info,
     };
     use crate::network_service::{self, Backend, Service};
     use crate::{enroll, issue};
@@ -1046,13 +1092,6 @@ mod imp {
             println!("Dispositivo revocado en el servidor.");
         }
         Ok(())
-    }
-
-    fn offline_warning(m: &Meta) -> String {
-        format!(
-            "AVISO --offline: el dispositivo SIGUE registrado en el servidor; un administrador debe revocarlo. Huella del dispositivo: {} (id {}).",
-            m.device_fingerprint, m.device_id
-        )
     }
 
     // ---- Migración de la instalación heredada (ADR-013 §10) ----

@@ -39,7 +39,6 @@ fn bundle(dir: &Path) -> Result<DeviceBundle, String> {
 }
 
 /// Retira el dispositivo con la misma firma de petición que usa el agente.
-#[cfg(unix)]
 pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
     let config = dir.join("agent.toml");
     let insecure_http = if config.exists() {
@@ -129,8 +128,6 @@ pub struct Registered {
 /// Error de `register`; `accepted` indica que el servidor ya respondió 201 (hay estado remoto).
 pub struct RegisterError {
     pub message: String,
-    // Solo lo lee `network join`, que existe únicamente en Unix.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub accepted: bool,
 }
 
@@ -253,7 +250,6 @@ impl Coordinator {
     }
 
     /// Desde el bloque del código de unión (ADR-018). El host ya lo validó el formato del código.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn from_code(c: &atenea_identity::join_code::Connectivity) -> Self {
         Self {
             stun: [
@@ -265,7 +261,6 @@ impl Coordinator {
     }
 
     /// Fija la CA ya descargada y verificada: el código lleva su hash, nunca una ruta.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn with_relay_ca(mut self, path: PathBuf) -> Self {
         self.relay_ca = Some(path);
         self
@@ -369,8 +364,6 @@ pub fn fetch_relay_ca(
 }
 
 /// Genera el `agent.toml` de una red con la raíz fijada por quien llama (nunca por el servidor).
-/// Solo la usa `network join`, que existe únicamente en Unix.
-#[cfg_attr(not(unix), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn pinned_config(
     url: &str,

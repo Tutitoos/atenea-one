@@ -91,7 +91,7 @@ pub(crate) fn read_seed(path: &Path) -> Result<SigningKey, String> {
 }
 
 #[cfg(windows)]
-fn read_seed(path: &Path) -> Result<SigningKey, String> {
+pub(crate) fn read_seed(path: &Path) -> Result<SigningKey, String> {
     let text =
         atenea_windows::read_private(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let text = std::str::from_utf8(&text).map_err(|e| e.to_string())?;
