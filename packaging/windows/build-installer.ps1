@@ -1,10 +1,12 @@
 # Copyright 2026 Tutitoos
 # SPDX-License-Identifier: Apache-2.0
-# Construye el instalador NSIS único de Windows (ADR-023) con los binarios ya compilados y la DLL oficial de Wintun
-# descargada y verificada por get-wintun.ps1. No instala nada. Requiere NSIS (`makensis`).
+# Construye el instalador NSIS único de Windows (ADR-023) con los binarios ya compilados (CLI y agente en BinDir, la
+# aplicación de escritorio en AppBinary) y la DLL oficial de Wintun descargada y verificada por get-wintun.ps1.
+# No instala nada. Requiere NSIS (`makensis`).
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$BinDir,
+    [Parameter(Mandatory)][string]$AppBinary,
     [Parameter(Mandatory)][string]$Version,
     [Parameter(Mandatory)][string]$OutDir
 )
@@ -15,6 +17,7 @@ $numeric = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 foreach ($name in 'atenea.exe', 'atenea-agent.exe') {
     if (-not (Test-Path -LiteralPath (Join-Path $BinDir $name) -PathType Leaf)) { throw "Falta $name en $BinDir" }
 }
+if (-not (Test-Path -LiteralPath $AppBinary -PathType Leaf)) { throw "Falta la aplicación $AppBinary" }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') { throw 'Solo se publica Windows x64.' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $out = (Resolve-Path -LiteralPath $OutDir).Path
@@ -32,6 +35,7 @@ try {
     $makensis = if ($found) { $found.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
     if (-not (Test-Path -LiteralPath $makensis)) { throw 'No se encuentra makensis (NSIS)' }
     & $makensis -V2 "-DVERSION=$Version" "-DVIVERSION=$numeric" "-DBINDIR=$((Resolve-Path -LiteralPath $BinDir).Path)" `
+        "-DAPPBIN=$((Resolve-Path -LiteralPath $AppBinary).Path)" `
         "-DWINTUNDIR=$work" "-DBUILDINFO=$info" "-DOUTFILE=$installer" (Join-Path $PSScriptRoot 'installer.nsi')
     if ($LASTEXITCODE) { throw "makensis falló ($LASTEXITCODE)" }
     Write-Output $installer

@@ -137,14 +137,18 @@ jobs:
           packaging/macos/build-pkg.sh
           pkgutil --payload-files target/macos-package/atenea-cli-*.pkg
           cp target/macos-package/*.pkg dist/
-      - name: Instalar NSIS a versión fija (Windows)
+      # Los ejecutables viajan al instalador único (job `suite-windows`) como artefacto interno; no se publican sueltos.
+      - name: Guardar los ejecutables para el instalador único
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install nsis --version=3.11 --yes --no-progress
-      - name: Construir el instalador único de Windows
+        run: |
+          mkdir parts
+          cp target/release/atenea.exe target/release/atenea-agent.exe parts/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: packaging/windows/build-installer.ps1 -BinDir "$PWD/target/release" -Version $env:ATENEA_VERSION -OutDir "$PWD/dist"
+        with:
+          name: native-bin-Windows
+          path: parts/*
+          if-no-files-found: error
       - name: Atestar procedencia de los artefactos
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -219,10 +223,6 @@ jobs:
         run: |
           go install "github.com/wailsapp/wails/v3/cmd/wails3@$(awk '/wailsapp\/wails\/v3 v/ {print $NF; exit}' apps/desktop/go.mod)"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Instalar NSIS a versión fija (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install nsis --version=3.11 --yes --no-progress
       - name: Compilar y probar el binario de producción
         run: |
           set -euo pipefail
@@ -251,6 +251,18 @@ jobs:
         with:
           name: desktop-${{ runner.os }}
           path: dist/*
+          if-no-files-found: error
+      # El ejecutable probado viaja al instalador único como artefacto interno (no se publica suelto).
+      - name: Guardar el ejecutable para el instalador único
+        if: runner.os == 'Windows'
+        run: |
+          mkdir parts
+          cp "$ATENEA_DESKTOP_BINARY" parts/atenea-desktop.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os == 'Windows'
+        with:
+          name: desktop-bin-Windows
+          path: parts/atenea-desktop.exe
           if-no-files-found: error
 
   # Instalador único de macOS (ADR-022): reempaqueta, sin recompilar, el `.pkg` del cliente y la aplicación ya probados
@@ -290,8 +302,61 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Instalador único de Windows (ADR-023): empaqueta, sin recompilar, el cliente y el agente del job `native` y la
+  # aplicación del job `desktop` (artefactos internos que `assemble` no mezcla en dist/), lo instala de verdad en el
+  # runner desechable y lo atesta. Sin firma de código.
+  suite-windows:
+    needs: [native, desktop]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: native-bin-Windows
+          path: parts/native
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-bin-Windows
+          path: parts/app
+      - name: Instalar NSIS a versión fija
+        run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Construir el instalador único (y uno anterior para la prueba de retroceso)
+        env:
+          ATENEA_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          $version = (Select-String -Path apps/cli/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF.StartsWith('refs/tags/')) { if ($env:GITHUB_REF -ne "refs/tags/v$version") { throw 'El tag no coincide con la versión' } }
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/parts/native" -AppBinary "$PWD/parts/app/atenea-desktop.exe" -Version $version -OutDir "$PWD/dist"
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/parts/native" -AppBinary "$PWD/parts/app/atenea-desktop.exe" -Version 0.0.1 -OutDir "$PWD/older"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Instalar, actualizar, desinstalar el instalador construido
+        timeout-minutes: 10
+        run: |
+          $installer = (Get-ChildItem dist/atenea-one-*-windows-amd64.exe).FullName
+          $older = (Get-ChildItem older/atenea-one-*-windows-amd64.exe).FullName
+          tests/windows/installer-checks.ps1 -Installer $installer -OlderInstaller $older
+      - name: Atestar procedencia del instalador
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: suite-Windows
+          path: dist/*
+          if-no-files-found: error
+
   assemble:
-    needs: [linux, native, desktop, suite-macos]
+    needs: [linux, native, desktop, suite-macos, suite-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -300,7 +365,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
-          pattern: "{linux,macOS,Windows,desktop-Linux,desktop-macOS,desktop-Windows,suite-macOS}"
+          pattern: "{linux,macOS,Windows,desktop-Linux,desktop-macOS,desktop-Windows,suite-macOS,suite-Windows}"
           merge-multiple: true
       - name: Comprobar que dist/ solo contiene ficheros
         run: |

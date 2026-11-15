@@ -63,6 +63,20 @@ function Get-JoinedNetworks {
     })
 }
 
+# La aplicación de escritorio no tiene estado propio (ADR-019) y un ejecutable en uso no se puede sustituir ni borrar:
+# se cierra solo la copia de este directorio (la bandeja la mantiene abierta sin ventana). NSIS es de 32 bits y lanza
+# este script con el PowerShell de 32 bits, que no puede leer `Process.Path` de un proceso de 64 bits: la ruta sale de CIM.
+function Stop-App {
+    $exe = Join-Path $Bin 'atenea-desktop.exe'
+    foreach ($process in @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'atenea-desktop.exe'")) {
+        if ($process.ExecutablePath -eq $exe) {
+            Stop-Process -Id $process.ProcessId -Force
+            Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
+            if (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue) { throw "No se pudo cerrar $exe (proceso $($process.ProcessId))." }
+        }
+    }
+}
+
 function Stop-AteneaService($service) {
     if ($service.Status -eq 'Stopped') { return }
     # Una salida con error durante la parada no debe provocar un reinicio por recuperación SCM.
@@ -111,6 +125,7 @@ switch ($Action) {
         # Para los servicios en marcha (el heredado y los de las redes) y imprime sus nombres, separados por comas,
         # para que el instalador solo vuelva a arrancar esos tras actualizar.
         $running = @(Get-AteneaServices | Where-Object { $_.Status -ne 'Stopped' })
+        Stop-App
         foreach ($service in $running) { Stop-AteneaService $service }
         Write-Output (($running | ForEach-Object { $_.Name }) -join ',')
     }
@@ -139,6 +154,7 @@ switch ($Action) {
                 'Salga de cada una con `atenea network leave <red>` (revoca el dispositivo en el servidor) o repita con /PURGE /FORCE para borrarlas sin revocar.')
         }
         $legacyService = Get-Service -Name $legacy -ErrorAction SilentlyContinue
+        Stop-App
         foreach ($service in Get-AteneaServices) { Stop-AteneaService $service }
         Invoke-AgentCleanup (Join-Path $Data 'agent.toml')
         foreach ($network in $networks) { Invoke-AgentCleanup $network.Config }

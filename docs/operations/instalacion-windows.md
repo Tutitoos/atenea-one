@@ -18,14 +18,15 @@ Para construirlo desde el repositorio (requiere NSIS y red para Wintun):
 
 ```powershell
 cargo build --release -p atenea-agent -p atenea-cli --bins
-packaging/windows/build-installer.ps1 -BinDir "$PWD/target/release" -Version <versión> -OutDir dist
+packaging/desktop/build-binary.sh "$PWD/target/atenea-desktop.exe"   # la interfaz (apps/desktop/build/client) debe estar compilada
+packaging/windows/build-installer.ps1 -BinDir "$PWD/target/release" -AppBinary "$PWD/target/atenea-desktop.exe" -Version <versión> -OutDir dist
 ```
 
 El instalador no solicita desactivar UAC, Secure Boot ni las comprobaciones de firma de controladores, no hace peticiones de red, no registra ningún servicio y no arranca nada. Va **sin firma de código**: SmartScreen puede avisar. En modo silencioso termina con código 0 si instala y 2 si rechaza o falla.
 
 **Actualizar** es ejecutar el instalador de una versión posterior: para los servicios de Atenea que estén en marcha (los de las redes y, si existe, el heredado), sustituye binarios y DLL, conserva `%ProgramData%\Atenea` íntegro y vuelve a arrancar **solo** los que estaban en marcha (un servicio parado o deshabilitado se queda como estaba). **Rechaza** instalar una versión anterior a la instalada. **No adopta** una instalación hecha con el antiguo `install.ps1` (sin entrada en «Aplicaciones»): se detiene y pide ejecutar su `uninstall.ps1`.
 
-Se instalan `atenea.exe`, `atenea-agent.exe`, la DLL oficial, su licencia, `BUILD-INFO.json` y `uninstall.exe` en `%ProgramFiles%\Atenea`; `%ProgramData%\Atenea` contiene configuración, claves y estado. El directorio de datos solo permite SYSTEM y Administradores. Los usuarios pueden leer/ejecutar binarios, nunca sustituirlos. No se añade PATH global ni una regla de firewall general.
+Se instalan `atenea.exe`, `atenea-agent.exe`, la aplicación de escritorio `atenea-desktop.exe`, la DLL oficial, su licencia, `BUILD-INFO.json` y `uninstall.exe` en `%ProgramFiles%\Atenea`, y un acceso directo «Atenea One» en el menú Inicio de todos los usuarios; `%ProgramData%\Atenea` contiene configuración, claves y estado. El directorio de datos solo permite SYSTEM y Administradores. Los usuarios pueden leer/ejecutar binarios, nunca sustituirlos. No se añade PATH global ni una regla de firewall general. La aplicación se abre sin elevar; la elevación (UAC) la pide ella en cada operación sobre una red (ver [instalacion-escritorio.md](instalacion-escritorio.md)). Si el runtime WebView2 de Microsoft falta, el instalador avisa y continúa: el cliente funciona y solo la ventana no abre hasta instalarlo. Al actualizar o desinstalar se cierra la aplicación si está en marcha (un ejecutable en uso no se puede sustituir) y no se vuelve a abrir. Una copia por usuario de versiones anteriores de la aplicación (`%LOCALAPPDATA%\Programs\Atenea One`) no se retira sola: se desinstala desde «Aplicaciones».
 
 Los servicios son de las redes y los crea `atenea network up`: **LocalSystem**, arranque **automático retrasado** (la red vuelve tras reiniciar el equipo; `down` los deshabilita), con:
 

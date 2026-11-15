@@ -69,7 +69,6 @@ class DesktopManifest(unittest.TestCase):
         (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.deb').write_bytes(deb(VERSION, COMMIT))
         (self.dist / f'atenea-desktop-{VERSION}-linux-amd64.rpm').write_bytes(b'rpm')
         (self.dist / f'atenea-desktop-{VERSION}-macos-arm64.dmg').write_bytes(b'dmg')
-        (self.dist / f'atenea-desktop-{VERSION}-windows-amd64.exe').write_bytes(b'exe')
 
     def create(self):
         manifest.create(self.dist, str(self.key), VERSION, COMMIT)
@@ -93,7 +92,6 @@ class DesktopManifest(unittest.TestCase):
         self.assertEqual(by_name[f'atenea-desktop-{VERSION}-linux-amd64.deb'], ['go-desktop-Linux.cdx.json'])
         self.assertEqual(by_name[f'atenea-desktop-{VERSION}-linux-amd64.rpm'], ['go-desktop-Linux.cdx.json'])
         self.assertEqual(by_name[f'atenea-desktop-{VERSION}-macos-arm64.dmg'], ['go-desktop-macOS.cdx.json'])
-        self.assertEqual(by_name[f'atenea-desktop-{VERSION}-windows-amd64.exe'], ['go-desktop-Windows.cdx.json'])
 
     def test_the_single_macos_installer_is_tied_to_both_the_rust_and_the_go_sbom(self):
         # El inventario Rust de macOS se simula con el de Go: solo importa que exista, sea válido y lleve la identidad.
@@ -101,6 +99,12 @@ class DesktopManifest(unittest.TestCase):
         (self.dist / f'atenea-one-{VERSION}-macos-arm64.pkg').write_bytes(b'pkg')
         by_name = {a['name']: a.get('sboms') for a in self.create()['artifacts']}
         self.assertEqual(by_name[f'atenea-one-{VERSION}-macos-arm64.pkg'], ['rust-macOS.cdx.json', 'go-desktop-macOS.cdx.json'])
+
+    def test_the_single_windows_installer_is_tied_to_both_the_rust_and_the_go_sbom(self):
+        shutil.copy(self.dist / 'go-desktop-Windows.cdx.json', self.dist / 'rust-Windows.cdx.json')
+        (self.dist / f'atenea-one-{VERSION}-windows-amd64.exe').write_bytes(b'exe')
+        by_name = {a['name']: a.get('sboms') for a in self.create()['artifacts']}
+        self.assertEqual(by_name[f'atenea-one-{VERSION}-windows-amd64.exe'], ['rust-Windows.cdx.json', 'go-desktop-Windows.cdx.json'])
 
     def test_verification_passes_for_an_untouched_release(self):
         self.create()

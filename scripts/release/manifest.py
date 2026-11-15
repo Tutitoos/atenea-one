@@ -131,16 +131,17 @@ def create(dist, key, version, commit, registry_digests=None):
     for entry in manifest['artifacts']:
         name = entry['name']
         if name.startswith('atenea-desktop'):
-            # Aplicación de escritorio (Go): un inventario por sistema operativo, sin el de Rust.
-            system = 'Linux' if name.endswith(('.deb', '.rpm')) else 'macOS' if name.endswith('.dmg') else 'Windows'
-            entry['sboms'] = [f'go-desktop-{system}.cdx.json']
+            # Aplicación de escritorio (Go): un inventario por sistema operativo, sin el de Rust. En Windows solo viaja
+            # dentro del instalador único.
+            entry['sboms'] = ['go-desktop-' + ('Linux' if name.endswith(('.deb', '.rpm')) else 'macOS') + '.cdx.json']
         elif name.startswith('atenea-one-') and name.endswith('.pkg'):
             # Instalador único de macOS (ADR-022): lleva el cliente (Rust) y la aplicación (Go).
             entry['sboms'] = ['rust-macOS.cdx.json', 'go-desktop-macOS.cdx.json']
         elif name.endswith(('.pkg', '-macOS')):
             entry['sboms'] = ['rust-macOS.cdx.json']
-        elif name.endswith('.exe'):
-            entry['sboms'] = ['rust-Windows.cdx.json']
+        elif name.startswith('atenea-one-') and name.endswith('.exe'):
+            # Instalador único de Windows (ADR-023): lleva el cliente y el agente (Rust), Wintun y la aplicación (Go).
+            entry['sboms'] = ['rust-Windows.cdx.json', 'go-desktop-Windows.cdx.json']
         elif name.endswith(('-linux', '.deb')):
             entry['sboms'] = ['rust.cdx.json']
         elif name.endswith('.docker.tar'):
