@@ -15,7 +15,7 @@ cliente, la aplicación lo dice y no ofrece unirse.
 | Linux (Fedora y derivadas) | `atenea-desktop-<versión>-linux-<arq>.rpm` | `sudo dnf install ./atenea-desktop-*-linux-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
 | macOS 11 o posterior | `atenea-one-<versión>-macos-<arq>.pkg` (**recomendado**: cliente y aplicación) | `sudo installer -pkg atenea-one-*-macos-*.pkg -target /` o doble clic | Instala el cliente (`/Library/Atenea/bin`) **y** `Atenea One.app` en `/Applications` como propiedad de root (ADR-022), con una sola autorización. Vive en la barra de menús (sin icono en el Dock). |
 | macOS (solo la aplicación) | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**; el cliente se instala aparte. |
-| Windows | `atenea-desktop-<versión>-windows-<arq>.exe` | Ejecutar; `/S` para instalación silenciosa | Instalación **por usuario** (`%LOCALAPPDATA%\Programs\Atenea One`), sin UAC; acceso directo en el menú Inicio y desinstalador. |
+| Windows 10/11 x64 | `atenea-one-<versión>-windows-amd64.exe` (cliente, agente y aplicación) | Ejecutar con doble clic (UAC) o `/S` desde una consola elevada | Instalación **por equipo** (`%ProgramFiles%\Atenea`), acceso directo «Atenea One» en el menú Inicio y desinstalador; **sin firma de código** (ADR-023). Ya no hay instalador por usuario de la aplicación sola. El runtime WebView2 de Microsoft debe estar presente: si falta, el instalador avisa y la ventana no abre hasta instalarlo. |
 
 La verificación de un release (firma Ed25519, SHA-256, SBOM) es la de [release.md](release.md): los paquetes entran en el
 mismo manifiesto, cada uno con el inventario Go de su sistema (`go-desktop-<Linux|macOS|Windows>.cdx.json`).
@@ -42,8 +42,8 @@ Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el 
 - **macOS:** al no estar notarizada, Gatekeeper pide confirmación («Abrir igualmente» en Ajustes del Sistema → Privacidad y
   seguridad). La firma ad hoc solo evita que el bundle se modifique sin que `codesign --verify` lo note.
 - **Windows:** SmartScreen avisará por la falta de firma Authenticode. El instalador **no incluye WebView2**: si el runtime no
-  está, lo dice y se detiene en lugar de descargar un binario sin verificar. Windows 11 y las versiones de Windows 10 al día
-  lo traen con Microsoft Edge.
+  está, lo dice y sigue (el cliente y los servicios no lo necesitan; la ventana no abre hasta instalarlo) en lugar de descargar
+  un binario sin verificar. Windows 11 y las versiones de Windows 10 al día lo traen con Microsoft Edge.
 - **Linux, Ubuntu 24.04:** AppArmor restringe los espacios de nombres de usuario sin privilegios y el sandbox de WebKitGTK
   (`bwrap`) puede impedir que la ventana arranque. En los spikes de ADR-019 la aplicación se cerró al arrancar hasta poner
   `kernel.apparmor_restrict_unprivileged_userns=0`. **No se ha comprobado en un escritorio real** ni se aplica ningún

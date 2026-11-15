@@ -102,7 +102,7 @@ jobs:
         timeout-minutes: 12
         run: sudo env GITHUB_ACTIONS=true tests/macos/run.sh
   windows:
-    needs: changes
+    needs: [changes, panel]
     if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     timeout-minutes: 50
@@ -132,13 +132,28 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Instalar NSIS a versión fija
         run: choco install nsis --version=3.11 --yes --no-progress
+      # El instalador único lleva la aplicación (ADR-023): se compila con los mismos indicadores que el release. Go también
+      # lo usa la aceptación de la aplicación (tests/windows/network-checks.ps1).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-ui
+          path: apps/desktop/build/client
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: apps/desktop/go.mod
+          cache-dependency-path: apps/desktop/go.sum
+      - name: Compilar la aplicación de escritorio
+        shell: bash
+        timeout-minutes: 10
+        run: packaging/desktop/build-binary.sh "$RUNNER_TEMP/atenea-desktop.exe"
       - name: Construir el instalador único y uno de versión anterior (prueba de retroceso)
         env:
           ATENEA_BUILD_COMMIT: ${{ github.sha }}
         run: |
           $version = (Select-String -Path apps/cli/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version $version -OutDir "$PWD/target/windows-installer"
-          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -Version 0.0.1 -OutDir "$PWD/target/windows-installer-older"
+          $app = "$env:RUNNER_TEMP/atenea-desktop.exe"
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -AppBinary $app -Version $version -OutDir "$PWD/target/windows-installer"
+          packaging/windows/build-installer.ps1 -BinDir "$PWD/target/debug" -AppBinary $app -Version 0.0.1 -OutDir "$PWD/target/windows-installer-older"
       - name: Dos adaptadores Wintun simultáneos con GUID propio (ADR-017)
         timeout-minutes: 5
         run: |
@@ -146,11 +161,6 @@ jobs:
           $env:ATENEA_WINTUN_DLL = "$env:RUNNER_TEMP/wintun/wintun.dll"
           cargo run -p atenea-tunnel --example two_adapters
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      # La aceptación de la aplicación (tests/windows/network-checks.ps1) ejecuta una prueba de Go contra el cliente instalado.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: apps/desktop/go.mod
-          cache-dependency-path: apps/desktop/go.sum
       - name: Aceptación elevada en VM desechable
         timeout-minutes: 35
         run: tests/windows/run.ps1

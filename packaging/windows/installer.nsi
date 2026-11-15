@@ -1,11 +1,11 @@
 ; Copyright 2026 Tutitoos
 ; SPDX-License-Identifier: Apache-2.0
-; Instalador único de Windows (ADR-023): agente, CLI y Wintun, por equipo (administrador). No registra ningún servicio
-; ni configura nada: cada red crea el suyo con `atenea network join/up` (ADR-017). Un servicio heredado `AteneaAgent`
-; de una instalación anterior se respeta. Las comprobaciones privilegiadas están en installer-ops.ps1.
+; Instalador único de Windows (ADR-023): agente, CLI, aplicación de escritorio y Wintun, por equipo (administrador). No
+; registra ningún servicio ni configura nada: cada red crea el suyo con `atenea network join/up` (ADR-017). Un servicio
+; heredado `AteneaAgent` de una instalación anterior se respeta. Las comprobaciones privilegiadas están en installer-ops.ps1.
 ;
-; Variables de compilación (/D): VERSION, VIVERSION (a.b.c.d), BINDIR (atenea.exe y atenea-agent.exe), WINTUNDIR
-; (wintun.dll y WINTUN-LICENSE.txt de get-wintun.ps1), BUILDINFO, OUTFILE.
+; Variables de compilación (/D): VERSION, VIVERSION (a.b.c.d), BINDIR (atenea.exe y atenea-agent.exe), APPBIN
+; (atenea-desktop.exe), WINTUNDIR (wintun.dll y WINTUN-LICENSE.txt de get-wintun.ps1), BUILDINFO, OUTFILE.
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -15,6 +15,10 @@ Unicode true
 
 !define APP_NAME "Atenea"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AteneaOne"
+!define APP_SHORTCUT "Atenea One"
+; Identificador del runtime «Evergreen» de WebView2 en EdgeUpdate.
+!define WEBVIEW2_KEY "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+!define WEBVIEW2_KEY_32 "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 !define PS '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-ops.ps1"'
 
 Name "${APP_NAME}"
@@ -93,6 +97,27 @@ Function .onInit
     ${EndIf}
 FunctionEnd
 
+; WebView2 es del sistema, no de Atenea: si falta, el cliente y los servicios funcionan igual y solo la ventana no abre.
+; Se avisa sin detener la instalación y sin descargar nada.
+Function CheckWebView2
+    ReadRegStr $0 HKLM "${WEBVIEW2_KEY}" "pv"
+    ${If} $0 == ""
+        ReadRegStr $0 HKLM "${WEBVIEW2_KEY_32}" "pv"
+    ${EndIf}
+    ${If} $0 == ""
+        ReadRegStr $0 HKCU "${WEBVIEW2_KEY}" "pv"
+    ${EndIf}
+    ${If} $0 == ""
+    ${OrIf} $0 == "0.0.0.0"
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Falta el runtime WebView2 de Microsoft, que la aplicación necesita para mostrar su ventana. El cliente ya está instalado.$\r$\n$\r$\nInstálelo desde https://developer.microsoft.com/microsoft-edge/webview2/" /SD IDOK
+        ${If} ${Silent}
+            FileOpen $9 "$TEMP\atenea-one-installer.log" a
+            FileWrite $9 "Falta WebView2: la aplicación no abrirá su ventana hasta instalarlo.$\r$\n"
+            FileClose $9
+        ${EndIf}
+    ${EndIf}
+FunctionEnd
+
 Section "Instalar"
     SetRegView 64
     SetShellVarContext all
@@ -120,14 +145,19 @@ Section "Instalar"
     SetOutPath "$INSTDIR"
     File "/oname=atenea.exe" "${BINDIR}\atenea.exe"
     File "/oname=atenea-agent.exe" "${BINDIR}\atenea-agent.exe"
+    File "/oname=atenea-desktop.exe" "${APPBIN}"
     File "/oname=wintun.dll" "${WINTUNDIR}\wintun.dll"
     File "/oname=WINTUN-LICENSE.txt" "${WINTUNDIR}\WINTUN-LICENSE.txt"
     File "/oname=BUILD-INFO.json" "${BUILDINFO}"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     !insertmacro Ops Protect ""
+    ; Acceso directo para todos los usuarios; la aplicación no tiene privilegios (ADR-019) y se abre sin elevar.
+    CreateShortCut "$SMPROGRAMS\${APP_SHORTCUT}.lnk" "$INSTDIR\atenea-desktop.exe" "--open" "$INSTDIR\atenea-desktop.exe" 0
+    Call CheckWebView2
     WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
     WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\atenea-desktop.exe"
     WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "Tutitoos"
     WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -175,6 +205,8 @@ Section "Uninstall"
     ${EndIf}
     Delete "$INSTDIR\atenea.exe"
     Delete "$INSTDIR\atenea-agent.exe"
+    Delete "$INSTDIR\atenea-desktop.exe"
+    Delete "$SMPROGRAMS\${APP_SHORTCUT}.lnk"
     Delete "$INSTDIR\wintun.dll"
     Delete "$INSTDIR\WINTUN-LICENSE.txt"
     Delete "$INSTDIR\BUILD-INFO.json"

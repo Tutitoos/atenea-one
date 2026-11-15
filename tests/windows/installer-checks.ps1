@@ -14,6 +14,8 @@ if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Solo se permite la VM desechable de
 $bin = Join-Path $env:ProgramFiles 'Atenea'
 $data = Join-Path $env:ProgramData 'Atenea'
 $key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AteneaOne'
+$appExe = Join-Path $bin 'atenea-desktop.exe'
+$shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Atenea One.lnk'
 
 function Invoke-Setup([string]$Path, [string[]]$Arguments) {
     # `_?=` hace que el desinstalador espere en lugar de copiarse a %TEMP% y volver al instante.
@@ -40,7 +42,7 @@ $dll = Join-Path $bin 'wintun.dll'
 $signature = Get-AuthenticodeSignature -FilePath $dll
 Assert-True ($signature.Status -eq 'Valid') "firma de wintun.dll: $($signature.Status)"
 Write-Output "wintun.dll SHA-256 $((Get-FileHash -Algorithm SHA256 $dll).Hash)"
-foreach ($f in 'atenea.exe', 'atenea-agent.exe', 'WINTUN-LICENSE.txt', 'BUILD-INFO.json', 'uninstall.exe') {
+foreach ($f in 'atenea.exe', 'atenea-agent.exe', 'atenea-desktop.exe', 'WINTUN-LICENSE.txt', 'BUILD-INFO.json', 'uninstall.exe') {
     Assert-True (Test-Path (Join-Path $bin $f)) "falta $f"
 }
 # Solo SYSTEM y Administradores controlan los datos (el SDDL de ADR-017/023).
@@ -50,6 +52,12 @@ Assert-True ($sddl -match '^O:BAG:BAD:P(AI)?\(A;OICI;FA;;;SY\)\(A;OICI;FA;;;BA\)
 Assert-True (-not (Get-Service AteneaAgent -ErrorAction SilentlyContinue)) 'el instalador registró AteneaAgent'
 Assert-True (-not (Get-Service 'AteneaNetwork-*' -ErrorAction SilentlyContinue)) 'el instalador registró un servicio de red'
 Assert-True ((Get-Acl -LiteralPath $bin).Sddl -match 'D:P.*\(A;[^)]*;;;BU\)') "DACL de Archivos de programa: $((Get-Acl -LiteralPath $bin).Sddl)"
+# La aplicación: ejecutable en la carpeta protegida, acceso directo para todos los usuarios y el mismo inventario.
+Assert-True (Test-Path $shortcut) 'falta el acceso directo del menú Inicio'
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+Assert-True ($link.TargetPath -eq $appExe -and $link.Arguments -eq '--open') "acceso directo: $($link.TargetPath) $($link.Arguments)"
+$appHash = (Get-FileHash -Algorithm SHA256 $appExe).Hash
+Assert-True ((Get-ItemProperty $key).DisplayIcon -eq $appExe) 'la entrada de desinstalación no apunta al icono de la aplicación'
 Assert-True ((& (Join-Path $bin 'atenea.exe') network legacy --json) -match '"present":false') '`network legacy` veía una instalación heredada que no existe'
 # Una instalación anterior (que sí registraba AteneaAgent) se respeta en las actualizaciones: se simula registrándolo.
 & "$PSScriptRoot/register-legacy.ps1"
@@ -80,15 +88,21 @@ $before = (Get-ItemProperty $key).DisplayVersion
 Assert-True ((Install $OlderInstaller) -eq 2) 'debía rechazar el retroceso de versión'
 Assert-True ((Get-ItemProperty $key).DisplayVersion -eq $before) 'el rechazo cambió la versión'
 
-# Actualización en el sitio: conserva datos y deja el servicio como estaba (parado).
+# Actualización en el sitio: conserva datos y deja el servicio como estaba (parado). Con la aplicación en marcha
+# (un ejecutable en uso no se sustituye) la cierra y deja la copia nueva; la simula un `ping` renombrado.
 $marker = Join-Path $data 'conservar.txt'
 Set-Content -LiteralPath $marker -Value 'x'
-Assert-True ((Install $Installer) -eq 0) 'actualización en el sitio'
+Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination $appExe -Force
+$fake = Start-Process -FilePath $appExe -ArgumentList '-n', '120', '127.0.0.1' -PassThru -WindowStyle Hidden
+Assert-True ((Install $Installer) -eq 0) 'actualización en el sitio con la aplicación en marcha'
+Assert-True ($fake.HasExited) 'la actualización no cerró la aplicación en marcha'
+Assert-True ((Get-FileHash -Algorithm SHA256 $appExe).Hash -eq $appHash) 'la actualización no dejó la aplicación nueva'
 Assert-True (Test-Path $marker) 'la actualización borró datos'
 Assert-True ((Get-Service AteneaAgent).Status -eq 'Stopped') 'la actualización arrancó un servicio parado'
 
 # Desinstalar conserva los datos; /PURGE los borra.
 Assert-True ((Uninstall @()) -eq 0) 'desinstalación'
+Assert-True (-not (Test-Path $appExe) -and -not (Test-Path $shortcut)) 'la desinstalación dejó la aplicación o su acceso directo'
 Remove-Item (Join-Path $bin 'uninstall.exe') -ErrorAction SilentlyContinue
 Remove-Item $bin -Recurse -Force -ErrorAction SilentlyContinue
 Assert-True (Test-Path $marker) 'la desinstalación borró datos sin /PURGE'

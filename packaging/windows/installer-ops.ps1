@@ -62,6 +62,18 @@ function Get-JoinedNetworks {
         [pscustomobject]@{ Id = $_.Name; Name = $name; Config = (Join-Path $_.FullName 'device\agent.toml'); Service = "AteneaNetwork-$($_.Name.Substring(28))" }
     })
 }
+# La aplicación de escritorio no tiene estado propio (ADR-019) y un ejecutable en uso no se puede sustituir ni borrar:
+# se cierra solo la copia de este directorio (la bandeja la mantiene abierta sin ventana).
+function Stop-App {
+    $exe = Join-Path $Bin 'atenea-desktop.exe'
+    foreach ($process in @(Get-Process -Name 'atenea-desktop' -ErrorAction SilentlyContinue)) {
+        $path = try { $process.Path } catch { $null }
+        if ($path -and $path -eq $exe) {
+            Stop-Process -Id $process.Id -Force
+            $null = $process.WaitForExit(10000)
+        }
+    }
+}
 
 function Stop-AteneaService($service) {
     if ($service.Status -eq 'Stopped') { return }
@@ -111,6 +123,7 @@ switch ($Action) {
         # Para los servicios en marcha (el heredado y los de las redes) y imprime sus nombres, separados por comas,
         # para que el instalador solo vuelva a arrancar esos tras actualizar.
         $running = @(Get-AteneaServices | Where-Object { $_.Status -ne 'Stopped' })
+        Stop-App
         foreach ($service in $running) { Stop-AteneaService $service }
         Write-Output (($running | ForEach-Object { $_.Name }) -join ',')
     }
@@ -139,6 +152,7 @@ switch ($Action) {
                 'Salga de cada una con `atenea network leave <red>` (revoca el dispositivo en el servidor) o repita con /PURGE /FORCE para borrarlas sin revocar.')
         }
         $legacyService = Get-Service -Name $legacy -ErrorAction SilentlyContinue
+        Stop-App
         foreach ($service in Get-AteneaServices) { Stop-AteneaService $service }
         Invoke-AgentCleanup (Join-Path $Data 'agent.toml')
         foreach ($network in $networks) { Invoke-AgentCleanup $network.Config }

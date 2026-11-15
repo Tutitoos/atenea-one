@@ -2,8 +2,8 @@
 # Copyright 2026 Tutitoos
 # SPDX-License-Identifier: Apache-2.0
 # Comprueba el paquete que `build.sh` dejó en DIRECTORIO instalándolo de verdad y arrancando la aplicación instalada con la
-# prueba de humo. SOLO para un runner desechable o un equipo de pruebas: Linux instala y desinstala con apt (sudo) y
-# Windows toca el perfil y HKCU; macOS solo monta el DMG en solo lectura.
+# prueba de humo. SOLO para un runner desechable o un equipo de pruebas: Linux instala y desinstala con apt (sudo);
+# macOS solo monta el DMG en solo lectura.
 set -euo pipefail
 if [ "$#" -ne 1 ]; then
     echo "Uso: $0 DIRECTORIO" >&2
@@ -56,7 +56,9 @@ case "$(uname -s)" in
         python3 "$smoke" 120 "$app/Contents/MacOS/atenea-desktop"
         ;;
     MINGW* | MSYS* | CYGWIN*)
-        pwsh -NoProfile -File "$root/packaging/desktop/windows/check-installer.ps1" -Installer "$(cygpath -w "$(ls "$dir"/atenea-desktop-*-windows-*.exe)")"
+        # Sin paquete propio: el instalador único se comprueba en CI (tests/windows) y en el job `suite-windows`.
+        echo 'Windows: sin paquete de escritorio propio'
+        exit 0
         ;;
     *) echo "Sistema no admitido: $(uname -s)" >&2; exit 2 ;;
 esac
