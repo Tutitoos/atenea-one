@@ -30,10 +30,14 @@ function Invoke-Sc([string]$Arguments) {
     $info.FileName = $sc
     $info.Arguments = $Arguments
     $info.UseShellExecute = $false
+    # La salida de sc.exe («[SC] ... SUCCESS») no debe mezclarse con la del asistente: `Stop` imprime los nombres de
+    # los servicios que el instalador leerá. Se lee aparte para no bloquear el proceso.
+    $info.RedirectStandardOutput = $true
     $process = [Diagnostics.Process]::Start($info)
     try {
+        $output = $process.StandardOutput.ReadToEndAsync()
         if (-not $process.WaitForExit(15000)) { $process.Kill(); throw "sc ${Arguments}: plazo agotado" }
-        if ($process.ExitCode -ne 0) { throw "sc $Arguments falló ($($process.ExitCode))" }
+        if ($process.ExitCode -ne 0) { throw "sc $Arguments falló ($($process.ExitCode)): $($output.Result)" }
     } finally { $process.Dispose() }
 }
 
