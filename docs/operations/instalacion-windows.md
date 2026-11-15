@@ -6,7 +6,7 @@ Windows x64, **Windows PowerShell 5.1** con sus módulos nativos y una sesión d
 
 El responsable aceptó **Wintun como única excepción de controlador el 2026-10-25**. No se usa el protocolo WireGuard ni otro componente suyo. Atenea carga la API de Wintun sin modificar la DLL. Los binarios de Atenea y sus scripts se entregan **sin firma**: no confundirlo con el controlador Wintun, cuya distribución oficial sí está firmada. Faltan el certificado de firma de código de Atenea y la validación en máquinas reales del responsable; no se declara una entrega firmada ni toda la matriz de interoperabilidad verificada.
 
-## Instalar y registrar sin arrancar
+## Instalar
 
 El instalador único es `atenea-one-<versión>-windows-amd64.exe` (ADR-023), por equipo. Se ejecuta con doble clic o, en silencio, desde una consola elevada:
 
@@ -21,23 +21,23 @@ cargo build --release -p atenea-agent -p atenea-cli --bins
 packaging/windows/build-installer.ps1 -BinDir "$PWD/target/release" -Version <versión> -OutDir dist
 ```
 
-El instalador no solicita desactivar UAC, Secure Boot ni las comprobaciones de firma de controladores, no hace peticiones de red y no arranca nada. Va **sin firma de código**: SmartScreen puede avisar. En modo silencioso termina con código 0 si instala y 2 si rechaza o falla.
+El instalador no solicita desactivar UAC, Secure Boot ni las comprobaciones de firma de controladores, no hace peticiones de red, no registra ningún servicio y no arranca nada. Va **sin firma de código**: SmartScreen puede avisar. En modo silencioso termina con código 0 si instala y 2 si rechaza o falla.
 
-**Actualizar** es ejecutar el instalador de una versión posterior: para el servicio si estaba en marcha, sustituye binarios y DLL, conserva `%ProgramData%\Atenea` íntegro y vuelve a arrancar el servicio solo si estaba en marcha. **Rechaza** instalar una versión anterior a la instalada. **No adopta** una instalación hecha con el antiguo `install.ps1` (sin entrada en «Aplicaciones»): se detiene y pide ejecutar su `uninstall.ps1`.
+**Actualizar** es ejecutar el instalador de una versión posterior: para los servicios de Atenea que estén en marcha (los de las redes y, si existe, el heredado), sustituye binarios y DLL, conserva `%ProgramData%\Atenea` íntegro y vuelve a arrancar **solo** los que estaban en marcha (un servicio parado o deshabilitado se queda como estaba). **Rechaza** instalar una versión anterior a la instalada. **No adopta** una instalación hecha con el antiguo `install.ps1` (sin entrada en «Aplicaciones»): se detiene y pide ejecutar su `uninstall.ps1`.
 
 Se instalan `atenea.exe`, `atenea-agent.exe`, la DLL oficial, su licencia, `BUILD-INFO.json` y `uninstall.exe` en `%ProgramFiles%\Atenea`; `%ProgramData%\Atenea` contiene configuración, claves y estado. El directorio de datos solo permite SYSTEM y Administradores. Los usuarios pueden leer/ejecutar binarios, nunca sustituirlos. No se añade PATH global ni una regla de firewall general.
 
-`AteneaAgent` se registra como **LocalSystem**, arranque **Manual**, con:
+Los servicios son de las redes y los crea `atenea network up`: **LocalSystem**, arranque **automático retrasado** (la red vuelve tras reiniciar el equipo; `down` los deshabilita), con:
 
 ```text
-atenea-agent.exe run --service --config C:\ProgramData\Atenea\agent.toml
+atenea-agent.exe run --service --config C:\ProgramData\Atenea\networks\<UUID>\device\agent.toml
 ```
 
-La ruta real se deriva de las variables del sistema: no se presupone la unidad C. No se arranca durante la instalación, incluso si existe una configuración anterior.
+La ruta real se deriva de las variables del sistema: no se presupone la unidad C. El instalador no registra ni arranca ninguno.
 
 El instalador (con `installer-ops.ps1`, que se ejecuta desde el directorio protegido de instalación y no desde `%TEMP%`) reutiliza un `%ProgramData%\Atenea` preexistente solo si él y todo su contenido pertenecen a SYSTEM o Administradores y no hay enlaces; si no, aborta sin tocarlo (cualquier usuario puede crear esa carpeta antes de la instalación). Reaplica la DACL privada al directorio. El servicio también exige que `agent.toml`, que contiene el ancla de confianza, tenga propietario SYSTEM/Administradores y DACL protegida con solo esas entidades (el agente rechaza el arranque si no).
 
-Recuperación SCM: el instalador configura `sc failure` con reinicios a los 5, 15 y 60 s (contador reiniciado a las 24 h) y `failureflag 1`, de modo que también una salida con código de error se reinicia, no solo una caída abrupta. Una parada ordenada (`Stop-Service`) no reinicia. Al arrancar, el agente limpia NRPT y rutas propios. **Residual:** entre una caída y el reinicio (≥ 5 s) o si se agotan los reintentos, las reglas NRPT del dominio permanecen y pueden enviar consultas a IPs del túnel por otro adaptador; en ese caso ejecutar `cleanup` con el servicio parado. El desinstalador desactiva la recuperación antes de parar el servicio.
+Recuperación SCM: `atenea network up` configura el servicio con reinicios a los 5, 15 y 60 s (contador reiniciado a las 24 h) y la opción de reiniciar también ante salidas con código de error, no solo ante una caída abrupta (el servicio heredado, con `sc failure` y `failureflag 1`). Una parada ordenada (`Stop-Service`, `atenea network down`) no reinicia. Al arrancar, el agente limpia NRPT y rutas propios. **Residual:** entre una caída y el reinicio (≥ 5 s) o si se agotan los reintentos, las reglas NRPT del dominio permanecen y pueden enviar consultas a IPs del túnel por otro adaptador; en ese caso ejecutar `cleanup` con el servicio parado. `down` y el desinstalador desactivan la recuperación antes de parar el servicio.
 
 El servicio escribe desde el arranque en `agent.log`, junto a su `agent.toml`: `%ProgramData%\Atenea\agent.log` el heredado y `%ProgramData%\Atenea\networks\<UUID>\device\agent.log` cada red (un fichero compartido lo abriría el primer servicio con acceso exclusivo de escritura y el segundo no arrancaría). El fichero está en modo anexado y sin secuencias ANSI, con propietario Administradores y DACL protegida que solo admite SYSTEM/Administradores; se puede leer mientras el servicio está activo. Si no puede abrirlo de forma privada, el arranque falla: no se cambia a una salida insegura. Conservar este registro antes de una retirada con `/PURGE`, que también lo elimina.
 
@@ -51,7 +51,32 @@ El instalador **lleva incrustada** la DLL de Wintun, sin modificar. La construcc
 
 Hash publicado en [wintun.net](https://www.wintun.net/) y obtenido independientemente descargando el ZIP oficial (2026-10-25). No hay URL alternativa ni aceptación de un hash distinto. El instalador conserva `WINTUN-LICENSE.txt` junto a la DLL. La licencia de binarios precompilados no es GPL: permite su uso mediante la API y redistribución junto al software que la usa, prohíbe modificar la DLL y retirar avisos. Véase el inventario de dependencias. La construcción falla si no puede validarse; no se versiona la DLL ni se incorpora un controlador de reemplazo.
 
-## Enrolar, configurar y arrancar
+## Unirse a una red (`atenea network`)
+
+El administrador de la red entrega un código de unión (`ATENEA1-…`). En una consola de Administrador elevada:
+
+```powershell
+atenea network inspect ATENEA1-…      # examina el código sin disco ni red
+atenea network join ATENEA1-… --yes   # claves nuevas por red y registro del dispositivo en el servidor
+atenea network up <red>               # crea el servicio AteneaNetwork-<id8> y lo inicia
+atenea network list                   # sin privilegios: estado de cada red
+atenea network down <red>             # para el servicio y lo deshabilita
+atenea network leave <red>            # revoca el dispositivo y borra servicio, claves y metadatos
+```
+
+Cada red tiene su servicio (`AteneaNetwork-<id8>`, con los **últimos** 8 dígitos hex de su UUID; el nombre de la red, que viene del servidor, nunca entra en él), su adaptador Wintun `atn_<id8>` (cuyo GUID es el UUID de la red), su puerto UDP desde 51820, sus tuberías `\\.\pipe\atenea-<id8>-control` y `-status` y sus claves en `%ProgramData%\Atenea\networks\<UUID>\device`. Los metadatos no secretos (nombre, servidor, huellas, interfaz, puerto) están en `%ProgramData%\Atenea\public\<UUID>.json`, legibles por cualquier usuario: `list` y `inspect` no necesitan privilegios. `join`, `up`, `down` y `leave` exigen una consola elevada; `up` además exige que `%ProgramFiles%\Atenea\atenea-agent.exe` no pueda ser sustituido por usuarios sin privilegios (ADR-017 §7) y no toca un servicio con ese nombre que ejecute otra cosa. Windows no migra una instalación heredada (ADR-017 §10): `atenea network legacy` la detecta; hay que desinstalarla y unirse de nuevo.
+
+## Instancia heredada (manual, solo laboratorio)
+
+El instalador ya no registra `AteneaAgent`. Para este flujo se registra a mano, en una consola elevada, con `config` apuntando a `%ProgramData%\Atenea\agent.toml`:
+
+```powershell
+$Bin = Join-Path $env:ProgramFiles 'Atenea'
+New-Service -Name AteneaAgent -DisplayName 'Atenea Client' -StartupType Manual `
+  -BinaryPathName ('"{0}" run --service --config "{1}"' -f (Join-Path $Bin 'atenea-agent.exe'), (Join-Path $env:ProgramData 'Atenea\agent.toml'))
+sc.exe failure AteneaAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000
+sc.exe failureflag AteneaAgent 1
+```
 
 El administrador de la red entrega un `join.json` auténtico (URL, ID de red y ancla pública), un token de enrolamiento y, si el servidor lo tiene configurado, la **conectividad** del código de red (ADR-018): el host STUN/relay (`stun_host`) y, si el relay usa una CA propia, el SHA-256 de esa CA (`relay_ca_sha256`); `GET …/join-code` y `POST …/enrollment-tokens` los devuelven en `connectivity`. No generar ni copiar la clave raíz o del emisor al cliente. En una sesión elevada, con `$Join` apuntando al fichero recibido, `$Url` a su URL, `$Token` al token efímero, `$Stun` al host STUN (sin puerto) y `$CaSha` al hash de la CA:
 
@@ -85,16 +110,25 @@ Wintun se busca junto al ejecutable; para una ejecución administrativa controla
 ## Operación, limpieza y retirada
 
 ```powershell
+# Redes unidas (consola elevada para down y leave):
+atenea network list
+atenea network down <red>
+# Tras una terminación forzada, con el servicio de la red parado:
+& "$env:ProgramFiles/Atenea/atenea-agent.exe" cleanup --config "$env:ProgramData/Atenea/networks/<UUID>/device/agent.toml"
+# Instancia heredada:
 $Cli = Join-Path $env:ProgramFiles 'Atenea/atenea.exe'
 & $Cli reload --socket '\\.\pipe\atenea-control'
 Stop-Service AteneaAgent
-# Tras una terminación forzada, con el servicio detenido:
-& "$env:ProgramFiles/Atenea/atenea-agent.exe" cleanup --config "$env:ProgramData/Atenea/agent.toml"
 # Desinstalar (conserva los datos); también desde «Aplicaciones»:
 & "$env:ProgramFiles/Atenea/uninstall.exe"
-# Retirada completa e irreversible, en silencio (en vez de la orden anterior):
+# Retirada completa e irreversible, en silencio (en vez de la orden anterior); se rechaza si siguen unidas redes:
 & "$env:ProgramFiles/Atenea/uninstall.exe" /S /PURGE
+# Con redes unidas: salir de cada una (revoca el dispositivo en el servidor) o confirmar el borrado sin revocar:
+atenea network leave <red>
+& "$env:ProgramFiles/Atenea/uninstall.exe" /S /PURGE /FORCE
 ```
+
+El desinstalador, antes de tocar nada con `/PURGE`, comprueba si quedan redes unidas (`%ProgramData%\Atenea\networks\<UUID>`): si las hay, termina con código 2, las lista y recomienda `atenea network leave`; `/PURGE /FORCE` las borra sin revocarlas en el servidor (un administrador deberá revocar el dispositivo por huella). Sin `/PURGE`, para cada red para el servicio, ejecuta el `cleanup` del agente y deja el servicio **deshabilitado**, con las identidades intactas: tras reinstalar, `atenea network up` lo reactiva. Con `/PURGE /FORCE`, además, borra los servicios de las redes y todos los datos.
 
 Las direcciones, MTU y rutas se aplican exclusivamente al adaptador Wintun mediante los cmdlets nativos NetTCPIP; el DNS dividido usa `Add-DnsClientNrptRule`, no claves de registro escritas a mano. Nunca se captura el dominio raíz. La parada SCM espera la limpieza normal; `cleanup` recupera rutas y NRPT propios y retira el dispositivo Wintun huérfano identificado de forma estricta, sin retirar reglas ajenas. Un fallo de limpieza aborta la retirada para permitir su reparación. Por defecto la desinstalación conserva `%ProgramData%\Atenea` para no destruir la identidad ni el estado antirrollback accidentalmente; `-Purge` elimina también todos esos datos de forma **irreversible**. No borra otros adaptadores ni fuerza la retirada global del controlador compartido Wintun.
 
@@ -102,7 +136,7 @@ La parada SCM publica `StopPending` con checkpoint inicial 1 y una indicación d
 
 ## Aceptación de CI y pendientes
 
-El trabajo `windows` compila cliente y `atenea-testpeer`, ejecuta pruebas y clippy, construye el instalador (y otro de versión `0.0.1` para la prueba de retroceso) y ejecuta `tests/windows/run.ps1` en el runner elevado desechable de GitHub. Antes del smoke, `tests/windows/installer-checks.ps1` comprueba el instalador: rechazo de una carpeta previa no gestionada, instalación limpia en `%ProgramFiles%\Atenea` (nativa), firma de la DLL, DACL de `%ProgramData%\Atenea`, servicio LocalSystem/manual/parado con recuperación 5/15/60 s, rechazo del retroceso, actualización en el sitio que conserva los datos y no arranca un servicio parado, y desinstalación que conserva los datos. Después instala realmente la DLL y el servicio; comprueba arranque manual hasta configurar, configuraciones firmadas v1 y v2, direcciones IPv4/IPv6, MTU 1280, rutas del adaptador, NRPT por dominio, ausencia de cambios de rutas por defecto/DNS global, DACL de las canalizaciones reales, rechazo de control por la canalización de estado, parada SCM, caída forzada, limpieza offline, reinicio y desinstalación con `/PURGE`. Los ecos ICMP IPv4/IPv6 atraviesan Wintun y Noise hacia el par Rust de usuario; no son respuestas simuladas de un backend de red.
+El trabajo `windows` compila cliente y `atenea-testpeer`, ejecuta pruebas y clippy, construye el instalador (y otro de versión `0.0.1` para la prueba de retroceso) y ejecuta `tests/windows/run.ps1` en el runner elevado desechable de GitHub, en tres fases. **1. `installer-checks.ps1`:** rechazo de una carpeta previa no gestionada; instalación limpia en `%ProgramFiles%\Atenea` (nativa) **sin ningún servicio registrado**; firma de la DLL; DACL de `%ProgramData%\Atenea` y de los binarios; `atenea network list` y `legacy` con un índice sintético; rechazo del retroceso de versión; actualización en el sitio que conserva los datos y respeta un servicio heredado parado; y desinstalación que conserva los datos. **2. `network-checks.ps1`**, contra un control plane falso (`fake_control.py`) y con códigos de unión sintéticos: `up`/`down` de una red montada a mano, rechazo de un servicio ajeno con ese nombre, `join` y `leave` de **dos redes a la vez** (dos servicios, dos adaptadores con su GUID, dos tuberías; `down` o `leave` de una no tocan la otra), una actualización que vuelve a arrancar solo la red que estaba en marcha, el rechazo de `/PURGE` con redes unidas, la desinstalación sin `/PURGE` (servicios parados y deshabilitados, identidades intactas), `up` tras reinstalar y `/PURGE /FORCE`. **3. `smoke.py`:** registra el servicio heredado y comprueba arranque manual hasta configurar, configuraciones firmadas v1 y v2, direcciones IPv4/IPv6, MTU 1280, rutas del adaptador, NRPT por dominio, ausencia de cambios de rutas por defecto/DNS global, DACL de las canalizaciones reales, rechazo de control por la canalización de estado, parada SCM, caída forzada, limpieza offline, reinicio y desinstalación con `/PURGE`. Los ecos ICMP IPv4/IPv6 atraviesan Wintun y Noise hacia el par Rust de usuario; no son respuestas simuladas de un backend de red.
 
 La comprobación NRPT construye objetos nuevos `[pscustomobject]` con `Name`/`Comment` de tipo cadena y `Namespace`/`NameServers` de tipo `[string[]]`; serializa explícitamente `-InputObject @($rules)`. No conserva PSObjects de `Select-Object` ni el árbol interno CIM. Los lectores normalizan escalar, lista y envoltorio `value`/`Count`, verifican tipos y, ante un error, incluyen hasta 1000 caracteres de la salida original. El snapshot de default/DNS, el servicio, las direcciones, los alias, índices, contadores y SDDL tienen asimismo lectores probados; las comparaciones de snapshots son estructurales, no cadenas JSON. Tras cada parada normal y tras `cleanup` de una terminación forzada se exige ausencia de NRPT, rutas de subred y adaptador, también oculto, manteniendo default/DNS global.
 

@@ -4,7 +4,7 @@
 # `atenea network up/down` (ADR-017 fase 2) con el cliente ya instalado. SOLO para la VM desechable de CI: crea y borra
 # un servicio AteneaNetwork-<id8> y los directorios de una red de prueba en %ProgramData%\Atenea.
 [CmdletBinding()]
-param()
+param([Parameter(Mandatory)][string]$Installer)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Solo se permite la VM desechable de GitHub Actions.' }
@@ -194,6 +194,62 @@ trust_anchor = "$anchor"
     Assert-True (-not (Service-Info-Of $nets[0].Service) -and -not (Test-Path (Join-Path $data "networks\$($nets[0].Id)"))) 'leave --offline dejó restos de A'
     Assert-True ((Invoke-Cli network list) -match 'No hay redes unidas') 'quedaron redes tras los leave'
     Write-Output 'NETWORK JOIN/LEAVE: OK'
+
+    # ---- actualizar y desinstalar con redes unidas (ADR-017 §9, ADR-023) ----
+    function Setup([string]$Path, [string[]]$Arguments) {
+        $p = Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru
+        $log = Join-Path $env:TEMP 'atenea-one-installer.log'
+        if ($p.ExitCode -ne 0 -and (Test-Path $log)) { Write-Host ((Get-Content $log) -join "`n"); Remove-Item $log }
+        return $p.ExitCode
+    }
+    function Uninstall-Atenea([string[]]$Extra) {
+        $code = Setup (Join-Path $bin 'uninstall.exe') (@('/S') + $Extra + @("_?=$bin"))
+        if ($code -eq 0) {
+            # `_?=` deja el desinstalador en su sitio para esperar a que termine; se retira a mano.
+            Remove-Item (Join-Path $bin 'uninstall.exe') -ErrorAction SilentlyContinue
+            Remove-Item $bin -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        return $code
+    }
+    foreach ($n in $nets) {
+        $code = (& $maker "https://127.0.0.1:$($n.Port)" $n.Id.Replace('-', '') "red-$($n.Short)" 'token-sintetico' | Out-String).Trim()
+        Invoke-Cli network join $code --yes --insecure-http --name equipo-prueba | Out-Null
+    }
+    # A en marcha y B parada y deshabilitada (up + down): la actualización solo debe volver a arrancar A.
+    Invoke-Cli network up $nets[0].Short | Out-Null
+    Invoke-Cli network up $nets[1].Short | Out-Null
+    Invoke-Cli network down $nets[1].Short | Out-Null
+    Assert-True ((Setup $Installer @('/S')) -eq 0) 'actualización con redes unidas'
+    $a = Service-Info-Of $nets[0].Service
+    $b = Service-Info-Of $nets[1].Service
+    Assert-True ($a.State -eq 'Running' -and $b.State -eq 'Stopped' -and $b.StartMode -eq 'Disabled') "tras actualizar: A $($a.State), B $($b.State)/$($b.StartMode)"
+    $failureA = & "$env:SystemRoot/System32/sc.exe" qfailure $nets[0].Service | Out-String
+    Assert-True ($failureA -match '5000' -and $failureA -match '15000' -and $failureA -match '60000') "la actualización no restableció la recuperación SCM de A: $failureA"
+    $pipeA = $nets[0].Pipe
+    Assert-True (Wait-Until { try { Invoke-Cli status --socket $pipeA | Out-Null; $true } catch { $false } }) 'A no responde tras actualizar'
+    Assert-True (-not (Get-Service AteneaAgent -ErrorAction SilentlyContinue)) 'la actualización registró AteneaAgent'
+    # /PURGE con redes unidas se rechaza antes de tocar nada.
+    Assert-True ((Uninstall-Atenea @('/PURGE')) -eq 2) '/PURGE con redes unidas debía rechazarse'
+    Assert-True ((Test-Path (Join-Path $data "networks\$($nets[0].Id)\device")) -and (Test-Path (Join-Path $data "networks\$($nets[1].Id)\device")) -and (Test-Path (Join-Path $bin 'atenea.exe'))) 'el rechazo de /PURGE tocó datos o binarios'
+    Assert-True ((Service-Info-Of $nets[0].Service).State -eq 'Running') 'el rechazo de /PURGE paró A'
+    # Desinstalar sin /PURGE: servicios parados y deshabilitados, identidades conservadas.
+    Assert-True ((Uninstall-Atenea @()) -eq 0) 'desinstalación con redes unidas'
+    foreach ($n in $nets) {
+        $s = Service-Info-Of $n.Service
+        Assert-True ($s.State -eq 'Stopped' -and $s.StartMode -eq 'Disabled') "tras desinstalar, $($n.Service): $($s.State)/$($s.StartMode)"
+        Assert-True (-not (Get-NetAdapter -Name $n.Alias -IncludeHidden -ErrorAction SilentlyContinue)) "la desinstalación dejó el adaptador de $($n.Short)"
+        Assert-True (Test-Path (Join-Path $data "networks\$($n.Id)\device\agent.toml")) "la desinstalación borró las claves de $($n.Short)"
+    }
+    # Reinstalar: `up` reactiva el servicio que dejó deshabilitado la desinstalación.
+    Assert-True ((Setup $Installer @('/S')) -eq 0) 'reinstalación con redes unidas'
+    Invoke-Cli network up $nets[0].Short | Out-Null
+    Assert-True ((Service-Info-Of $nets[0].Service).State -eq 'Running') 'up no reactivó la red tras reinstalar'
+    # /PURGE /FORCE borra también las identidades de las redes unidas y sus servicios.
+    Assert-True ((Uninstall-Atenea @('/PURGE', '/FORCE')) -eq 0) '/PURGE /FORCE'
+    Assert-True (-not (Test-Path $data)) '/PURGE /FORCE dejó datos'
+    Assert-True (@(Get-Service 'AteneaNetwork-*' -ErrorAction SilentlyContinue).Count -eq 0) '/PURGE /FORCE dejó servicios de red'
+    Assert-True ((Setup $Installer @('/S')) -eq 0) 'reinstalación final'
+    Write-Output 'NETWORK INSTALADOR: OK'
 } finally {
     foreach ($p in $script:servers) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {} }
     foreach ($name in @($svc) + @(Get-CimInstance Win32_Service -Filter "Name LIKE 'AteneaNetwork-%'" | ForEach-Object { $_.Name })) {
