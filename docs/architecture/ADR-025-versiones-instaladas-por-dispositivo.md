@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-025: Versiones instaladas de cada dispositivo (agente, CLI y aplicación)
 
-- **Estado:** **Propuesto.** El responsable fijó el **alcance** (agente, CLI y aplicación de cada dispositivo) y la **visibilidad** (todos los miembros de la red) el 2026-11-16; el resto de decisiones (P1 a P3) son recomendaciones pendientes de su aceptación. **Sin código todavía.** Nada probado fuera de la lectura del código de `main`.
+- **Estado:** **Aceptado** por el responsable el 2026-11-16: alcance (agente, CLI y aplicación de cada dispositivo), visibilidad (todos los miembros de la red, entendida como en D2) y las tres propuestas P1 a P3 tal como se redactaron. **Implementación por fases**; sin código todavía en el momento de aceptarlo. Nada probado fuera de la lectura del código de `main`.
 - **Relacionados:** [ADR-024](ADR-024-servicios-expuestos-por-dispositivo.md) (el canal de informe y de pares que se reutiliza, y su regla «servidor antes que agentes»), [ADR-012](ADR-012-nombres-de-dispositivo.md) (metadatos de presentación), [ADR-016](ADR-016-politicas-de-acceso-minimas.md) (quién ve a quién), [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md) y [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) (la aplicación no tiene privilegios y su superficie es una lista cerrada), [ADR-022](ADR-022-instalar-el-cliente-con-la-aplicacion.md) y [ADR-023](ADR-023-instalador-unico-de-windows.md) (los instaladores únicos).
 
 ## Contexto
@@ -27,9 +27,9 @@ La pantalla «Detalles» de un dispositivo en la aplicación de escritorio muest
 | D1 | **Alcance** | **Agente, CLI y aplicación** de cada dispositivo | Solo este equipo (sin protocolo); solo agente y CLI (un paquete, una versión) |
 | D2 | **Quién ve las versiones de un dispositivo** | **Todos los miembros de la red**, sin opt-in ni restricción a administradores | Solo administradores; solo pares con política |
 
-**Cómo se interpreta D2 en este ADR (hay que confirmarlo).** «Todos los miembros» se aplica a quien **ya ve ese dispositivo**: `/device/peers` sigue devolviendo solo los pares con política (ADR-016) y el inventario sigue siendo el de la organización. **No** se añade un endpoint que liste versiones de toda la red a un dispositivo que no tiene política con el otro: eso ampliaría lo que un miembro puede saber de equipos a los que ni siquiera puede llegar. Si el responsable quiere esa lista de red completa, es una decisión aparte (un endpoint nuevo y otra revisión de amenazas).
+**Cómo se interpreta D2 (confirmado por el responsable el 2026-11-16).** «Todos los miembros» se aplica a quien **ya ve ese dispositivo**: `/device/peers` sigue devolviendo solo los pares con política (ADR-016) y el inventario sigue siendo el de la organización. **No** se añade un endpoint que liste versiones de toda la red a un dispositivo que no tiene política con el otro: eso ampliaría lo que un miembro puede saber de equipos a los que ni siquiera puede llegar. Una lista de red completa sería una decisión aparte (un endpoint nuevo y otra revisión de amenazas).
 
-### Propuestas (pendientes de aceptación)
+### Propuestas (aceptadas por el responsable el 2026-11-16 tal como se redactaron)
 
 | # | Propuesta | Recomendación | Alternativa descartada |
 |---|---|---|---|
