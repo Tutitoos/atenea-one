@@ -130,7 +130,8 @@ switch ($Action) {
         }
     }
     'Remove' {
-        $networks = Get-JoinedNetworks
+        # @(...): una función que no emite nada devuelve $null, y `.Count` sobre $null falla con StrictMode.
+        $networks = @(Get-JoinedNetworks)
         # La guarda va primero: antes de parar ni tocar nada.
         if ($Purge -and -not $Force -and $networks.Count -gt 0) {
             $list = ($networks | ForEach-Object { "  $($_.Name) ($($_.Id))" }) -join [Environment]::NewLine

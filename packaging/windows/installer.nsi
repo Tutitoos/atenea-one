@@ -164,6 +164,12 @@ Section "Uninstall"
     Pop $0
     ${If} $1 != 0
         MessageBox MB_OK|MB_ICONSTOP "No se pudo desinstalar (código $1); se conserva la instalación.$\r$\n$\r$\n$0" /SD IDOK
+        ; En silencio no hay ventana: el motivo queda en %TEMP% para quien lo automatiza.
+        ${If} ${Silent}
+            FileOpen $9 "$TEMP\atenea-one-installer.log" a
+            FileWrite $9 "$0$\r$\n"
+            FileClose $9
+        ${EndIf}
         SetErrorLevel 2
         Abort
     ${EndIf}
