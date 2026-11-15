@@ -107,72 +107,93 @@ pub fn services(root: Option<PathBuf>, cmd: ServicesCmd) -> Result<(), String> {
 pub fn run(
     _root: Option<PathBuf>,
     _backend: crate::network_service::Backend,
+    result: Option<String>,
     cmd: NetworkCmd,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
         use crate::network_windows as win;
-        match cmd {
-            NetworkCmd::Inspect { code, json } => {
-                crate::network_common::inspect(&code, json, &mut std::io::stdout().lock())
-            }
-            NetworkCmd::List { json } => win::list(&win::Ctx::new()?, json),
-            NetworkCmd::Legacy { json } => win::legacy(json, &mut std::io::stdout().lock()),
-            NetworkCmd::Up { network } => win::up(&win::Ctx::new()?, &network),
-            NetworkCmd::Down { network } => win::down(&win::Ctx::new()?, &network),
-            NetworkCmd::Join {
-                code,
-                name,
-                status_gid,
-                yes,
-                insecure_http,
-                stun_host,
-                relay_ca,
-                up,
-            } => {
-                if status_gid.is_some() {
-                    return Err("--status-gid no existe en Windows: el estado lo lee el grupo Users".into());
-                }
-                use std::io::IsTerminal;
-                win::join(
-                    &win::Ctx::new()?,
-                    &win::JoinOpts {
-                        code,
-                        name,
-                        yes,
-                        insecure_http,
-                        stun_host,
-                        relay_ca,
-                        up,
-                    },
-                    &mut std::io::stdin().lock(),
-                    std::io::stdin().is_terminal(),
-                )
-            }
-            NetworkCmd::Leave {
-                network,
-                yes,
-                offline,
-            } => {
-                use std::io::IsTerminal;
-                win::leave(
-                    &win::Ctx::new()?,
-                    &network,
-                    yes,
-                    offline,
-                    &mut std::io::stdin().lock(),
-                    std::io::stdin().is_terminal(),
-                )
-            }
-            NetworkCmd::MigrateLegacy { .. } => Err(
-                "Windows no migra la instalación heredada (ADR-017 §10): desinstálala, reinstala y únete con `atenea network join`".into(),
-            ),
+        // Antes de hacer nada: un nonce inválido no puede acabar en una ruta.
+        if let Some(nonce) = &result
+            && !win::valid_nonce(nonce)
+        {
+            return Err("--result: se esperan 32 dígitos hex en minúsculas".into());
         }
+        let outcome = run_windows(cmd);
+        if let Some(nonce) = result
+            && let Err(e) = win::record_result(&nonce, &outcome)
+        {
+            eprintln!("aviso: no se pudo dejar el resultado para la aplicación: {e}");
+        }
+        outcome
     }
     #[cfg(not(windows))]
     {
-        let _ = cmd;
+        let _ = (result, cmd);
         Err("`atenea network` no está soportado en esta plataforma".into())
+    }
+}
+
+#[cfg(windows)]
+fn run_windows(cmd: NetworkCmd) -> Result<(), String> {
+    use crate::network_windows as win;
+    match cmd {
+        NetworkCmd::Inspect { code, json } => {
+            crate::network_common::inspect(&code, json, &mut std::io::stdout().lock())
+        }
+        NetworkCmd::List { json } => win::list(&win::Ctx::new()?, json),
+        NetworkCmd::Legacy { json } => win::legacy(json, &mut std::io::stdout().lock()),
+        NetworkCmd::Up { network } => win::up(&win::Ctx::new()?, &network),
+        NetworkCmd::Down { network } => win::down(&win::Ctx::new()?, &network),
+        NetworkCmd::Join {
+            code,
+            name,
+            status_gid,
+            yes,
+            insecure_http,
+            stun_host,
+            relay_ca,
+            up,
+        } => {
+            if status_gid.is_some() {
+                return Err(
+                    "--status-gid no existe en Windows: el estado lo lee el grupo Users".into(),
+                );
+            }
+            use std::io::IsTerminal;
+            win::join(
+                &win::Ctx::new()?,
+                &win::JoinOpts {
+                    code,
+                    name,
+                    yes,
+                    insecure_http,
+                    stun_host,
+                    relay_ca,
+                    up,
+                },
+                &mut std::io::stdin().lock(),
+                std::io::stdin().is_terminal(),
+            )
+        }
+        NetworkCmd::Leave {
+            network,
+            yes,
+            offline,
+        } => {
+            use std::io::IsTerminal;
+            win::leave(
+                &win::Ctx::new()?,
+                &network,
+                yes,
+                offline,
+                &mut std::io::stdin().lock(),
+                std::io::stdin().is_terminal(),
+            )
+        }
+        NetworkCmd::MigrateLegacy { .. } => Err(
+            "Windows no migra la instalación heredada (ADR-017 §10): desinstálala, reinstala y únete con `atenea network join`".into(),
+        ),
     }
 }
 
@@ -180,8 +201,12 @@ pub fn run(
 pub fn run(
     root: Option<PathBuf>,
     backend: crate::network_service::Backend,
+    result: Option<String>,
     cmd: NetworkCmd,
 ) -> Result<(), String> {
+    if result.is_some() {
+        return Err("--result solo existe en Windows (canal de resultado de la aplicación)".into());
+    }
     use std::io::IsTerminal;
     let cmd = match cmd {
         NetworkCmd::Inspect { code, json } => {
@@ -1854,6 +1879,7 @@ mod imp {
                     crate::network::run(
                         Some(root.clone()),
                         Backend::Auto,
+                        None,
                         crate::network::NetworkCmd::Inspect {
                             code: code_text(443, token, 1),
                             json,

@@ -65,12 +65,36 @@ pub fn legacy_port(text: &str) -> Option<u16> {
         .map(|a| a.port())
 }
 
+/// 32 dígitos hex en minúsculas: lo único que acepta `--result` y lo único que entra en una ruta.
+pub fn valid_nonce(nonce: &str) -> bool {
+    nonce.len() == 32
+        && nonce
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Contenido de `result.json`: `{"ok":true,"message":""}` o el motivo del fallo, sin caracteres de control (salvo
+/// saltos de línea) y acotado: lo lee la aplicación (Go, 4 KiB máximo) y se lo enseña al usuario.
+pub fn result_json(outcome: &Result<(), String>) -> Vec<u8> {
+    let (ok, message) = match outcome {
+        Ok(()) => (true, String::new()),
+        Err(e) => (
+            false,
+            e.chars()
+                .filter(|c| !c.is_control() || *c == '\n')
+                .take(900)
+                .collect(),
+        ),
+    };
+    serde_json::to_vec(&serde_json::json!({ "ok": ok, "message": message })).expect("serializable")
+}
+
 #[cfg(windows)]
 pub use system::*;
 
 #[cfg(windows)]
 mod system {
-    use super::{allocate_port, legacy_port, read_metas};
+    use super::{allocate_port, legacy_port, read_metas, result_json, valid_nonce};
     use crate::network_common::{
         Meta, State, code_info, confirm, now, offline_warning, resolve, server_of, short,
         state_from_status, write_code_info,
@@ -600,6 +624,43 @@ mod system {
         Ok(())
     }
 
+    /// Deja `result.json` para la aplicación en `%ProgramData%\Atenea\ui-results\<nonce>\` (ADR-017 §8). Lo crea el
+    /// lado elevado, con escritura solo para SYSTEM y Administradores y lectura para `Users`; nunca se escribe en una
+    /// ruta que controle el usuario. Retira de paso los resultados de hace más de un día.
+    pub fn record_result(nonce: &str, outcome: &Result<(), String>) -> Result<(), String> {
+        if !valid_nonce(nonce) {
+            return Err("nonce no válido".into());
+        }
+        let base =
+            PathBuf::from(std::env::var_os("ProgramData").ok_or("falta la variable ProgramData")?)
+                .join("Atenea")
+                .join("ui-results");
+        create_public_dir(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+        purge_old_results(&base);
+        let dir = base.join(nonce);
+        create_public_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let file = dir.join("result.json");
+        replace_public(&file, &result_json(outcome)).map_err(|e| format!("{}: {e}", file.display()))
+    }
+
+    fn purge_old_results(base: &std::path::Path) {
+        let day = std::time::Duration::from_secs(24 * 60 * 60);
+        let Ok(entries) = std::fs::read_dir(base) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > day);
+            if old && entry.file_name().to_str().is_some_and(valid_nonce) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
     /// Windows no migra la instalación heredada (ADR-017 §10): solo informa de que existe.
     pub fn legacy(json: bool, output: &mut dyn Write) -> Result<(), String> {
         let present = !matches!(
@@ -675,5 +736,41 @@ mod tests {
         assert_eq!(legacy_port("listen = \"0.0.0.0:51830\"\n"), Some(51830));
         assert_eq!(legacy_port("listen = \"no\"\n"), None);
         assert_eq!(legacy_port("="), None);
+    }
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    #[test]
+    fn the_nonce_is_32_lowercase_hex_digits_and_nothing_that_could_be_a_path() {
+        assert!(valid_nonce(&"0123456789abcdef".repeat(2)));
+        let bad = [
+            String::new(),
+            "abc".into(),
+            "a".repeat(33),
+            "A".repeat(32),
+            "../etc/passwd/00000000000000".into(),
+            "g".repeat(32),
+        ];
+        for nonce in &bad {
+            assert!(!valid_nonce(nonce), "{nonce}");
+        }
+    }
+
+    #[test]
+    fn the_result_carries_success_or_a_short_clean_failure_message() {
+        let ok: serde_json::Value = serde_json::from_slice(&result_json(&Ok(()))).unwrap();
+        assert_eq!(ok, serde_json::json!({"ok": true, "message": ""}));
+        let err = format!("fallo\n\u{1b}[31mrojo{}", "ñ".repeat(2000));
+        let bytes = result_json(&Err(err));
+        // Lo lee la aplicación con un tope de 4 KiB: el peor caso (caracteres de varios bytes) cabe.
+        assert!(bytes.len() < 4096, "{}", bytes.len());
+        let failed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(failed["ok"], false);
+        let message = failed["message"].as_str().unwrap();
+        assert!(message.starts_with("fallo\n[31mrojo"), "{message:?}");
+        assert!(!message.contains('\u{1b}'));
     }
 }
