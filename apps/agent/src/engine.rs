@@ -3461,7 +3461,11 @@ mod tests {
             let mut buf = [0; wire::MAX_FRAME];
             loop {
                 let (n, src) = socket.recv_from(&mut buf).await.unwrap();
-                let response = match wire::parse(&buf[..n]).unwrap() {
+                // Un datagrama ajeno (la sonda de 1 byte de `receives_ipv4` de otro hub que cayó en este puerto) no mata el servidor.
+                let Ok(message) = wire::parse(&buf[..n]) else {
+                    continue;
+                };
+                let response = match message {
                     wire::Message::CookieReq { .. } => {
                         // Agotar deliberadamente los tres intentos de la apertura inicial.
                         if observed.fetch_add(1, Ordering::SeqCst) < 3 {
@@ -3505,6 +3509,12 @@ mod tests {
                 socket.send_to(&response, src).await.unwrap();
             }
         });
+        // Regresión del intermitente de CI: un datagrama ajeno de 1 byte, como la sonda de `receives_ipv4` de otro hub
+        // al que macOS dio este mismo puerto, ni mata al servidor ni cuenta como petición de cookie.
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .send_to(&[0], endpoint.as_str())
+            .unwrap();
         let mut l = lab();
         l.a.on_tun(&v4(1, 2, b"demanda"), l.now, l.unix);
         l.now += SUSPECT_AFTER;

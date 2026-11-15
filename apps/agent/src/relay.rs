@@ -1386,7 +1386,11 @@ mod tests {
             let mut buf = [0; wire::MAX_FRAME];
             loop {
                 let (n, src) = socket.recv_from(&mut buf).await.unwrap();
-                let response = match wire::parse(&buf[..n]).unwrap() {
+                // Un datagrama ajeno (la sonda de 1 byte de `receives_ipv4` de otro hub que cayó en este puerto) no mata el servidor.
+                let Ok(message) = wire::parse(&buf[..n]) else {
+                    continue;
+                };
+                let response = match message {
                     wire::Message::CookieReq {
                         relay_id: requested,
                     } => {
@@ -1966,7 +1970,10 @@ mod tests {
             loop {
                 let (n, src) = socket.recv_from(&mut buf).await.unwrap();
                 let unix = server_clock.load(Ordering::SeqCst);
-                let response = match wire::parse(&buf[..n]).unwrap() {
+                let Ok(message) = wire::parse(&buf[..n]) else {
+                    continue;
+                };
+                let response = match message {
                     wire::Message::CookieReq { .. } => {
                         wire::encode_cookie(&[6; 16], &cookies.cookie(src, unix))
                     }
