@@ -142,7 +142,10 @@ func TestElevationCommandPerOS(t *testing.T) {
 		t.Errorf("linux: %q %q %v", prog, args, err)
 	}
 	if _, _, err := ElevationCommand("windows", "x", "p"); err == nil {
-		t.Error("windows no debe estar soportado aquí")
+		t.Error("una orden que no es de WindowsScript no debe elevarse en Windows")
+	}
+	if _, _, err := ElevationCommand("freebsd", "x", "p"); err == nil {
+		t.Error("un sistema sin elevación no debe aceptarse")
 	}
 	if _, _, err := ElevationCommand("darwin", "a\"b", "p"); err == nil {
 		t.Error("comillas en la orden deben rechazarse")

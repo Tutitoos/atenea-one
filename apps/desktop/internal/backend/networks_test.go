@@ -210,10 +210,11 @@ func TestClientInfoSaysWhetherTheCLIIsThereWithoutRunningIt(t *testing.T) {
 		{"ausente", "linux", filepath.Join(dir, "no-existe"), ClientInfo{OS: "linux", Supported: true, CanJoin: true}},
 		{"sin permiso de ejecución", "linux", notExe, ClientInfo{OS: "linux", Supported: true, CanJoin: true}},
 		{"un directorio no es el CLI", "darwin", dir, ClientInfo{OS: "darwin", Supported: true, CanJoin: true}},
-		{"Windows se puede ver pero no unir; el CLI no cuenta", "windows", exe, ClientInfo{OS: "windows", Supported: true}},
+		{"Windows: un fichero normal en la ruta fija basta", "windows", exe, ClientInfo{OS: "windows", Supported: true, CanJoin: true, Installed: true}},
+		{"Windows sin CLI", "windows", filepath.Join(dir, "no-existe"), ClientInfo{OS: "windows", Supported: true, CanJoin: true}},
 		{"otro sistema no está soportado", "freebsd", exe, ClientInfo{OS: "freebsd"}},
 	} {
-		if runtime.GOOS == "windows" && tc.want.Supported {
+		if runtime.GOOS == "windows" && tc.goos != "windows" && tc.want.Installed {
 			continue // un anfitrión Windows no tiene bits de ejecución: el permiso 0o111 de Unix no se puede probar allí
 		}
 		if got := clientFor(tc.goos, tc.cli); got != tc.want {
@@ -294,12 +295,13 @@ func TestApplyOtherOperationsUseTheCallerNetworkAndTheirOwnPrompt(t *testing.T) 
 }
 
 func TestNetworkSocketIsTheCLISocketPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("las redes múltiples no están soportadas en Windows")
-	}
 	t.Setenv("ATENEA_RUN_DIR", "/tmp/run")
 	got, err := NetworkSocket(testID)
-	if err != nil || got != "/tmp/run/456789ab/status.sock" {
+	want := "/tmp/run/456789ab/status.sock"
+	if runtime.GOOS == "windows" {
+		want = `\\.\pipe\atenea-456789ab-status` // una tubería por red, con el id corto del UUID (ADR-017 §5)
+	}
+	if err != nil || got != want {
 		t.Fatalf("NetworkSocket = %q, %v", got, err)
 	}
 	for _, bad := range []string{"", "x", testID + "0", strings.ToUpper(testID)} {

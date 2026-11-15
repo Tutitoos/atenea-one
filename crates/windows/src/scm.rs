@@ -139,7 +139,8 @@ const ACCESS: ServiceAccess = ServiceAccess::QUERY_CONFIG
     .union(ServiceAccess::CHANGE_CONFIG)
     .union(ServiceAccess::QUERY_STATUS)
     .union(ServiceAccess::START)
-    .union(ServiceAccess::STOP);
+    .union(ServiceAccess::STOP)
+    .union(ServiceAccess::DELETE);
 
 fn wait_for(service: &Service, wanted: ServiceState, what: &str) -> io::Result<()> {
     let deadline = Instant::now() + WAIT;
@@ -248,5 +249,25 @@ pub fn stop_network_service(spec: &NetworkService) -> io::Result<bool> {
     service
         .change_config(&spec.info(ServiceStartType::Disabled))
         .map_err(io_error)?;
+    Ok(true)
+}
+
+/// `leave`: borra el servicio, que ya debe estar parado. `false` si no existía.
+pub fn delete_network_service(spec: &NetworkService) -> io::Result<bool> {
+    spec.validate()?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(io_error)?;
+    let service = match manager.open_service(&spec.name, ACCESS) {
+        Ok(service) => service,
+        Err(e) if does_not_exist(&e) => return Ok(false),
+        Err(e) => return Err(io_error(e)),
+    };
+    spec.verify(&service)?;
+    if service.query_status().map_err(io_error)?.current_state != ServiceState::Stopped {
+        return Err(io::Error::other(
+            "el servicio debe estar parado antes de borrarlo",
+        ));
+    }
+    service.delete().map_err(io_error)?;
     Ok(true)
 }

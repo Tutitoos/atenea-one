@@ -6,7 +6,7 @@
 #
 #   Linux:   atenea-desktop-<versión>-linux-<arq>.deb y .rpm   (necesita `wails3` en el PATH)
 #   macOS:   atenea-desktop-<versión>-macos-<arq>.dmg con «Atenea One.app» (firma ad hoc)
-#   Windows: atenea-desktop-<versión>-windows-<arq>.exe (NSIS, por usuario; necesita `makensis` y `pwsh`)
+#   Windows: ningún paquete propio (el ejecutable va dentro del instalador único de packaging/windows); solo inventario e identidad
 #
 # Entorno: ATENEA_VERSION y ATENEA_BUILD_COMMIT (obligatorios). ATENEA_DESKTOP_BINARY usa un binario ya compilado
 # (y probado) en vez de compilar. La interfaz (`apps/desktop/build/client`) debe estar compilada antes.
@@ -38,7 +38,7 @@ fi
 case "$system" in
     Linux) "$root/packaging/desktop/linux/build.sh" "$binary" "$ATENEA_VERSION" "$(dpkg --print-architecture)" "$out" ;;
     macOS) "$root/packaging/desktop/macos/build-dmg.sh" "$binary" "$ATENEA_VERSION" "$out" ;;
-    Windows) pwsh -NoProfile -File "$root/packaging/desktop/windows/build-installer.ps1" -Binary "$binary" -Version "$ATENEA_VERSION" -OutDir "$out" ;;
+    Windows) ;; # La aplicación solo viaja dentro del instalador único (packaging/windows, ADR-023); aquí solo el inventario.
 esac
 # Inventario: los módulos que se enlazan en este binario para este sistema (`go list` no descarga nada si hay caché).
 (cd "$root/apps/desktop" && go list -deps -tags production -f '{{with .Module}}{{if not .Main}}{{.Path}}	{{.Version}}{{end}}{{end}}' .) | awk 'NF' | sort -u > "$work/golist.txt"

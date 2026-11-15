@@ -147,15 +147,19 @@ fn privileged(token: HANDLE) -> io::Result<bool> {
     Ok(false)
 }
 
-/// Crea exclusivamente con DACL protegida, sin ventana de permisos heredados.
-pub fn create_private(path: &Path) -> io::Result<File> {
+const PRIVATE_SDDL: &str = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)";
+// Legible por cualquier usuario local (BU): solo metadatos no secretos de las redes unidas (ADR-017 §2).
+const PUBLIC_FILE_SDDL: &str = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)";
+const PUBLIC_DIR_SDDL: &str = "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)";
+
+fn create_with(path: &Path, sddl: &str, purpose: &str) -> io::Result<File> {
     if !privileged(process_token(unsafe { GetCurrentProcess() })?.0)? {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "la custodia de claves exige SYSTEM o Administrator elevado",
+            format!("{purpose} exige SYSTEM o Administrator elevado"),
         ));
     }
-    let sd = descriptor("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)")?;
+    let sd = descriptor(sddl)?;
     let attrs = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: sd.0,
@@ -177,6 +181,46 @@ pub fn create_private(path: &Path) -> io::Result<File> {
         return Err(last());
     }
     Ok(unsafe { File::from_raw_handle(handle) })
+}
+/// Crea exclusivamente con DACL protegida, sin ventana de permisos heredados.
+pub fn create_private(path: &Path) -> io::Result<File> {
+    create_with(path, PRIVATE_SDDL, "la custodia de claves")
+}
+fn create_public(path: &Path) -> io::Result<File> {
+    create_with(path, PUBLIC_FILE_SDDL, "los metadatos públicos")
+}
+/// Crea el directorio de metadatos públicos con DACL protegida: SYSTEM y Administradores escriben, los
+/// usuarios solo leen. Si ya existe, debe ser un directorio de verdad (no un enlace).
+pub fn create_public_dir(path: &Path) -> io::Result<()> {
+    if !privileged(process_token(unsafe { GetCurrentProcess() })?.0)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "los metadatos públicos exigen SYSTEM o Administrator elevado",
+        ));
+    }
+    let sd = descriptor(PUBLIC_DIR_SDDL)?;
+    let attrs = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let wide_path = wide(path.as_os_str())?;
+    if unsafe { CreateDirectoryW(wide_path.as_ptr(), &attrs) } != 0 {
+        return Ok(());
+    }
+    let error = last();
+    if error.kind() != io::ErrorKind::AlreadyExists {
+        return Err(error);
+    }
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.is_dir() && !meta.file_type().is_symlink() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{}: existe y no es un directorio", path.display()),
+        ))
+    }
 }
 /// Abre un diagnóstico privado en append y valida el objeto sin seguir enlaces.
 pub fn append_private(path: &Path) -> io::Result<File> {
@@ -319,12 +363,15 @@ fn validate_dacl(file: &File) -> io::Result<()> {
     Ok(())
 }
 pub fn replace_private(path: &Path, body: &[u8]) -> io::Result<()> {
+    replace_with(path, body, create_private)
+}
+fn replace_with(path: &Path, body: &[u8], create: fn(&Path) -> io::Result<File>) -> io::Result<()> {
     // El temporal exclusivo vive en el mismo volumen y nunca reutiliza un objeto ajeno.
     let mut attempt = 0u32;
     let (tmp, mut file) = loop {
         let candidate =
             path.with_file_name(format!(".atenea-{}-{attempt}.tmp", std::process::id()));
-        match create_private(&candidate) {
+        match create(&candidate) {
             Ok(file) => break (candidate, file),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 128 => attempt += 1,
             Err(e) => return Err(e),
@@ -352,6 +399,10 @@ pub fn replace_private(path: &Path, body: &[u8]) -> io::Result<()> {
         let _ = std::fs::remove_file(tmp);
     }
     result
+}
+/// Reemplaza atómicamente un fichero de metadatos públicos: SYSTEM y Administradores escriben, los usuarios leen.
+pub fn replace_public(path: &Path, body: &[u8]) -> io::Result<()> {
+    replace_with(path, body, create_public)
 }
 
 /// `true` si este proceso es SYSTEM o tiene el grupo Administradores activo (token elevado).

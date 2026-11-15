@@ -57,13 +57,15 @@ ficheros después de firmar.
 
 **Nombres de los artefactos publicados:** `atenea-<componente>-<versión>-<os>-<arq>.<ext>` con `os` en `linux`, `macos`
 o `windows` y `arq` en `amd64` o `arm64` (`atenea-cli-<v>-linux-<arq>.deb`, `atenea-one-<v>-macos-<arq>.pkg`,
-`atenea-one-<v>-windows-amd64.exe`: instalador único de Windows con cliente, agente y Wintun, ADR-023). `atenea.deb` se mantiene como alias del
+`atenea-one-<v>-windows-amd64.exe`: instalador único de Windows con cliente, agente, aplicación de escritorio y Wintun, ADR-023; el job `suite-windows` lo construye sin recompilar, lo instala, actualiza y desinstala en un runner desechable y lo atesta). `atenea.deb` se mantiene como alias del
 `.deb` del CLI para no romper descargas existentes; entra en el manifiesto y en la atestación como cualquier otro fichero.
 
 **Paquetes de escritorio** (`packaging/desktop/`, ver [instalacion-escritorio.md](instalacion-escritorio.md)): el job
 `desktop` del workflow de release construye en cada sistema el binario de producción, lo prueba con la prueba de humo,
-genera `atenea-desktop-<v>-linux-<arq>.deb`, `atenea-desktop-<v>-linux-<arq>.rpm`, `atenea-desktop-<v>-macos-<arq>.dmg` y
-`atenea-desktop-<v>-windows-<arq>.exe`, los instala, los arranca y los desinstala, y los ateste. `manifest.py` ata cada
+genera `atenea-desktop-<v>-linux-<arq>.deb`, `atenea-desktop-<v>-linux-<arq>.rpm` y `atenea-desktop-<v>-macos-<arq>.dmg`,
+los instala (el DMG se monta), los arranca y los ateste. En Windows no hay paquete propio: el ejecutable probado se sube como
+artefacto **interno** `desktop-bin-Windows` (junto al `native-bin-Windows` del cliente y el agente) y entra en el instalador
+único; el job deja allí solo el inventario Go y la identidad. `manifest.py` ata cada
 paquete al SBOM Go de su sistema (no al de Rust) y comprueba la identidad del `.deb` (acepta `control.tar.gz`, que es lo
 que produce nfpm, además de `control.tar.xz`). `tests/release/test_desktop_manifest.py` (en `scripts/check.sh`) cubre
 ese contrato con artefactos sintéticos. **Sin firma de desarrollador ni notarización.** El `.deb` y el `.rpm` salen

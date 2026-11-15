@@ -2,7 +2,7 @@
 
 La aplicación de escritorio ([ADR-019](../architecture/ADR-019-aplicacion-de-escritorio-wails.md)) se empaqueta con
 `packaging/desktop/build.sh`, el mismo script en CI y en el release. **Los paquetes no llevan firma de desarrollador ni
-están notarizados.** El `.dmg`, el `.rpm` y el `.exe` **no instalan el agente ni el CLI** (siguen en su `.deb`, `.pkg` y ZIP de
+están notarizados.** El `.dmg`, el `.rpm` y el `.exe` **no instalan el agente ni el CLI** (siguen en su `.deb`, su `.pkg` y el `.exe` único `atenea-one-*` de
 [Linux](instalacion-linux.md), [macOS](instalacion-macos.md) y [Windows](instalacion-windows.md)); en macOS el `.pkg` único
 `atenea-one-*` trae los dos y el `.deb` de escritorio **exige** el `.deb` del cliente de su misma versión (ADR-022). Sin
 cliente, la aplicación lo dice y no ofrece unirse.
@@ -15,7 +15,7 @@ cliente, la aplicación lo dice y no ofrece unirse.
 | Linux (Fedora y derivadas) | `atenea-desktop-<versión>-linux-<arq>.rpm` | `sudo dnf install ./atenea-desktop-*-linux-*.rpm` | Lo mismo; depende de `gtk4` y `webkitgtk6.0`. |
 | macOS 11 o posterior | `atenea-one-<versión>-macos-<arq>.pkg` (**recomendado**: cliente y aplicación) | `sudo installer -pkg atenea-one-*-macos-*.pkg -target /` o doble clic | Instala el cliente (`/Library/Atenea/bin`) **y** `Atenea One.app` en `/Applications` como propiedad de root (ADR-022), con una sola autorización. Vive en la barra de menús (sin icono en el Dock). |
 | macOS (solo la aplicación) | `atenea-desktop-<versión>-macos-<arq>.dmg` | Abrir el DMG y arrastrar «Atenea One» a Aplicaciones | `Atenea One.app` con firma **ad hoc**; el cliente se instala aparte. |
-| Windows | `atenea-desktop-<versión>-windows-<arq>.exe` | Ejecutar; `/S` para instalación silenciosa | Instalación **por usuario** (`%LOCALAPPDATA%\Programs\Atenea One`), sin UAC; acceso directo en el menú Inicio y desinstalador. |
+| Windows 10/11 x64 | `atenea-one-<versión>-windows-amd64.exe` (cliente, agente y aplicación) | Ejecutar con doble clic (UAC) o `/S` desde una consola elevada | Instalación **por equipo** (`%ProgramFiles%\Atenea`), acceso directo «Atenea One» en el menú Inicio y desinstalador; **sin firma de código** (ADR-023). Ya no hay instalador por usuario de la aplicación sola. El runtime WebView2 de Microsoft debe estar presente: si falta, el instalador avisa y la ventana no abre hasta instalarlo. |
 
 La verificación de un release (firma Ed25519, SHA-256, SBOM) es la de [release.md](release.md): los paquetes entran en el
 mismo manifiesto, cada uno con el inventario Go de su sistema (`go-desktop-<Linux|macOS|Windows>.cdx.json`).
@@ -27,7 +27,7 @@ muestra la ventana con el asistente de **Primeros pasos** ([ADR-021](../architec
 
 1. **Sistema y cliente.** Si falta el cliente (`atenea`), el asistente enseña la orden de instalación para copiar
    (`sudo apt install ./atenea-cli-*-linux-*.deb ./atenea-desktop-*-linux-*.deb` o `sudo installer -pkg atenea-one-*-macos-*.pkg -target /`) y «Comprobar de
-   nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows solo **ve el estado** (ver «Windows: solo ver el estado»).
+   nuevo». **No lo instala ni lo descarga, y no abre enlaces.** En Windows une y gestiona con UAC (ver «Windows: unir y gestionar con UAC»).
 2. **Instalación heredada**, si la hay: ofrece importarla antes de unirse a otra red.
 3. **Unirse:** pegar el código, revisar a qué red te unes (nombre, servidor, huella de la raíz, conectividad) y confirmar; el
    sistema pide la autorización. Es la misma pantalla de «Redes».
@@ -42,8 +42,8 @@ Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el 
 - **macOS:** al no estar notarizada, Gatekeeper pide confirmación («Abrir igualmente» en Ajustes del Sistema → Privacidad y
   seguridad). La firma ad hoc solo evita que el bundle se modifique sin que `codesign --verify` lo note.
 - **Windows:** SmartScreen avisará por la falta de firma Authenticode. El instalador **no incluye WebView2**: si el runtime no
-  está, lo dice y se detiene en lugar de descargar un binario sin verificar. Windows 11 y las versiones de Windows 10 al día
-  lo traen con Microsoft Edge.
+  está, lo dice y sigue (el cliente y los servicios no lo necesitan; la ventana no abre hasta instalarlo) en lugar de descargar
+  un binario sin verificar. Windows 11 y las versiones de Windows 10 al día lo traen con Microsoft Edge.
 - **Linux, Ubuntu 24.04:** AppArmor restringe los espacios de nombres de usuario sin privilegios y el sandbox de WebKitGTK
   (`bwrap`) puede impedir que la ventana arranque. En los spikes de ADR-019 la aplicación se cerró al arrancar hasta poner
   `kernel.apparmor_restrict_unprivileged_userns=0`. **No se ha comprobado en un escritorio real** ni se aplica ningún
@@ -51,19 +51,20 @@ Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el 
 - La aplicación guarda sus preferencias en la carpeta de configuración del usuario (`one.atenea.desktop`); desinstalar el paquete
   **no** las borra.
 
-### Windows: solo ver el estado
+### Windows: unir y gestionar con UAC
 
-En Windows la aplicación **no une ni gestiona redes** (unirse, conectar, desconectar y salir no se ofrecen; el CLI de Windows aún
-no admite `atenea network`, ADR-017). Lo que sí hace, sin privilegios: leer la tubería de estado del agente
-(`\\.\pipe\atenea-status`, legible por el grupo Users) y mostrar **una única red**, la instalada a mano con `install.ps1`
-(«Red de este equipo»). Si el servicio `AteneaAgent` no responde, el asistente pide instalarlo y arrancarlo siguiendo la
-[guía de Windows](instalacion-windows.md) (la aplicación no lo instala). También lanza `ping.exe` a los pares (el resultado
-se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre el panel con `rundll32 url.dll,FileProtocolHandler`.
-«Abrir al iniciar sesión» (Diagnóstico y último paso del asistente) funciona en Windows con un valor bajo la clave `Run` del propio usuario (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor `Atenea One` con la ruta del ejecutable entre comillas y sin argumentos): sin privilegios y sin servicio residente, y la aplicación arranca oculta, en la bandeja. Desactivarlo borra el valor. No está comprobado en un Windows real; lo prueba la CI de Windows sobre una clave temporal. Siguen sin soporte en Windows las notificaciones del sistema.
+En Windows la aplicación **une y gestiona redes** como en macOS y Linux (ADR-017 fase 3). Sin privilegios lee el estado: la lista sale de `atenea network list --json` y el estado de cada red, de su tubería `\\.\pipe\atenea-<id8>-status` (legible por el grupo Users). Unirse, conectar, desconectar y salir se ejecutan con el **diálogo de UAC**: la aplicación lanza `powershell.exe` con `Start-Process -Verb RunAs` (sin FFI), que ejecuta una sola llamada al CLI (`atenea network join <código> --yes --up`, `up`, `down` o `leave`; no hay shell que encadene órdenes). La ventana de UAC la pone Windows y nombra el programa, no el texto de Atenea: la confirmación previa (red, servidor, huella) es la de la aplicación.
 
-**Comprobado en un Windows real (2026-11-06):** en un Windows 11 Pro 24H2 (amd64, en español, unido a un dominio), con el cliente instalado con `install.ps1` y el agente enrolado en una red y arrancado, la aplicación (compilada desde esta rama) muestra **«Red de este equipo» como conectada**. Es la lectura real de la tubería de estado desde la aplicación, que corre **sin elevar** (la cuenta que la usó es de administrador, así que no se ha probado con una cuenta estándar); lo vio el responsable en pantalla (sin captura).
+- **El CLI que se eleva es siempre `%ProgramFiles%\Atenea\atenea.exe`**, la carpeta que protege el instalador. La ruta sale de la carpeta conocida del sistema, no de una variable de entorno; `ATENEA_CLI` no sirve para una operación elevada, y un enlace se rechaza. **No lee la DACL del fichero** (exigiría FFI de seguridad en la aplicación): confía en la que fija el instalador, que comprueba la CI; si alguien relaja esa carpeta, la elevación lo hereda.
+- **El resultado viaja por un fichero, no por la salida.** La salida de una orden elevada con UAC no se puede capturar y el proceso elevado nunca escribe en una ruta que controle el usuario. La aplicación elige un identificador de 128 bits aleatorios (`--result <nonce>`) y el CLI elevado crea `%ProgramData%\Atenea\ui-results\<nonce>\result.json` (escritura solo para SYSTEM y Administradores, lectura para `Users`; hasta 4 KiB, sin caracteres de control) con `{"ok":…,"message":…}`. Solo aporta el mensaje de un fallo: el estado se vuelve a leer con `network list`, que es la fuente de verdad. El CLI retira los resultados de hace más de un día.
+- **Cancelar el diálogo no cambia nada:** `powershell` sale con 126 (error 1223 de Windows) y la aplicación muestra «Cancelado».
+- **No hay migración de la instalación heredada** (`AteneaAgent`, ADR-017 §10): la aplicación no la ofrece; hay que desinstalarla, reinstalar y unirse con un código. Tampoco se pueden publicar servicios de este equipo todavía (ADR-024 en Windows).
+- También lanza `ping.exe` a los pares (el resultado se calcula con los envíos pedidos, sin depender del idioma de Windows) y abre el panel con `rundll32 url.dll,FileProtocolHandler`.
+- «Abrir al iniciar sesión» (Diagnóstico y último paso del asistente) funciona con un valor bajo la clave `Run` del propio usuario (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor `Atenea One` con la ruta del ejecutable entre comillas y sin argumentos): sin privilegios y sin servicio residente, y la aplicación arranca oculta, en la bandeja. Desactivarlo borra el valor. Siguen sin soporte en Windows las notificaciones del sistema.
 
-**Sin comprobar en un Windows real:** el ping a un par (no había ningún par: era el único dispositivo de la red), abrir el panel con `rundll32`, el resto de pantallas (Diagnóstico, Servidores) y otras versiones o idiomas de Windows. El formato de tiempo de `ping` en español (`<1m`) está escrito de memoria. La app no verifica que el propietario de la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI, vetado en la app): un usuario local que creara esa tubería antes que el servicio podría mostrar un estado falso y que «Abrir el panel» abriera una URL suya (siempre `https`, sin credenciales).
+**Lo que prueba la CI** (`tests/windows/network-checks.ps1`, runner elevado desechable): el canal `result.json` del CLI (éxito, fallo con su mensaje, nonce inválido, DACL), y la ruta REAL de la aplicación (`TestWindowsElevationAcceptance`: comprobación del CLI de Archivos de programa, `powershell Start-Process -Verb RunAs`, `up`, `down` y `leave` de una red unida contra un control plane falso, y el mensaje de un fallo). En el runner UAC no pide confirmación (la cuenta ya es administrador), así que **el diálogo y su cancelación no se ejercitan**; las pruebas unitarias cubren la orden que se construye (sin comillas ni metacaracteres que escapen de la cita de PowerShell) y el canal de resultado con un ejecutor simulado.
+
+**Sin comprobar en un Windows real:** el diálogo de UAC y su cancelación, una cuenta estándar que lea la lista y las tuberías (solo se comprueban sus DACL), unirse contra un control plane real, el ping a un par, abrir el panel con `rundll32`, el resto de pantallas y otras versiones o idiomas de Windows. La aplicación no verifica que el propietario de la tubería sea Administradores (lo hace el CLI Rust; exigiría FFI): un usuario local que creara esa tubería antes que el servicio podría mostrar un estado falso y que «Abrir el panel» abriera una URL suya (siempre `https`, sin credenciales).
 
 ## Servicios de los dispositivos
 

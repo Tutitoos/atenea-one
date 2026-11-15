@@ -46,7 +46,7 @@ try {
     # Un solo plazo cubre la recogida PS5.1 real y todos los lectores, antes de instalar.
     Invoke-Bounded "& '$PSScriptRoot/json-fixtures.ps1' -Out '$repo/target/windows-json-fixtures.json'; & python -u '$PSScriptRoot/check_ps51_fixtures.py' '$repo/target/windows-json-fixtures.json'; if (`$LASTEXITCODE -ne 0) {exit `$LASTEXITCODE}" 30
     Invoke-Bounded "& '$PSScriptRoot/installer-checks.ps1' -Installer '$installer' -OlderInstaller '$older'" 300
-    Invoke-Bounded "& '$PSScriptRoot/network-checks.ps1'" 240
+    Invoke-Bounded "& '$PSScriptRoot/network-checks.ps1' -Installer '$installer'" 1500
     Invoke-Bounded "& python -u '$PSScriptRoot/smoke.py'; if (`$LASTEXITCODE -ne 0) {exit `$LASTEXITCODE}" 360
 } catch {
     $failure = $_
