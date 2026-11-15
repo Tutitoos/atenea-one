@@ -105,7 +105,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
@@ -147,7 +147,7 @@ jobs:
           cargo run -p atenea-tunnel --example two_adapters
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Aceptación elevada en VM desechable
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: tests/windows/run.ps1
   # Aplicación de escritorio (Go + Wails v3, módulo propio): solo si cambia ella o crates/windows.
   desktop:

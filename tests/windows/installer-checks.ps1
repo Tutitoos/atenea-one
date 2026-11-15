@@ -46,6 +46,13 @@ foreach ($f in 'atenea.exe', 'atenea-agent.exe', 'WINTUN-LICENSE.txt', 'BUILD-IN
 # Solo SYSTEM y Administradores controlan los datos (el SDDL de ADR-017/023).
 $sddl = (Get-Acl -LiteralPath $data).GetSecurityDescriptorSddlForm('Owner,Group,Access')
 Assert-True ($sddl -match '^O:BAG:BAD:P(AI)?\(A;OICI;FA;;;SY\)\(A;OICI;FA;;;BA\)$') "DACL de ProgramData: $sddl"
+# El instalador ya no registra ningún servicio (ADR-017 §9) y los usuarios pueden ejecutar la CLI, no sustituirla.
+Assert-True (-not (Get-Service AteneaAgent -ErrorAction SilentlyContinue)) 'el instalador registró AteneaAgent'
+Assert-True (-not (Get-Service 'AteneaNetwork-*' -ErrorAction SilentlyContinue)) 'el instalador registró un servicio de red'
+Assert-True ((Get-Acl -LiteralPath $bin).Sddl -match 'D:P.*\(A;[^)]*;;;BU\)') "DACL de Archivos de programa: $((Get-Acl -LiteralPath $bin).Sddl)"
+Assert-True ((& (Join-Path $bin 'atenea.exe') network legacy --json) -match '"present":false') '`network legacy` veía una instalación heredada que no existe'
+# Una instalación anterior (que sí registraba AteneaAgent) se respeta en las actualizaciones: se simula registrándolo.
+& "$PSScriptRoot/register-legacy.ps1"
 $service = Get-CimInstance Win32_Service -Filter "Name='AteneaAgent'"
 Assert-True ($service.StartName -eq 'LocalSystem' -and $service.StartMode -eq 'Manual' -and $service.State -eq 'Stopped') "servicio: $($service.StartName)/$($service.StartMode)/$($service.State)"
 $failure = & "$env:SystemRoot/System32/sc.exe" qfailure AteneaAgent | Out-String

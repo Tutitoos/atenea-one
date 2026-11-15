@@ -234,6 +234,8 @@ dst = "any"
 
     peer = None
     try:
+        # El instalador ya no registra el servicio heredado (ADR-017 §9): esta aceptación lo registra como antes.
+        print(ps(f"& '{REPO / 'tests/windows/register-legacy.ps1'}'", timeout=45))
         service = service_snapshot()
         assert service['State'] == 'Stopped' and service['StartMode'] == 'Manual', service
         assert service['StartName'] == 'LocalSystem', service

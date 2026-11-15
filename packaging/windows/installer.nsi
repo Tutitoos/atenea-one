@@ -1,8 +1,8 @@
 ; Copyright 2026 Tutitoos
 ; SPDX-License-Identifier: Apache-2.0
-; Instalador único de Windows (ADR-023): agente, CLI y Wintun, por equipo (administrador). Instala sin arrancar y sin
-; configurar: la identidad y la configuración las crea el usuario en %ProgramData%\Atenea. Las comprobaciones
-; privilegiadas están en installer-ops.ps1 (las mismas que install.ps1/uninstall.ps1).
+; Instalador único de Windows (ADR-023): agente, CLI y Wintun, por equipo (administrador). No registra ningún servicio
+; ni configura nada: cada red crea el suyo con `atenea network join/up` (ADR-017). Un servicio heredado `AteneaAgent`
+; de una instalación anterior se respeta. Las comprobaciones privilegiadas están en installer-ops.ps1.
 ;
 ; Variables de compilación (/D): VERSION, VIVERSION (a.b.c.d), BINDIR (atenea.exe y atenea-agent.exe), WINTUNDIR
 ; (wintun.dll y WINTUN-LICENSE.txt de get-wintun.ps1), BUILDINFO, OUTFILE.
@@ -11,6 +11,7 @@ Unicode true
 !include "LogicLib.nsh"
 !include "WordFunc.nsh"
 !include "FileFunc.nsh"
+!include "TextFunc.nsh"
 
 !define APP_NAME "Atenea"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AteneaOne"
@@ -35,8 +36,9 @@ VIAddVersionKey "LegalCopyright" "Copyright 2026 Tutitoos"
 !insertmacro MUI_LANGUAGE "Spanish"
 !insertmacro GetOptions
 !insertmacro un.GetOptions
+!insertmacro TrimNewLines
 
-Var WasRunning
+Var Running
 Var Existing
 !insertmacro un.GetParameters
 
@@ -109,12 +111,10 @@ Section "Instalar"
     SetOutPath "$INSTDIR"
     File "/oname=installer-ops.ps1" "installer-ops.ps1"
     !insertmacro Ops Check ""
-    StrCpy $WasRunning "0"
+    StrCpy $Running ""
     ${If} $Existing != ""
         !insertmacro Ops Stop ""
-        ${If} $0 == "running"
-            StrCpy $WasRunning "1"
-        ${EndIf}
+        ${TrimNewLines} "$0" $Running
     ${EndIf}
     !insertmacro Ops Prepare ""
     SetOutPath "$INSTDIR"
@@ -125,7 +125,7 @@ Section "Instalar"
     File "/oname=BUILD-INFO.json" "${BUILDINFO}"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
-    !insertmacro Ops Register ""
+    !insertmacro Ops Protect ""
     WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
     WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "Tutitoos"
@@ -133,9 +133,9 @@ Section "Instalar"
     WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
     WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
-    ; Solo se vuelve a arrancar el servicio si estaba en marcha antes de actualizar.
-    ${If} $WasRunning == "1"
-        !insertmacro Ops Start ""
+    ; Solo se vuelven a arrancar los servicios que estaban en marcha antes de actualizar.
+    ${If} $Running != ""
+        !insertmacro Ops Start "-Names $Running"
     ${EndIf}
 SectionEnd
 
@@ -144,20 +144,26 @@ Function un.onInit
     SetShellVarContext all
 FunctionEnd
 
-; Sin /PURGE se conservan los datos (identidad, claves, configuración) de %ProgramData%\Atenea.
+; Sin /PURGE se conservan los datos (identidades, claves, configuración) de %ProgramData%\Atenea. Los servicios de las
+; redes quedan parados y deshabilitados. /PURGE borra los datos y rechaza hacerlo si siguen unidas redes, salvo /FORCE.
 Section "Uninstall"
     ${un.GetParameters} $2
-    ${un.GetOptions} $2 "/PURGE" $3
     StrCpy $4 ""
+    ${un.GetOptions} $2 "/PURGE" $3
     ${IfNot} ${Errors}
         StrCpy $4 "-Purge"
+    ${EndIf}
+    ClearErrors
+    ${un.GetOptions} $2 "/FORCE" $3
+    ${IfNot} ${Errors}
+        StrCpy $4 "$4 -Force"
     ${EndIf}
     ClearErrors
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-ops.ps1" -Action Remove -Bin "$INSTDIR" -Data "$APPDATA\Atenea" $4'
     Pop $1
     Pop $0
     ${If} $1 != 0
-        MessageBox MB_OK|MB_ICONSTOP "No se pudo retirar el servicio (código $1); se conserva la instalación.$\r$\n$\r$\n$0" /SD IDOK
+        MessageBox MB_OK|MB_ICONSTOP "No se pudo desinstalar (código $1); se conserva la instalación.$\r$\n$\r$\n$0" /SD IDOK
         SetErrorLevel 2
         Abort
     ${EndIf}
