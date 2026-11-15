@@ -230,6 +230,7 @@ jobs:
           binary="$RUNNER_TEMP/atenea-desktop"
           if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
           packaging/desktop/build-binary.sh "$binary"
+          packaging/desktop/check-version.sh "$binary"
           echo "ATENEA_DESKTOP_BINARY=$binary" >> "$GITHUB_ENV"
           if [ "$RUNNER_OS" = Linux ]; then
             # El sandbox de WebKitGTK no arranca en el runner (ver ci.yml); se desactiva solo en esta prueba.
