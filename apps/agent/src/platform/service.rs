@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Adaptador seguro entre SCM y el bucle compartido del agente.
 pub(crate) use atenea_windows::service_stop_receiver as stop_receiver;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Conserva el diagnóstico desde el arranque hasta la desconexión de SCM.
-pub(crate) fn init_logging(level: tracing::Level) -> Result<(), String> {
-    let root = std::env::var_os("ProgramData").ok_or("ProgramData ausente")?;
-    let dir = PathBuf::from(root).join("Atenea");
-    if !dir.is_absolute() {
-        return Err("ProgramData debe ser una ruta absoluta".into());
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("directorio de diagnóstico: {e}"))?;
+/// Conserva el diagnóstico desde el arranque hasta la desconexión de SCM. El registro vive junto a la
+/// configuración (`agent.log` en su directorio): cada servicio escribe en el suyo, porque un fichero
+/// compartido lo abriría el primer servicio con acceso exclusivo de escritura y el segundo no arrancaría.
+pub(crate) fn init_logging(level: tracing::Level, config: &Path) -> Result<(), String> {
+    let dir = config
+        .parent()
+        .filter(|dir| config.is_absolute() && dir.is_absolute())
+        .ok_or("el servicio exige una ruta de configuración absoluta")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("directorio de diagnóstico: {e}"))?;
     let file = atenea_windows::append_private(&dir.join("agent.log"))
         .map_err(|e| format!("agent.log privado: {e}"))?;
     tracing_subscriber::fmt()

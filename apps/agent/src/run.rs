@@ -54,8 +54,12 @@ enum Cmd {
 pub fn main() -> ExitCode {
     let cmd = Cli::parse().cmd;
     #[cfg(target_os = "windows")]
-    if matches!(&cmd, Cmd::Run { service: true, .. }) {
-        if let Err(error) = crate::platform::service::init_logging(log_level()) {
+    if let Cmd::Run {
+        config,
+        service: true,
+    } = &cmd
+    {
+        if let Err(error) = crate::platform::service::init_logging(log_level(), config) {
             eprintln!("diagnóstico del servicio: {error}");
             return ExitCode::FAILURE;
         }
