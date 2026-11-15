@@ -13,5 +13,6 @@ pub use service::{dispatch_service, service_stop_receiver};
 // La API del SCM de `windows-service` es segura: sin `unsafe` en este módulo.
 mod scm;
 pub use scm::{
-    NetworkService, ServiceStatus, service_status, start_network_service, stop_network_service,
+    NetworkService, ServiceStatus, delete_network_service, service_status, start_network_service,
+    stop_network_service,
 };
