@@ -62,15 +62,17 @@ function Get-JoinedNetworks {
         [pscustomobject]@{ Id = $_.Name; Name = $name; Config = (Join-Path $_.FullName 'device\agent.toml'); Service = "AteneaNetwork-$($_.Name.Substring(28))" }
     })
 }
+
 # La aplicación de escritorio no tiene estado propio (ADR-019) y un ejecutable en uso no se puede sustituir ni borrar:
-# se cierra solo la copia de este directorio (la bandeja la mantiene abierta sin ventana).
+# se cierra solo la copia de este directorio (la bandeja la mantiene abierta sin ventana). NSIS es de 32 bits y lanza
+# este script con el PowerShell de 32 bits, que no puede leer `Process.Path` de un proceso de 64 bits: la ruta sale de CIM.
 function Stop-App {
     $exe = Join-Path $Bin 'atenea-desktop.exe'
-    foreach ($process in @(Get-Process -Name 'atenea-desktop' -ErrorAction SilentlyContinue)) {
-        $path = try { $process.Path } catch { $null }
-        if ($path -and $path -eq $exe) {
-            Stop-Process -Id $process.Id -Force
-            $null = $process.WaitForExit(10000)
+    foreach ($process in @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'atenea-desktop.exe'")) {
+        if ($process.ExecutablePath -eq $exe) {
+            Stop-Process -Id $process.ProcessId -Force
+            Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
+            if (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue) { throw "No se pudo cerrar $exe (proceso $($process.ProcessId))." }
         }
     }
 }

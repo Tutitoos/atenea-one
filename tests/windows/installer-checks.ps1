@@ -95,7 +95,9 @@ Set-Content -LiteralPath $marker -Value 'x'
 Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination $appExe -Force
 $fake = Start-Process -FilePath $appExe -ArgumentList '-n', '120', '127.0.0.1' -PassThru -WindowStyle Hidden
 Assert-True ((Install $Installer) -eq 0) 'actualización en el sitio con la aplicación en marcha'
-Assert-True ($fake.HasExited) 'la actualización no cerró la aplicación en marcha'
+$closed = $fake.WaitForExit(5000)
+if (-not $closed) { Stop-Process -Id $fake.Id -Force }  # no dejar un ejecutable en uso que impida la limpieza
+Assert-True $closed 'la actualización no cerró la aplicación en marcha'
 Assert-True ((Get-FileHash -Algorithm SHA256 $appExe).Hash -eq $appHash) 'la actualización no dejó la aplicación nueva'
 Assert-True (Test-Path $marker) 'la actualización borró datos'
 Assert-True ((Get-Service AteneaAgent).Status -eq 'Stopped') 'la actualización arrancó un servicio parado'
