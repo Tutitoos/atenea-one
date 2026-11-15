@@ -151,7 +151,8 @@ trust_anchor = "$anchor"
     $refused = $false
     try { Invoke-Cli network join $again --yes --insecure-http --name equipo-prueba | Out-Null } catch { $refused = $_.Exception.Message -match 'unido a la red' }
     Assert-True $refused 'una segunda unión a la misma red debía rechazarse'
-    $listed = @(Invoke-Cli network list --json | ConvertFrom-Json)
+    # PowerShell 5.1 entrega la lista JSON como un único objeto array: sin @(...) para no envolverla otra vez.
+    $listed = Invoke-Cli network list --json | ConvertFrom-Json
     Assert-True (@($listed).Count -eq 2) "list: se esperaban 2 redes: $(Invoke-Cli network list)"
     $ports = @($listed | ForEach-Object { $_.listen_port })
     Assert-True ($ports[0] -ne $ports[1] -and @($ports | Where-Object { $_ -lt 51820 }).Count -eq 0) "puertos: $ports"
