@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestWindowsElevationAcceptance ejerce la ruta REAL de la aplicación (comprobación del CLI de Archivos de programa,
@@ -65,19 +66,32 @@ func TestWindowsElevationAcceptance(t *testing.T) {
 	if _, err := Apply("up", id, "", ""); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	if got := state(); got != "iniciada_sin_configuracion" {
+	// La tubería de estado aparece unos instantes después de que el SCM marque el servicio en marcha: la interfaz
+	// sondea, y la prueba también.
+	waitFor := func(want string) string {
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			got := state()
+			if got == want || time.Now().After(deadline) {
+				return got
+			}
+			InvalidateList()
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if got := waitFor("iniciada_sin_configuracion"); got != "iniciada_sin_configuracion" {
 		t.Fatalf("tras up: %s", got)
 	}
 	if _, err := Apply("down", id, "", ""); err != nil {
 		t.Fatalf("down: %v", err)
 	}
-	if got := state(); got != "detenida" {
+	if got := waitFor("detenida"); got != "detenida" {
 		t.Fatalf("tras down: %s", got)
 	}
 	if _, err := Apply("leave", id, "", ""); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
-	if got := state(); got != "ausente" {
+	if got := waitFor("ausente"); got != "ausente" {
 		t.Fatalf("tras leave: %s", got)
 	}
 }
