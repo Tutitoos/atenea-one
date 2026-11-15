@@ -145,7 +145,16 @@ jobs:
       - name: Compilar la aplicación de escritorio
         shell: bash
         timeout-minutes: 10
+        env:
+          ATENEA_BUILD_COMMIT: ${{ github.sha }}
         run: packaging/desktop/build-binary.sh "$RUNNER_TEMP/atenea-desktop.exe"
+      # ADR-025: el binario de producción es del subsistema gráfico; `--version` debe escribir igualmente en la tubería.
+      - name: La aplicación imprime su versión (subsistema gráfico)
+        shell: bash
+        timeout-minutes: 2
+        env:
+          ATENEA_BUILD_COMMIT: ${{ github.sha }}
+        run: packaging/desktop/check-version.sh "$RUNNER_TEMP/atenea-desktop.exe"
       - name: Construir el instalador único y uno de versión anterior (prueba de retroceso)
         env:
           ATENEA_BUILD_COMMIT: ${{ github.sha }}
@@ -215,6 +224,8 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" -tags production ./...
       - name: Compilar
         run: go build -trimpath -o atenea-desktop${{ runner.os == 'Windows' && '.exe' || '' }} .
+      - name: Versión (sin pantalla ni ventana)
+        run: test "$(./atenea-desktop${{ runner.os == 'Windows' && '.exe' || '' }} --version | tr -d '\r')" = 'atenea-desktop 0.0.0-dev (unknown)'
       - name: Prueba de humo (interfaz embebida, CSP, filtro y puente)
         run: |
           if [ "$RUNNER_OS" = Linux ]; then

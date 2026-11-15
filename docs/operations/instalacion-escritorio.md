@@ -50,6 +50,7 @@ Se puede volver a abrir desde «Sin redes» o en `/welcome`; no guarda nada: el 
   rodeo en los paquetes: desactivar el sandbox de WebKit o relajar ese ajuste es una decisión de seguridad del usuario.
 - La aplicación guarda sus preferencias en la carpeta de configuración del usuario (`one.atenea.desktop`); desinstalar el paquete
   **no** las borra.
+- **Versión instalada** (ADR-025, fase 2): `atenea-desktop --version` (o `-V`, como único argumento) imprime `atenea-desktop <versión> (<commit>)` y sale **sin abrir ventana, bandeja ni servicio** y sin necesitar pantalla. Es la misma forma que `atenea --version`; el agente del equipo la ejecutará desde una ruta fija para informar qué versión de la aplicación hay instalada (fases siguientes). La versión y el commit se incrustan al compilar con `packaging/desktop/build-binary.sh`; un binario compilado a mano sin ellos imprime `atenea-desktop 0.0.0-dev (unknown)`. En Windows el binario es del subsistema gráfico: `packaging/desktop/check-version.sh` comprueba en la CI que aun así escribe en una tubería.
 
 ### Windows: unir y gestionar con UAC
 

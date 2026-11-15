@@ -20,6 +20,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/app"
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/buildinfo"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/notify"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/runtimefilter"
 	"github.com/Tutitoos/atenea-one/apps/desktop/internal/secure"
@@ -36,6 +37,11 @@ var assets embed.FS
 var trayPNG []byte
 
 func main() {
+	// ADR-025: el agente del equipo ejecuta `atenea-desktop --version` desde una ruta fija. Se atiende antes de crear
+	// la aplicación, la ventana, la bandeja o cualquier servicio, y no necesita pantalla.
+	if buildinfo.Handle(os.Args[1:], os.Stdout) {
+		return
+	}
 	ui, err := fs.Sub(assets, "build/client")
 	if err != nil {
 		panic(err)
