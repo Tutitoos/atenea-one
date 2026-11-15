@@ -73,9 +73,16 @@ Var Existing
     ${EndIf}
 !macroend
 
+; Quien lanza el instalador desde PowerShell 7 deja en el entorno un PSModulePath que el Windows PowerShell 5.1 hijo hereda
+; y con el que no carga Microsoft.PowerShell.Security (`Set-Acl` desaparece). Se borra: el 5.1 recompone el suyo.
+!macro ResetModulePath
+    System::Call 'Kernel32::SetEnvironmentVariable(t "PSModulePath", p 0)i'
+!macroend
+
 Function .onInit
     SetRegView 64
     SetShellVarContext all
+    !insertmacro ResetModulePath
 
     ReadRegStr $Existing HKLM "${UNINST_KEY}" "DisplayVersion"
     ${If} $Existing != ""
@@ -172,6 +179,7 @@ SectionEnd
 Function un.onInit
     SetRegView 64
     SetShellVarContext all
+    !insertmacro ResetModulePath
 FunctionEnd
 
 ; Sin /PURGE se conservan los datos (identidades, claves, configuración) de %ProgramData%\Atenea. Los servicios de las
