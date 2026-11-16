@@ -14,6 +14,25 @@ function versionText(device: Model<'Device'>, component: typeof components[numbe
   return found.commit === 'unknown' ? found.version : `${found.version} (${found.commit.slice(0, 7)})`;
 }
 
+/** Mismo plazo que `/device/peers` (ADR-024): pasado ese tiempo los pares ya no ven la lista, aunque el inventario la conserve. */
+const SERVICES_FRESH_SECS = 120;
+
+/** ADR-024 fase 6: `services_at` nulo = nunca informó (o publicación apagada); informado y vacío = no publica. Dato declarado, no abre ni autoriza nada. */
+function Services({ device }: { device: Model<'Device'> }) {
+  if (!device.services_at) return <p>Sin servicios informados (el agente no publica o nunca informó).</p>;
+  const age = Math.max(0, Math.round((Date.now() - Date.parse(device.services_at)) / 1000));
+  return <>
+    {device.services.length ? <ul className="devices-services" aria-label={`Servicios publicados por ${device.name}`}>
+      {device.services.map(service => <li key={service.port}>
+        Puerto <code>{service.port}</code> · {service.scheme}{service.label && ` · ${service.label}`}</li>)}
+    </ul> : <p>No publica servicios.</p>}
+    {age > SERVICES_FRESH_SECS && <p className="warning" role="status">
+      Último informe de servicios hace más de {SERVICES_FRESH_SECS} s: los demás dispositivos ya no ven esta lista.</p>}
+    <small>Declarados por el agente el <time dateTime={device.services_at}>{new Date(device.services_at).toLocaleString('es')}</time>;
+      publicar un servicio no lo hace alcanzable ni crea políticas, y no está verificado independientemente.</small>
+  </>;
+}
+
 export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh }: {
   device: Model<'Device'>; devices: Model<'Device'>[]; net: string; elapsed: number;
   routes: Model<'Route'>[]; canEdit: boolean; refresh: () => Promise<unknown>;
@@ -30,6 +49,8 @@ export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, r
       {components.map(([component, label]) => <div key={component}><dt>{label}</dt><dd>{versionText(device, component)}</dd></div>)}
     </dl>
     {device.versions_at && <small>Versiones declaradas por el agente el <time dateTime={device.versions_at}>{new Date(device.versions_at).toLocaleString('es')}</time>; no verificadas independientemente.</small>}
+    <h4>Servicios publicados</h4>
+    <Services device={device}/>
     <p className="devices-fingerprint"><strong>Huella completa: </strong><code>{device.fingerprint}</code>
       <CopyButton value={device.fingerprint} label={`Copiar huella del detalle de ${device.name}`}/></p>
     {report ? <>
