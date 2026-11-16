@@ -21,6 +21,8 @@ const port = z.number().int().min(1).max(65535);
 const peerService = z.object({ port, proto: z.literal('tcp'), scheme: z.enum(['http', 'https']).default('http'), label: z.string().nullish() });
 const ownService = z.object({ port, proto: z.literal('tcp') });
 const tolerant = <T extends z.ZodType>(item: T) => z.array(z.unknown()).transform((list) => list.flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data as z.output<T>] : []; })).nullish();
+// Versiones instaladas (ADR-025): datos de presentación; una entrada rara se descarta sin invalidar el estado.
+const installed = z.object({ component: z.enum(['agent', 'cli', 'desktop']), version: z.string(), commit: z.string() });
 const peer = z.object({
   public_key: z.string(),
   device_id: deviceId,
@@ -39,6 +41,9 @@ const peer = z.object({
   paths: z.array(path).default([]),
   // Lo que ese par publica en esta red (solo si hay política hacia él y él lo activó).
   services: tolerant(peerService),
+  // `versions_at` nulo = el par nunca informó («Sin informar»); con fecha, lo que falta en la lista no está instalado.
+  versions: tolerant(installed),
+  versions_at: z.string().nullish(),
 });
 const status = z.object({
   server: z.object({
@@ -62,6 +67,8 @@ const status = z.object({
   services: tolerant(ownService),
   services_truncated: z.boolean().nullish(),
   services_publish: z.boolean().nullish(),
+  // `null` hasta la primera detección del propio agente.
+  versions: tolerant(installed),
   peers: z.array(peer).default([]),
 });
 
