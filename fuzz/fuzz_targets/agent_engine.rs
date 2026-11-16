@@ -17,6 +17,8 @@ mod engine;
 mod packet;
 #[path = "../../apps/agent/src/services.rs"]
 mod services;
+#[path = "../../apps/agent/src/versions.rs"]
+mod versions;
 /// `relay.rs` arrastra TLS/tokio; el motor solo necesita la etiqueta del camino.
 mod relay {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
@@ -47,6 +49,7 @@ mod sync {
         pub names: HashMap<DeviceId, String>,
         pub roles: HashMap<DeviceId, &'static str>,
         pub services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
+        pub versions: HashMap<DeviceId, crate::versions::PeerVersions>,
     }
 }
 

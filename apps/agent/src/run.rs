@@ -677,6 +677,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     > = None;
     let mut services_started: Option<Instant> = None;
     let mut services_failing = false;
+    let mut versions_task: Option<tokio::task::JoinHandle<Vec<crate::versions::ComponentVersion>>> =
+        None;
+    let mut versions_started: Option<Instant> = None;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -797,6 +800,18 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         let iface = rt.tun.name().to_owned();
                         services_task = Some(tokio::spawn(async move { net::listening_tcp(&iface).await }));
                         services_started = Some(now);
+                    }
+                    // Versiones instaladas (ADR-025): al arrancar y cada 10 minutos, en un hilo aparte (cada `--version`
+                    // tiene plazo). La lista solo se informa cuando ya hay una detección.
+                    if versions_task.as_ref().is_some_and(|task| task.is_finished())
+                        && let Some(task) = versions_task.take()
+                        && let Ok(list) = task.await
+                    {
+                        rt.engine.set_versions(list);
+                    }
+                    if versions_task.is_none() && versions_started.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(600)) {
+                        versions_task = Some(tokio::task::spawn_blocking(|| crate::versions::installed(crate::versions::running_agent(env!("CARGO_PKG_VERSION"), crate::build_info::COMMIT))));
+                        versions_started = Some(now);
                     }
                     rt.housekeeping(unix);
                     let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));

@@ -597,6 +597,10 @@ pub struct PeerStatus {
     pub services: Vec<crate::services::PeerService>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<&'static str>,
+    /// Versiones instaladas del par (ADR-025): la última lista que informó, `[]` si no informó o no tiene nada.
+    pub versions: Vec<crate::versions::ComponentVersion>,
+    /// Cuándo las informó (RFC 3339 del servidor); `null` si nunca: «sin informar», distinto de «sin componentes».
+    pub versions_at: Option<String>,
     pub endpoint: Option<String>,
     pub session: Option<String>,
     pub last_handshake_secs_ago: Option<u64>,
@@ -637,6 +641,8 @@ pub struct Status {
     pub services_truncated: bool,
     /// `[services] publish` en vigor; la aplicación lo lee para pintar el interruptor (ADR-024, fase 5).
     pub services_publish: bool,
+    /// Versiones instaladas de este equipo (ADR-025); `null` hasta la primera detección, y entonces no se informan.
+    pub versions: Option<Vec<crate::versions::ComponentVersion>>,
 }
 
 pub struct Engine {
@@ -682,6 +688,8 @@ pub struct Engine {
     names: HashMap<DeviceId, String>,
     roles: HashMap<DeviceId, &'static str>,
     peer_services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
+    peer_versions: HashMap<DeviceId, crate::versions::PeerVersions>,
+    own_versions: Option<Vec<crate::versions::ComponentVersion>>,
     hostname: Option<String>,
     probe_random: fn() -> u32,
 }
@@ -725,6 +733,8 @@ impl Engine {
             services_publish: false,
             roles: HashMap::new(),
             peer_services: HashMap::new(),
+            peer_versions: HashMap::new(),
+            own_versions: None,
             hostname: None,
             probe_random: crypto::random_u32,
         }
@@ -2056,11 +2066,17 @@ impl Engine {
         self.services_publish = publish;
     }
 
+    /// Versiones instaladas en este equipo (ADR-025); `None` hasta la primera detección.
+    pub fn set_versions(&mut self, versions: Vec<crate::versions::ComponentVersion>) {
+        self.own_versions = Some(versions);
+    }
+
     pub fn set_metadata(&mut self, hostname: Option<String>, peers: crate::sync::PeerMetadata) {
         self.hostname = hostname;
         self.names = peers.names;
         self.roles = peers.roles;
         self.peer_services = peers.services;
+        self.peer_versions = peers.versions;
     }
 
     pub fn status(&self, now: Instant, unix: u64) -> Status {
@@ -2080,6 +2096,7 @@ impl Engine {
             services: self.services.0.clone(),
             services_truncated: self.services.1,
             services_publish: self.services_publish,
+            versions: self.own_versions.clone(),
             peers: self
                 .peers
                 .iter()
@@ -2094,6 +2111,12 @@ impl Engine {
                         .cloned()
                         .unwrap_or_default(),
                     role: self.roles.get(&p.device_id).copied(),
+                    versions: self
+                        .peer_versions
+                        .get(&p.device_id)
+                        .map(|v| v.list.clone())
+                        .unwrap_or_default(),
+                    versions_at: self.peer_versions.get(&p.device_id).map(|v| v.at.clone()),
                     endpoint: p.endpoint.map(|e| e.to_string()),
                     session: p
                         .current
@@ -4256,6 +4279,17 @@ mod tests {
                         label: Some("panel".into()),
                     }],
                 )]),
+                versions: HashMap::from([(
+                    [2; 16],
+                    crate::versions::PeerVersions {
+                        list: vec![crate::versions::ComponentVersion {
+                            component: crate::versions::Component::Desktop,
+                            version: "0.1.31".into(),
+                            commit: "dfe72ae".into(),
+                        }],
+                        at: "2026-11-16T10:20:30Z".into(),
+                    },
+                )]),
             },
         );
         let after = serde_json::to_value(l.a.status(l.now, l.unix)).unwrap();
@@ -4272,6 +4306,21 @@ mod tests {
         assert_eq!(
             after["peers"][0]["public_key"],
             before["peers"][0]["public_key"]
+        );
+        assert_eq!(
+            after["peers"][0]["versions"],
+            serde_json::json!([{"component":"desktop","version":"0.1.31","commit":"dfe72ae"}])
+        );
+        assert_eq!(after["peers"][0]["versions_at"], "2026-11-16T10:20:30Z");
+        // Un par que nunca informó queda «sin informar»: lista vacía y fecha nula, distinto de «sin componentes».
+        assert_eq!(before["peers"][0]["versions"], serde_json::json!([]));
+        assert!(before["peers"][0]["versions_at"].is_null());
+        // Las versiones propias son `null` hasta la primera detección y después la lista, aunque sea vacía.
+        assert!(before["versions"].is_null());
+        l.a.set_versions(vec![]);
+        assert_eq!(
+            serde_json::to_value(l.a.status(l.now, l.unix)).unwrap()["versions"],
+            serde_json::json!([])
         );
     }
 
