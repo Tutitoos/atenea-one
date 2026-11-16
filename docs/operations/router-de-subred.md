@@ -59,7 +59,7 @@ sudo ip route add 10.77.0.0/24 via 192.168.50.2
 
 No ejecutarla indiscriminadamente en clientes del túnel ni en el host Proxmox. Para IPv6 configurar una ruta de retorno equivalente a los prefijos ULA reales del túnel. Probar ida y vuelta: que el cliente alcance la LAN no demuestra que las respuestas sepan regresar.
 
-Con SNAT el agente mantiene su tabla nftables exclusiva `atenea_atenea0` (forma `atenea_<interfaz>`). No modificarla a mano: se limpia al cerrar, al arrancar y con `cleanup` tras una caída. No toca las tablas del firewall del administrador. Para inspeccionar: `sudo nft list table inet atenea_atenea0`. Las rutas de cliente viven en la TUN y desaparecen al destruirla; nunca se sustituye la ruta por defecto.
+Con SNAT el agente mantiene su tabla nftables exclusiva `atenea_atenea0` (forma `atenea_<interfaz>`). No modificarla a mano: se limpia al cerrar, al arrancar y con `cleanup` tras una caída. Si otro proceso la borra (por ejemplo, recargar el servicio `nftables` empieza por `flush ruleset`), el agente la vuelve a crear en un máximo de ~30 s con las mismas reglas y avisa en su registro; mientras tanto la LAN pierde el SNAT. No toca las tablas del firewall del administrador. Para inspeccionar: `sudo nft list table inet atenea_atenea0`. Las rutas de cliente viven en la TUN y desaparecen al destruirla; nunca se sustituye la ruta por defecto.
 
 ## 4. DNS dividido
 

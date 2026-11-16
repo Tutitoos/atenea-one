@@ -680,6 +680,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     let mut versions_task: Option<tokio::task::JoinHandle<Vec<crate::versions::ComponentVersion>>> =
         None;
     let mut versions_started: Option<Instant> = None;
+    let mut snat_checked: Option<Instant> = None;
     let mut tun_buf = vec![0u8; 4096];
     let mut udp_buf = vec![0u8; 4096];
 
@@ -812,6 +813,15 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                     if versions_task.is_none() && versions_started.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(600)) {
                         versions_task = Some(tokio::task::spawn_blocking(|| crate::versions::installed(crate::versions::running_agent(env!("CARGO_PKG_VERSION"), crate::build_info::COMMIT))));
                         versions_started = Some(now);
+                    }
+                    // Un router con SNAT lo pierde si otro vacía nftables: cada 30 s se comprueba y se vuelve a crear.
+                    if snat_checked.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(30)) {
+                        snat_checked = Some(now);
+                        match rt.netconf.restore_snat() {
+                            Ok(true) => tracing::warn!("la tabla nft de SNAT había desaparecido: se ha vuelto a crear"),
+                            Ok(false) => {}
+                            Err(e) => tracing::warn!("no se pudo restaurar el SNAT: {e}"),
+                        }
                     }
                     rt.housekeeping(unix);
                     let elapsed = last_declaration.map_or(Duration::MAX, |last| now.duration_since(last));

@@ -50,6 +50,11 @@ pub(crate) trait HostNetwork {
     fn set_dns(&self, dns: &DnsConfig) -> Result<(), String>;
     fn clear_dns(&self) -> Result<(), String>;
     fn set_snat(&self, routes: &[AdvertisedRoute], replace: bool) -> Result<(), String>;
+    /// `Some(false)` si el SNAT que el agente instaló ya no existe (otro lo quitó). `None`: no se puede saber o no aplica.
+    /// Solo lectura.
+    fn snat_present(&self) -> Option<bool> {
+        None
+    }
     fn cleanup(&self) -> Result<(), String>;
     fn forwarding(&self, ipv6: bool) -> bool;
     async fn local_addrs(&self, port: u16) -> Vec<SocketAddr>;

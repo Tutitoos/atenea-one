@@ -116,7 +116,7 @@ La orden de control `cleanup` retira los resolutores de macOS (y el DNS de Windo
 la siguiente aplicación de la configuración, que `cleanup` fuerza, lo instala de nuevo. En Linux `cleanup` solo borra la
 tabla nft y el DNS por enlace de resolved no se toca.
 
-SNAT afecta exclusivamente al tráfico que entra por la TUN y sale hacia cada subred marcada `snat = true` en la configuración firmada. Las reglas se reemplazan en una transacción nftables en la tabla exclusiva `inet atenea_INTERFAZ`. Sin SNAT, la LAN necesita una ruta de retorno a la red del túnel. El agente elimina su tabla al arrancar y cerrar; tras una caída:
+SNAT afecta exclusivamente al tráfico que entra por la TUN y sale hacia cada subred marcada `snat = true` en la configuración firmada. Las reglas se reemplazan en una transacción nftables en la tabla exclusiva `inet atenea_INTERFAZ`. Sin SNAT, la LAN necesita una ruta de retorno a la red del túnel. Si otro proceso quita la tabla (`nft flush ruleset`, `systemctl reload nftables`), el agente lo detecta en la comprobación que hace cada 30 s con SNAT aplicado, la vuelve a crear con las mismas rutas y lo registra con un aviso; si no puede saber si existe (nft no responde algo legible) no la toca. Solo Linux: macOS y Windows no sirven subredes. El agente elimina su tabla al arrancar y cerrar; tras una caída:
 
 ```sh
 atenea-agent cleanup --config /etc/atenea/agent.toml
