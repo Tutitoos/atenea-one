@@ -211,6 +211,19 @@ pub(crate) fn parse_proc_net_tcp(text: &str, v6: bool) -> Vec<SocketAddr> {
         })
         .collect()
 }
+impl Network {
+    /// Consultar primero permite distinguir tabla ausente de un error de permisos. Solo lectura.
+    fn table_exists(&self, table: &str) -> Result<bool, String> {
+        let tables = run(&self.bins.nft, &["-j", "list", "tables"])?;
+        let tables: serde_json::Value =
+            serde_json::from_slice(&tables).map_err(|_| "respuesta nft inválida")?;
+        Ok(tables["nftables"]
+            .as_array()
+            .ok_or("respuesta nft inválida")?
+            .iter()
+            .any(|v| v["table"]["family"] == "inet" && v["table"]["name"] == table))
+    }
+}
 impl HostNetwork for Network {
     fn supports_subnet_routing(&self) -> bool {
         true
@@ -300,19 +313,14 @@ impl HostNetwork for Network {
     }
     fn cleanup(&self) -> Result<(), String> {
         let table = format!("atenea_{}", self.interface);
-        // Consultar primero permite distinguir tabla ausente de un error de permisos.
-        let tables = run(&self.bins.nft, &["-j", "list", "tables"])?;
-        let tables: serde_json::Value =
-            serde_json::from_slice(&tables).map_err(|_| "respuesta nft inválida")?;
-        let exists = tables["nftables"]
-            .as_array()
-            .ok_or("respuesta nft inválida")?
-            .iter()
-            .any(|v| v["table"]["family"] == "inet" && v["table"]["name"] == table);
-        if exists {
+        if self.table_exists(&table)? {
             run(&self.bins.nft, &["delete", "table", "inet", &table])?;
         }
         Ok(())
+    }
+    fn snat_present(&self) -> Option<bool> {
+        self.table_exists(&format!("atenea_{}", self.interface))
+            .ok()
     }
     fn set_snat(&self, routes: &[AdvertisedRoute], replace: bool) -> Result<(), String> {
         let table = format!("atenea_{}", self.interface);

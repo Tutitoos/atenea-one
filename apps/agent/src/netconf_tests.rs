@@ -343,6 +343,38 @@ fn snat_uses_only_signed_true_flags_and_replaces_in_one_transaction() {
 }
 
 #[test]
+fn snat_is_recreated_when_another_process_removes_its_table() {
+    let host = Host::new();
+    let mut net = host.netconf();
+    let mut cfg = config();
+    cfg.advertised = vec![AdvertisedRoute {
+        prefix: prefix("192.168.50.0/24"),
+        snat: true,
+    }];
+    // Sin SNAT aplicado no hay nada que restaurar.
+    assert!(!net.restore_snat().unwrap());
+    assert_eq!(host.log("nft.log"), "");
+    net.apply(&cfg, &[]).unwrap();
+    // La tabla ya no está (otro la quitó; `tables.json` sigue vacío): se vuelve a crear, sin borrarla antes.
+    assert!(net.restore_snat().unwrap());
+    let transactions = host.log("transactions");
+    assert_eq!(transactions.matches("--- transaction ---").count(), 2);
+    assert!(!transactions.contains("delete table"));
+    assert!(transactions.contains("ip daddr 192.168.50.0/24 masquerade"));
+    // Con la tabla presente no se toca.
+    host.put(
+        "tables.json",
+        r#"{"nftables":[{"table":{"family":"inet","name":"atenea_atenea0"}}]}"#,
+    );
+    assert!(!net.restore_snat().unwrap());
+    assert_eq!(host.log("transactions"), transactions);
+    // Si nft no responde algo legible no se sabe qué hay: no se toca.
+    host.put("tables.json", "no es json");
+    assert!(!net.restore_snat().unwrap());
+    assert_eq!(host.log("transactions"), transactions);
+}
+
+#[test]
 fn cleanup_of_an_absent_table_is_idempotent_and_preserves_other_tables() {
     let host = Host::new();
     host.put(

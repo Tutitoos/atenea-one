@@ -291,6 +291,18 @@ impl<H: HostNetwork> NetConf<H> {
         self.snat = Some(routes);
         Ok(())
     }
+    /// El SNAT puede desaparecer sin que el agente lo note (`nft flush ruleset`, `systemctl reload nftables`): lo vuelve a
+    /// crear con las rutas que tiene aplicadas. `Ok(true)` si lo restauró.
+    pub fn restore_snat(&mut self) -> Result<bool, String> {
+        let Some(routes) = self.snat.clone() else {
+            return Ok(false);
+        };
+        if self.host.snat_present() != Some(false) {
+            return Ok(false);
+        }
+        self.host.set_snat(&routes, false)?;
+        Ok(true)
+    }
 }
 impl<H: HostNetwork> Drop for NetConf<H> {
     fn drop(&mut self) {
