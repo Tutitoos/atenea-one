@@ -10,6 +10,8 @@ export const device: Model<'Device'> = {
   hostname: null,
   services: [],
   services_at: null,
+  versions: [],
+  versions_at: null,
   status: 'pending',
   role: 'device',
   join_origin: 'token',

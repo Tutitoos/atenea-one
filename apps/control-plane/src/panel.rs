@@ -117,6 +117,7 @@ pub struct Report {
     routes: Option<Vec<RouteReport>>,
     hostname: Option<String>,
     services: Option<Vec<Service>>,
+    versions: Option<Vec<ComponentVersion>>,
 }
 /// Máximo de servicios publicados por dispositivo (ADR-024).
 const MAX_SERVICES: usize = 64;
@@ -160,6 +161,50 @@ fn validate_services(mut list: Vec<Service>) -> Result<Vec<Service>, ApiError> {
                 return Err(bad());
             }
             s.label = Some(label.to_owned());
+        }
+    }
+    Ok(list)
+}
+/// Componentes cuya versión instalada informa el agente (ADR-025).
+#[derive(Deserialize, Serialize, PartialEq, Eq, Hash, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum Component {
+    Agent,
+    Cli,
+    Desktop,
+}
+/// Un componente instalado y su versión. Dato de presentación: no autoriza ni enruta nada.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentVersion {
+    component: Component,
+    version: String,
+    commit: String,
+}
+/// Uno por componente como máximo (ADR-025).
+const MAX_VERSIONS: usize = 3;
+const MAX_VERSION_CHARS: usize = 32;
+/// Valida la lista (a lo sumo uno por componente, versión de caracteres cerrados, commit hexadecimal en minúsculas de 7 a
+/// 40 o `unknown`). Un informe inválido se rechaza entero, como el resto del informe.
+fn validate_versions(list: Vec<ComponentVersion>) -> Result<Vec<ComponentVersion>, ApiError> {
+    let bad = || ApiError::bad("invalid_report");
+    if list.len() > MAX_VERSIONS {
+        return Err(bad());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for v in &list {
+        let version_ok = !v.version.is_empty()
+            && v.version.len() <= MAX_VERSION_CHARS
+            && v.version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'));
+        let commit_ok = v.commit == "unknown"
+            || ((7..=40).contains(&v.commit.len())
+                && v.commit
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+        if !version_ok || !commit_ok || !seen.insert(v.component) {
+            return Err(bad());
         }
     }
     Ok(list)
@@ -217,6 +262,7 @@ pub async fn status(
         .transpose()
         .map_err(|_| ApiError::bad("invalid_report"))?;
     let services = report.services.map(validate_services).transpose()?;
+    let versions = report.versions.map(validate_versions).transpose()?;
     if report.routes.as_ref().is_some_and(|routes| {
         routes.len() > 256
             || routes.iter().any(|r| {
@@ -285,6 +331,14 @@ pub async fn status(
         sqlx::query("UPDATE devices SET services=$2,services_at=now() WHERE id=$1")
             .bind(dev)
             .bind(json!(services))
+            .execute(&mut *tx)
+            .await?;
+    }
+    // Ausente no toca lo guardado (agente anterior); presente, incluso vacío, sustituye la lista (ADR-025).
+    if let Some(versions) = versions {
+        sqlx::query("UPDATE devices SET versions=$2,versions_at=now() WHERE id=$1")
+            .bind(dev)
+            .bind(json!(versions))
             .execute(&mut *tx)
             .await?;
     }
