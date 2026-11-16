@@ -242,6 +242,8 @@ para comprobarlo sin modificar la etiqueta protegida `atenea/relay:local`.
 Los alias `atenea-infra-pin/haproxy:pinned` y `atenea-infra-pin/caddy:pinned` deben
 estar preaprovisionados: el runner ya no crea ni cambia etiquetas del host.
 
+`bash tests/infra/preparar-imagenes.sh` deja listo todo eso en el Docker local: construye `atenea-infra:local`, las tres imágenes propias y `atenea/tools:local` desde el árbol actual y descarga las de terceros por los digests de `deploy/compose/prod/compose.yaml`, poniéndoles los alias y etiquetas que usa `run.sh`. **Sustituye** las etiquetas `atenea/*:local`, `atenea-infra:local` y `postgres:17` del Docker donde se ejecuta, y necesita red y tiempo de compilación (~5 min en un runner de 4 núcleos). Es lo que ejecuta el job `infra` de la [CI](ci.md) (2026-11-16: ensayo completo en ~15 min más ~5 min de imágenes); `run.sh` monta `/var/lib/docker` del nodo en un volumen anónimo para que el Docker anidado no dependa del sistema de ficheros del contenedor.
+
 Usa un único Debian 13 con systemd, privilegios y cgroup v2, `--network none`,
 sin socket del anfitrión. Transfiere imágenes **locales** mediante
 `docker save | docker exec -i ... docker load`, resuelve sus IDs SHA-256 en el
