@@ -18,7 +18,8 @@ git config commit.gpgsign false
 for f in docs/a.md apps/web/app/x.tsx apps/control-plane/src/x.rs apps/agent/src/x.rs apps/cli/src/x.rs \
     apps/desktop/src/x.rs packaging/desktop/x crates/tunnel/src/x.rs crates/windows/src/x.rs packaging/macos/x tests/macos/x.py \
     tests/windows/x.ps1 tests/network-lab/x.sh Cargo.lock rust-toolchain.toml .github/workflows/ci.yml \
-    .github/workflows/release.yml scripts/install-linux-desktop-deps.sh; do
+    .github/workflows/release.yml scripts/install-linux-desktop-deps.sh infra/ansible/x.yml deploy/compose/prod/x \
+    tests/infra/x.sh apps/control-plane/migrations/x.sql scripts/ci-changes.sh; do
     mkdir -p "$(dirname "$f")"
     echo base > "$f"
 done
@@ -31,6 +32,12 @@ run() {
     : > "$work/.out"
     EVENT=$1 BEFORE=$2 BASE_SHA=$3 SHA=HEAD GITHUB_OUTPUT="$work/.out" sh "$script"
     printf '%s %s' "$(sed -n 's/^native=//p' "$work/.out")" "$(sed -n 's/^desktop=//p' "$work/.out")"
+}
+# infra EVENT BEFORE BASE_SHA -> "true|false" (tercera salida: job `infra`)
+run_infra() {
+    : > "$work/.out"
+    EVENT=$1 BEFORE=$2 BASE_SHA=$3 SHA=HEAD GITHUB_OUTPUT="$work/.out" sh "$script"
+    sed -n 's/^infra=//p' "$work/.out"
 }
 # touch FICHERO...: modifica y confirma; deja la confirmación anterior en $prev
 touch_commit() {
@@ -87,5 +94,18 @@ expect "evento desconocido" "true true" "$(run release '' '')"
 
 # Sin cambios entre las dos confirmaciones: nada que ejecutar.
 expect "sin diferencias" "false false" "$(run push "$(git rev-parse HEAD)" '')"
+
+# Job `infra`: solo lo que toca la distribución, Ansible, OpenTofu, el ensayo o las migraciones.
+for case in \
+    "docs/a.md|false" "apps/web/app/x.tsx|false" "apps/control-plane/src/x.rs|false" "apps/agent/src/x.rs|false" \
+    "crates/tunnel/src/x.rs|false" "tests/network-lab/x.sh|false" ".github/workflows/release.yml|false" \
+    "infra/ansible/x.yml|true" "deploy/compose/prod/x|true" "tests/infra/x.sh|true" \
+    "apps/control-plane/migrations/x.sql|true" ".github/workflows/ci.yml|true" "scripts/ci-changes.sh|true"; do
+    file=${case%%|*}
+    touch_commit "$file"
+    expect "infra: push $file" "${case##*|}" "$(run_infra push "$prev" '')"
+done
+expect "infra: pull_request sin base" "true" "$(run_infra pull_request '' '')"
+expect "infra: ejecución manual" "true" "$(run_infra workflow_dispatch '' '')"
 
 [ "$fails" -eq 0 ] && echo "RUTAS DE CI: TODO OK" || { echo "RUTAS DE CI: $fails fallo(s)"; exit 1; }

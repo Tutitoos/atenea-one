@@ -44,8 +44,10 @@ if [[ -n ${INFRA_NEXT_CONTROL_PLANE_IMAGE:-} ]]; then
     next=("$INFRA_NEXT_CONTROL_PLANE_IMAGE" "${INFRA_NEXT_COORDINATOR_IMAGE:?}" "${INFRA_NEXT_RELAY_IMAGE:?}")
 fi
 docker image inspect "${images[@]}" ${next[@]+"${next[@]}"} >/dev/null
+# /var/lib/docker en un volumen anónimo (se elimina con `rm -fv`): el Docker anidado no puede usar overlay2 sobre la capa
+# de escritura del propio contenedor (en un runner de GitHub caería a un controlador lento).
 docker run -d --pull never --network none --name "$name" --privileged --cgroupns=host \
-    --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
+    --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -v /var/lib/docker \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$root:/src:ro" "$image" >/dev/null
 for ((i=0; i<60; i++)); do
     if docker exec "$name" systemctl show --property=Version --value >/dev/null 2>&1; then break; fi

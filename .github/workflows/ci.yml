@@ -12,15 +12,17 @@ permissions:
   contents: read
 
 jobs:
-  # Qué jobs de plataforma necesita este cambio (scripts/ci-changes.sh, probado en tests/ci/changes.sh).
+  # Qué jobs de plataforma e infraestructura necesita este cambio (scripts/ci-changes.sh, probado en tests/ci/changes.sh).
   # `check` es el único job obligatorio para main y corre siempre; macOS y Windows solo si toca código
-  # nativo, y la aplicación de escritorio solo si toca su código. Ante la duda se ejecuta todo.
+  # nativo, la aplicación de escritorio solo si toca su código e `infra` solo si toca Ansible, OpenTofu, la distribución
+  # de Compose, el ensayo o las migraciones. Ante la duda se ejecuta todo.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       native: ${{ steps.filter.outputs.native }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,6 +35,29 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           SHA: ${{ github.sha }}
         run: sh scripts/ci-changes.sh
+  # Ensayo de infraestructura (tests/infra): stack real con Ansible y Compose en un nodo systemd desechable y sin red,
+  # migraciones, HTTPS, actualización con rollback, relay y OpenTofu. Construye las imágenes de este árbol.
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Liberar disco del runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          df -h /
+      - name: Preparar imágenes (descarga y compila)
+        run: tests/infra/preparar-imagenes.sh
+      - name: Liberar la caché de construcción
+        run: |
+          docker builder prune --all --force
+          df -h /
+      - name: Ensayo de infraestructura
+        run: bash tests/infra/run.sh
   check:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
