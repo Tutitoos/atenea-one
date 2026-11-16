@@ -4,6 +4,16 @@ import { api, type Model } from '@atenea/api-client';
 import { ActionForm, ConfirmDialog, CopyButton, Dialog, RunButton, ShortId } from './ui';
 import { endpointsSchema, nameSchema } from './domain';
 
+const components = [['agent', 'Versión del agente'], ['cli', 'Versión de la CLI'], ['desktop', 'Versión de la aplicación']] as const;
+
+/** ADR-025: `versions_at` nulo = nunca informó; con fecha, lo que falta no está instalado. Dato declarado por el agente, no verificado. */
+function versionText(device: Model<'Device'>, component: typeof components[number][0]) {
+  if (!device.versions_at) return 'Sin informar';
+  const found = device.versions.find(item => item.component === component);
+  if (!found) return 'No instalada';
+  return found.commit === 'unknown' ? found.version : `${found.version} (${found.commit.slice(0, 7)})`;
+}
+
 export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh }: {
   device: Model<'Device'>; devices: Model<'Device'>[]; net: string; elapsed: number;
   routes: Model<'Route'>[]; canEdit: boolean; refresh: () => Promise<unknown>;
@@ -17,7 +27,9 @@ export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, r
       <div><dt>Hostname</dt><dd>{device.hostname ?? 'Sin nombre del sistema comunicado'}</dd></div>
       <div><dt>Origen del nombre</dt><dd>{device.name_source === 'admin' ? 'administrativo' : 'del sistema'}</dd></div>
       <div><dt>Endpoints</dt><dd>{device.endpoints.join(', ') || 'Sin endpoints'}</dd></div>
+      {components.map(([component, label]) => <div key={component}><dt>{label}</dt><dd>{versionText(device, component)}</dd></div>)}
     </dl>
+    {device.versions_at && <small>Versiones declaradas por el agente el <time dateTime={device.versions_at}>{new Date(device.versions_at).toLocaleString('es')}</time>; no verificadas independientemente.</small>}
     <p className="devices-fingerprint"><strong>Huella completa: </strong><code>{device.fingerprint}</code>
       <CopyButton value={device.fingerprint} label={`Copiar huella del detalle de ${device.name}`}/></p>
     {report ? <>
