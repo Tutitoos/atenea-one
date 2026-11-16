@@ -810,7 +810,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         rt.engine.set_versions(list);
                     }
                     if versions_task.is_none() && versions_started.is_none_or(|s| now.duration_since(s) >= Duration::from_secs(600)) {
-                        versions_task = Some(tokio::task::spawn_blocking(|| crate::versions::installed(crate::build_info::running_agent())));
+                        versions_task = Some(tokio::task::spawn_blocking(|| crate::versions::installed(crate::versions::running_agent(env!("CARGO_PKG_VERSION"), crate::build_info::COMMIT))));
                         versions_started = Some(now);
                     }
                     rt.housekeeping(unix);

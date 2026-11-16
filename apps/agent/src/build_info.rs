@@ -1,15 +1,10 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 //! Identidad embebida; una compilación de desarrollo no pretende ser un release.
-const COMMIT: &str = match option_env!("ATENEA_BUILD_COMMIT") {
+pub(crate) const COMMIT: &str = match option_env!("ATENEA_BUILD_COMMIT") {
     Some(commit) => commit,
     None => "unknown",
 };
-
-/// Versión y commit de esta compilación para el informe de versiones instaladas (ADR-025).
-pub(crate) fn running_agent() -> Option<crate::versions::ComponentVersion> {
-    crate::versions::running_agent(env!("CARGO_PKG_VERSION"), COMMIT)
-}
 
 pub(crate) fn print_version(name: &str) -> bool {
     if std::env::args()
