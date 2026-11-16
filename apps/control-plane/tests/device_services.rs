@@ -148,7 +148,7 @@ async fn servicios_solo_los_ve_un_par_con_politica_y_dentro_de_120_segundos() {
     // Sin informe de servicios: el par sale con lista vacía.
     assert_eq!(
         peers(t, viewer).await,
-        json!([{"device_id":publisher.id,"name":"Par","role":"device","services":[]}])
+        json!([{"device_id":publisher.id,"name":"Par","role":"device","services":[],"versions":[],"versions_at":null}])
     );
     let reply = services_report(
         t,
@@ -351,7 +351,14 @@ fn openapi_describe_servicios() {
     let schemas = &doc["components"]["schemas"];
     assert_eq!(
         schemas["DevicePeer"]["required"],
-        json!(["device_id", "name", "role", "services"])
+        json!([
+            "device_id",
+            "name",
+            "role",
+            "services",
+            "versions",
+            "versions_at"
+        ])
     );
     assert_eq!(
         schemas["DeviceService"]["required"],

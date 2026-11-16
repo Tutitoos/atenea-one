@@ -269,14 +269,16 @@ async fn respond(
             .iter()
             .map(|p| Uuid::from_bytes(p.device_id))
             .collect();
-        let rows = sqlx::query("SELECT id,name,role,CASE WHEN services_at>now()-make_interval(secs=>$2) THEN services ELSE '[]'::jsonb END services FROM devices WHERE id=ANY($1) ORDER BY id")
+        // `versions` no caduca como `services` (ADR-025, P3): se devuelve la última informada con su fecha, y `null` en
+        // `versions_at` significa «nunca informó» (agente anterior o sin informe).
+        let rows = sqlx::query("SELECT id,name,role,CASE WHEN services_at>now()-make_interval(secs=>$2) THEN services ELSE '[]'::jsonb END services,versions,versions_at FROM devices WHERE id=ANY($1) ORDER BY id")
             .bind(ids)
             .bind(SERVICES_FRESH_SECS)
             .fetch_all(&mut *tx)
             .await?;
         let names: Vec<_> = rows
             .iter()
-            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),"services":r.get::<serde_json::Value,_>("services")}))
+            .map(|r| serde_json::json!({"device_id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),"services":r.get::<serde_json::Value,_>("services"),"versions":r.get::<serde_json::Value,_>("versions"),"versions_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("versions_at")}))
             .collect();
         tx.commit().await?;
         return Ok(([("cache-control", "no-store")], axum::Json(names)).into_response());

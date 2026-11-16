@@ -261,7 +261,7 @@
           "system"
         ],
         "summary": "Nombres y roles de los pares autorizados para un dispositivo aprobado",
-        "description": "Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. services es siempre un array: solo trae servicios de pares ya visibles por política y con un informe de 120 s o menos; en otro caso []. Publicar un servicio no lo hace alcanzable ni crea políticas. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos.",
+        "description": "Petición AtDevice firmada, solo dispositivos aprobados; mismo límite device_per_minute que config (429 rate_limited). Devuelve exclusivamente los pares de la configuración según las mismas políticas, sin incluir al solicitante ni pendientes/revocados; sin políticas devuelve []. Los nombres son metadatos de visualización no firmados y nunca identifican, autorizan, resuelven DNS ni enrutan. services es siempre un array: solo trae servicios de pares ya visibles por política y con un informe de 120 s o menos; en otro caso []. Publicar un servicio no lo hace alcanzable ni crea políticas. versions (ADR-025) es siempre un array y versions_at una fecha o null (nunca informó): se devuelve la última lista informada por cada par visible por política, sin caducar a los 120 s. Respuesta Cache-Control: no-store; 401 firma inválida, 403 device_not_approved, 409 políticas o prefijos de red inválidos.",
         "operationId": "getDevicePeers",
         "responses": {
           "200": {
@@ -470,7 +470,7 @@
           "system"
         ],
         "summary": "Reemplaza el informe declarado del dispositivo",
-        "description": "hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo. services opcional (ver DeviceReportInput): máximo 64, sin puertos duplicados; mismos límites de tamaño, nonce y tasa que el resto del informe.",
+        "description": "hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo. services opcional (ver DeviceReportInput): máximo 64, sin puertos duplicados; mismos límites de tamaño, nonce y tasa que el resto del informe. versions opcional (ADR-025, ver DeviceReportInput): como máximo 3 entradas, una por componente; inválido: 400 invalid_report.",
         "operationId": "reportDeviceStatus",
         "requestBody": {
           "content": {
@@ -5260,6 +5260,8 @@
           "hostname",
           "services",
           "services_at",
+          "versions",
+          "versions_at",
           "status",
           "join_origin",
           "endpoints",
@@ -5382,6 +5384,21 @@
           },
           "status": {
             "$ref": "#/components/schemas/DeviceStatus"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceVersion"
+            },
+            "description": "Última lista de versiones instaladas informada, sin filtro de antigüedad; [] si nunca informó o si no hay componentes que informar. Consulte versions_at para distinguirlo.",
+            "maxItems": 3
+          },
+          "versions_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -5452,7 +5469,9 @@
           "device_id",
           "name",
           "role",
-          "services"
+          "services",
+          "versions",
+          "versions_at"
         ],
         "properties": {
           "device_id": {
@@ -5472,6 +5491,21 @@
             },
             "description": "Servicios TCP que el par publica; [] si no publica, si el informe tiene más de 120 s o si nunca informó. Es información de visualización: publicar un servicio no lo hace alcanzable ni crea políticas (el ACL no limita puertos).",
             "maxItems": 64
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceVersion"
+            },
+            "description": "Versiones instaladas de los componentes de Atenea del par (ADR-025), una por componente instalado: un componente que no aparece no está instalado, siempre que versions_at no sea null. No caducan como services: es la última lista informada. Dato de visualización sin efecto en autorización ni enrutado.",
+            "maxItems": 3
+          },
+          "versions_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -5568,6 +5602,21 @@
               }
             ],
             "description": "Servicios TCP publicados (ADR-024). Ausente o null: no toca lo guardado (agente antiguo o publicación apagada). Presente, incluida []: sustituye la lista anterior y fija services_at. Puertos duplicados, puerto 0, más de 64 o etiqueta inválida: 400 invalid_request; proto distinto de tcp, scheme fuera de http|https o campos desconocidos: 400 invalid_report."
+          },
+          "versions": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DeviceVersion"
+                },
+                "maxItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Versiones instaladas de los componentes de Atenea del dispositivo (ADR-025). Ausente o null: no toca lo guardado (agente anterior a este campo). Presente, incluida []: sustituye la lista anterior y fija versions_at. Más de 3 entradas, un componente repetido, una versión o un commit fuera de las reglas de DeviceVersion o campos desconocidos: 400 invalid_report y no se guarda nada del informe. Un control plane anterior a este campo rechaza el informe entero: el servidor se actualiza antes que los agentes."
           }
         }
       },
@@ -5689,6 +5738,36 @@
           "use_system_name": {
             "type": "boolean",
             "description": "true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen."
+          }
+        }
+      },
+      "DeviceVersion": {
+        "type": "object",
+        "required": [
+          "component",
+          "version",
+          "commit"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string",
+            "description": "Commit de la compilación: de 7 a 40 hexadecimales en minúsculas, o unknown.",
+            "pattern": "^(unknown|[0-9a-f]{7,40})$"
+          },
+          "component": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "cli",
+              "desktop"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "Versión del componente instalado (de 1 a 32 caracteres de 0-9, A-Z, a-z, punto, más y guion).",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[0-9A-Za-z.+-]+$"
           }
         }
       },
