@@ -6,6 +6,15 @@ responsable debe decidir su identidad, custodia y canal de distribución de la
 clave pública antes de publicar. No hay clave real ni clave privada de prueba en
 el repositorio; las pruebas generan claves efímeras fuera del árbol.
 
+## Cuándo se publica una versión
+
+Una versión no sale con cada cambio ni con cada fase de un ADR. Los cambios se integran en `main` con su CI y quedan sin publicar hasta que se dé una de estas dos situaciones:
+
+- **Un arreglo crítico:** una vulnerabilidad, una pérdida o corrupción de datos, una caída del servicio o una regresión grave en los equipos que ya usan el producto.
+- **Muchos cambios acumulados** que los usuarios vean o necesiten (funciones nuevas, correcciones de comportamiento, cambios de compatibilidad), de modo que publicar compense el trabajo de verificar y desplegar.
+
+No hay umbrales numéricos ni plazos mínimos: el responsable decide caso por caso. Los cambios que solo tocan pruebas, CI, documentación o herramientas internas no justifican por sí solos una versión, y tampoco un arreglo menor que afecte a pocos equipos. Publicar y desplegar requieren siempre una orden expresa del responsable, y cada versión sigue el procedimiento de las secciones siguientes (verificación firmada incluida).
+
 ## Ensayo local sin red
 
 Requisitos ya instalados: Python 3.11+, OpenSSL 3 con Ed25519, Docker Linux con
