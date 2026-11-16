@@ -62,6 +62,25 @@ const Addresses = ({ addrs }: { addrs: string[] }) => (
   </>
 );
 
+type Installed = NonNullable<Reply['status']['versions']>;
+
+/** ADR-025: tres filas fijas. `list` nulo (o par sin fecha de informe) = «Sin informar»; informado y ausente = «No instalada». */
+function Versions({ list, reported }: { list?: Installed | null; reported: boolean }) {
+  const text = (component: Installed[number]['component']) => {
+    if (!reported || !list) return 'Sin informar';
+    const found = list.find((v) => v.component === component);
+    if (!found) return 'No instalada';
+    return found.commit === 'unknown' ? found.version : `${found.version} (${found.commit.slice(0, 7)})`;
+  };
+  return (
+    <>
+      <Row label="Versión del agente">{text('agent')}</Row>
+      <Row label="Versión de la CLI">{text('cli')}</Row>
+      <Row label="Versión de la aplicación">{text('desktop')}</Row>
+    </>
+  );
+}
+
 function SelfDetail({ reply }: { reply: Reply }) {
   const { status, health } = reply;
   const names = useNames();
@@ -75,6 +94,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
       <Heading>Detalles</Heading>
       <Card>
         <Row label="Nombre del sistema">{status.hostname}</Row>
+        <Versions list={status.versions} reported={status.versions != null} />
         <Row label="Lease">{left == null ? null : left > 0 ? `quedan ${ago(left)}` : 'caducado'}</Row>
         <Row label="Configuración">{`v${status.config.version}`}</Row>
         <Row label="NAT">{status.nat?.mapping}</Row>
@@ -109,6 +129,7 @@ function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { pee
       <Heading>Detalles</Heading>
       <Card>
         <Row label="Nombre en la red">{peer.name}</Row>
+        <Versions list={peer.versions} reported={peer.versions_at != null} />
         <Row label="Camino en uso">{label}</Row>
         {ready}
         {latency}
