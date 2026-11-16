@@ -43,3 +43,11 @@ func TestInjectedValuesAppearInTheLine(t *testing.T) {
 		t.Fatalf("%q != %q", got, want)
 	}
 }
+
+// El agente (Rust) busca esta cadena en el binario instalado antes de ejecutarlo con --version: una aplicación anterior a
+// la opción arrancaría entera. Cambiarla exige cambiar `DESKTOP_MARKER` en apps/agent/src/versions.rs en el mismo cambio.
+func TestMarkerIsTheOneTheAgentSearchesFor(t *testing.T) {
+	if Marker != "ATENEA-DESKTOP-VERSION-FLAG-1" {
+		t.Fatalf("la marca cambió a %q sin actualizar al agente", Marker)
+	}
+}

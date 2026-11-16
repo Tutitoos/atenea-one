@@ -19,4 +19,11 @@ if [ "$got" != "$want" ]; then
     echo "La aplicación imprimió «$got» y se esperaba «$want»" >&2
     exit 1
 fi
-echo "VERSIÓN DE LA APLICACIÓN: OK ($want)"
+# La marca que busca el agente antes de ejecutar la aplicación (`DESKTOP_MARKER` en apps/agent/src/versions.rs): sin ella
+# el agente no la ejecuta ni informa su versión.
+marker=ATENEA-DESKTOP-VERSION-FLAG-1
+if ! grep -aqF "$marker" "$1"; then
+    echo "El binario no lleva la marca $marker que busca el agente" >&2
+    exit 1
+fi
+echo "VERSIÓN DE LA APLICACIÓN: OK ($want; marca presente)"

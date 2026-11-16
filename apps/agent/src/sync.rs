@@ -143,6 +143,9 @@ pub struct Report {
     /// `Some([])` sustituye lo guardado por «sin servicios»; `None` no toca nada (ADR-024, D1).
     #[serde(skip_serializing_if = "Option::is_none")]
     services: Option<Vec<crate::services::PeerService>>,
+    /// `Some` siempre que ya se detectó (incluso `[]`, que sustituye lo guardado); `None` no toca nada (ADR-025).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    versions: Option<Vec<crate::versions::ComponentVersion>>,
 }
 
 impl Report {
@@ -204,6 +207,7 @@ pub fn build_report(
             .publish
             .then(|| services.published(&status.services)),
         hostname: status.hostname.clone(),
+        versions: status.versions.clone(),
         nat_mapping: status.nat.as_ref().map(|nat| nat.mapping),
         paths: status
             .peers
@@ -268,6 +272,8 @@ pub struct PeerMetadata {
     pub names: HashMap<DeviceId, String>,
     pub roles: HashMap<DeviceId, &'static str>,
     pub services: HashMap<DeviceId, Vec<crate::services::PeerService>>,
+    /// Última lista de versiones instaladas de cada par que ya informó (ADR-025).
+    pub versions: HashMap<DeviceId, crate::versions::PeerVersions>,
 }
 
 pub(crate) const METADATA_LIMIT: usize = 256 * 1024;
@@ -340,6 +346,10 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
         role: serde_json::Value,
         #[serde(default)]
         services: serde_json::Value,
+        #[serde(default)]
+        versions: serde_json::Value,
+        #[serde(default)]
+        versions_at: serde_json::Value,
     }
     if body.len() > METADATA_LIMIT {
         return Err("respuesta demasiado grande");
@@ -363,6 +373,9 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
                 metadata.services.insert(id, services);
             }
         }
+        if let Some(versions) = parse_versions(&e.versions, &e.versions_at) {
+            metadata.versions.insert(id, versions);
+        }
         let role = match e.role.as_str() {
             Some("device") => "device",
             Some("server") => "server",
@@ -371,6 +384,49 @@ fn parse_peer_metadata(body: &[u8]) -> Result<PeerMetadata, &'static str> {
         metadata.roles.insert(id, role);
     }
     Ok(metadata)
+}
+
+/// La lista de versiones de un par: cada entrada se valida por separado y se descartan las malas, las repetidas y las que
+/// sobran; sin una fecha de informe válida no hay «informó» y el par queda «sin informar».
+fn parse_versions(
+    list: &serde_json::Value,
+    at: &serde_json::Value,
+) -> Option<crate::versions::PeerVersions> {
+    use crate::versions::{
+        Component, ComponentVersion, MAX_VERSIONS, valid_commit, valid_reported_at, valid_version,
+    };
+    let at = at.as_str().filter(|at| valid_reported_at(at))?;
+    let mut parsed: Vec<ComponentVersion> = Vec::new();
+    // Un servidor correcto manda como mucho tres; se revisa un margen fijo y se ignora el resto.
+    for entry in list.as_array()?.iter().take(16) {
+        let (Some(component), Some(version), Some(commit)) = (
+            entry
+                .get("component")
+                .and_then(|v| v.as_str())
+                .and_then(Component::parse),
+            entry.get("version").and_then(|v| v.as_str()),
+            entry.get("commit").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        if valid_version(version)
+            && valid_commit(commit)
+            && parsed.iter().all(|p| p.component != component)
+        {
+            parsed.push(ComponentVersion {
+                component,
+                version: version.to_owned(),
+                commit: commit.to_owned(),
+            });
+        }
+        if parsed.len() == MAX_VERSIONS {
+            break;
+        }
+    }
+    Some(crate::versions::PeerVersions {
+        list: parsed,
+        at: at.to_owned(),
+    })
 }
 
 /// Solo TCP con puerto 1..=65535; esquema `http` por defecto; etiqueta como un nombre.
@@ -481,6 +537,7 @@ mod tests {
             }],
             services_truncated: false,
             services_publish: false,
+            versions: None,
             peers: ["direct", "relay-udp", "relay-tls", "probing", "none"]
                 .into_iter()
                 .map(|path| PeerStatus {
@@ -490,6 +547,13 @@ mod tests {
                     // El informe es una lista blanca: el nombre del par no debe aparecer en él.
                     name: Some("nombre del par".into()),
                     role: Some("server"),
+                    // Lo que informa el par tampoco debe aparecer en el informe.
+                    versions: vec![crate::versions::ComponentVersion {
+                        component: crate::versions::Component::Cli,
+                        version: "9.9.9".into(),
+                        commit: "unknown".into(),
+                    }],
+                    versions_at: Some("2026-11-16T10:20:30Z".into()),
                     probe: crate::engine::ProbeStatus::default(),
                     endpoint: Some("203.0.113.1:1234".into()),
                     session: Some("sesión".into()),
@@ -596,6 +660,8 @@ mod tests {
             name: None,
             services: vec![],
             role: None,
+            versions: vec![],
+            versions_at: None,
             endpoint: None,
             session: None,
             last_handshake_secs_ago: None,
@@ -664,6 +730,7 @@ mod tests {
                 .to_vec(),
             services_truncated: false,
             services_publish: false,
+            versions: None,
             peers: vec![],
         }
     }
@@ -675,6 +742,133 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
             r#"{"nat_mapping":null,"paths":[]}"#
+        );
+    }
+
+    #[test]
+    fn report_carries_the_detected_versions_and_nothing_before_the_first_detection() {
+        use crate::versions::{Component, ComponentVersion};
+        // Sin detección el informe no lleva el campo (no borra lo que el servidor ya tiene).
+        let report =
+            build_report(&services_status(), &Default::default(), &Default::default()).unwrap();
+        assert!(
+            serde_json::to_value(&report)
+                .unwrap()
+                .get("versions")
+                .is_none()
+        );
+        let mut status = services_status();
+        status.versions = Some(vec![
+            ComponentVersion {
+                component: Component::Agent,
+                version: "0.1.31".into(),
+                commit: "dfe72ae".into(),
+            },
+            ComponentVersion {
+                component: Component::Cli,
+                version: "0.1.31".into(),
+                commit: "unknown".into(),
+            },
+        ]);
+        let json = serde_json::to_value(
+            build_report(&status, &Default::default(), &Default::default()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json["versions"],
+            serde_json::json!([
+                {"component":"agent","version":"0.1.31","commit":"dfe72ae"},
+                {"component":"cli","version":"0.1.31","commit":"unknown"}
+            ])
+        );
+        // Detectado y vacío: se envía `[]`, que sustituye lo guardado («no hay nada instalado que informar»).
+        status.versions = Some(vec![]);
+        let json = serde_json::to_value(
+            build_report(&status, &Default::default(), &Default::default()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["versions"], serde_json::json!([]));
+        // Sin lease no hay informe, versiones o no.
+        status.config.lease_active = false;
+        assert!(build_report(&status, &Default::default(), &Default::default()).is_none());
+    }
+
+    #[test]
+    fn peer_versions_are_validated_per_entry_and_need_a_report_date() {
+        let id = "11111111-1111-1111-1111-111111111111";
+        let body = |versions: &str, at: &str| {
+            format!(
+                r#"[{{"device_id":"{id}","name":"par","role":"device","services":[],"versions":{versions},"versions_at":{at}}}]"#
+            )
+        };
+        let key = [0x11; 16];
+        let good = r#"[{"component":"agent","version":"0.1.31","commit":"dfe72ae"},{"component":"cli","version":"0.1.31","commit":"unknown"}]"#;
+        let parsed =
+            parse_peer_metadata(body(good, r#""2026-11-16T10:20:30Z""#).as_bytes()).unwrap();
+        let versions = &parsed.versions[&key];
+        assert_eq!(versions.at, "2026-11-16T10:20:30Z");
+        assert_eq!(versions.list.len(), 2);
+        assert_eq!(versions.list[1].commit, "unknown");
+        // Un servidor anterior (sin los campos) o un par que nunca informó: sin entrada («sin informar»); el nombre y el
+        // rol no se pierden.
+        let old = format!(r#"[{{"device_id":"{id}","name":"par","role":"server","services":[]}}]"#);
+        let parsed = parse_peer_metadata(old.as_bytes()).unwrap();
+        assert!(parsed.versions.is_empty());
+        assert_eq!(parsed.roles[&key], "server");
+        assert!(
+            parse_peer_metadata(body("[]", "null").as_bytes())
+                .unwrap()
+                .versions
+                .is_empty()
+        );
+        // Informó sin nada instalado: entrada con lista vacía (distinto de «sin informar»).
+        let empty =
+            parse_peer_metadata(body("[]", r#""2026-11-16T10:20:30Z""#).as_bytes()).unwrap();
+        assert!(empty.versions[&key].list.is_empty());
+        // Fecha ajena a una marca de tiempo, o que no es texto: sin entrada.
+        for at in [
+            r#""ayer""#,
+            r#""<script>2026-11-16T10:20:30Z""#,
+            "1763288430",
+            "null",
+        ] {
+            assert!(
+                parse_peer_metadata(body(good, at).as_bytes())
+                    .unwrap()
+                    .versions
+                    .is_empty(),
+                "{at}"
+            );
+        }
+        // Cada entrada se valida por separado: se descartan las malas, las repetidas y las que sobran de tres.
+        let mixed = r#"[
+            {"component":"agent","version":"0.1.31","commit":"dfe72ae"},
+            {"component":"agent","version":"9.9.9","commit":"dfe72ae"},
+            {"component":"relay","version":"1","commit":"unknown"},
+            {"component":"cli","version":"0.1 31","commit":"unknown"},
+            {"component":"cli","version":"1","commit":"ABCDEF0"},
+            {"component":"desktop","version":"0.1.31"},
+            "texto",
+            {"component":"desktop","version":"0.1.31","commit":"abcdef0"}
+        ]"#;
+        let parsed =
+            parse_peer_metadata(body(mixed, r#""2026-11-16T10:20:30Z""#).as_bytes()).unwrap();
+        let list = &parsed.versions[&key].list;
+        assert_eq!(
+            list.iter()
+                .map(|v| (v.component, v.version.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (crate::versions::Component::Agent, "0.1.31"),
+                (crate::versions::Component::Desktop, "0.1.31")
+            ]
+        );
+        // No es una lista: sin entrada.
+        assert!(
+            parse_peer_metadata(body(r#""agent""#, r#""2026-11-16T10:20:30Z""#).as_bytes())
+                .unwrap()
+                .versions
+                .is_empty()
         );
     }
 

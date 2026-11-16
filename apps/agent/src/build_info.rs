@@ -6,6 +6,11 @@ const COMMIT: &str = match option_env!("ATENEA_BUILD_COMMIT") {
     None => "unknown",
 };
 
+/// Versión y commit de esta compilación para el informe de versiones instaladas (ADR-025).
+pub(crate) fn running_agent() -> Option<crate::versions::ComponentVersion> {
+    crate::versions::running_agent(env!("CARGO_PKG_VERSION"), COMMIT)
+}
+
 pub(crate) fn print_version(name: &str) -> bool {
     if std::env::args()
         .nth(1)
