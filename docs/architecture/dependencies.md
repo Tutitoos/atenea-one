@@ -366,6 +366,14 @@ las comprobaciones de advisories ni de fuentes.
   proveedor de pruebas. Upstream no publica una versión corregida.
   **Salida:** versión corregida de rsa compatible con openidconnect, o retirada
   upstream de esa dependencia; retirar la excepción después de la actualización.
+- **RUSTSEC-2026-0543 — `chrono` 0.4.45 (aceptada el 2026-11-17).**
+  [Advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543) informativo: la
+  biblioteca queda sin mantenimiento; no describe una vulnerabilidad ni hay versión
+  corregida. Es dependencia directa del control plane (fechas de PostgreSQL con `sqlx`
+  y de la API con `utoipa`) y también llega por `oauth2` 5 y `openidconnect` 4, de
+  modo que migrar el uso propio a `time` no la retira del grafo.
+  **Salida:** que vuelva a mantenerse o migrar el uso directo; revisar de inmediato si
+  aparece un advisory de vulnerabilidad.
 
 La excepción deja de ser válida si se introduce uso de claves privadas RSA con
 esta dependencia: revisar antes de cambiar el flujo.
