@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { COLUMNS, CONSULTED, GROUPS, SOURCES } from "../../comparison.mjs";
+import Status from "./Status.astro";
 
 // La tabla y su lista de fuentes van juntas porque los superíndices de una
 // apuntan a la otra. La usan la portada y `/comparacion/`, así que los colores
@@ -64,7 +65,11 @@ const numberOf = (key: string) => keys.indexOf(key as keyof typeof SOURCES) + 1;
                         text === "—" ? "text-gray-400" : "text-gray-300",
                       ]}
                     >
-                      {text}
+                      {text === "❌" ? (
+                        <Status status="no" label="ninguno" />
+                      ) : (
+                        text
+                      )}
                       {sources.map((source) => (
                         <sup class="ml-0.5 font-mono">
                           <a

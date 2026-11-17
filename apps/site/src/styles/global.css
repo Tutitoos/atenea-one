@@ -39,6 +39,11 @@
   --color-graph-cross: #94a3b8;
   --color-graph-exact: #d8a94a;
 
+  /* Estado de una celda de la comparación: tiene (verde), no tiene (rojo). El
+     oro del acento marca lo que está en curso. */
+  --color-ok: #3fb97f;
+  --color-no: #e5484d;
+
   /* The surfaces of the terminal skin, shared by the landing shell and the
      documentation. Cool-tinted near-blacks, never #000. Declared here rather
      than on the landing's own <html> so both halves of the site read one

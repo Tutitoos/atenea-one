@@ -419,7 +419,7 @@ export const GROUPS = [
       {
         topic: "acciones además de permitir o denegar",
         cells: [
-          ["ninguna"],
+          ["❌"],
           ["—"],
           [
             "TEE, WATCH y REDIRECT: copiar o redirigir tráfico a otro nodo",
@@ -552,7 +552,7 @@ export const GROUPS = [
       },
       {
         topic: "benchmark cara a cara",
-        cells: [["ninguno"], ["ninguno"], ["ninguno"]],
+        cells: [["❌"], ["❌"], ["❌"]],
       },
     ],
   },
@@ -589,8 +589,94 @@ export const FIT = [
 
 export const NOTES = [
   "Esto compara cómo está construido cada sistema, no cuánto rinde. No hemos medido Tailscale ni ZeroTier: ninguna cifra de esta web los incluye, y las de rendimiento de Atenea One son de laboratorio.",
-  "Una raya (—) significa que no encontramos el dato en las fuentes consultadas, no que el producto carezca de esa función.",
+  "Una raya (—) significa que no encontramos el dato en las fuentes consultadas, no que el producto carezca de esa función. La cruz sí marca una ausencia.",
   "Atenea One usa la misma familia de construcción que WireGuard (Noise IK con X25519, ChaCha20-Poly1305 y BLAKE2s), pero el cable, el antirreplay y la gestión de sesiones son código propio sin revisión externa. Esa es la diferencia que más pesa en contra.",
   "Fallar cerrado tiene un coste: si el emisor de Atenea One está caído más que la vigencia del lease, todos los túneles caen. En Tailscale, lo ya establecido sigue funcionando mientras no caduquen las claves.",
   "El proyecto no promete equivalencia con ZeroTier ni con Tailscale.",
+];
+
+/**
+ * La tabla corta de la portada. Cada celda es un estado (`yes`, `no`, `wip` o
+ * `na`) y sale de una fila de `GROUPS` o de un ADR: ninguna marca aquí contradice
+ * a la tabla completa. `na` es «no encontrado en las fuentes», nunca «no».
+ *
+ * @type {{ topic: string; cells: ("yes" | "no" | "wip" | "na")[] }[]}
+ */
+export const SUMMARY = [
+  {
+    topic: "Coordinación y rendezvous sin terceros",
+    cells: ["yes", "no", "no"],
+  },
+  {
+    topic: "Código abierto: cliente y plano de control",
+    cells: ["yes", "no", "na"],
+  },
+  {
+    topic: "Relays autoalojables: UDP y TLS/TCP 443",
+    cells: ["yes", "yes", "na"],
+  },
+  {
+    topic: "Travesía de NAT: STUN y hole punching",
+    cells: ["yes", "yes", "yes"],
+  },
+  {
+    topic: "Cifrado de extremo a extremo con relay opaco",
+    cells: ["yes", "yes", "yes"],
+  },
+  {
+    topic: "PFS: claves de sesión efímeras en el handshake",
+    cells: ["yes", "yes", "no"],
+  },
+  {
+    topic: "Política de acceso default-deny",
+    cells: ["yes", "na", "no"],
+  },
+  {
+    topic: "Aplicación de la política en el endpoint",
+    cells: ["yes", "yes", "yes"],
+  },
+  {
+    topic: "Plano de datos activo con el plano de control caído",
+    cells: ["no", "yes", "na"],
+  },
+  {
+    topic: "Auditoría criptográfica externa del protocolo",
+    cells: ["wip", "na", "na"],
+  },
+  {
+    topic: "Capa 2: Ethernet virtual (L2)",
+    cells: ["wip", "na", "yes"],
+  },
+  {
+    topic: "Exit node: ruta por defecto vía un par",
+    cells: ["no", "yes", "na"],
+  },
+  {
+    topic: "Clientes de escritorio: Linux, macOS y Windows",
+    cells: ["yes", "yes", "na"],
+  },
+  {
+    topic: "Autenticación de administradores: OIDC",
+    cells: ["yes", "yes", "na"],
+  },
+  {
+    topic: "Subnet router: rutas hacia una LAN",
+    cells: ["yes", "yes", "na"],
+  },
+  {
+    topic: "DNS interno: resolución por nombre de host",
+    cells: ["yes", "yes", "na"],
+  },
+  {
+    topic: "Clientes móviles: Android e iOS",
+    cells: ["no", "yes", "yes"],
+  },
+];
+
+/** @type {{ status: "yes" | "no" | "wip" | "na"; text: string }[]} */
+export const LEGEND = [
+  { status: "yes", text: "lo tiene" },
+  { status: "no", text: "no lo tiene" },
+  { status: "wip", text: "en curso o pendiente" },
+  { status: "na", text: "sin dato en las fuentes" },
 ];
