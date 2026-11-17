@@ -16,3 +16,6 @@ overrides:
   'eslint>minimatch': '>=11.0.1'
   '@typescript-eslint/typescript-estree>minimatch': '>=11.0.1'
   '@redocly/openapi-core>minimatch': '>=11.0.1'
+  # next solo entra como peer de `geist` (las fuentes del panel, que es React Router): no se ejecuta. Las 16.2.0–16.4.4
+  # tienen dos fugas de caché de gravedad moderada (GHSA-mfr8-8qww-v76h, GHSA-vc7v-qv4w-wrv8) que `pnpm audit --prod` marca.
+  next: '>=16.4.5'
