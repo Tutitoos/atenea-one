@@ -99,6 +99,8 @@ Un administrador puede fijar `name` mediante el `PATCH` existente (pasa a `admin
 
 El inventario expone `name_source` y `hostname`. `GET /api/v1/device/peers`, con petición AtDevice firmada y dispositivo aprobado, devuelve `{device_id,name,role,services,versions,versions_at}` de los mismos pares que config (los servicios solo con informe de 120 s o menos; las versiones instaladas, ADR-025, la última lista informada con su fecha), bajo el mismo límite de tasa y con `Cache-Control: no-store`. Son metadatos no firmados para mostrar, nunca para identificar, autorizar, resolver DNS o enrutar. No cambia `DeviceConfig`. Detalle y compatibilidad: [contrato API §12](../../docs/api/control-plane-v1.md#12-nombres-de-dispositivo-adr-012), §20 (servicios) y §22 (versiones).
 
+**Administración delegada (ADR-026).** Un administrador concede a un dispositivo aprobado permisos por red con un alcance (`PUT/DELETE /api/v1/networks/{net}/devices/{dev}/grant`, `GET …/grants`). El dispositivo los ejerce con su firma AtDevice bajo `/api/v1/device/admin/` (`grant`, `devices`, `policies`, `join-codes`, `devices/{dev}/approve|revoke`; código en `src/delegated.rs`): `403 grant_missing` sin el permiso y `403 out_of_scope` fuera del alcance, políticas solo entre dispositivos del alcance, aprobación por huella completa, como mucho 8 códigos vivos y 256 políticas por delegado, y 60 peticiones por minuto. El inventario y las políticas exponen `enrolled_by_device` y `created_by_device`. Detalle: [contrato API §23 y §24](../../docs/api/control-plane-v1.md#23-concesiones-de-administración-delegada-adr-026-fase-2).
+
 ## Panel, informes y métricas
 
 Tras compilar `apps/web`, configure `ATENEA_CP_WEB_DIR` con su `build/client`.
