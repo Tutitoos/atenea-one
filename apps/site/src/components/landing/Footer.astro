@@ -1,0 +1,94 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { REPOSITORY_URL } from "../../site.mjs";
+
+// El pie no lleva encabezados: los títulos de columna nombran un grupo de
+// enlaces y nada más, así que son etiquetas y quedan fuera de la jerarquía.
+const groups = [
+  {
+    title: "empezar",
+    links: [
+      { href: "/instalacion/", label: "instalación" },
+      { href: "/como-funciona/", label: "cómo funciona" },
+    ],
+  },
+  {
+    title: "referencia",
+    links: [
+      { href: "/comparacion/", label: "frente a Tailscale y ZeroTier" },
+      { href: "/rendimiento/", label: "rendimiento" },
+      { href: "/seguridad/", label: "seguridad" },
+      { href: "/limites/", label: "estado y límites" },
+      {
+        href: `${REPOSITORY_URL}/blob/main/SECURITY.md`,
+        label: "reportar una vulnerabilidad",
+      },
+    ],
+  },
+];
+---
+
+<footer class="border-t border-rule">
+  <div
+    class="mx-auto box-border grid w-full max-w-6xl grid-cols-1 items-baseline gap-10 px-6 py-14 font-mono text-xs sm:grid-cols-2 lg:grid-cols-3"
+  >
+    <div>
+      <p class="flex items-center gap-2 text-gray-100">
+        <img src="/favicon.svg" alt="" width="20" height="20" class="size-5" />
+        atenea one
+      </p>
+      <p class="mt-3 max-w-xs text-gray-400">
+        VPN P2P self-hosted. Producto en evaluación, sin auditoría
+        independiente: no lo uses para proteger datos sensibles.
+      </p>
+      <ul class="mt-5 space-y-2">
+        <li>
+          <a
+            href={`${REPOSITORY_URL}/blob/main/LICENSE`}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-accent-200 underline underline-offset-4">Apache-2.0</a
+          >
+        </li>
+        <li>
+          <a
+            href={REPOSITORY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-accent-200 underline underline-offset-4"
+            >github.com/Tutitoos/atenea-one</a
+          >
+        </li>
+      </ul>
+    </div>
+
+    {
+      groups.map((group) => (
+        <nav aria-label={group.title}>
+          <p class="text-gray-400">{group.title}</p>
+          <ul class="mt-3 space-y-2">
+            {group.links.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  target={
+                    /^https?:\/\//.test(link.href) ? "_blank" : undefined
+                  }
+                  rel={
+                    /^https?:\/\//.test(link.href)
+                      ? "noopener noreferrer"
+                      : undefined
+                  }
+                  class="text-gray-300 underline-offset-4 transition-colors hover:text-gray-100 hover:underline"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ))
+    }
+  </div>
+</footer>

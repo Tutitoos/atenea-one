@@ -29,4 +29,5 @@ pnpm -r --if-present run lint
 pnpm -r --if-present run typecheck
 pnpm -r --if-present run test
 pnpm --filter @atenea/web run build
+pnpm --filter @atenea/site run build
 pnpm --filter @atenea/desktop run build

@@ -1,0 +1,66 @@
+---
+title: Frente a Tailscale y ZeroTier
+description: Comparación técnica de Atenea One con Tailscale y ZeroTier (criptografía, travesía de NAT, confianza, política, modelo de red y operación), con la fuente de cada afirmación.
+tableOfContents: false
+---
+
+import CompareTable from "../../components/landing/CompareTable.astro";
+
+Esta página compara **cómo está construido** cada sistema. No es una comparación de rendimiento: en este repositorio no hay ninguna medición de Tailscale ni de ZeroTier, y no se ha hecho un benchmark cara a cara. Las cifras de [Rendimiento](/rendimiento/) son solo de Atenea One y de laboratorio.
+
+Lo dicho de Tailscale, WireGuard y ZeroTier sale de su documentación pública; el número junto a cada celda enlaza a su fuente. Si algo ha cambiado desde la fecha de consulta, manda su documentación. Una raya (—) significa que no encontramos el dato en esas fuentes, no que el producto carezca de la función. Lo de Atenea One sale de los ADR y los contratos de protocolo del repositorio.
+
+## La diferencia que sí se reivindica
+
+En Atenea One, ninguna pieza de coordinación depende de un tercero: el coordinator, el servidor STUN y los relays son los que despliegues tú. El proyecto no usa WireGuard como protocolo y no depende de ZeroTier, Tailscale, Headscale ni de otro servicio externo de coordinación.
+
+## Tabla completa
+
+<CompareTable />
+
+## Cómo leerla
+
+### Criptografía
+
+Atenea One y WireGuard usan la misma familia de construcción: Noise IK con X25519, ChaCha20-Poly1305 y BLAKE2s, con MAC1 y MAC2 con cookie contra el agotamiento de CPU y una ventana antirreplay de tamaño parecido. WireGuard añade un PSK opcional (`IKpsk2`); Atenea One no tiene PSK.
+
+La diferencia no está en las primitivas sino en quién ha revisado el resto. En Atenea One el formato de cable, la política antirreplay y la gestión de sesiones son **código propio sin revisión externa**, y el ADR-003 los señala como el mayor riesgo criptográfico del producto. Como la biblioteca usada no admite datos asociados, la cabecera de los paquetes de datos no va autenticada por el AEAD: el índice selecciona la clave y el contador es el nonce.
+
+ZeroTier usa un protocolo original con Salsa20 y Poly1305 y declara que su capa VL1 no implementa secreto hacia adelante; recomienda TLS o SSH por encima cuando se necesita.
+
+### Conectividad
+
+Los tres intentan un camino directo y recurren a un relay si no lo logran. Cambia el orden y el dueño del relay:
+
+- En Tailscale toda conexión empieza relayada por DERP y sube a directa si puede.
+- En ZeroTier el primer paquete sale de inmediato por un root, lo que da conectividad instantánea.
+- En Atenea One no hay camino hasta completar el rendezvous (unos 5 s para un par nuevo en laboratorio) o establecer el relay.
+
+Atenea One no tiene una flota global de relays: la latencia por relay depende de dónde despliegues los tuyos.
+
+### Confianza
+
+En los tres hay una pieza que autoriza dispositivos, y comprometerla tiene consecuencias distintas:
+
+- **Atenea One** separa la raíz (fuera de línea) del emisor (en el servidor). Un emisor comprometido puede autorizar identidades hasta que caduque su certificado, acotado en tiempo y serial.
+- **Tailscale** confía por defecto en su coordinación para repartir claves de nodo. Tailnet Lock, opcional, mueve esa confianza a nodos firmantes tuyos con un modelo de confianza en el primer uso.
+- **ZeroTier** hace del controller la autoridad de certificación de la red: con su clave secreta se pueden emitir configuraciones fraudulentas.
+
+### Disponibilidad frente a revocación
+
+Es la misma decisión vista desde dos lados. Atenea One revoca dejando de emitir, con cotas conocidas (≤ 60 s si el par alcanza al emisor, ≤ 330 s en el peor caso), y a cambio **todos los túneles caen** si el emisor está caído más que la vigencia del lease. Tailscale mantiene lo ya establecido mientras no caduquen las claves, y a cambio no puede revocar ni cambiar reglas con la coordinación caída.
+
+### Política
+
+Atenea One y ZeroTier filtran sin estado y en los dos extremos. En Atenea One eso tiene una consecuencia documentada: una regla A→B con un puerto concreto genera una regla inversa sin restricción de puertos, así que B puede iniciar tráfico hacia A. El motor de reglas de ZeroTier es bastante más expresivo (L2 a L4, etiquetas, capacidades firmadas, copia y redirección de tráfico); el de Atenea One es deliberadamente mínimo.
+
+## Dónde es más débil Atenea One
+
+- Es un MVP administrable en laboratorio, **sin revisión criptográfica independiente**.
+- No tiene L2 (diseñado y en pausa hasta la auditoría), ni salida a Internet, ni clientes móviles.
+- No tiene alta disponibilidad del control plane, el coordinator ni la base de datos.
+- No hay una red global de relays: los relays son los que despliegues tú.
+- Admite 256 dispositivos aprobados por red.
+- Sin medición cara a cara, no se afirma nada sobre rendimiento relativo.
+
+El proyecto prohíbe expresamente anunciar equivalencia o compatibilidad con ZeroTier.

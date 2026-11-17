@@ -28,6 +28,7 @@ node_modules/
 dist/
 build/
 .react-router/
+.astro/
 *.tsbuildinfo
 coverage/
 playwright-report/

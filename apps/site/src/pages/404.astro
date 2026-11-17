@@ -1,0 +1,21 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+
+export const prerender = true;
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "No encontrada",
+    description: "Esa página no existe.",
+    template: "splash",
+    editUrl: false,
+  }}
+>
+  <p>
+    Esa página no existe. Empieza por la <a href="/instalacion/">instalación</a>
+    o por <a href="/como-funciona/">cómo funciona</a>.
+  </p>
+</StarlightPage>

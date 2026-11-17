@@ -1,0 +1,57 @@
+---
+interface Props {
+  value: string;
+  label?: string;
+  /**
+   * Sustituye el aspecto por defecto en lugar de añadirse a él: el `w-16` base
+   * solo da cabida a `copiado`.
+   */
+  class?: string;
+}
+
+const {
+  value,
+  label = "copiar",
+  class:
+    className = "w-20 shrink-0 border border-rule-strong py-1 text-center text-xs text-gray-300 transition-colors hover:bg-raise hover:text-gray-100",
+} = Astro.props;
+---
+
+<button
+  type="button"
+  data-copy={value}
+  class={className}>{label}</button
+>
+
+<script>
+  // Un listener por botón, enlazado una vez para todos los de la página.
+  const RESET_MS = 1500;
+
+  for (const node of document.querySelectorAll("button[data-copy]")) {
+    if (!(node instanceof HTMLButtonElement)) {
+      continue;
+    }
+
+    const button = node;
+    const value = button.dataset.copy;
+    if (value === undefined) {
+      continue;
+    }
+
+    const label = button.textContent ?? "copiar";
+
+    button.addEventListener("click", () => {
+      navigator.clipboard.writeText(value).then(
+        () => {
+          button.textContent = "copiado";
+          window.setTimeout(() => {
+            button.textContent = label;
+          }, RESET_MS);
+        },
+        () => {
+          button.textContent = "falló";
+        },
+      );
+    });
+  }
+</script>

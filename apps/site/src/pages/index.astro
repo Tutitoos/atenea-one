@@ -1,0 +1,135 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import Faq from "../components/landing/Faq.astro";
+import Compare from "../components/landing/Compare.astro";
+import FinalCta from "../components/landing/FinalCta.astro";
+import Flow from "../components/landing/Flow.astro";
+import Footer from "../components/landing/Footer.astro";
+import Hero from "../components/landing/Hero.astro";
+import Layout from "../components/landing/Layout.astro";
+import Measured from "../components/landing/Measured.astro";
+import Quickstart from "../components/landing/Quickstart.astro";
+import Section from "../components/landing/Section.astro";
+import SubHead from "../components/landing/SubHead.astro";
+import TopBar from "../components/landing/TopBar.astro";
+import { FAQ } from "../faq.mjs";
+import { PROJECT_TAGLINE } from "../site.mjs";
+
+// El orden es el argumento: cómo funciona (el diagrama) -> los principios que
+// lo sostienen -> lo que se ha medido -> en qué se confía y en qué no -> cómo
+// empezar -> dudas -> instalar. Cada bloque enlaza a la página donde la
+// pregunta se responde entera.
+export const prerender = true;
+
+const principles = [
+  {
+    title: "Camino directo primero",
+    text: "Un coordinator y un servidor STUN propios ayudan a los dispositivos a encontrarse y atravesar NAT. Si no hay camino directo, el tráfico va por un relay UDP o, como último recurso, por TLS sobre el puerto 443.",
+  },
+  {
+    title: "Cifrado de extremo a extremo",
+    text: "Los dispositivos negocian sesiones con Noise IK, con antirreplay y rekey propios. El relay solo ve direcciones, tamaños y tiempos: nunca el contenido.",
+  },
+  {
+    title: "Configuración firmada",
+    text: "Cada dispositivo recibe una configuración firmada con sus pares y su política de acceso. Denegación por defecto, ACL en origen y destino, y revocación mediante leases.",
+  },
+];
+
+const trust = [
+  {
+    title: "Relay y coordinator no son de confianza",
+    text: "Se tratan como no fiables para la confidencialidad y la integridad del tráfico. Pueden degradar la conectividad, no leer ni alterar los datos.",
+  },
+  {
+    title: "La raíz no está en el servidor",
+    text: "La clave raíz se custodia fuera de línea y solo certifica emisores acotados en tiempo. Un emisor comprometido tiene el alcance de su certificado.",
+  },
+  {
+    title: "Honestidad sobre el estado",
+    text: "El protocolo no tiene revisión criptográfica externa. Es un MVP administrable en laboratorio: no lo uses para proteger datos sensibles todavía.",
+  },
+];
+
+const faqGraph = [
+  {
+    "@type": "FAQPage",
+    mainEntity: FAQ.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  },
+];
+---
+
+<Layout
+  title="Atenea One: VPN P2P self-hosted"
+  description={PROJECT_TAGLINE}
+  extraGraph={faqGraph}
+>
+  <TopBar />
+  <main id="main">
+    <Hero />
+    <Section index="01" title="cómo funciona" id="como-funciona">
+      <Flow />
+      <p class="mt-10 text-xs">
+        <a
+          href="/como-funciona/"
+          class="font-mono text-accent-200 underline underline-offset-4"
+          >la arquitectura completa</a
+        >
+      </p>
+    </Section>
+    <Section index="02" title="los principios" id="principios">
+      <div class="grid grid-cols-1 gap-10 md:grid-cols-3">
+        {
+          principles.map((item) => (
+            <div>
+              <SubHead title={item.title} />
+              <p class="mt-5 max-w-[68ch] text-sm leading-6 text-gray-300">
+                {item.text}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </Section>
+    <Section index="03" title="medido, no prometido" id="medido">
+      <Measured />
+    </Section>
+    <Section index="04" title="frente a Tailscale y ZeroTier" id="comparacion">
+      <Compare />
+    </Section>
+    <Section index="05" title="en qué se confía y en qué no" id="seguridad">
+      <div class="grid grid-cols-1 gap-10 md:grid-cols-3">
+        {
+          trust.map((item) => (
+            <div>
+              <SubHead title={item.title} />
+              <p class="mt-5 max-w-[68ch] text-sm leading-6 text-gray-300">
+                {item.text}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+      <p class="mt-10 text-xs">
+        <a
+          href="/seguridad/"
+          class="font-mono text-accent-200 underline underline-offset-4"
+          >modelo de amenazas y límites</a
+        >
+      </p>
+    </Section>
+    <Section index="06" title="empieza con tu primera red" id="empezar">
+      <Quickstart />
+    </Section>
+    <Section index="07" title="preguntas frecuentes" id="faq">
+      <Faq />
+    </Section>
+    <FinalCta />
+  </main>
+  <Footer />
+</Layout>

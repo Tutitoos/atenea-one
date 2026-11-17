@@ -1,0 +1,274 @@
+---
+// The standalone shell for the landing page. It imports nothing from
+// Starlight: `--sl-color-*` does not exist outside a Starlight page, so the
+// page runs on the Tailwind theme in global.css alone. The surfaces it needs
+// (shell, panel, raise, rule, rule-strong) are declared there, in `@theme`,
+// and shared with the documentation.
+//
+// `<body>` is sans, and mono is applied where it means something: a heading, a
+// label, an identifier, a command, a table header, a numeric readout. That
+// split is not new -- it is the rule `docs.css` states and the documentation
+// half already follows. The landing carried `font-mono` on `<body>` instead,
+// which put every paragraph in the terminal face, made the `h1` wrap a line
+// early at `sm:text-5xl`, and left the Geist Sans this page already downloads
+// entirely unused.
+import "../../styles/global.css";
+import {
+  LICENSE_NAME,
+  PREVIEW_ALT,
+  LICENSE_URL,
+  PROJECT_NAME,
+  PROJECT_TAGLINE,
+  REPOSITORY_URL,
+  absoluteUrl,
+} from "../../pages/_seo";
+
+interface Props {
+  title: string;
+  description: string;
+  canonical?: string;
+  type?: "website" | "article";
+  structuredData?: Record<string, unknown>;
+  extraGraph?: Record<string, unknown>[];
+}
+
+const {
+  title,
+  description,
+  canonical: canonicalOverride,
+  type = "website",
+  structuredData: structuredDataOverride,
+  extraGraph = [],
+} = Astro.props;
+
+// Absolute and derived from `site`, never a literal: the deployment sets
+// ATENEA_SITE_URL and a hardcoded host would publish the wrong canonical.
+const canonical =
+  canonicalOverride ?? absoluteUrl(Astro.site, Astro.url.pathname);
+
+// One graph, joined to every documentation page by `@id`.
+const defaultStructuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": absoluteUrl(Astro.site, "/#software"),
+      name: PROJECT_NAME,
+      description: PROJECT_TAGLINE,
+      applicationCategory: "NetworkingApplication",
+      operatingSystem: "Linux, macOS, Windows",
+      url: absoluteUrl(Astro.site, "/"),
+      codeRepository: REPOSITORY_URL,
+      sameAs: [REPOSITORY_URL],
+      license: LICENSE_URL,
+      isAccessibleForFree: true,
+    },
+    {
+      "@type": "WebSite",
+      "@id": absoluteUrl(Astro.site, "/#website"),
+      name: PROJECT_NAME,
+      description: PROJECT_TAGLINE,
+      url: absoluteUrl(Astro.site, "/"),
+      inLanguage: "es",
+      license: LICENSE_URL,
+      about: { "@id": absoluteUrl(Astro.site, "/#software") },
+    },
+  ],
+};
+
+// Nodos que la página añade al grafo por defecto, por ejemplo su `FAQPage`.
+const structuredData = structuredDataOverride ?? {
+  ...defaultStructuredData,
+  "@graph": [...defaultStructuredData["@graph"], ...extraGraph],
+};
+const preview = absoluteUrl(Astro.site, "/og.png");
+---
+
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/favicon-16.png" sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0a0b0d" />
+
+    <meta property="og:type" content={type} />
+    <meta property="og:site_name" content={PROJECT_NAME} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    {/* The OG spec wants `language_TERRITORY`, not a bare language tag. */}
+    <meta property="og:locale" content="es_ES" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta property="og:image" content={preview} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={PREVIEW_ALT} />
+    <meta name="twitter:image" content={preview} />
+    <meta name="twitter:image:alt" content={PREVIEW_ALT} />
+
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta name="license" content={LICENSE_NAME} />
+
+    <slot name="head" />
+
+    <script
+      type="application/ld+json"
+      is:inline
+      set:html={JSON.stringify(structuredData)}
+    />
+  </head>
+  <body class="min-h-screen bg-shell font-sans text-gray-100 antialiased">
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-10 focus:border focus:border-rule-strong focus:bg-panel focus:px-3 focus:py-2 focus:text-xs"
+      >Saltar al contenido</a
+    >
+    <slot />
+
+    <script>
+      // The only JavaScript this page ships beyond the copy buttons. It is a
+      // module, so it is deferred by default and cannot block the first paint.
+      import { startMotion } from "../../lib/motion";
+
+      startMotion();
+    </script>
+  </body>
+</html>
+
+<style>
+  /* global.css imports the Tailwind theme and utilities but no preflight, and
+     Starlight's reset only runs on Starlight pages. This is the reset for this
+     page. It sits in the base layer so every utility still wins over it. */
+  @layer base {
+    :global(*),
+    :global(*::before),
+    :global(*::after) {
+      box-sizing: border-box;
+    }
+
+    /* The two declarations that used to sit inline on <html>. The surfaces are
+       theme tokens now, so there is nothing left to declare there, and the
+       shell colour is kept on the root as well as on <body> so an overscroll
+       past the body still paints page colour rather than white. */
+    :global(html) {
+      color-scheme: dark;
+      background-color: var(--color-shell);
+    }
+
+    :global(body) {
+      margin: 0;
+      font-size: 0.875rem;
+      line-height: 1.55;
+    }
+
+    /* A fieldset's and legend's margin belong here rather than in the component
+       that uses one: this layer is the only place a margin reset does not
+       outrank the `mt-*` a caller puts on the element. The fieldset's `padding`
+       and `min-width` stay with the component, where the box actually matters. */
+    :global(h1),
+    :global(h2),
+    :global(h3),
+    :global(p),
+    :global(pre),
+    :global(figure),
+    :global(figcaption),
+    :global(ul),
+    :global(ol),
+    :global(dl),
+    :global(dd),
+    :global(fieldset),
+    :global(legend) {
+      margin: 0;
+      font-size: inherit;
+      font-weight: inherit;
+    }
+
+    :global(ul),
+    :global(ol) {
+      padding: 0;
+      list-style: none;
+    }
+
+    :global(a) {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    :global(button) {
+      appearance: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      text-align: inherit;
+      cursor: pointer;
+    }
+
+    :global(table) {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    :global(th) {
+      font-weight: inherit;
+      text-align: left;
+    }
+
+    :global(pre),
+    :global(code) {
+      font-family: var(--font-mono);
+    }
+
+    :global(code) {
+      color: var(--color-gray-100);
+    }
+
+    :global(p code),
+    :global(li code),
+    :global(td code),
+    :global(dd code) {
+      padding: 0.05em 0.3em;
+      background-color: var(--color-raise);
+    }
+
+    :global(:focus-visible) {
+      outline: 1px solid var(--color-accent-200);
+      outline-offset: 2px;
+    }
+
+    :global(::selection) {
+      background-color: var(--color-accent-900);
+      color: var(--color-gray-100);
+    }
+  }
+
+  /* Unlayered, so it overrides anything a utility asks for. */
+  @media (prefers-reduced-motion: reduce) {
+    :global(*),
+    :global(*::before),
+    :global(*::after) {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>

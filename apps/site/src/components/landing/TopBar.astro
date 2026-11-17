@@ -1,0 +1,121 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { REPOSITORY_URL } from "../../site.mjs";
+
+// La navegación es generada: si un enlace sale del sitio se lee de su propio
+// `href`, así que una entrada nueva no puede olvidar la regla.
+const rows: { href: string; label: string }[] = [
+  { href: "/#como-funciona", label: "cómo funciona" },
+  { href: "/#medido", label: "medido" },
+  { href: "/#comparacion", label: "comparación" },
+  { href: "/#seguridad", label: "seguridad" },
+  { href: "/#faq", label: "faq" },
+  { href: "/#instalar", label: "instalar" },
+  { href: "/instalacion/", label: "docs" },
+  { href: REPOSITORY_URL, label: "github" },
+];
+
+const links = rows.map((link) => ({
+  ...link,
+  external: /^https?:\/\//.test(link.href),
+}));
+
+// The nine labels are about 590px of monospace plus eight gaps. At the old
+// spacing that was wide enough to make the desktop row wrap after the blog link
+// was added. The narrower desktop gaps keep it beside the wordmark from 1024px
+// up; the tagline returns at 1280px, where the full row still fits. Below 1024px
+// the whole bar used the desktop row too early, and it wrapped badly:
+// measured on the built page, the header stood 137px tall at 320px, 113px at
+// 390px and 89px through 540px, against the 41px it costs on a desktop. The
+// disclosure now stays in charge through tablet widths, so the links do not
+// compete with the logo for a row that cannot hold them.
+//
+// So the bar keeps one row at every width. What changes is what the row holds:
+// the tagline is decorative next to the wordmark and only appears where it
+// already fitted, and the links collapse behind a disclosure below 1024px.
+---
+
+<header class="border-b border-rule">
+  <div
+    class="mx-auto box-border flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3 font-mono text-xs lg:flex-nowrap"
+  >
+    <a href="/" class="flex items-center gap-2 text-gray-100">
+      <img src="/favicon.svg" alt="" width="20" height="20" class="size-5" />
+      atenea one
+    </a>
+
+    {/* The tagline repeats what the hero says one screen down, so it is the
+        first thing to go when the row is short. It returns at 1280px, where
+        the wordmark and the narrowed desktop navigation still fit together. */}
+    <span class="hidden text-gray-400 xl:inline">vpn p2p self-hosted</span>
+
+    {/* The disclosure is a checkbox and a label, like the tabs on the front
+        page: no JavaScript, keyboard-navigable, and announced. The input is
+        `sr-only` and never `display: none`, because a hidden input cannot take
+        focus and the keyboard is how this is meant to be driven. It comes
+        before the label and the nav because the whole control is a sibling
+        selector. */}
+    <input id="nav-open" class="peer sr-only" type="checkbox" />
+    <label
+      for="nav-open"
+      class="ml-auto cursor-pointer text-gray-400 transition-colors hover:text-gray-100 lg:hidden"
+    >
+      <span data-when="closed">menú</span>
+      <span data-when="open">cerrar</span>
+    </label>
+
+    {/* Closed, the nav is `display: none` and its links stay in the served
+        HTML, which is what a crawler and a reader with no CSS get: the whole
+        list, exactly as the front page's tabs degrade. Open, it is a column
+        under the wordmark rather than a row squeezed beside it. From 1024px the
+        disclosure stops applying and this is the desktop row.
+
+        Nothing closes it on a tap, and nothing needs to: this header does not
+        stick, so following one of the four in-page anchors scrolls it out of
+        the viewport along with the rest of the bar. A close-on-click would be
+        the one piece of JavaScript on this control, bought for a state the
+        reader stops seeing anyway. From 1024px up, the desktop row is explicitly
+        non-wrapping and the links use the measured narrower gap. */}
+    <nav
+      class="hidden w-full basis-full flex-col gap-y-3 pt-3 peer-checked:flex lg:ml-auto lg:flex lg:w-auto lg:basis-auto lg:flex-row lg:items-center lg:gap-x-4 lg:gap-y-2 lg:pt-0"
+      aria-label="Principal"
+    >
+      {
+        links.map((link) => (
+          <a
+            href={link.href}
+            target={link.external ? "_blank" : undefined}
+            rel={link.external ? "noopener noreferrer" : undefined}
+            class="text-gray-400 underline-offset-4 transition-colors hover:text-gray-100 hover:underline"
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+  </div>
+</header>
+
+<style>
+  /* The word on the button is the action it performs, so it has to follow the
+     checkbox. It cannot be a `peer-checked:` utility: that variant compiles to
+     a sibling combinator and these two spans are inside the label, which is the
+     sibling -- the utility would compile and never match. */
+  label[for="nav-open"] [data-when="open"],
+  #nav-open:checked ~ label[for="nav-open"] [data-when="closed"] {
+    display: none;
+  }
+
+  #nav-open:checked ~ label[for="nav-open"] [data-when="open"] {
+    display: inline;
+  }
+
+  /* The focus ring belongs on the label, because the input that owns the focus
+     is the one thing on this control nobody can see. Same rule, same reason and
+     same offset as the tabs of `ProductProof.astro`. */
+  #nav-open:focus-visible ~ label[for="nav-open"] {
+    outline: 1px solid var(--color-accent-200);
+    outline-offset: 3px;
+  }
+</style>
