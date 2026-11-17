@@ -14,6 +14,7 @@ const methods = {
   open_panel: ['OpenPanel', ['network', 'deviceId']],
   open_service: ['OpenService', ['network', 'deviceId', 'port']],
   services_publish_set: ['ServicesPublishSet', ['network', 'on']],
+  admin_apply: ['AdminApply', ['op', 'network', 'params']],
   notifications_get: ['NotificationsGet', []],
   notifications_set: ['NotificationsSet', ['on']],
   autostart_get: ['AutostartGet', []],
@@ -27,7 +28,7 @@ export async function invoke<T = string>(cmd: string, args: Record<string, unkno
   const [method, names] = entry;
   try {
     // Un argumento omitido viaja como cadena vacía (Go no distingue ausente de vacío en estos campos).
-    return (await Call.ByName(`main.AteneaService.${method}`, ...names.map((n) => args[n] ?? (n === 'on' ? false : '')))) as T;
+    return (await Call.ByName(`main.AteneaService.${method}`, ...names.map((n) => args[n] ?? (n === 'on' ? false : n === 'params' ? {} : '')))) as T;
   } catch (e) {
     throw e instanceof Error ? e.message : e;
   }

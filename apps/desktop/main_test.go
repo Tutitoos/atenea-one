@@ -15,8 +15,8 @@ import (
 
 // Guardia de ADR-019 §2 y decisión 10, ampliada por ADR-021: la superficie que la página puede invocar es exactamente
 // esta. Añadir un método exportado al servicio obliga a tocar esta lista, es decir, a revisarlo.
-func TestServiceSurfaceIsExactlyTheFourteenOperations(t *testing.T) {
-	want := []string{"AutostartGet", "AutostartSet", "ClientStatus", "DevicePing", "NetworkApply", "NetworkInspect",
+func TestServiceSurfaceIsExactlyTheFifteenOperations(t *testing.T) {
+	want := []string{"AdminApply", "AutostartGet", "AutostartSet", "ClientStatus", "DevicePing", "NetworkApply", "NetworkInspect",
 		"NetworkLegacy", "NetworkList", "NotificationsGet", "NotificationsSet", "OpenPanel", "OpenService", "ServicesPublishSet", "Status"}
 	if got := surface.Exported(&AteneaService{}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("superficie del servicio = %v\nesperada             = %v", got, want)

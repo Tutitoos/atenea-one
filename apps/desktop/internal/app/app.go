@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app reúne la lógica de las catorce operaciones que la aplicación expone al frontend y el sondeo de la
+// Package app reúne la lógica de las quince operaciones que la aplicación expone al frontend y el sondeo de la
 // bandeja (ADR-019). No depende de Wails: el servicio vinculado de `main` solo delega aquí, de modo que todo lo
 // que decide algo se puede probar sin ventana.
 package app
@@ -196,6 +196,15 @@ func (a *App) ServicesPublishSet(network string, on bool) error {
 		return err
 	}
 	return backend.SetServicesPublish(network, on)
+}
+
+// AdminApply ejecuta una escritura de administración delegada (ADR-026) en una red unida, con la autorización del
+// sistema. La lectura de la concesión, el inventario y las políticas no pasa por aquí: sale del estado del agente.
+func (a *App) AdminApply(op, network string, p backend.AdminParams) (string, error) {
+	if _, err := backend.JoinedNetwork(network); err != nil {
+		return "", err
+	}
+	return backend.ApplyAdmin(op, network, p)
 }
 
 // ClaimFirstRun dice si esta es la primera vez que se abre la aplicación para este usuario y lo anota (ADR-021): true

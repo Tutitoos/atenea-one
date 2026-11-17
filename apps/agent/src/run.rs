@@ -508,6 +508,26 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
             }
         })
     });
+    // ADR-026: concesión de este dispositivo y lo que le deja ver; una lectura cada 30 s (hasta 3 peticiones, de las 30 por
+    // minuto que admite el control plane por dispositivo), fuera del bucle de datos.
+    let (admin_tx, admin_rx) = tokio::sync::watch::channel::<Option<crate::admin::Status>>(None);
+    let admin_task = cfg.sync.clone().map(|sync| {
+        let (identity, device) = (identity.clone(), cfg.device_id);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let (sync, identity) = (sync.clone(), identity.clone());
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::admin::fetch(&sync, &identity, device, unix_now())
+                })
+                .await
+                .unwrap_or(Err("lectura de administración interrumpida"));
+                admin_tx.send_modify(|status| crate::admin::record(status, result));
+            }
+        })
+    });
     let mut engine = Engine::new(cfg.network_id, noise, unix_now());
     engine.set_cookie_threshold(cfg.handshake_cookie_threshold_per_second);
     engine.set_services_publish(cfg.services.publish);
@@ -692,6 +712,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 coord_rx.borrow().clone(),
                 relay.status(),
                 server_rx.borrow().clone(),
+                admin_rx.borrow().clone(),
             )
             .to_string(),
         )
@@ -738,7 +759,7 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         let (own, peers) = names_rx.borrow_and_update().clone();
                         rt.engine.set_metadata(own, peers);
                     }
-                    let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status(), server_rx.borrow().clone());
+                    let mut snapshot = ipc_status(&rt, sync_rx.borrow().clone(), coord_rx.borrow().clone(), relay.status(), server_rx.borrow().clone(), admin_rx.borrow().clone());
                     relay_requests.renewals.write_to(&mut snapshot);
                     status_tx.send_replace(std::sync::Arc::<str>::from(snapshot.to_string()));
                     if endpoint_task.as_ref().is_some_and(|task| task.is_finished())
@@ -1091,6 +1112,9 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     if let Some(task) = server_task {
         task.abort();
     }
+    if let Some(task) = admin_task {
+        task.abort();
+    }
     if let Some(task) = report_task {
         task.abort();
     }
@@ -1362,6 +1386,7 @@ fn ipc_status(
     coord: Option<CoordStatus>,
     relay: crate::relay::RelayStatus,
     server: Option<crate::server::Status>,
+    admin: Option<crate::admin::Status>,
 ) -> serde_json::Value {
     let mut status =
         serde_json::to_value(rt.engine.status(Instant::now(), unix_now())).unwrap_or_default();
@@ -1369,6 +1394,7 @@ fn ipc_status(
     status["coordinator"] = serde_json::to_value(coord).unwrap_or_default();
     status["relay"] = serde_json::to_value(relay).unwrap_or_default();
     status["server"] = serde_json::to_value(server).unwrap_or_default();
+    status["admin"] = serde_json::to_value(admin).unwrap_or_default();
     let network = rt.netconf.status();
     status["routes"] = serde_json::to_value(&network.routes).unwrap_or_default();
     status["dns"] = serde_json::json!(network.dns);
