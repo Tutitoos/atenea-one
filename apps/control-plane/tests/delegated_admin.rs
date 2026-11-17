@@ -544,6 +544,28 @@ async fn revocar_al_delegado_retira_el_permiso_y_conserva_lo_que_creo() {
         )
         .await;
     assert_eq!(r.json.as_array().unwrap().len(), 1);
+    assert_eq!(r.json[0]["created_by_device"], s.lead.id.to_string());
+    // El inventario del administrador dice quién dio de alta a cada equipo; los del administrador, nadie.
+    let devices =
+        s.t.json(
+            "GET",
+            &format!("/api/v1/networks/{}/devices", s.net),
+            Some(&s.owner),
+            json!(null),
+        )
+        .await;
+    let by = |id: Uuid| {
+        devices
+            .json
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == id.to_string())
+            .unwrap()["enrolled_by_device"]
+            .clone()
+    };
+    assert_eq!(by(new.id), s.lead.id.to_string());
+    assert_eq!(by(s.other.id), Value::Null);
     let r =
         s.t.json(
             "DELETE",

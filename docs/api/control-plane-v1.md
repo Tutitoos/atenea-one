@@ -479,6 +479,7 @@ La gestión es de un administrador; el dispositivo ejerce su concesión con las 
 - `DELETE` de la misma ruta (`owner` o `admin`, CSRF): `204`; `404 not_found` si no tenía concesión.
 - **Revocar el dispositivo** (por un administrador o con `/device/leave`) borra su concesión en la misma transacción.
 - Auditoría: `device.grant` (con permisos y alcance) y `device.grant_revoke` (con `reason`: `admin` o `device_revoked`). Eventos SSE: `devices` y `audit`.
+- **Autoría (fase 5).** `GET /api/v1/networks/{net}/devices` añade `enrolled_by_device` (uuid del delegado cuyo código usó el dispositivo, o `null` si lo dio de alta un administrador o entró por solicitud) y `GET /api/v1/networks/{net}/policies` añade `created_by_device` (uuid del delegado que la creó, o `null` si fue un administrador). Mismas reglas de lectura que antes, token de servicio incluido.
 
 ## 24. Administración delegada desde el dispositivo (ADR-026, fase 3)
 

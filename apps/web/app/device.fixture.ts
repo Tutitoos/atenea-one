@@ -15,6 +15,7 @@ export const device: Model<'Device'> = {
   status: 'pending',
   role: 'device',
   join_origin: 'token',
+  enrolled_by_device: null,
   endpoints: [],
   fingerprint: 'huella-sintetica-verificable',
   ipv4: null,

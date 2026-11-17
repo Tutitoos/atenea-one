@@ -16,9 +16,10 @@ const columns = [
 ] as const;
 type SortColumn = typeof columns[number][0];
 
-export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all' }: {
+export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all', grants }: {
   devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number;
   refresh: () => Promise<unknown>; routes?: Model<'Route'>[]; status?: string;
+  grants?: Model<'DeviceGrant'>[];
 }) {
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState(status);
@@ -115,7 +116,7 @@ export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [
               </tr>
               {isExpanded && <tr id={`device-${device.id}`}><td colSpan={5}>
                 <DeviceDetail device={device} devices={devices} net={net} elapsed={elapsed} routes={routes}
-                  canEdit={canEdit} refresh={refresh}/>
+                  canEdit={canEdit} refresh={refresh} grants={grants}/>
               </td></tr>}
               </Fragment>;
             })}</tbody>
