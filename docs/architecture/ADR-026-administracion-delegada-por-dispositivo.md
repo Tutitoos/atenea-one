@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-026: Administración delegada por dispositivo (permisos por red, con alcance)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-17, con las cinco decisiones D1 a D5 tal como se recomendaron. **Sin implementar:** ninguna fase tiene código.
+- **Estado:** **Aceptado** por el responsable el 2026-11-17, con las cinco decisiones D1 a D5 tal como se recomendaron. **Fase 2 implementada** (migración `0013` y gestión de concesiones por un administrador, con pruebas de integración contra PostgreSQL 17): las concesiones se guardan y se auditan, pero **ninguna ruta de dispositivo las consulta todavía**, así que no dan ningún permiso efectivo. Fases 3 a 7 sin código; nada desplegado y el retroceso de la `0013` sin ensayar.
 - **Relacionados:** [ADR-016](ADR-016-politicas-de-acceso-minimas.md) (políticas con deny por defecto y la regla inversa), [ADR-013](ADR-013-redes-multiples-y-union-por-codigo.md) (código de unión y aprobación), [ADR-020](ADR-020-token-de-servicio-de-solo-lectura.md) (el token de servicio sigue siendo de solo lectura), [ADR-019](ADR-019-aplicacion-de-escritorio-wails.md), [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) y [ADR-024](ADR-024-servicios-expuestos-por-dispositivo.md) (la aplicación no tiene privilegios y su lista de operaciones elevadas es cerrada), [ADR-017](ADR-017-redes-por-instancia-en-windows.md) (elevación con UAC en Windows).
 
 ## Contexto
@@ -60,7 +60,7 @@ El alcance limita las escrituras. Las lecturas (`read:*`) cubren siempre toda la
 
 ### 4. Control plane
 
-- **Migración `0013`** (aditiva): tabla `device_grants` (`network_id`, `device_id`, `scopes`, `scope_kind`, `scope_devices`, `granted_by`, `granted_at`); `enrollment_tokens.created_by_device` y `devices.enrolled_by_device` (nulos si lo hizo un usuario); `access_policies.created_by_device` (nulo si lo creó un administrador). `enrollment_tokens.created_by` pasa a admitir nulo cuando hay `created_by_device`.
+- **Migración `0013`** (aditiva): tabla `device_grants` (`network_id`, `device_id`, `scopes`, `scope_kind`, `scope_devices`, `granted_by`, `granted_at`); `enrollment_tokens.created_by_device` y `devices.enrolled_by_device` (nulos si lo hizo un usuario); `access_policies.created_by_device` (nulo si lo creó un administrador). En `enrollment_tokens` y `access_policies`, `created_by` pasa a admitir nulo cuando el autor es un dispositivo.
 - **Para el administrador** (sesión, `owner` o `admin`): `GET /api/v1/networks/{net}/grants`, `PUT /api/v1/networks/{net}/devices/{dev}/grant` y `DELETE` de la misma ruta.
 - **Para el dispositivo** (firma `AtDevice`, mismo anti-repetición y ventana de tiempo que hoy), bajo `/api/v1/device/admin/`: `grant` (los permisos propios), `devices`, `policies` (listar, crear, borrar), `join-codes` (crear), `devices/{dev}/approve` y `devices/{dev}/revoke`. Sin permiso o fuera de alcance responde `403` con un código estable (`grant_missing`, `out_of_scope`); un destino inexistente o de otra red responde `404`.
 - **No cambian** el túnel, la configuración firmada ni `/device/peers`. Las políticas delegadas se compilan igual que las demás. El agente solo gana, en la fase 6, tres lecturas para la aplicación (véase §6); no ejecuta ninguna escritura delegada.

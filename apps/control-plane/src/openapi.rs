@@ -163,6 +163,10 @@ fn schemas() -> ComponentsBuilder {
         ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
         ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Último informe de servicios guardado, sin filtro de antigüedad; [] si nunca se ha publicado. Consulte services_at.")).into()), ("services_at", nullable_timestamp()), ("versions", ArrayBuilder::new().items(named("DeviceVersion")).max_items(Some(3)).description(Some("Última lista de versiones instaladas informada, sin filtro de antigüedad; [] si nunca informó o si no hay componentes que informar. Consulte versions_at para distinguirlo.")).into()), ("versions_at", nullable_timestamp()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
+        ("DeviceGrantPermission", choices(&crate::grants::SCOPES)),
+        ("DeviceGrantScope", complete(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).description(Some("Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.")).into())])),
+        ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(6)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
+        ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_at", timestamp())])),
         ("DeviceId", complete(&[("device_id", uuid())])),
         ("DeviceUpdate", object(&[("role", named("DeviceRole")), ("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
         ("Id", complete(&[("id", uuid())])),
@@ -495,6 +499,36 @@ pub fn document() -> OpenApi {
             "200",
             "DeviceUpdate",
             "DeviceId",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/grants",
+            "listDeviceGrants",
+            "Lista las concesiones de administración delegada; requiere pertenencia",
+            "read",
+            "200",
+            "",
+            "[]DeviceGrant",
+        ),
+        (
+            Put,
+            "/api/v1/networks/{net}/devices/{dev}/grant",
+            "setDeviceGrant",
+            "Concede o sustituye los permisos de un dispositivo aprobado; requiere admin u owner",
+            "write",
+            "200",
+            "DeviceGrantInput",
+            "DeviceGrant",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/devices/{dev}/grant",
+            "removeDeviceGrant",
+            "Retira la concesión de un dispositivo; requiere admin u owner",
+            "write",
+            "204",
+            "",
+            "",
         ),
         (
             Get,
@@ -1008,6 +1042,20 @@ pub fn document() -> OpenApi {
         if id == "setJoinPolicy" {
             operation = operation.description(Some("policy: cerrada | con_solicitud; cualquier otro valor: 400 invalid_request. Queda auditado (network.join_policy)."));
         }
+        if matches!(
+            id,
+            "setDeviceGrant" | "removeDeviceGrant" | "listDeviceGrants"
+        ) {
+            operation = operation.description(Some("ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar."));
+        }
+        if id == "setDeviceGrant" {
+            operation = operation.response(
+                "409",
+                ResponseBuilder::new()
+                    .description("device_not_approved: solo se concede a un dispositivo aprobado")
+                    .content("application/json", Content::new(Some(named("Error")))),
+            );
+        }
         if id == "getJoinCode" {
             operation = operation.description(Some("code no lleva token. Si el servidor tiene configurado el host STUN (ADR-018), lleva además el bloque de conectividad (STUN y, si se configuró, el SHA-256 de la CA del relay) y connectivity lo resume; connectivity es null si el código no lo lleva. ?conectividad=0 devuelve el código sin bloque. 409 invalid_network_name_for_code si el nombre de la red no cumple el formato del código (1..48 bytes, sin recortes ni controles), 409 invalid_public_url_for_code si public_url no cumple (https, ≤ 100 bytes, sin barra final) o 409 code_too_long si con el bloque el texto supera 512 caracteres. Cache-Control: no-store."));
         }
@@ -1067,7 +1115,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 41);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 43);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

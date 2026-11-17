@@ -120,6 +120,11 @@ pub fn router(s: AppState) -> Router {
             patch(devices::update),
         )
         .route(
+            "/api/v1/networks/{net}/devices/{dev}/grant",
+            put(crate::grants::set).delete(crate::grants::remove),
+        )
+        .route("/api/v1/networks/{net}/grants", get(crate::grants::list))
+        .route(
             "/api/v1/networks/{net}/policies",
             get(policies::list).post(policies::create),
         )

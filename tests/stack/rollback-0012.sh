@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Copyright 2026 Tutitoos
 # SPDX-License-Identifier: Apache-2.0
-# Retroceso v0.1.31 (binario desplegado en el piloto, migraciones 1–11) sobre 0012 (devices.versions/versions_at)
-# con escrituras nuevas. No ejecuta down migrations: el binario anterior debe funcionar con el esquema ampliado.
+# Retroceso v0.1.31 (migraciones 1–11) sobre 0012 (devices.versions/versions_at, primera revisión con esa migración:
+# v0.1.32) con escrituras nuevas. No ejecuta down migrations: el binario anterior debe funcionar con el esquema ampliado.
 #
-# A diferencia de rollback-0008/0009/0010, no necesita las imágenes de laboratorio: compila los dos control plane
-# en el anfitrión (perfil dev, un solo CARGO_TARGET_DIR) y usa solo PostgreSQL 17 en Docker, con datos sintéticos.
-# Requiere docker, cargo, python3 y un openssl con Ed25519 (`pkeyutl -rawin`); ATENEA_PREVIOUS_TAG cambia N.
+# N y N+1 son TAGS fijos, no el árbol de trabajo, como en rollback-0010.sh: el ensayo describe un paso concreto del
+# historial y no se rompe al añadir migraciones. Compila los dos control plane en el anfitrión (perfil dev, un solo
+# CARGO_TARGET_DIR) y usa solo PostgreSQL 17 en Docker, con datos sintéticos. Requiere docker, cargo, python3 y un openssl
+# con Ed25519 (`pkeyutl -rawin`); ATENEA_PREVIOUS_TAG y ATENEA_NEXT_TAG cambian N y N+1.
 set -euo pipefail
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$ROOT"
@@ -14,6 +15,7 @@ umask 077
 START=$SECONDS
 RUN="atenea-rollback-0012-$$"
 PREVIOUS_TAG=${ATENEA_PREVIOUS_TAG:-v0.1.31}
+NEXT_TAG=${ATENEA_NEXT_TAG:-v0.1.32}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/atenea-rollback-0012.XXXXXX")
 TMP=$(cd "$TMP" && pwd -P)
 PG=$RUN-pg
@@ -30,7 +32,9 @@ cleanup() {
   printf "%s comprobaciones; pasan %s; fallan %s\n" "$((passed + (rc != 0)))" "$passed" "$((rc != 0))"
   if [ -n "$CP_PID" ]; then kill "$CP_PID" >/dev/null 2>&1 || true; fi
   docker rm -fv "$PG" >/dev/null 2>&1 || true
-  if [ -d "$TMP/previous" ]; then git worktree remove --force "$TMP/previous"; fi
+  for tree in previous next; do
+    if [ -d "$TMP/$tree" ]; then git worktree remove --force "$TMP/$tree"; fi
+  done
   rm -rf "$TMP"
   exit "$rc"
 }
@@ -40,14 +44,16 @@ trap 'exit 143' TERM
 
 docker info >/dev/null
 PREVIOUS=$(git rev-parse "$PREVIOUS_TAG^{commit}")
+NEXT=$(git rev-parse "$NEXT_TAG^{commit}")
 git worktree add --detach "$TMP/previous" "$PREVIOUS"
+git worktree add --detach "$TMP/next" "$NEXT"
 set -- "$TMP/previous"/apps/control-plane/migrations/*.sql
 [ "$#" -eq 11 ]
 test -f "$TMP/previous/apps/control-plane/migrations/0011_configuration_versions_not_after.sql"
-set -- apps/control-plane/migrations/*.sql
+set -- "$TMP/next"/apps/control-plane/migrations/*.sql
 [ "$#" -eq 12 ]
-test -f apps/control-plane/migrations/0012_device_versions.sql
-printf 'N tag %s commit=%s; N+1 working-tree HEAD=%s\n' "$PREVIOUS_TAG" "$PREVIOUS" "$(git rev-parse HEAD)"
+test -f "$TMP/next/apps/control-plane/migrations/0012_device_versions.sql"
+printf 'N tag %s commit=%s; N+1 tag %s commit=%s\n' "$PREVIOUS_TAG" "$PREVIOUS" "$NEXT_TAG" "$NEXT"
 
 # Binarios: cada revisión se compila con su propio árbol; Cargo distingue las rutas de los paquetes locales.
 mkdir -p "$TMP/bin"
@@ -56,7 +62,7 @@ build() {
   cp "$TARGET/debug/atenea-control-plane" "$2"
 }
 build "$TMP/previous" "$TMP/bin/n"
-build "$ROOT" "$TMP/bin/n1" -p atenea-cli
+build "$TMP/next" "$TMP/bin/n1" -p atenea-cli
 cp "$TARGET/debug/atenea" "$TMP/bin/atenea"
 cmp -s "$TMP/bin/n" "$TMP/bin/n1" && { echo 'N y N+1 son el mismo binario' >&2; exit 1; }
 printf 'N sha256=%s\nN+1 sha256=%s\n' "$(shasum -a 256 "$TMP/bin/n" | cut -c1-64)" "$(shasum -a 256 "$TMP/bin/n1" | cut -c1-64)"

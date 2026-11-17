@@ -463,4 +463,19 @@ La migración `0012_device_versions.sql` añade `devices.versions jsonb NOT NULL
 
 **Inventario (`GET /api/v1/networks/{net}/devices`).** Cada dispositivo añade `versions` y `versions_at`, sin filtro de antigüedad. Lo ve quien ya puede leer el inventario (pertenencia a la organización, incluido el token de servicio de solo lectura de §19).
 
-**Despliegue y compatibilidad.** El informe rechaza campos desconocidos: un servidor anterior a esta migración devolvería `400 invalid_report` **a todo el informe** de un agente que ya envíe `versions`. Por eso **este servidor se actualiza antes que cualquier agente** que informe versiones. Los agentes anteriores siguen siendo válidos (no envían el campo). La migración es una columna con valor por defecto: el binario anterior funciona con el esquema ampliado, pero `--migrate` del binario anterior fallaría con una migración desconocida; el retroceso de esta migración **no se ha ensayado** (`tests/stack` solo cubre hasta la `0010`).
+**Despliegue y compatibilidad.** El informe rechaza campos desconocidos: un servidor anterior a esta migración devolvería `400 invalid_report` **a todo el informe** de un agente que ya envíe `versions`. Por eso **este servidor se actualiza antes que cualquier agente** que informe versiones. Los agentes anteriores siguen siendo válidos (no envían el campo). La migración es una columna con valor por defecto: el binario anterior funciona con el esquema ampliado, pero `--migrate` del binario anterior falla con una migración desconocida sin cambiar la base (ensayado con `tests/stack/rollback-0012.sh`).
+
+## 23. Concesiones de administración delegada (ADR-026, fase 2)
+
+La migración `0013_device_grants.sql` crea `device_grants` (una fila por dispositivo: `scopes`, `scope_kind`, `scope_devices`, `granted_by`, `granted_at`) y añade la autoría delegada que usarán las fases siguientes: `enrollment_tokens.created_by_device`, `devices.enrolled_by_device` y `access_policies.created_by_device`; en `enrollment_tokens` y `access_policies`, `created_by` pasa a admitir nulo. Es aditiva y el binario anterior no lee esas columnas.
+
+**En esta fase solo existe la gestión por un administrador.** Ninguna ruta de dispositivo consulta todavía las concesiones: concederlas no da ningún permiso efectivo hasta la fase 3.
+
+- `GET /api/v1/networks/{net}/grants` (pertenencia; también el token de servicio): lista `[{"device_id","scopes","scope":{"kind","devices"},"granted_by","granted_at"}]`.
+- `PUT /api/v1/networks/{net}/devices/{dev}/grant` (`owner` o `admin`, CSRF) con `{"scopes":[…],"scope":{"kind":"enrolled"|"devices"|"network","devices"?:[uuid]}}`: concede o **sustituye** la concesión del dispositivo y devuelve la concesión guardada.
+  - `scopes`: lista cerrada (`read:devices`, `read:policies`, `write:join-codes`, `write:approve-devices`, `write:policies`, `write:revoke-devices`), no vacía y sin repetir; se guarda y se devuelve en ese orden.
+  - `scope.devices` solo con `kind = "devices"`: de 1 a 64 dispositivos de la misma red, no revocados y sin repetir; con los otros dos tipos debe faltar o estar vacía.
+  - Cualquier otra cosa → `400 invalid_grant`; un campo desconocido o un tipo erróneo se rechaza al leer el cuerpo. `404 not_found` si el dispositivo no es de la red; `409 device_not_approved` si está pendiente o revocado.
+- `DELETE` de la misma ruta (`owner` o `admin`, CSRF): `204`; `404 not_found` si no tenía concesión.
+- **Revocar el dispositivo** (por un administrador o con `/device/leave`) borra su concesión en la misma transacción.
+- Auditoría: `device.grant` (con permisos y alcance) y `device.grant_revoke` (con `reason`: `admin` o `device_revoked`). Eventos SSE: `devices` y `audit`.

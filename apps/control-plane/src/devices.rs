@@ -447,6 +447,8 @@ async fn revoke_device(
         )
         .await?;
     }
+    // Un dispositivo revocado no conserva permisos de administración delegada (ADR-026).
+    crate::grants::withdraw(&mut tx, net, dev, actor_kind, actor, org, "device_revoked").await?;
     audit::record(
         &mut tx,
         actor_kind,
