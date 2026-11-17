@@ -15,6 +15,7 @@ export const ALLOWED_TEMPLATES = [
   "/api/v1/networks/{net}/audit",
   "/api/v1/networks/{net}/devices",
   "/api/v1/networks/{net}/dns",
+  "/api/v1/networks/{net}/grants",
   "/api/v1/networks/{net}/metrics",
   "/api/v1/networks/{net}/policies",
   "/api/v1/networks/{net}/routes",
