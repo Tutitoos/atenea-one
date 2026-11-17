@@ -489,6 +489,30 @@ mod system {
         }
     }
 
+    /// Administración delegada (ADR-026): firma con la clave de identidad de la red, que solo lee un administrador.
+    pub fn admin(
+        ctx: &Ctx,
+        cmd: crate::admin::AdminCmd,
+        input: &mut dyn BufRead,
+        interactive: bool,
+    ) -> Result<(), String> {
+        require_elevated()?;
+        let metas = read_metas(&ctx.public)?;
+        let m = resolve(&metas, cmd.network())?;
+        let target = crate::admin::Target {
+            url: m.url.clone(),
+            device_id: m.device_id.clone(),
+            dir: ctx.device_dir(&m.network_id),
+        };
+        crate::admin::run(
+            &target,
+            cmd,
+            input,
+            interactive,
+            &mut std::io::stdout().lock(),
+        )
+    }
+
     pub fn leave(
         ctx: &Ctx,
         query: &str,

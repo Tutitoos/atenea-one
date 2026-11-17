@@ -71,6 +71,10 @@ pub enum NetworkCmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Administración delegada con los permisos que un administrador concedió a este dispositivo (ADR-026).
+    /// Se ejecuta con los mismos privilegios que `join`: firma con la clave de identidad de la red.
+    #[command(flatten)]
+    Admin(crate::admin::AdminCmd),
 }
 
 /// Valor de `atenea services publish`.
@@ -191,6 +195,15 @@ fn run_windows(cmd: NetworkCmd) -> Result<(), String> {
                 std::io::stdin().is_terminal(),
             )
         }
+        NetworkCmd::Admin(cmd) => {
+            use std::io::IsTerminal;
+            win::admin(
+                &win::Ctx::new()?,
+                cmd,
+                &mut std::io::stdin().lock(),
+                std::io::stdin().is_terminal(),
+            )
+        }
         NetworkCmd::MigrateLegacy { .. } => Err(
             "Windows no migra la instalación heredada (ADR-017 §10): desinstálala, reinstala y únete con `atenea network join`".into(),
         ),
@@ -255,6 +268,7 @@ pub fn run(
             yes,
             offline,
         } => imp::leave(&ctx, &network, yes, offline, &mut input, interactive),
+        NetworkCmd::Admin(cmd) => imp::admin(&ctx, cmd, &mut input, interactive),
         NetworkCmd::Inspect { .. } => unreachable!(),
     }
 }
@@ -1048,6 +1062,30 @@ mod imp {
         }
         println!("publish={}", if on { "on" } else { "off" });
         Ok(())
+    }
+
+    /// Administración delegada (ADR-026): firma con la clave de identidad de la red, que solo lee root.
+    pub fn admin(
+        ctx: &Ctx,
+        cmd: crate::admin::AdminCmd,
+        input: &mut dyn BufRead,
+        interactive: bool,
+    ) -> Result<(), String> {
+        network_service::root_required()?;
+        let metas = read_metas(ctx)?;
+        let m = resolve(&metas, cmd.network())?;
+        let target = crate::admin::Target {
+            url: m.url.clone(),
+            device_id: m.device_id.clone(),
+            dir: ctx.device_dir(&m.network_id),
+        };
+        crate::admin::run(
+            &target,
+            cmd,
+            input,
+            interactive,
+            &mut std::io::stdout().lock(),
+        )
     }
 
     pub fn leave(

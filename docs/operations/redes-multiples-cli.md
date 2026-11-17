@@ -35,6 +35,28 @@ sudo atenea services publish <on|off> --network <id|prefijo|sufijo|nombre>   # A
 
 `join`, `leave` y la asignación de interfaz/puerto se serializan con un bloqueo exclusivo del directorio raíz (`File::lock`); también `up` y `down` lo respetan. La asignación reserva los recursos declarados de la instancia heredada aunque esté parada, y comprueba los puertos contra el sistema.
 
+## Administración delegada (ADR-026)
+
+Si un administrador concedió permisos a este dispositivo en una red, estas órdenes los ejercen con la clave de identidad de esa red. **Solo existen en esta CLI: ninguna concede permisos** (eso es del panel). Todas llevan `--network <id|prefijo|sufijo|nombre>` y `--json` (imprime la respuesta del servidor tal cual), se ejecutan con los mismos privilegios que `join` (root en Linux y macOS; consola elevada en Windows) y necesitan un control plane con las rutas `/api/v1/device/admin/`; con uno anterior responden «el servidor no admite administración delegada».
+
+```sh
+sudo atenea network permissions --network RED
+sudo atenea network devices     --network RED
+sudo atenea network join-code   --network RED [--ttl 600]
+sudo atenea network approve HUELLA --network RED
+sudo atenea network revoke  DISPOSITIVO --network RED [--yes]
+sudo atenea network policy list   --network RED
+sudo atenea network policy add    --network RED --from A --to B [--proto tcp --ports 22]
+sudo atenea network policy remove ID --network RED [--yes]
+```
+
+- **`permissions`**: los permisos y el alcance de las escrituras de este dispositivo. **`devices`** y **`policy list`** muestran toda la red (permisos `read:devices` y `read:policies`); `devices` marca con `*` lo que está dentro del alcance.
+- **`join-code`** (`write:join-codes`): código de un solo uso de 60 a 3600 s (600 por defecto) y sin aprobación automática. Se imprime **una sola vez** y no se guarda en disco. El equipo que lo use entra pendiente.
+- **`approve <huella>`** (`write:approve-devices`): exige la huella completa (8 grupos de 4 hex en minúsculas, la que muestra el equipo al unirse). Busca el dispositivo con esa huella, comprueba que está pendiente y envía la aprobación **con la huella**; el servidor la vuelve a comparar. Si no hay ninguno o ya no está pendiente, no se envía nada.
+- **`revoke <dispositivo>`** (`write:revoke-devices`) y **`policy remove <id>`** (`write:policies`): piden confirmación; sin terminal interactiva exigen `--yes`.
+- **`policy add`** (`write:policies`): `--from` y `--to` son id o nombre (un nombre debe ser único entre los no revocados) y solo se envían dispositivos, nunca `any` ni prefijos. `--proto` es `any` (por defecto), `icmp`, `tcp`, `udp` o `icmpv6`; `--ports` (`22` o `8000-8100`) solo con tcp o udp.
+- Los errores del servidor se traducen a un mensaje: sin permiso (`grant_missing`), fuera de alcance (`out_of_scope`), huella distinta, demasiados códigos vivos, etc. Un `401` suele indicar el reloj del equipo o un dispositivo revocado.
+
 ## Disposición en disco
 
 Raíz por defecto: `/var/lib/atenea/networks` (Linux) y `/Library/Application Support/Atenea/networks` (macOS).
