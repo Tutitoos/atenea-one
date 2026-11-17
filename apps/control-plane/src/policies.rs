@@ -90,13 +90,37 @@ pub async fn create(
     Json(b): Json<Policy>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
+    let mut tx = s.pool.begin().await?;
+    let id = insert(&mut tx, net, &b, Some(u), None).await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "policy.create",
+        id,
+        json!({"src":b.src,"dst":b.dst,"proto":b.proto,"port_min":b.port_min,"port_max":b.port_max}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((StatusCode::CREATED, Json(json!({"id":id}))))
+}
+/// Valida e inserta una política bajo el bloqueo de la red y comprueba que la configuración de todos sigue compilando.
+/// El autor es un usuario o un dispositivo delegado (ADR-026); la auditoría es de quien llama.
+pub async fn insert(
+    tx: &mut PgConnection,
+    net: Uuid,
+    b: &Policy,
+    user: Option<Uuid>,
+    device: Option<Uuid>,
+) -> Result<Uuid, ApiError> {
     if ![0, 1, 6, 17, 58].contains(&b.proto)
         || b.port_min > b.port_max
         || !matches!(b.proto, 6 | 17) && (b.port_min != 0 || b.port_max != 0)
     {
         return Err(ApiError::bad("invalid_ports"));
     }
-    let mut tx = s.pool.begin().await?;
     let row = sqlx::query(
         "SELECT ipv4_cidr::text v4,ipv6_cidr::text v6 FROM networks WHERE id=$1 FOR UPDATE",
     )
@@ -132,9 +156,9 @@ pub async fn create(
         return Err(ApiError::conflict("policy_overflow"));
     }
     let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO access_policies(id,network_id,src,dst,proto,port_min,port_max,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(net).bind(json!(b.src)).bind(json!(b.dst)).bind(i16::from(b.proto)).bind(i32::from(b.port_min)).bind(i32::from(b.port_max)).bind(u).execute(&mut *tx).await?;
-    let devices = crate::issue::load_devices(&mut tx, net).await?;
-    let rules = rules(&mut tx, net).await?;
+    sqlx::query("INSERT INTO access_policies(id,network_id,src,dst,proto,port_min,port_max,created_by,created_by_device) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(id).bind(net).bind(json!(b.src)).bind(json!(b.dst)).bind(i16::from(b.proto)).bind(i32::from(b.port_min)).bind(i32::from(b.port_max)).bind(user).bind(device).execute(&mut *tx).await?;
+    let devices = crate::issue::load_devices(&mut *tx, net).await?;
+    let rules = rules(&mut *tx, net).await?;
     let network_prefixes = ["v4", "v6"]
         .iter()
         .map(|k| {
@@ -151,19 +175,7 @@ pub async fn create(
     for d in &devices {
         crate::issue::compile(d, &devices, &rules, &network_prefixes)?;
     }
-    audit::record(
-        &mut tx,
-        "user",
-        u,
-        Some(org),
-        Some(net),
-        "policy.create",
-        id,
-        json!({"src":b.src,"dst":b.dst,"proto":b.proto,"port_min":b.port_min,"port_max":b.port_max}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(json!({"id":id}))))
+    Ok(id)
 }
 pub async fn remove(
     State(s): State<AppState>,
