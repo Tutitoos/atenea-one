@@ -5,9 +5,9 @@
 # nuevas y administración delegada real. No ejecuta down migrations: el binario anterior debe funcionar con el esquema
 # ampliado.
 #
-# N es el tag v0.1.32. N+1 todavía no tiene tag (la 0013 no se ha publicado): es la revisión `ATENEA_NEXT_REF`, por
-# defecto el commit de `main` que cierra la fase 6 de ADR-026. Al publicar la versión que la incluya, fijar aquí su tag,
-# como hacen rollback-0010.sh y rollback-0012.sh. Compila los dos control plane en el anfitrión (perfil dev, un solo
+# N es el tag v0.1.32 y N+1 el tag v0.1.33 (la primera versión con la 0013); `ATENEA_NEXT_REF` admite cualquier revisión
+# (un commit de `main`, por ejemplo). Como rollback-0010.sh y rollback-0012.sh, el ensayo describe un paso concreto del
+# historial. Compila los dos control plane en el anfitrión (perfil dev, un solo
 # CARGO_TARGET_DIR) y usa solo PostgreSQL 17 en Docker, con datos sintéticos y los binarios reales del control plane y
 # de la CLI (la delegación se ejercita con peticiones firmadas AtDevice de verdad). Requiere docker, cargo, python3 y un
 # openssl con Ed25519 (`pkeyutl -rawin`).
@@ -18,7 +18,7 @@ umask 077
 START=$SECONDS
 RUN="atenea-rollback-0013-$$"
 PREVIOUS_TAG=${ATENEA_PREVIOUS_TAG:-v0.1.32}
-NEXT_REF=${ATENEA_NEXT_REF:-36c63e2}
+NEXT_REF=${ATENEA_NEXT_REF:-v0.1.33}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/atenea-rollback-0013.XXXXXX")
 TMP=$(cd "$TMP" && pwd -P)
 PG=$RUN-pg
