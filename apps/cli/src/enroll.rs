@@ -38,22 +38,39 @@ fn bundle(dir: &Path) -> Result<DeviceBundle, String> {
     Ok(bundle)
 }
 
-/// Retira el dispositivo con la misma firma de petición que usa el agente.
-pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
+/// `insecure_http` del `agent.toml` de la red (solo laboratorio); falso si no hay fichero.
+fn config_insecure_http(dir: &Path) -> Result<bool, String> {
     let config = dir.join("agent.toml");
-    let insecure_http = if config.exists() {
-        let text =
-            std::fs::read_to_string(&config).map_err(|e| format!("{}: {e}", config.display()))?;
-        let table: toml::Table = toml::from_str(&text).map_err(|e| format!("agent.toml: {e}"))?;
-        table
-            .get("sync")
-            .and_then(|s| s.get("insecure_http"))
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(false)
-    } else {
-        false
-    };
-    let url = format!("{}/api/v1/device/leave", base_url(url, insecure_http)?);
+    if !config.exists() {
+        return Ok(false);
+    }
+    let text =
+        std::fs::read_to_string(&config).map_err(|e| format!("{}: {e}", config.display()))?;
+    let table: toml::Table = toml::from_str(&text).map_err(|e| format!("agent.toml: {e}"))?;
+    Ok(table
+        .get("sync")
+        .and_then(|s| s.get("insecure_http"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false))
+}
+
+/// Respuesta del control plane a una petición firmada.
+pub struct Reply {
+    pub status: u16,
+    pub body: String,
+}
+
+/// Petición con la firma `AtDevice` que usa el agente. `path` incluye la query y `body` va tal cual firmado.
+/// El cuerpo de la respuesta se limita a 1 MiB.
+pub fn signed(
+    url: &str,
+    device: &str,
+    dir: &Path,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Result<Reply, String> {
+    let url = format!("{}{path}", base_url(url, config_insecure_http(dir)?)?);
     let uri: ureq::http::Uri = url.parse().map_err(|_| "URL inválida")?;
     let key = crate::issue::read_seed(&dir.join("identity.key"))?;
     let id = hex::decode::<16>(&device.replace('-', "")).ok_or("id del dispositivo inválido")?;
@@ -66,9 +83,9 @@ pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
     let auth = atenea_identity::api_auth::sign_request(
         &key,
         id,
-        "POST",
+        method,
         uri.path_and_query().ok_or("URL inválida")?.as_str(),
-        b"",
+        body,
         ts,
         nonce,
     );
@@ -79,15 +96,34 @@ pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
         .http_status_as_error(false)
         .build()
         .into();
-    let response = agent
-        .post(&url)
-        .header("Authorization", &auth)
-        .send_empty()
+    let mut request = ureq::http::Request::builder()
+        .method(method)
+        .uri(&url)
+        .header("Authorization", &auth);
+    if !body.is_empty() {
+        request = request.header("Content-Type", "application/json");
+    }
+    let request = request.body(body).map_err(|e| e.to_string())?;
+    let mut response = agent
+        .run(request)
         .map_err(|e| format!("no se pudo contactar con el servidor: {e}"))?;
-    if response.status().as_u16() != 200 {
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(1 << 20)
+        .read_to_string()
+        .unwrap_or_default();
+    Ok(Reply { status, body })
+}
+
+/// Retira el dispositivo con la misma firma de petición que usa el agente.
+pub fn leave(url: &str, device: &str, dir: &Path) -> Result<(), String> {
+    let reply = signed(url, device, dir, "POST", "/api/v1/device/leave", b"")?;
+    if reply.status != 200 {
         return Err(format!(
             "el servidor rechazó la revocación (HTTP {})",
-            response.status()
+            reply.status
         ));
     }
     Ok(())
