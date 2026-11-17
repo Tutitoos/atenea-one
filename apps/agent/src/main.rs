@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Agente VPN: dueño de la TUN y de las claves del dispositivo (fase 2, configuración de laboratorio).
 
+mod admin;
 mod build_info;
 mod config;
 mod coord;

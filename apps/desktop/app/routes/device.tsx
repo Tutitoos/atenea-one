@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { PanelButton, PingButton } from '../device-actions';
 import { TrafficHistory } from '../device-history';
 import type { DeviceHistory } from '../lib/history';
@@ -11,6 +12,8 @@ import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
 import { PeerServices } from '../services';
+import { Administration } from '../admin';
+import { readClient } from '../lib/networks';
 import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton } from '../ui';
 
 function Title({ id, name, editable, rename = false }: { id: string; name: string; editable: boolean; rename?: boolean }) {
@@ -81,9 +84,12 @@ function Versions({ list, reported }: { list?: Installed | null; reported: boole
   );
 }
 
-function SelfDetail({ reply }: { reply: Reply }) {
+function SelfDetail({ reply, network, stale }: { reply: Reply; network: string; stale: boolean }) {
   const { status, health } = reply;
   const names = useNames();
+  const info = useQuery({ queryKey: ['client'], queryFn: readClient });
+  // La aplicación eleva donde puede unir redes; en Windows las escrituras delegadas aún no están soportadas (usa la CLI).
+  const canWrite = info.data?.can_join === true && info.data.os !== 'windows';
   const left = status.config.valid_until_unix ? Math.round(status.config.valid_until_unix - Date.now() / 1000) : null;
   const seen = (unix?: number | null) => (unix ? `ok hace ${ago(Date.now() / 1000 - unix)}` : null);
   return (
@@ -104,6 +110,7 @@ function SelfDetail({ reply }: { reply: Reply }) {
         <Row label="Relays asignados">{String(status.relay?.allocations ?? 0)}</Row>
         <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} label="clave pública" /></Row>
       </Card>
+      <Administration status={status} network={network} canWrite={canWrite} stale={stale} />
     </>
   );
 }
@@ -162,7 +169,7 @@ export default function Device() {
       <Skeleton className="h-32 w-full" />
     </Loading>
   );
-  if (id === 'self') return <SelfDetail reply={sample.reply} />;
+  if (id === 'self') return <SelfDetail reply={sample.reply} network={network} stale={stale} />;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
   return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true && !stale} ping={asked?.ping === true && !stale} stale={stale} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }

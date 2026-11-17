@@ -10,8 +10,9 @@ import (
 
 // AteneaService es el servicio vinculado de Wails y la ÚNICA superficie que la página puede invocar (ADR-019 §2 y
 // decisión 10): todo método exportado de un servicio registrado es invocable desde JavaScript, así que este tipo
-// tiene exactamente estos catorce métodos (ClientStatus es de solo lectura: ADR-021; OpenService y ServicesPublishSet son
-// de ADR-024: la primera no recibe URL, solo id de par y puerto; la segunda es la única operación elevada nueva) y la
+// tiene exactamente estos quince métodos (ClientStatus es de solo lectura: ADR-021; OpenService y ServicesPublishSet son
+// de ADR-024: la primera no recibe URL, solo id de par y puerto; la segunda es una operación elevada con argumentos fijos;
+// AdminApply es de ADR-026: una lista cerrada de cinco escrituras delegadas, cada una una sola llamada al CLI) y la
 // lógica vive en `internal/app`, sin vincular. Añadir un método exportado es un cambio de seguridad: rompe
 // TestServiceSurface y exige revisión.
 type AteneaService struct {
@@ -109,4 +110,11 @@ func (s *AteneaService) OpenService(network, deviceID string, port int) error {
 func (s *AteneaService) ServicesPublishSet(network string, on bool) error {
 	s.seen("ServicesPublishSet")
 	return s.core.ServicesPublishSet(network, on)
+}
+
+// AdminApply ejecuta una escritura de administración delegada (código de unión, aprobar, revocar, crear o borrar una
+// política) con la autorización del sistema; la operación es de una lista cerrada (ADR-026).
+func (s *AteneaService) AdminApply(op, network string, params backend.AdminParams) (string, error) {
+	s.seen("AdminApply")
+	return s.core.AdminApply(op, network, params)
 }

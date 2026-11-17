@@ -99,6 +99,14 @@ export const openService = (network: string, deviceId: string, port: number) => 
 /** Pide la autorización de administrador del sistema (la única orden elevada nueva); cancelar el diálogo rechaza y no cambia nada. */
 export const setServicesPublish = (network: string, on: boolean) => call<void>('services_publish_set', { network, on });
 
+
+/** ADR-026: escrituras de administración delegada (lista cerrada). Cada una pide la autorización de administrador del
+ * sistema; cancelar el diálogo rechaza y no cambia nada. La lectura sale del estado del agente, no de aquí. */
+export type AdminOp = 'join-code' | 'approve' | 'revoke' | 'policy-add' | 'policy-remove';
+export type AdminParams = Partial<{ ttl: number; fingerprint: string; device: string; policy: string; from: string; to: string; proto: string; ports: string }>;
+export const adminApply = (op: AdminOp, network: string, params: AdminParams = {}) => call<string>('admin_apply', { op, network, params });
+/** Solo se muestra el código y su caducidad; Go descarta el resto de la respuesta. */
+export const joinCodeReply = z.object({ code: z.string().min(1), expires_at: z.string() });
 export async function readNotifications(): Promise<boolean> {
   return z.boolean().parse(await call<boolean>('notifications_get'));
 }

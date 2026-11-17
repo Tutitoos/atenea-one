@@ -128,6 +128,12 @@ El socket de estado heredado `/var/run/atenea/status.sock` (macOS) o `/run/atene
 
 La sección **Redes** de la aplicación (ADR-013 fase 4, [ADR-011 §2](../architecture/ADR-011-aplicacion-de-escritorio.md)) usa solo estos comandos: `list --json` y `inspect --json` sin privilegios, y `join`, `up`, `down` y `leave` con la autorización del sistema operativo (macOS: diálogo de administrador; Linux: `pkexec`) en cada operación. Unirse ejecuta `join … --yes --status-gid <grupo primario del usuario>` y a continuación `up`, en una sola autorización. El token de un código con token es visible un instante en la línea de órdenes de esa operación. Windows no está soportado. **La elevación real no se ha probado**; consulta los límites de ADR-013 §9.
 
+## Administración delegada en la aplicación (ADR-026, fase 6)
+
+Si un administrador concedió permisos al equipo, el detalle del **propio equipo** muestra «Administración»: la concesión y su alcance, el código de unión, los pendientes (aprobar comparando la huella completa), los dispositivos (revocar) y las políticas (crear y borrar entre dispositivos del alcance). **Las lecturas no piden autorización:** el agente consulta `/api/v1/device/admin/{grant,devices,policies}` cada 30 s (solo `GET` firmados; las dos últimas solo si la concesión incluye `read:devices` o `read:policies`) y las expone en `status.admin` del estado local; sin concesión es `null`, con un servidor anterior no aparece. Un cambio puede tardar hasta 30 s en verse.
+
+**Cada escritura sí pide la autorización de administrador del sistema** y es una sola llamada a la CLI con argumentos validados (UUID, huella de 8 grupos de 4 hex, protocolo, puertos): `network join-code --network ID --ttl N --json`, `network approve HUELLA --network ID`, `network revoke ID --network ID --yes`, `network policy add --network ID --from ID --to ID --proto P [--ports R]` y `network policy remove ID --network ID --yes`. La página recibe del código de unión solo el código y su caducidad. **En Windows la aplicación no hace estas escrituras todavía:** se usa la CLI de arriba. El servicio vinculado pasa de 14 a **15 métodos** (`AdminApply`).
+
 ## Privilegios
 
 La CLI **no se autoeleva** (opción A de ADR-013 §3.4): se ejecuta como root o con `sudo`; no invoca `sudo` ni `pkexec`. Sin permisos devuelve «permiso denegado: ejecuta con sudo». El token del código es visible en la línea de órdenes (historial, `ps`): para códigos con token se recomienda un historial desactivado.

@@ -69,6 +69,25 @@ const status = z.object({
   services_publish: z.boolean().nullish(),
   // `null` hasta la primera detección del propio agente.
   versions: tolerant(installed),
+  // ADR-026: concesión de administración delegada de ESTE equipo y lo que le deja ver. `grant` nulo = sin concesión;
+  // ausente = agente o servidor anteriores. Datos de presentación: el servidor decide cada escritura.
+  admin: z.object({
+    grant: z.object({
+      scopes: z.array(z.string()),
+      scope: z.object({ kind: z.enum(['enrolled', 'devices', 'network']), devices: z.array(z.string()).default([]) }),
+      granted_at: z.string(),
+    }).nullish(),
+    devices: tolerant(z.object({
+      id: z.string(), name: z.string(), role: z.string(), status: z.enum(['pending', 'approved', 'revoked']), fingerprint: z.string(),
+      ipv4: z.string().nullish(), ipv6: z.string().nullish(), enrolled_by_device: z.string().nullish(), in_scope: z.boolean(),
+    })),
+    policies: tolerant(z.object({
+      id: z.string(), src: z.object({ kind: z.string(), device_id: z.string().nullish(), prefix: z.string().nullish() }),
+      dst: z.object({ kind: z.string(), device_id: z.string().nullish(), prefix: z.string().nullish() }),
+      proto: z.number(), port_min: z.number(), port_max: z.number(), created_by_device: z.string().nullish(),
+    })),
+    fetched_unix: z.number().nullish(), last_error: z.string().nullish(),
+  }).nullish(),
   peers: z.array(peer).default([]),
 });
 
