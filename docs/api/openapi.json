@@ -46,6 +46,842 @@
         }
       }
     },
+    "/api/v1/device/admin/devices": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Inventario de la red para un delegado; requiere read:devices",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "listDelegatedDevices",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DelegatedDevice"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/devices/{dev}/approve": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Aprueba por su huella un pendiente del alcance; requiere write:approve-devices",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "approveDelegatedDevice",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegatedApproval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/devices/{dev}/revoke": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Revoca un dispositivo del alcance; cuerpo vacío; requiere write:revoke-devices",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "revokeDelegatedDevice",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/grant": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concesión del propio dispositivo",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "getDelegatedGrant",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegatedGrant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/join-codes": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Crea un código de unión de un solo uso, sin aprobación automática; requiere write:join-codes",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "createDelegatedJoinCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewDelegatedJoinCode"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/policies": {
+      "get": {
+        "tags": [
+          "policies"
+        ],
+        "summary": "Políticas de la red para un delegado; requiere read:policies",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "listDelegatedPolicies",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DelegatedPolicy"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "policies"
+        ],
+        "summary": "Crea una política entre dos dispositivos del alcance; requiere write:policies",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "createDelegatedPolicy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/policies/{id}": {
+      "delete": {
+        "tags": [
+          "policies"
+        ],
+        "summary": "Borra una política delegada con ambos extremos en el alcance; requiere write:policies",
+        "description": "ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device.",
+        "operationId": "deleteDelegatedPolicy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/device/config": {
       "get": {
         "tags": [
@@ -5570,6 +6406,153 @@
           "unknown"
         ]
       },
+      "DelegatedApproval": {
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "Huella completa del dispositivo pendiente, tal como la muestra su equipo."
+          }
+        }
+      },
+      "DelegatedDevice": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "status",
+          "fingerprint",
+          "ipv4",
+          "ipv6",
+          "enrolled_at",
+          "enrolled_by_device",
+          "in_scope"
+        ],
+        "properties": {
+          "enrolled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enrolled_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Delegado cuyo código lo dio de alta; null si fue un usuario o una solicitud."
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "in_scope": {
+            "type": "boolean",
+            "description": "true si el alcance de quien pregunta lo incluye."
+          },
+          "ipv4": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ipv6": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeviceStatus"
+          }
+        }
+      },
+      "DelegatedGrant": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "network_id",
+          "scopes",
+          "scope",
+          "granted_at"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "network_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DeviceGrantScope"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceGrantPermission"
+            }
+          }
+        }
+      },
+      "DelegatedPolicy": {
+        "type": "object",
+        "required": [
+          "id",
+          "src",
+          "dst",
+          "proto",
+          "port_min",
+          "port_max",
+          "created_by_device"
+        ],
+        "properties": {
+          "created_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Delegado que la creó; null si fue un administrador."
+          },
+          "dst": {
+            "$ref": "#/components/schemas/Selector"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "port_max": {
+            "type": "integer"
+          },
+          "port_min": {
+            "type": "integer"
+          },
+          "proto": {
+            "type": "integer"
+          },
+          "src": {
+            "$ref": "#/components/schemas/Selector"
+          }
+        }
+      },
       "Device": {
         "type": "object",
         "required": [
@@ -6694,6 +7677,19 @@
           },
           "unknown": {
             "type": "integer"
+          }
+        }
+      },
+      "NewDelegatedJoinCode": {
+        "type": "object",
+        "required": [
+          "ttl_secs"
+        ],
+        "properties": {
+          "ttl_secs": {
+            "type": "integer",
+            "maximum": 3600,
+            "minimum": 60
           }
         }
       },

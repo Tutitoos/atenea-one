@@ -56,29 +56,19 @@ pub async fn token(
     if !(60..=86400).contains(&b.ttl_secs) {
         return Err(ApiError::bad("invalid_ttl"));
     }
-    let raw = URL_SAFE_NO_PAD.encode(atenea_identity::generate_seed());
-    let id = Uuid::now_v7();
-    let expires = chrono::Utc::now() + chrono::Duration::seconds(b.ttl_secs as i64);
     let mut tx = s.pool.begin().await?;
-    let r = sqlx::query("SELECT root_anchor,name FROM networks WHERE id=$1")
-        .bind(net)
-        .fetch_one(&mut *tx)
-        .await?;
-    let (root, net_name): (Vec<u8>, String) = (r.get("root_anchor"), r.get("name"));
-    // Un nombre o URL que no caben en el código (con el bloque de conectividad incluido) no impiden crear el
-    // token: `code` es null y el operador puede pedirlo con `?conectividad=0`.
-    let code = networks::join_code(&s, net, &net_name, &root, Some(&raw), with_connectivity).ok();
-    let connectivity = if code.is_some() {
-        networks::connectivity_json(&s, with_connectivity)
-    } else {
-        Value::Null
-    };
-    let anchor: [u8; 32] = root
-        .as_slice()
-        .try_into()
-        .map_err(|_| ApiError::internal())?;
-    let fingerprint = atenea_identity::anchor_fingerprint(&anchor);
-    sqlx::query("INSERT INTO enrollment_tokens(id,network_id,token_hash,created_by,expires_at,auto_approve,role) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(net).bind(Sha256::digest(raw.as_bytes()).as_slice()).bind(u).bind(expires).bind(b.auto_approve).bind(role).execute(&mut *tx).await?;
+    let (id, body) = issue_token(
+        &s,
+        &mut tx,
+        net,
+        b.ttl_secs,
+        b.auto_approve,
+        role,
+        with_connectivity,
+        Some(u),
+        None,
+    )
+    .await?;
     audit::record(
         &mut tx,
         "user",
@@ -91,15 +81,52 @@ pub async fn token(
     )
     .await?;
     tx.commit().await?;
+    Ok((StatusCode::CREATED, TOKEN_HEADERS, Json(body)))
+}
+/// Un token nunca debe quedar en cachés intermedias.
+pub const TOKEN_HEADERS: [(&str, &str); 2] = [
+    ("cache-control", "no-store"),
+    ("x-content-type-options", "nosniff"),
+];
+/// Crea el token de unión y la respuesta que lo muestra una sola vez. El autor es un usuario o un dispositivo
+/// delegado (ADR-026); la auditoría es de quien llama.
+#[allow(clippy::too_many_arguments)]
+pub async fn issue_token(
+    s: &AppState,
+    tx: &mut sqlx::PgConnection,
+    net: Uuid,
+    ttl_secs: u64,
+    auto_approve: bool,
+    role: &str,
+    with_connectivity: bool,
+    user: Option<Uuid>,
+    device: Option<Uuid>,
+) -> Result<(Uuid, Value), ApiError> {
+    let raw = URL_SAFE_NO_PAD.encode(atenea_identity::generate_seed());
+    let id = Uuid::now_v7();
+    let expires = chrono::Utc::now() + chrono::Duration::seconds(ttl_secs as i64);
+    let r = sqlx::query("SELECT root_anchor,name FROM networks WHERE id=$1")
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    let (root, net_name): (Vec<u8>, String) = (r.get("root_anchor"), r.get("name"));
+    // Un nombre o URL que no caben en el código (con el bloque de conectividad incluido) no impiden crear el
+    // token: `code` es null y el operador puede pedirlo con `?conectividad=0`.
+    let code = networks::join_code(s, net, &net_name, &root, Some(&raw), with_connectivity).ok();
+    let connectivity = if code.is_some() {
+        networks::connectivity_json(s, with_connectivity)
+    } else {
+        Value::Null
+    };
+    let anchor: [u8; 32] = root
+        .as_slice()
+        .try_into()
+        .map_err(|_| ApiError::internal())?;
+    let fingerprint = atenea_identity::anchor_fingerprint(&anchor);
+    sqlx::query("INSERT INTO enrollment_tokens(id,network_id,token_hash,created_by,created_by_device,expires_at,auto_approve,role) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(net).bind(Sha256::digest(raw.as_bytes()).as_slice()).bind(user).bind(device).bind(expires).bind(auto_approve).bind(role).execute(&mut *tx).await?;
     Ok((
-        StatusCode::CREATED,
-        [
-            ("cache-control", "no-store"),
-            ("x-content-type-options", "nosniff"),
-        ],
-        Json(
-            json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)},"code":code,"root_anchor_fingerprint":fingerprint,"connectivity":connectivity}),
-        ),
+        id,
+        json!({"token":raw,"expires_at":expires,"join":{"url":s.config.public_url,"token":raw,"network_id":net,"root_anchor":hex::encode(root)},"code":code,"root_anchor_fingerprint":fingerprint,"connectivity":connectivity}),
     ))
 }
 #[derive(Deserialize)]
@@ -121,7 +148,7 @@ pub async fn enroll(
     let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
-    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve,role").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
+    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve,role,created_by_device").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
     let net: Uuid = row.get("network_id");
     let auto: bool = row.get("auto_approve");
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
@@ -140,6 +167,12 @@ pub async fn enroll(
         &row.get::<String, _>("role"),
     )
     .await?;
+    // Quién lo dio de alta (ADR-026): nulo si el código lo creó un usuario.
+    sqlx::query("UPDATE devices SET enrolled_by_device=$2 WHERE id=$1")
+        .bind(dev)
+        .bind(row.get::<Option<Uuid>, _>("created_by_device"))
+        .execute(&mut *tx)
+        .await?;
     if auto {
         networks::allocate(&mut tx, net, dev).await?;
         sqlx::query("UPDATE devices SET status='approved',approved_at=now() WHERE id=$1")
@@ -312,6 +345,27 @@ pub async fn approve(
 ) -> Result<Json<Value>, ApiError> {
     let (u, org) = networks::access(&s, &h, net, true).await?;
     let mut tx = s.pool.begin().await?;
+    let addresses = approve_pending(&mut tx, net, dev).await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "device.approve",
+        dev,
+        json!({"addresses":addresses}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"device_id":dev,"status":"approved"})))
+}
+/// Aprueba un dispositivo pendiente bajo el bloqueo de la red y devuelve sus direcciones; la auditoría es de quien llama.
+pub async fn approve_pending(
+    tx: &mut sqlx::PgConnection,
+    net: Uuid,
+    dev: Uuid,
+) -> Result<Vec<String>, ApiError> {
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
         .bind(net)
         .execute(&mut *tx)
@@ -326,30 +380,17 @@ pub async fn approve(
     if status != "pending" {
         return Err(ApiError::conflict("device_not_pending"));
     }
-    networks::allocate(&mut tx, net, dev).await?;
+    networks::allocate(&mut *tx, net, dev).await?;
     sqlx::query("UPDATE devices SET status='approved',approved_at=now() WHERE id=$1")
         .bind(dev)
         .execute(&mut *tx)
         .await?;
-    let addresses: Vec<String> = sqlx::query_scalar(
+    Ok(sqlx::query_scalar(
         "SELECT host(addr) FROM ip_allocations WHERE device_id=$1 ORDER BY family",
     )
     .bind(dev)
     .fetch_all(&mut *tx)
-    .await?;
-    audit::record(
-        &mut tx,
-        "user",
-        u,
-        Some(org),
-        Some(net),
-        "device.approve",
-        dev,
-        json!({"addresses":addresses}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(Json(json!({"device_id":dev,"status":"approved"})))
+    .await?)
 }
 pub async fn revoke(
     State(s): State<AppState>,
@@ -368,6 +409,35 @@ async fn revoke_device(
     admin: Option<(Uuid, Uuid)>,
 ) -> Result<(), ApiError> {
     let mut tx = s.pool.begin().await?;
+    let (actor_kind, actor, org, action) = match admin {
+        Some((user, org)) => ("user", user, org, "device.revoke"),
+        None => {
+            let org = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
+                .bind(net)
+                .fetch_one(&mut *tx)
+                .await?;
+            ("device", dev, org, "device.leave")
+        }
+    };
+    revoke_in(&mut tx, net, dev, actor_kind, actor, org, action).await?;
+    tx.commit().await?;
+    if admin.is_none() {
+        s.panel.changed(net, "devices");
+        s.panel.changed(net, "audit");
+    }
+    Ok(())
+}
+/// Revoca dentro de la transacción de quien llama. El actor es un usuario, el propio dispositivo que se retira
+/// o un dispositivo delegado (ADR-026).
+pub async fn revoke_in(
+    tx: &mut sqlx::PgConnection,
+    net: Uuid,
+    dev: Uuid,
+    actor_kind: &str,
+    actor: Uuid,
+    org: Uuid,
+    action: &str,
+) -> Result<(), ApiError> {
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
         .bind(net)
         .execute(&mut *tx)
@@ -399,23 +469,13 @@ async fn revoke_device(
             .bind(dev)
             .fetch_all(&mut *tx)
             .await?;
-    let (actor_kind, actor, org, action) = match admin {
-        Some((user, org)) => ("user", user, org, "device.revoke"),
-        None => {
-            let org = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
-                .bind(net)
-                .fetch_one(&mut *tx)
-                .await?;
-            ("device", dev, org, "device.leave")
-        }
-    };
-    sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind(admin.map(|(user, _)| user)).execute(&mut *tx).await?;
+    sqlx::query("UPDATE device_routes SET status='rejected',snat=NULL,decided_at=now(),decided_by=$2 WHERE device_id=$1").bind(dev).bind((actor_kind == "user").then_some(actor)).execute(&mut *tx).await?;
     // La dirección liberada se reasigna al siguiente dispositivo aprobado: lo que apuntaba a ella (reglas
     // con ese /32 o /128 exacto, servidor DNS) se retira aquí para que no lo herede.
     let orphans = sqlx::query("DELETE FROM access_policies WHERE network_id=$1 AND ((src->>'kind'='prefix' AND (src->>'prefix')::inet = ANY($2::inet[])) OR (dst->>'kind'='prefix' AND (dst->>'prefix')::inet = ANY($2::inet[]))) RETURNING id,src,dst,proto,port_min,port_max").bind(net).bind(&freed).fetch_all(&mut *tx).await?;
     for policy in &orphans {
         audit::record(
-            &mut tx,
+            &mut *tx,
             actor_kind,
             actor,
             Some(org),
@@ -426,7 +486,7 @@ async fn revoke_device(
         )
         .await?;
     }
-    let mut dns = crate::dns::load(&mut tx, net).await?;
+    let mut dns = crate::dns::load(&mut *tx, net).await?;
     let servers = dns.servers.len();
     dns.servers.retain(|a| !freed.contains(&a.to_string()));
     if dns.servers.len() != servers {
@@ -436,7 +496,7 @@ async fn revoke_device(
             .execute(&mut *tx)
             .await?;
         audit::record(
-            &mut tx,
+            &mut *tx,
             actor_kind,
             actor,
             Some(org),
@@ -448,9 +508,9 @@ async fn revoke_device(
         .await?;
     }
     // Un dispositivo revocado no conserva permisos de administración delegada (ADR-026).
-    crate::grants::withdraw(&mut tx, net, dev, actor_kind, actor, org, "device_revoked").await?;
+    crate::grants::withdraw(&mut *tx, net, dev, actor_kind, actor, org, "device_revoked").await?;
     audit::record(
-        &mut tx,
+        &mut *tx,
         actor_kind,
         actor,
         Some(org),
@@ -460,11 +520,6 @@ async fn revoke_device(
         json!({}),
     )
     .await?;
-    tx.commit().await?;
-    if admin.is_none() {
-        s.panel.changed(net, "devices");
-        s.panel.changed(net, "audit");
-    }
     Ok(())
 }
 

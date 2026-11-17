@@ -469,7 +469,7 @@ La migración `0012_device_versions.sql` añade `devices.versions jsonb NOT NULL
 
 La migración `0013_device_grants.sql` crea `device_grants` (una fila por dispositivo: `scopes`, `scope_kind`, `scope_devices`, `granted_by`, `granted_at`) y añade la autoría delegada que usarán las fases siguientes: `enrollment_tokens.created_by_device`, `devices.enrolled_by_device` y `access_policies.created_by_device`; en `enrollment_tokens` y `access_policies`, `created_by` pasa a admitir nulo. Es aditiva y el binario anterior no lee esas columnas.
 
-**En esta fase solo existe la gestión por un administrador.** Ninguna ruta de dispositivo consulta todavía las concesiones: concederlas no da ningún permiso efectivo hasta la fase 3.
+La gestión es de un administrador; el dispositivo ejerce su concesión con las rutas de §24.
 
 - `GET /api/v1/networks/{net}/grants` (pertenencia; también el token de servicio): lista `[{"device_id","scopes","scope":{"kind","devices"},"granted_by","granted_at"}]`.
 - `PUT /api/v1/networks/{net}/devices/{dev}/grant` (`owner` o `admin`, CSRF) con `{"scopes":[…],"scope":{"kind":"enrolled"|"devices"|"network","devices"?:[uuid]}}`: concede o **sustituye** la concesión del dispositivo y devuelve la concesión guardada.
@@ -479,3 +479,29 @@ La migración `0013_device_grants.sql` crea `device_grants` (una fila por dispos
 - `DELETE` de la misma ruta (`owner` o `admin`, CSRF): `204`; `404 not_found` si no tenía concesión.
 - **Revocar el dispositivo** (por un administrador o con `/device/leave`) borra su concesión en la misma transacción.
 - Auditoría: `device.grant` (con permisos y alcance) y `device.grant_revoke` (con `reason`: `admin` o `device_revoked`). Eventos SSE: `devices` y `audit`.
+
+## 24. Administración delegada desde el dispositivo (ADR-026, fase 3)
+
+Un dispositivo **aprobado** con concesión ejerce sus permisos con la firma `AtDevice` de siempre (misma ventana de 60 s y mismo nonce de un solo uso que `/device/routes`), sobre **su** red. No hay migración nueva.
+
+| Ruta bajo `/api/v1/device/admin` | Permiso | Resultado |
+| --- | --- | --- |
+| `GET /grant` | cualquiera | `{"device_id","network_id","scopes","scope":{"kind","devices"},"granted_at"}` |
+| `GET /devices` | `read:devices` | Toda la red: `id`, `name`, `role`, `status`, `fingerprint`, `ipv4`, `ipv6`, `enrolled_at`, `enrolled_by_device`, `in_scope` |
+| `GET /policies` | `read:policies` | Toda la red; cada política lleva `created_by_device` (nulo si la creó un administrador) |
+| `POST /policies` | `write:policies` | `201 {"id"}`; mismo cuerpo que la ruta del administrador |
+| `DELETE /policies/{id}` | `write:policies` | `204` |
+| `POST /join-codes` con `{"ttl_secs"}` | `write:join-codes` | `201`, misma respuesta que `enrollment-tokens`; `Cache-Control: no-store` |
+| `POST /devices/{dev}/approve` con `{"fingerprint"}` | `write:approve-devices` | `{"device_id","status":"approved"}` |
+| `POST /devices/{dev}/revoke` (cuerpo vacío) | `write:revoke-devices` | `{"device_id","status":"revoked"}` |
+
+- **Sin concesión o sin el permiso:** `403 grant_missing` en todas. Un dispositivo pendiente o revocado recibe `403 device_not_approved` antes de mirar la concesión.
+- **Alcance** (solo limita las escrituras): `network` cubre toda la red; `devices`, la lista; `enrolled`, el propio dispositivo y los que entraron con un código suyo (`devices.enrolled_by_device`). Fuera de él, `403 out_of_scope`; un destino que no es de la red, `404 not_found`.
+- **Políticas:** origen y destino deben ser `kind: "device"` y estar ambos en el alcance; `any` o un prefijo responden `403 out_of_scope`. Después se aplican las validaciones de siempre (`invalid_selector`, `invalid_ports`, `policy_overflow`, compilación). Solo se borra una política creada por un delegado (él u otro) cuyos dos extremos estén en el alcance; las de un administrador, nunca.
+- **Códigos de unión:** un solo uso, sin aprobación automática y con rol `device`; `ttl_secs` de 60 a 3600 (`400 invalid_ttl`); como mucho 8 códigos vivos por delegado (`409 join_code_limit`). El dispositivo que lo consume queda `pending` con `enrolled_by_device` del delegado.
+- **Aprobar:** el destino debe estar en el alcance y la huella del cuerpo debe ser exactamente la de su `DeviceBundle`; si no, `409 fingerprint_mismatch` sin cambiar nada. `409 device_not_pending` si ya no está pendiente.
+- **Revocar:** igual que la revocación por un administrador (libera direcciones, rechaza sus rutas, retira su concesión). Un delegado puede revocarse a sí mismo.
+- **Límites:** 60 peticiones por minuto y dispositivo en estas rutas (`429 rate_limited`), además de la cuota general de dispositivo; 256 políticas creadas por delegado (`409 policy_overflow`).
+- **Concurrencia:** cada escritura bloquea la fila de la red y lee la concesión dentro de la misma transacción; revocar al delegado borra la concesión bajo ese bloqueo.
+- **Auditoría:** `token.create`, `device.approve`, `device.revoke`, `policy.create` y `policy.delete` con `actor_kind = device` y el delegado como autor. Eventos SSE: `devices` o `policies`, y `audit`.
+- **Lo que un delegado no puede hacer** no tiene ruta: conceder o cambiar permisos, cambiar nombre, rol o política de unión, aprobar rutas de subred, DNS ni el certificado de emisor.

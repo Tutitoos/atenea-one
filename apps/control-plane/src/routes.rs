@@ -34,6 +34,16 @@ pub async fn authenticate(
     uri: &Uri,
     body: &[u8],
 ) -> Result<(Uuid, Uuid), ApiError> {
+    authenticate_as(s, h, uri, body, "POST").await
+}
+/// Petición `AtDevice` de un dispositivo aprobado: firma sobre el método dado, ventana de 60 s, cuota y nonce único.
+pub async fn authenticate_as(
+    s: &AppState,
+    h: &HeaderMap,
+    uri: &Uri,
+    body: &[u8],
+    method: &str,
+) -> Result<(Uuid, Uuid), ApiError> {
     let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = atenea_identity::api_auth::parse_authorization(
         h.get("authorization")
@@ -58,7 +68,7 @@ pub async fn authenticate(
     atenea_identity::api_auth::verify_request(
         &signed,
         &key,
-        "POST",
+        method,
         uri.path_and_query().map_or(uri.path(), |p| p.as_str()),
         body,
     )

@@ -167,6 +167,11 @@ fn schemas() -> ComponentsBuilder {
         ("DeviceGrantScope", complete(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).description(Some("Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.")).into())])),
         ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(6)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
         ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_at", timestamp())])),
+        ("DelegatedGrant", complete(&[("device_id", uuid()), ("network_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_at", timestamp())])),
+        ("DelegatedDevice", complete(&[("id", uuid()), ("name", text()), ("role", named("DeviceRole")), ("status", named("DeviceStatus")), ("fingerprint", text()), ("ipv4", nullable_text()), ("ipv6", nullable_text()), ("enrolled_at", timestamp()), ("enrolled_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado cuyo código lo dio de alta; null si fue un usuario o una solicitud.")).into()), ("in_scope", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true si el alcance de quien pregunta lo incluye.")).into())])),
+        ("DelegatedPolicy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer()), ("created_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado que la creó; null si fue un administrador.")).into())])),
+        ("NewDelegatedJoinCode", object(&[("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(3600)).into())], &["ttl_secs"])),
+        ("DelegatedApproval", object(&[("fingerprint", ObjectBuilder::new().schema_type(Type::String).description(Some("Huella completa del dispositivo pendiente, tal como la muestra su equipo.")).into())], &["fingerprint"])),
         ("DeviceId", complete(&[("device_id", uuid())])),
         ("DeviceUpdate", object(&[("role", named("DeviceRole")), ("name", named("DeviceName")), ("use_system_name", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true: vuelve al último hostname y fija name_source=device; 409 no_system_name si no existe. No se combina con name. false no cambia el origen.")).into()), ("endpoints", endpoints)], &[])),
         ("Id", complete(&[("id", uuid())])),
@@ -642,6 +647,86 @@ pub fn document() -> OpenApi {
         ),
         (
             Get,
+            "/api/v1/device/admin/grant",
+            "getDelegatedGrant",
+            "Concesión del propio dispositivo",
+            "device",
+            "200",
+            "",
+            "DelegatedGrant",
+        ),
+        (
+            Get,
+            "/api/v1/device/admin/devices",
+            "listDelegatedDevices",
+            "Inventario de la red para un delegado; requiere read:devices",
+            "device",
+            "200",
+            "",
+            "[]DelegatedDevice",
+        ),
+        (
+            Get,
+            "/api/v1/device/admin/policies",
+            "listDelegatedPolicies",
+            "Políticas de la red para un delegado; requiere read:policies",
+            "device",
+            "200",
+            "",
+            "[]DelegatedPolicy",
+        ),
+        (
+            Post,
+            "/api/v1/device/admin/policies",
+            "createDelegatedPolicy",
+            "Crea una política entre dos dispositivos del alcance; requiere write:policies",
+            "device",
+            "201",
+            "NewPolicy",
+            "Id",
+        ),
+        (
+            Delete,
+            "/api/v1/device/admin/policies/{id}",
+            "deleteDelegatedPolicy",
+            "Borra una política delegada con ambos extremos en el alcance; requiere write:policies",
+            "device",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Post,
+            "/api/v1/device/admin/join-codes",
+            "createDelegatedJoinCode",
+            "Crea un código de unión de un solo uso, sin aprobación automática; requiere write:join-codes",
+            "device",
+            "201",
+            "NewDelegatedJoinCode",
+            "EnrollmentToken",
+        ),
+        (
+            Post,
+            "/api/v1/device/admin/devices/{dev}/approve",
+            "approveDelegatedDevice",
+            "Aprueba por su huella un pendiente del alcance; requiere write:approve-devices",
+            "device",
+            "200",
+            "DelegatedApproval",
+            "DeviceState",
+        ),
+        (
+            Post,
+            "/api/v1/device/admin/devices/{dev}/revoke",
+            "revokeDelegatedDevice",
+            "Revoca un dispositivo del alcance; cuerpo vacío; requiere write:revoke-devices",
+            "device",
+            "200",
+            "",
+            "DeviceState",
+        ),
+        (
+            Get,
             "/api/v1/networks/{net}/routes",
             "listRoutes",
             "Lista las declaraciones y sus decisiones",
@@ -769,6 +854,7 @@ pub fn document() -> OpenApi {
             } else if path.contains("policies") {
                 "policies"
             } else if path.contains("devices")
+                || path.starts_with("/api/v1/device/admin")
                 || id == "enrollDevice"
                 || id == "requestJoin"
                 || id == "createEnrollmentToken"
@@ -989,6 +1075,9 @@ pub fn document() -> OpenApi {
                     .content("application/json", Content::new(Some(named("Error")))),
             );
         }
+        if id.contains("Delegated") {
+            operation = operation.description(Some("ADR-026. Firma AtDevice de un dispositivo aprobado con concesión en su red. 403 grant_missing sin concesión o sin el permiso; 403 out_of_scope si el destino, un extremo de la política o su autor quedan fuera del alcance (un delegado no crea políticas any ni por prefijo ni borra las de un administrador); 404 not_found si el destino no es de la red. Las lecturas cubren toda la red. Aprobar: 409 fingerprint_mismatch si la huella no coincide, 409 device_not_pending. Códigos: ttl_secs 60..3600 (400 invalid_ttl), como mucho 8 vivos por delegado (409 join_code_limit). Políticas: como mucho 256 creadas por delegado (409 policy_overflow) y las mismas validaciones que createPolicy. 60 peticiones por minuto y dispositivo (429 rate_limited), aparte de la cuota general. Queda auditado con actor_kind=device."));
+        }
         if matches!(
             id,
             "enrollDevice"
@@ -1001,7 +1090,8 @@ pub fn document() -> OpenApi {
                 | "addMemberByEmail"
                 | "createServiceToken"
                 | "getServer"
-        ) {
+        ) || id.contains("Delegated")
+        {
             operation = operation.response(
                 "429",
                 ResponseBuilder::new()
@@ -1115,7 +1205,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 43);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 50);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

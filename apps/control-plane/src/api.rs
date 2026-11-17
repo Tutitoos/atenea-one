@@ -148,6 +148,31 @@ pub fn router(s: AppState) -> Router {
             post(devices::leave).layer(axum::extract::DefaultBodyLimit::max(1024)),
         )
         .route("/api/v1/device/routes", post(crate::routes::declare))
+        .route("/api/v1/device/admin/grant", get(crate::delegated::grant))
+        .route(
+            "/api/v1/device/admin/devices",
+            get(crate::delegated::list_devices),
+        )
+        .route(
+            "/api/v1/device/admin/policies",
+            get(crate::delegated::list_policies).post(crate::delegated::create_policy),
+        )
+        .route(
+            "/api/v1/device/admin/policies/{id}",
+            delete(crate::delegated::remove_policy),
+        )
+        .route(
+            "/api/v1/device/admin/join-codes",
+            post(crate::delegated::join_code),
+        )
+        .route(
+            "/api/v1/device/admin/devices/{dev}/approve",
+            post(crate::delegated::approve),
+        )
+        .route(
+            "/api/v1/device/admin/devices/{dev}/revoke",
+            post(crate::delegated::revoke),
+        )
         .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
         .route(
             "/api/v1/networks/{net}/routes/{id}/approve",
