@@ -1413,6 +1413,223 @@
         ]
       }
     },
+    "/api/v1/networks/{net}/devices/{dev}/grant": {
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concede o sustituye los permisos de un dispositivo aprobado; requiere admin u owner",
+        "description": "ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar.",
+        "operationId": "setDeviceGrant",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceGrantInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceGrant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "device_not_approved: solo se concede a un dispositivo aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Retira la concesión de un dispositivo; requiere admin u owner",
+        "description": "ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar.",
+        "operationId": "removeDeviceGrant",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}/devices/{dev}/revoke": {
       "post": {
         "tags": [
@@ -1944,6 +2161,110 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/grants": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista las concesiones de administración delegada; requiere pertenencia",
+        "description": "ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar.",
+        "operationId": "listDeviceGrants",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceGrant"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "serviceToken": []
           }
         ]
       }
@@ -5399,6 +5720,117 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "DeviceGrant": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "scopes",
+          "scope",
+          "granted_by",
+          "granted_at"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "granted_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DeviceGrantScope"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceGrantPermission"
+            }
+          }
+        }
+      },
+      "DeviceGrantInput": {
+        "type": "object",
+        "required": [
+          "scopes",
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "devices": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "maxItems": 64
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "enrolled",
+                  "devices",
+                  "network"
+                ]
+              }
+            }
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceGrantPermission"
+            },
+            "maxItems": 6,
+            "minItems": 1
+          }
+        }
+      },
+      "DeviceGrantPermission": {
+        "type": "string",
+        "enum": [
+          "read:devices",
+          "read:policies",
+          "write:join-codes",
+          "write:approve-devices",
+          "write:policies",
+          "write:revoke-devices"
+        ]
+      },
+      "DeviceGrantScope": {
+        "type": "object",
+        "required": [
+          "kind",
+          "devices"
+        ],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.",
+            "maxItems": 64
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "enrolled",
+              "devices",
+              "network"
+            ]
           }
         }
       },
