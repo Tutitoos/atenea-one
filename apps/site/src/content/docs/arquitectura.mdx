@@ -1,0 +1,223 @@
+---
+title: Arquitectura
+description: Cómo está construido Atenea One, de las piezas del servidor a un paquete cifrado entre dos dispositivos, con diagramas y ejemplos.
+---
+
+import Components from "../../components/diagrams/Components.astro";
+import TrustChain from "../../components/diagrams/TrustChain.astro";
+import JoinFlow from "../../components/diagrams/JoinFlow.astro";
+import Entry443 from "../../components/diagrams/Entry443.astro";
+import SubnetRouter from "../../components/diagrams/SubnetRouter.astro";
+import Flow from "../../components/landing/Flow.astro";
+
+Esta página explica Atenea One de arriba abajo: qué piezas hay, en qué se confía de cada una, cómo se une un dispositivo, cómo se conectan dos y qué pasa cuando algo falla. Todo sale de los ADR y de los contratos de protocolo del repositorio. Donde un valor es un parámetro que se ajusta, se dice.
+
+:::caution[Estado]
+Atenea One es un MVP administrable en laboratorio, **sin revisión criptográfica independiente**. Esta arquitectura describe lo implementado y verificado en laboratorio, no una garantía. Consulta [Estado y límites](/limites/).
+:::
+
+## Visión general
+
+El sistema tiene tres partes: un **servidor** que tú operas, los **agentes** que corren en cada dispositivo y una **raíz de firma** que vive fuera del servidor.
+
+<Components />
+
+| Pieza | Qué hace | Confianza |
+| --- | --- | --- |
+| **Control plane y panel** | Crea redes, aprueba dispositivos, rutas y políticas, y firma las configuraciones con la clave del emisor. Autentica a los administradores con OIDC | Autoriza: su compromiso se acota por el certificado del emisor |
+| **Coordinator + STUN** | Anuncios de presencia, rendezvous y descubrimiento de la dirección pública. No consulta la base de datos del control plane | Sin confianza para confidencialidad ni integridad |
+| **Relay** | Reenvía datagramas ya cifrados entre dos agentes, por UDP o por TLS/TCP | Sin confianza: ve direcciones, tamaños y tiempos |
+| **HAProxy y Caddy** | Entrada compartida: HAProxy enruta TCP 443 por SNI y ALPN; Caddy sirve el panel y la API con TLS | Sin confianza para el tráfico de aplicación |
+| **Agente** | Propietario de la interfaz TUN y de las claves del dispositivo. Verifica la configuración, negocia sesiones y aplica la política | Las claves privadas no salen del dispositivo |
+| **PostgreSQL y Dex** | Estado del control plane y proveedor OIDC del piloto | Internos: no publican puertos |
+
+El código está en un monorepositorio de Rust y TypeScript. Las aplicaciones (`apps/`) son `agent`, `cli`, `control-plane`, `coordinator`, `relay`, `desktop` (Wails) y `web` (el panel). Las bibliotecas (`crates/`) se reparten así:
+
+| Crate | Responsabilidad |
+| --- | --- |
+| `atenea-crypto` | Handshake Noise IK, sesiones, antirreplay y rekey |
+| `atenea-identity` | Configuración firmada, certificados de emisor y códigos de red |
+| `atenea-policies` | Evaluación de ACL sobre paquetes IP, con denegación por defecto |
+| `atenea-nat-traversal` | STUN (RFC 8489) y utilidades de candidatos |
+| `atenea-relay-core` | Protocolo del relay v2: mensajes, tokens, cookies y tramado TCP |
+| `atenea-tunnel` | Interfaz TUN de capa 3 para Linux, macOS y Windows |
+| `atenea-protocol` | Formato de datagrama |
+
+## Identidad y confianza
+
+Un agente no pregunta a un servidor "¿puedo hablar con B?". Obedece una **configuración firmada** y verifica toda su cadena de firma. Hay dos niveles de clave Ed25519.
+
+<TrustChain />
+
+- **La raíz** se genera en una estación de administración, **nunca en un host expuesto**, y solo firma certificados de emisor. Su clave pública es el ancla que cada agente guarda al unirse. Antes del piloto se exige un token hardware; la elección de hardware sigue pendiente.
+- **El emisor** vive en el servidor y firma la configuración de cada dispositivo. Su certificado lleva una clave pública, un `issuer_serial` monótono, el ámbito de red y una validez (30 días en laboratorio).
+- **El agente** persiste el mayor serial y la mayor `version` vistos y rechaza los menores. Admite hasta **dos anclas** para rotar la raíz sin cortar el servicio.
+
+Qué protege esto y qué no:
+
+- Protege frente a un emisor falso, un control plane sustituido o un atacante en la red que sirva configuraciones.
+- No protege frente a la raíz comprometida (no hay recuperación automática: hay que reincorporar cada dispositivo), ni frente a un emisor mientras su certificado sea válido.
+
+### Qué lleva la configuración
+
+La configuración firmada es un contrato binario, determinista y versionado. Un dispositivo recibe, para su red:
+
+- su identidad y las de sus pares autorizados (clave X25519 de handshake, direcciones de túnel y, opcionalmente, endpoints);
+- las reglas de la política, de **denegación por defecto**;
+- las rutas de subred que los pares sirven y las que él sirve (`routes` y `advertised`, hasta 8 de cada), con `snat` por ruta;
+- los servidores y dominios del DNS dividido;
+- un **lease**: validez de 300 s, reemitida cada 60 s, con una tolerancia de reloj de 30 s.
+
+Una configuración sin rutas ni DNS se emite como `version = 1`; la `version = 2` solo aparece cuando hace falta.
+
+## Unirse a una red
+
+Un dispositivo entra con un **código de red**: un texto copiable con lo necesario para pedir la unión.
+
+<JoinFlow />
+
+El formato de texto es `ATENEA1-` seguido del payload en base32, agrupado en bloques de seis caracteres. Esta es solo la **forma**, con caracteres inventados: no es un código válido y no decodifica.
+
+```text
+ATENEA1-AEBAGB-AFAYDQ-QCIKBM-GA2DQN-RYHA4D-CMRTG4-ZTHE2D-...
+```
+
+El código lleva la URL del servidor, el identificador de red, la **raíz de confianza** (`root_anchor`), un nombre y, de forma opcional, un token de un uso y un bloque de conectividad (host STUN y hash de la CA del relay). El cliente fija esa raíz desde el primer contacto: **no hay confianza en el primer uso**. Junto al código se muestra su huella, para compararla por otro canal.
+
+El enrolamiento completo, en la línea de comandos, es:
+
+```sh
+sudo atenea device-init --dir /var/lib/atenea/device
+sudo atenea enroll --url https://control.example.test --token "$TOKEN" --dir /var/lib/atenea/device
+```
+
+Después, un administrador compara la huella del dispositivo y lo aprueba. Un código sin token **no concede acceso**: solo permite enviar una solicitud de unión que alguien tiene que aprobar. Un código con token es una credencial de un uso y debe tratarse como secreto. Los pasos concretos están en [Instalación](/instalacion/).
+
+## Conectar dos dispositivos
+
+Cuando A tiene tráfico para B y no hay una ruta confirmada, el agente decide en cada paso:
+
+<Flow compact />
+
+### Un ejemplo, paso a paso
+
+Dos agentes, A y B, con configuración vigente en la misma red y cada uno detrás de un NAT doméstico.
+
+1. **Presencia.** Cada agente hace `announce` al coordinator cada 20 s, con un TTL de 60 s, mientras tenga un lease vigente. Anuncia hasta 8 candidatos, con el endpoint que ve STUN en primer lugar.
+2. **Aviso.** Cada agente mantiene un long-poll sobre `/v1/events` para recibir avisos de sus pares.
+3. **Rendezvous.** A tiene tráfico para B y pide `rendezvous` (como máximo una vez cada 5 s por par). El coordinator solo responde si el vínculo es **mutuo**: A lista a B en su configuración, B tiene presencia vigente y B lista a A. Si no, responde `404 peer_unavailable`, igual para un par inexistente, no autorizado o desconectado. Si es mutuo, devuelve a A los candidatos de B y encola un aviso para B con los de A.
+4. **Sondeo.** Ambos lados envían a la vez un INIT de Noise de 146 bytes, cada ~1 s con un jitter de ±25 %, durante como mucho 10 s y 12 envíos por candidato. Cada NAT abre una entrada con el primer paquete saliente y deja pasar el del otro lado.
+5. **Handshake y ruta.** B responde con un RESP de 62 bytes. La ruta se **confirma solo con un paquete autenticado** de la sesión, nunca con un endpoint anunciado.
+6. **Datos.** Desde ahí van datagramas cifrados de extremo a extremo. Con la ruta directa confirmada, un paquete vacío cada 15 s mantiene abierto el mapeo del NAT. Si no llega nada durante 45 s, la ruta se da por perdida y se vuelve al rendezvous.
+
+En el laboratorio, un par que no se conocía tardó de media 5,13 s (máximo 5,317 s) en el primer eco, y uno ya conocido 0,34 s. El residuo de unos 5 s coincide con el paso de rendezvous del coordinator. No es un SLA: está medido en Docker sobre un Mac, no en redes reales.
+
+### Qué ve el agente
+
+El estado de cada par se consulta con `atenea status`. Este fragmento es **ilustrativo**: los nombres de campo son los del contrato, y los valores están inventados.
+
+```json
+{
+  "peers": [
+    {
+      "name": "portatil",
+      "path": "direct",
+      "endpoint": "203.0.113.7:41641",
+      "candidates": 3,
+      "last_rx_secs": 2,
+      "probe": { "failures": 0, "hold_secs": null, "relay_wanted": false }
+    }
+  ],
+  "nat": { "mapping": "independent", "reflexive": "198.51.100.4:51820", "candidates": 4 }
+}
+```
+
+`path` puede ser `direct`, `relay-udp`, `relay-tls`, `probing` o `none`. Un par en `none` sin tráfico es normal: el camino se descubre bajo demanda. El campo `nat.mapping` clasifica el NAT comparando lo que STUN ve desde dos puertos del mismo servidor: `independent` hace viable el hole punching; `dependent` (NAT simétrico) significa que la conexión directa fallará y se informa.
+
+### Cuando no hay camino directo
+
+El agente pide al coordinator un relay (`/v1/relay`). Cada entrada devuelta lleva un **token de 189 bytes** firmado por el coordinator, ligado a la red, al par de origen y destino, al relay concreto y a una ventana de tiempo. Con él, el agente se asigna en el relay:
+
+1. Pide una cookie (`COOKIE_REQ`, 64 bytes) y recibe una cookie de 16 bytes ligada a su IP y puerto.
+2. Envía `ALLOC` (298 bytes) con la cookie, el token y una prueba Ed25519 de posesión de su clave.
+3. El relay **empareja** la asignación con la del otro extremo y reenvía solo entre las dos. El cliente no elige el destino.
+
+El relay no descifra nada: transporta datagramas de cable v2 opacos. Si UDP está bloqueado, el mismo protocolo viaja por TLS 1.3 en TCP 443 con ALPN `atenea-relay/2`. La sesión Noise, las claves y los contadores no cambian al pasar de un camino a otro; si el mismo paquete llega por dos caminos, la ventana antirreplay lo deduplica.
+
+## Cifrado y formato de cable
+
+Cada par de dispositivos negocia una sesión con `Noise_IK_25519_ChaChaPoly_BLAKE2s`. Como cada agente ya conoce y ha verificado la clave estática del otro por la configuración firmada, el patrón IK basta con un solo viaje de ida y vuelta.
+
+| Mensaje | Tamaño | Qué lleva |
+| --- | --- | --- |
+| INIT | 146 bytes | versión, tipo, índice, mensaje 1 de Noise (108), MAC1 y MAC2 |
+| RESP | 62 bytes | versión, tipo, índices y mensaje 2 de Noise (52) |
+| DATA | 30 bytes de cabecera y etiqueta | índice de receptor, contador y carga cifrada |
+
+- **Antirreplay.** El contador de 64 bits es el nonce. Una ventana deslizante de 2048 contadores se comprueba primero en solo lectura, luego se autentica el paquete y solo entonces se actualiza: un paquete falso nunca mueve la ventana.
+- **Rekey.** Es un handshake nuevo, con claves efímeras. Rekey suave a los 120 s o 2^32 mensajes y rechazo de envío a los 180 s o 2^40. Esos límites son parámetros de laboratorio.
+- **Anti-DoS.** MAC1 se valida antes de cualquier operación costosa; bajo carga se exige además MAC2 con una cookie de retorno. La respuesta de cookie (62 bytes) es menor que un INIT (146), así que no amplifica.
+- **MTU.** 1400 bytes por defecto, en un rango de 1280 a 1500. Con IPv4, un paquete de 1400 bytes ocupa 1400 + 30 + 8 + 20 = 1458 bytes en el cable y cabe en un MTU de 1500.
+
+## La entrada compartida
+
+Los clientes que solo pueden salir por TCP 443 necesitan llegar al relay por ese puerto, y el panel también está en 443. Un único proceso lo reparte:
+
+<Entry443 />
+
+| Puerto | Escucha | Función |
+| --- | --- | --- |
+| TCP 80 | Caddy | Desafío ACME y redirección a HTTPS |
+| TCP 443 | HAProxy | Panel y API (a Caddy) y relay TLS |
+| UDP 443 | Relay | Reenvío por UDP |
+| UDP 3478 y 3479 | Coordinator | STUN (dos puertos, para clasificar el mapeo del NAT) |
+
+HAProxy no descifra: enruta por SNI y ALPN sin ver claves ni tráfico. Es una pieza más en el camino de 443: si cae, caen el panel y el relay TLS. Los clientes sin el SNI correcto no pueden usar el relay TLS, y es intencionado. No se soportan proxies HTTP ni inspección TLS que sustituya certificados.
+
+## Subredes y DNS
+
+Un dispositivo Linux puede servir una red interna al resto de la red.
+
+<SubnetRouter />
+
+- El router **declara** qué prefijos puede servir; no tiene efecto hasta que un administrador lo apruebe.
+- Solo se aceptan prefijos privados (RFC 1918, `100.64.0.0/10` y ULA `fc00::/7`), de /8 o más largos en IPv4 y /32 o más largos en IPv6. Nunca una ruta por defecto: **no hay exit node**.
+- Un prefijo aprobado no puede solaparse con la red del túnel ni con otro aprobado de la misma red.
+- No hay tránsito entre pares: un paquete para la ruta de otro par recibido de un par se descarta.
+- El cliente **no instala** una ruta que choque con una de su LAN o que cubra la dirección del coordinator, de STUN, de un relay o del control plane.
+- El DNS dividido se aplica solo con `systemd-resolved`, por enlace, y solo para los dominios de la red. Nunca captura el DNS general ni edita `/etc/resolv.conf`.
+
+macOS y Windows son solo clientes: consumen rutas y DNS, pero no sirven subredes.
+
+## Qué pasa cuando algo falla
+
+| Situación | Qué ocurre |
+| --- | --- |
+| UDP bloqueado | El agente usa el relay TLS por TCP 443. En laboratorio, unos 21,6 Mbit/s y 0,72 ms de RTT p50 |
+| NAT simétrico | STUN lo detecta (`mapping: dependent`), el sondeo directo falla y el tráfico va por relay |
+| Un par no responde | A los 45 s sin recibir nada la ruta se da por perdida; tras un fallo el sondeo se retrasa desde 30 s hasta 5 min |
+| Se revoca un dispositivo | Los pares que alcanzan al emisor lo dejan de aceptar en 60 s más el tiempo de recarga; un dispositivo aislado se corta solo a los 330 s como máximo |
+| El emisor cae más de unos 5 minutos | Los leases caducan y **todos los túneles caen**: falla cerrado. Vuelven al recuperar el emisor |
+| El reloj retrocede | El agente lo trata como anomalía y deniega hasta que se corrija: el reloj es parte de la seguridad |
+| Se pierde o compromete la raíz | No hay recuperación automática: hay que reincorporar cada dispositivo con un ancla nueva |
+| Se reinicia un agente | Reconecta bajo demanda: en laboratorio, 0,34 s de media con un par conocido y 5,13 s con uno nuevo |
+
+La revocación nunca es inmediata. La garantía es una cota, no un instante.
+
+## Límites que dan forma al diseño
+
+- 256 dispositivos aprobados por red y 256 pares en una configuración firmada.
+- El coordinator admite 4096 presencias y 256 long-polls simultáneos de forma predeterminada.
+- El relay admite 4096 asignaciones (1024 por red, 32 por origen).
+- La entrada admite 2048 conexiones, con un tope de 128 por origen.
+- No hay alta disponibilidad del control plane, el coordinator, la base de datos ni la entrada, ni conmutación multirregión.
+
+## Para profundizar
+
+Cada decisión de esta página tiene su ADR o contrato en el repositorio:
+
+- [ADR-001: Noise IK](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-001-noise-ik.md) y [ADR-003: cifrado, antirreplay y rekey](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-003-cifrado-antirreplay.md)
+- [ADR-002: revocación mediante leases](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-002-revocacion-lease.md) y [ADR-005: custodia de la raíz](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-005-custodia-clave-raiz.md)
+- [ADR-004: entrada 443 compartida](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-004-entrada-443.md) y [ADR-007: subredes, DNS y privilegios](https://github.com/Tutitoos/atenea-one/blob/main/docs/architecture/ADR-007-subredes-dns-privilegios.md)
+- [Coordinator v1](https://github.com/Tutitoos/atenea-one/blob/main/docs/protocol/coordinator-v1.md), [relay v2](https://github.com/Tutitoos/atenea-one/blob/main/docs/protocol/relay-v2.md) y [código de red v1](https://github.com/Tutitoos/atenea-one/blob/main/docs/protocol/join-code-v1.md)
+- [Modelo de amenazas](/seguridad/) y [Rendimiento](/rendimiento/)

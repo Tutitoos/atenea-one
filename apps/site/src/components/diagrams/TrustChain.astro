@@ -1,0 +1,70 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import DiagramFrame from "./DiagramFrame.astro";
+import { arrow, box, label } from "./diagram";
+
+// La cadena de firma de ADR-005 y ADR-002: raíz -> emisor -> configuración -> agente.
+const shapes = [
+  box(16, 40, 184, 96, "raíz", "Ed25519 · offline", "gold"),
+  box(266, 40, 184, 96, "cert. de emisor", "serial monótono · 30 d"),
+  box(516, 40, 184, 96, "config firmada", "version monótona · lease"),
+  box(766, 40, 178, 96, "agente", "verifica y aplica", "ok"),
+
+  arrow("M202 88 L264 88", "gold"),
+  arrow("M452 88 L514 88"),
+  arrow("M702 88 L764 88"),
+
+  label(233, 76, "firma", { size: 11 }),
+  label(483, 76, "firma", { size: 11 }),
+  label(733, 76, "reemite", { size: 11 }),
+  label(733, 108, "cada 60 s", { size: 11 }),
+
+  label(108, 164, "su clave pública es el ancla", { size: 11 }),
+  label(108, 180, "que cada agente fija al unirse", { size: 11 }),
+  label(358, 164, "emisor: online, en el servidor", { size: 11 }),
+  label(358, 180, "la raíz nunca está en él", { size: 11 }),
+  label(608, 164, "lease de 300 s", { size: 11 }),
+  label(608, 180, "tolerancia de reloj de 30 s", { size: 11 }),
+
+  // Lo que el agente rechaza.
+  box(266, 214, 678, 82, "", "", "no"),
+  label(
+    284,
+    240,
+    "serial menor al ya visto · otra raíz · otra red · certificado o lease caducado",
+    { anchor: "start", size: 12, tone: "no" },
+  ),
+  label(
+    284,
+    262,
+    "version menor (rollback) · reloj anterior a la hora máxima vista menos 30 s",
+    { anchor: "start", size: 12, tone: "no" },
+  ),
+  label(
+    284,
+    284,
+    "firma de configuración usada como certificado (dominios de firma separados)",
+    { anchor: "start", size: 12, tone: "no" },
+  ),
+  arrow("M855 138 L855 212", "no", { dash: true }),
+  label(16, 236, "el agente rechaza:", {
+    anchor: "start",
+    size: 12,
+    tone: "no",
+  }),
+].join("");
+---
+
+<DiagramFrame
+  title="Cadena de confianza"
+  description="La raíz, que vive fuera de línea, firma certificados de emisor. El emisor, que está en el servidor, firma la configuración de cada dispositivo y la reemite cada 60 segundos. El agente verifica toda la cadena y rechaza la configuración si el serial es menor, la raíz o la red son otras, algo caducó o la versión retrocede."
+  viewBox="0 0 960 316"
+  minWidth={44}
+>
+  <Fragment set:html={shapes} />
+  <Fragment slot="caption">
+    Dos niveles de clave Ed25519. Comprometer el servidor entrega, como mucho, un
+    emisor acotado por la validez de su certificado, no la raíz.
+  </Fragment>
+</DiagramFrame>

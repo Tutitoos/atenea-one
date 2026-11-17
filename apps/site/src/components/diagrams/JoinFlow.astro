@@ -1,0 +1,80 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import DiagramFrame from "./DiagramFrame.astro";
+import { arrow, box, label } from "./diagram";
+
+// Unirse a una red con un código (join-code-v1 y la guía de instalación).
+const steps = [
+  {
+    x: 16,
+    title: "1 · crear",
+    sub: "el admin crea la red",
+    tone: "plain" as const,
+  },
+  {
+    x: 209,
+    title: "2 · entregar",
+    sub: "canal de confianza",
+    tone: "gold" as const,
+  },
+  {
+    x: 402,
+    title: "3 · unirse",
+    sub: "fija la raíz del código",
+    tone: "plain" as const,
+  },
+  {
+    x: 595,
+    title: "4 · aprobar",
+    sub: "compara la huella",
+    tone: "gold" as const,
+  },
+  {
+    x: 788,
+    title: "5 · conectar",
+    sub: "recibe la config",
+    tone: "ok" as const,
+  },
+];
+
+const shapes = [
+  ...steps.map((s) => box(s.x, 30, 168, 76, s.title, s.sub, s.tone)),
+  ...[0, 1, 2, 3].map((i) =>
+    arrow(`M${steps[i].x + 170} 68 L${steps[i + 1].x - 2} 68`),
+  ),
+
+  label(
+    480,
+    148,
+    "el código lleva: url del servidor · network_id · root_anchor · nombre · [token de un uso]",
+    { size: 11.5 },
+  ),
+  label(
+    480,
+    170,
+    "ATENEA1-XXXXXX-XXXXXX-XXXXXX-...  (base32, hasta 512 caracteres)",
+    { size: 11.5, tone: "gold" },
+  ),
+  label(
+    480,
+    204,
+    "sin TOFU: el cliente no confía en lo que el servidor diga después",
+    { size: 11.5 },
+  ),
+].join("");
+---
+
+<DiagramFrame
+  title="Unirse a una red con un código"
+  description="El administrador crea la red y entrega un código por un canal de confianza. El cliente fija la raíz de confianza que lleva el código, solicita la unión, el administrador compara la huella del dispositivo y lo aprueba, y el dispositivo recibe su configuración firmada."
+  viewBox="0 0 960 224"
+  minWidth={44}
+>
+  <Fragment set:html={shapes} />
+  <Fragment slot="caption">
+    El código no autentica por sí mismo: la confianza viene del canal por el que
+    llega. Un código sin token solo permite enviar una solicitud; con token es una
+    credencial de un uso y debe tratarse como secreto.
+  </Fragment>
+</DiagramFrame>

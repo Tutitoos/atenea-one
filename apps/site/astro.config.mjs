@@ -63,6 +63,7 @@ export default defineConfig({
           items: [
             { label: "Instalación", slug: "instalacion" },
             { label: "Cómo funciona", slug: "como-funciona" },
+            { label: "Arquitectura", slug: "arquitectura" },
           ],
         },
         {
