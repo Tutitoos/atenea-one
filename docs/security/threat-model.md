@@ -105,7 +105,21 @@ Ataques físicos al dispositivo; compromiso del núcleo del SO; canales laterale
 - **Invalidación anticipada:** cualquier firma o descifrado con clave privada RSA
   en producción exige retirar esta aceptación y revisar la exposición.
 
-La única excepción vigente es DEP-2026-02; el resto de advisories y las
+### DEP-2026-03 — chrono 0.4 / RUSTSEC-2026-0543
+
+- **Estado:** excepción temporal autorizada por el responsable el 2026-11-17; revisar
+  **antes de 2027-01-23**.
+- **Motivo:** [el advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543) es
+  informativo: declara la biblioteca sin mantenimiento, sin describir una
+  vulnerabilidad. Solo la usa el control plane, para las fechas de la base de datos y
+  de la API.
+- **Condición de salida:** que la biblioteca vuelva a mantenerse, o migrar el uso
+  directo a `time`. La migración no la retira del grafo mientras `oauth2` y
+  `openidconnect` dependan de ella.
+- **Invalidación anticipada:** un advisory de vulnerabilidad sobre chrono exige
+  revisar la exposición de inmediato, sin esperar a la fecha.
+
+Las excepciones vigentes son DEP-2026-02 y DEP-2026-03; el resto de advisories y las
 restricciones de licencias y fuentes siguen activas. Análisis de compatibilidad:
 `docs/architecture/dependencies.md`, sección de excepciones temporales.
 

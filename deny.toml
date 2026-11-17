@@ -12,6 +12,8 @@ unmaintained = "workspace"
 ignore = [
     # REVISAR ANTES DE 2027-01-23
     { id = "RUSTSEC-2023-0071", reason = "apps/control-plane/src/auth.rs::callback verifica ID tokens con la clave pública RSA del IdP; no firma ni descifra con claves privadas RSA. apps/control-plane/tests/oidc.rs usa una clave efímera solo para el IdP de pruebas. Sin versión corregida upstream; revisar antes de 2027-01-23. https://rustsec.org/advisories/RUSTSEC-2023-0071" },
+    # REVISAR ANTES DE 2027-01-23. Aviso informativo (sin mantenimiento), no una vulnerabilidad.
+    { id = "RUSTSEC-2026-0543", reason = "chrono solo se usa en el control plane para fechas de la base de datos y de la API (sqlx y utoipa con la feature chrono). Sin versión corregida. Migrar el uso directo a `time` no la retira del grafo: oauth2 5 y openidconnect 4 la traen. Aceptado por el responsable el 2026-11-17; revisar antes de 2027-01-23 o de inmediato si aparece una vulnerabilidad. https://rustsec.org/advisories/RUSTSEC-2026-0543" },
 ]
 
 [licenses]
