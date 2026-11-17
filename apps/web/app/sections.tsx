@@ -1,8 +1,8 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { Link, useSearchParams } from 'react-router';
-import type { UseQueryResult } from '@tanstack/react-query';
-import type { Model } from '@atenea/api-client';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { api, result, type Model } from '@atenea/api-client';
 import { Devices } from './devices';
 import { Enrollment } from './enrollment';
 import { JoinNetwork } from './join-network';
@@ -26,6 +26,9 @@ export type SectionProps = {
 };
 function DeviceSection(props: SectionProps) {
   const [params] = useSearchParams();
+  // Un servidor anterior no tiene la ruta: la consulta falla y el panel omite la sección de permisos.
+  const grants = useQuery({ queryKey: ['network', props.net, 'grants'], retry: false,
+    queryFn: () => result(api.GET('/api/v1/networks/{net}/grants', { params: { path: { net: props.net } } })) });
   const pendingOnly = params.get('status') === 'pending';
   return <><Status query={props.devices}/><Status query={props.routes}/>
     {pendingOnly && <p>Solicitudes pendientes · <Link to={`/?org=${props.network.data?.org_id ?? ''}&net=${props.net}&view=Dispositivos`}>Ver todos los dispositivos</Link></p>}
@@ -33,7 +36,7 @@ function DeviceSection(props: SectionProps) {
     {props.devices.data && <Devices key={pendingOnly ? 'pending' : 'all'}
       devices={props.devices.data} status={pendingOnly ? 'pending' : 'all'}
       accessRole={props.role} net={props.net} elapsed={props.elapsed}
-      refresh={props.refresh} routes={props.routes.data}/>}</>;
+      refresh={props.refresh} routes={props.routes.data} grants={grants.data}/>}</>;
 }
 function EnrollmentSection({ network, net, canEdit }: SectionProps) {
   return <>{network.data && <JoinNetwork net={net} canEdit={canEdit} policy={network.data.join_policy}/>}

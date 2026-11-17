@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, result, type Model } from '@atenea/api-client';
 import { Button, ConfirmDialog, Dialog, EmptyState, Field, ShortId, Status } from './ui';
+import { Author } from './device-grants';
 import { policySchema, selector } from './domain';
 
 const policyNotice = 'Las políticas son efectivamente bidireccionales: la regla inversa mantiene el protocolo, pero no restringe puertos. Una política A→B tcp/22 permite también a B iniciar tráfico TCP a A en cualquier puerto; no se limita a respuestas de conexiones iniciadas por A.';
@@ -125,6 +126,7 @@ export function Policies({ net, canEdit, devices = [] }: {
     {query.data?.length ? <ul className="cards">{query.data.map(policy => <li className="card" key={policy.id}>
       <p>{describe(policy.src)} → {describe(policy.dst)}</p>
       <p>{protocols[policy.proto] ?? policy.proto} · {describePorts(policy.proto, policy.port_min, policy.port_max)}</p>
+      <p>Creada por: <Author id={policy.created_by_device} devices={devices} none="administrador"/></p>
       {canEdit && <ConfirmDialog trigger="Borrar" title="Borrar política"
         description="Los pares afectados dejarán de comunicarse al renovar la configuración."
         label="Confirmar borrado" confirm={async () => {

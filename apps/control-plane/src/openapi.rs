@@ -50,6 +50,14 @@ fn nullable_text() -> RefOr<Schema> {
         .into()
 }
 
+fn nullable_uuid(description: &str) -> RefOr<Schema> {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::from_iter([Type::String, Type::Null]))
+        .format(Some(SchemaFormat::Custom("uuid".into())))
+        .description(Some(description))
+        .into()
+}
+
 fn named(name: &str) -> RefOr<Schema> {
     if let Some(item) = name.strip_prefix("[]") {
         ArrayBuilder::new()
@@ -161,7 +169,7 @@ fn schemas() -> ComponentsBuilder {
         ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
         ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
-        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Último informe de servicios guardado, sin filtro de antigüedad; [] si nunca se ha publicado. Consulte services_at.")).into()), ("services_at", nullable_timestamp()), ("versions", ArrayBuilder::new().items(named("DeviceVersion")).max_items(Some(3)).description(Some("Última lista de versiones instaladas informada, sin filtro de antigüedad; [] si nunca informó o si no hay componentes que informar. Consulte versions_at para distinguirlo.")).into()), ("versions_at", nullable_timestamp()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
+        ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Último informe de servicios guardado, sin filtro de antigüedad; [] si nunca se ha publicado. Consulte services_at.")).into()), ("services_at", nullable_timestamp()), ("versions", ArrayBuilder::new().items(named("DeviceVersion")).max_items(Some(3)).description(Some("Última lista de versiones instaladas informada, sin filtro de antigüedad; [] si nunca informó o si no hay componentes que informar. Consulte versions_at para distinguirlo.")).into()), ("versions_at", nullable_timestamp()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("enrolled_by_device", nullable_uuid("Delegado cuyo código de unión usó; null si lo dio de alta un administrador o entró por solicitud (ADR-026).")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceGrantPermission", choices(&crate::grants::SCOPES)),
         ("DeviceGrantScope", complete(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).description(Some("Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.")).into())])),
@@ -182,7 +190,7 @@ fn schemas() -> ComponentsBuilder {
             ("port_min", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(0)).maximum(Some(65535)).default(Some(serde_json::json!(0))).into()),
             ("port_max", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(0)).maximum(Some(65535)).default(Some(serde_json::json!(0))).into()),
         ], &["src", "dst", "proto"])),
-        ("Policy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer())])),
+        ("Policy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer()), ("created_by_device", nullable_uuid("Delegado que la creó; null si fue un administrador (ADR-026)."))])),
         ("AuditEvent", complete(&[("id", integer()), ("at", timestamp()), ("actor_kind", choices(&["user","device","system"])), ("actor_id", text()), ("action", text()), ("target", text()), ("detail", ObjectBuilder::new().schema_type(Type::Object).into())])),
         ("SignedConfig", ObjectBuilder::new().schema_type(Type::String).format(Some(SchemaFormat::Custom("binary".into()))).description(Some("SignedConfig binario del contrato signed-config-v1; verificación con atenea-identity." )).into()),
         ("IssuerCertificate", ObjectBuilder::new().schema_type(Type::String).format(Some(SchemaFormat::Custom("binary".into()))).description(Some("IssuerCert binario de exactamente 178 bytes; firma raíz, red, emisor y vigencia comprobados." )).into()),

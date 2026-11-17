@@ -80,8 +80,8 @@ pub async fn list(
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
-    let rows=sqlx::query("SELECT id,src,dst,proto,port_min,port_max FROM access_policies WHERE network_id=$1 ORDER BY id").bind(net).fetch_all(&s.pool).await?;
-    Ok(Json(json!(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"src":r.get::<Value,_>("src"),"dst":r.get::<Value,_>("dst"),"proto":r.get::<i16,_>("proto"),"port_min":r.get::<i32,_>("port_min"),"port_max":r.get::<i32,_>("port_max")})).collect::<Vec<_>>())))
+    let rows=sqlx::query("SELECT id,src,dst,proto,port_min,port_max,created_by_device FROM access_policies WHERE network_id=$1 ORDER BY id").bind(net).fetch_all(&s.pool).await?;
+    Ok(Json(json!(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"src":r.get::<Value,_>("src"),"dst":r.get::<Value,_>("dst"),"proto":r.get::<i16,_>("proto"),"port_min":r.get::<i32,_>("port_min"),"port_max":r.get::<i32,_>("port_max"),"created_by_device":r.get::<Option<Uuid>,_>("created_by_device")})).collect::<Vec<_>>())))
 }
 pub async fn create(
     State(s): State<AppState>,

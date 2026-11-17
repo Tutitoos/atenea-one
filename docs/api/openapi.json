@@ -6568,6 +6568,7 @@
           "versions_at",
           "status",
           "join_origin",
+          "enrolled_by_device",
           "endpoints",
           "fingerprint",
           "ipv4",
@@ -6605,6 +6606,14 @@
           "enrolled_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "enrolled_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Delegado cuyo código de unión usó; null si lo dio de alta un administrador o entró por solicitud (ADR-026)."
           },
           "fingerprint": {
             "type": "string"
@@ -7873,9 +7882,18 @@
           "dst",
           "proto",
           "port_min",
-          "port_max"
+          "port_max",
+          "created_by_device"
         ],
         "properties": {
+          "created_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Delegado que la creó; null si fue un administrador (ADR-026)."
+          },
           "dst": {
             "$ref": "#/components/schemas/Selector"
           },

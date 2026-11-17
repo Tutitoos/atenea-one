@@ -120,6 +120,12 @@ Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
   esos servidores; nunca se captura el DNS general. El backend decide el alcance
   de los servidores (túnel/rutas aprobadas) y muestra su error. Vaciar ambos campos
   elimina DNS. `systemd-resolved` es requisito del agente, no del navegador.
+- El detalle de un dispositivo aprobado muestra «Administración delegada»
+  (ADR-026): permisos, alcance, quién los concedió y cuándo. `owner` y `admin`
+  conceden, cambian y retiran (alcance «los que da de alta», lista o toda la red,
+  con aviso); los miembros solo leen. «Dado de alta por» y «Creada por» (políticas)
+  indican si lo hizo un administrador o un dispositivo delegado. Un servidor sin
+  la ruta `/grants` no muestra la sección.
 - Dispositivos muestra forwarding, DNS y rutas instaladas/en conflicto con motivo,
   declarados por el agente y con edad del informe. Un router con rutas aprobadas
   que declara `forwarding_ok=false` muestra una advertencia; no equivale a una

@@ -3,6 +3,7 @@
 import { api, type Model } from '@atenea/api-client';
 import { ActionForm, ConfirmDialog, CopyButton, Dialog, RunButton, ShortId } from './ui';
 import { endpointsSchema, nameSchema } from './domain';
+import { Author, Delegation } from './device-grants';
 
 const components = [['agent', 'Versión del agente'], ['cli', 'Versión de la CLI'], ['desktop', 'Versión de la aplicación']] as const;
 
@@ -33,9 +34,10 @@ function Services({ device }: { device: Model<'Device'> }) {
   </>;
 }
 
-export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh }: {
+export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh, grants }: {
   device: Model<'Device'>; devices: Model<'Device'>[]; net: string; elapsed: number;
   routes: Model<'Route'>[]; canEdit: boolean; refresh: () => Promise<unknown>;
+  grants?: Model<'DeviceGrant'>[];
 }) {
   const report = device.report;
   const params = { path: { net, dev: device.id } };
@@ -46,11 +48,13 @@ export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, r
       <div><dt>Hostname</dt><dd>{device.hostname ?? 'Sin nombre del sistema comunicado'}</dd></div>
       <div><dt>Origen del nombre</dt><dd>{device.name_source === 'admin' ? 'administrativo' : 'del sistema'}</dd></div>
       <div><dt>Endpoints</dt><dd>{device.endpoints.join(', ') || 'Sin endpoints'}</dd></div>
+      <div><dt>Dado de alta por</dt><dd><Author id={device.enrolled_by_device} devices={devices}/></dd></div>
       {components.map(([component, label]) => <div key={component}><dt>{label}</dt><dd>{versionText(device, component)}</dd></div>)}
     </dl>
     {device.versions_at && <small>Versiones declaradas por el agente el <time dateTime={device.versions_at}>{new Date(device.versions_at).toLocaleString('es')}</time>; no verificadas independientemente.</small>}
     <h4>Servicios publicados</h4>
     <Services device={device}/>
+    <Delegation device={device} devices={devices} net={net} grants={grants} canEdit={canEdit} refresh={refresh}/>
     <p className="devices-fingerprint"><strong>Huella completa: </strong><code>{device.fingerprint}</code>
       <CopyButton value={device.fingerprint} label={`Copiar huella del detalle de ${device.name}`}/></p>
     {report ? <>
