@@ -600,11 +600,12 @@ export const NOTES = [
  * `na`) y sale de una fila de `GROUPS` o de un ADR: ninguna marca aquí contradice
  * a la tabla completa. `na` es «no encontrado en las fuentes», nunca «no».
  *
- * @type {{ topic: string; cells: ("yes" | "no" | "wip" | "na")[] }[]}
+ * @type {{ topic: string; hint?: string; cells: ("yes" | "no" | "wip" | "na")[] }[]}
  */
 export const SUMMARY = [
   {
     topic: "Coordinación y rendezvous sin terceros",
+    hint: "Rendezvous: el paso en el que dos dispositivos detrás de NAT se encuentran. Un tercero con IP pública les pasa las direcciones candidatas del otro y los dos envían paquetes a la vez para abrir un camino directo. En Atenea One lo hace el coordinator, que solo da pistas sin autenticar: el túnel lo crea únicamente un handshake válido.",
     cells: ["yes", "no", "no"],
   },
   {
@@ -617,26 +618,32 @@ export const SUMMARY = [
   },
   {
     topic: "Travesía de NAT: STUN y hole punching",
+    hint: "Hole punching: los dos dispositivos se envían paquetes UDP a la vez, de modo que el NAT de cada uno abre una entrada que deja pasar la respuesta. STUN les dice qué dirección y puerto públicos ven desde fuera.",
     cells: ["yes", "yes", "yes"],
   },
   {
     topic: "Cifrado de extremo a extremo con relay opaco",
+    hint: "Relay opaco: solo reenvía datagramas ya cifrados entre los dos extremos. Ve direcciones IP, tamaños y tiempos, pero no el contenido.",
     cells: ["yes", "yes", "yes"],
   },
   {
     topic: "PFS: claves de sesión efímeras en el handshake",
+    hint: "PFS (secreto perfecto hacia adelante): cada sesión usa claves efímeras que se descartan. Si luego se roba una clave de larga duración, no sirve para descifrar el tráfico ya capturado.",
     cells: ["yes", "yes", "no"],
   },
   {
     topic: "Política de acceso default-deny",
+    hint: "Default-deny: sin una regla que lo permita, el tráfico se descarta. Lo contrario es permitirlo todo hasta que se añaden reglas.",
     cells: ["yes", "na", "no"],
   },
   {
     topic: "Aplicación de la política en el endpoint",
+    hint: "Endpoint: el propio dispositivo. El filtrado ocurre en el agente de cada extremo, no en un servidor intermedio.",
     cells: ["yes", "yes", "yes"],
   },
   {
     topic: "Plano de datos activo con el plano de control caído",
+    hint: "El plano de control reparte claves, configuración y política; el plano de datos es el túnel por el que va el tráfico. Atenea One falla cerrado: si el emisor cae más que la vigencia del lease (unos 5 minutos), los túneles caen.",
     cells: ["no", "yes", "na"],
   },
   {
@@ -645,10 +652,12 @@ export const SUMMARY = [
   },
   {
     topic: "Capa 2: Ethernet virtual (L2)",
+    hint: "Capa 2: la red se comporta como un cable Ethernet, con difusión y multidifusión. Las redes de Atenea One son de capa 3 (IP).",
     cells: ["wip", "na", "yes"],
   },
   {
     topic: "Exit node: ruta por defecto vía un par",
+    hint: "Exit node: un dispositivo por el que sale a Internet todo el tráfico de otro (ruta por defecto 0.0.0.0/0). Atenea One no lo permite, por diseño.",
     cells: ["no", "yes", "na"],
   },
   {
@@ -657,10 +666,12 @@ export const SUMMARY = [
   },
   {
     topic: "Autenticación de administradores: OIDC",
+    hint: "OIDC (OpenID Connect): el estándar para iniciar sesión con un proveedor de identidad externo, como Google, Microsoft u Okta.",
     cells: ["yes", "yes", "na"],
   },
   {
     topic: "Subnet router: rutas hacia una LAN",
+    hint: "Subnet router: un dispositivo que da al resto de la red acceso a una red local entera, sin instalar el cliente en cada equipo de esa red.",
     cells: ["yes", "yes", "na"],
   },
   {

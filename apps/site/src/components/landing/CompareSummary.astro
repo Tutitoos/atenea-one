@@ -48,6 +48,30 @@ import Status from "./Status.astro";
                 class="px-5 py-4 text-sm leading-5 font-medium text-gray-100"
               >
                 {row.topic}
+                {row.hint && (
+                  <>
+                    <button
+                      type="button"
+                      data-tip={row.hint}
+                      aria-label={`Qué significa: ${row.topic}`}
+                      class="tip-trigger ml-2 inline-flex size-4 cursor-help items-center justify-center align-[-0.15em] text-gray-400 transition-colors hover:text-accent-200"
+                    >
+                      <svg
+                        viewBox="0 0 16 16"
+                        class="size-4"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        aria-hidden="true"
+                      >
+                        <circle cx="8" cy="8" r="6.25" />
+                        <path d="M8 7.25v4" stroke-linecap="square" />
+                        <path d="M8 4.75v.01" stroke-width="2" stroke-linecap="square" />
+                      </svg>
+                    </button>
+                    <span class="sr-only">{row.hint}</span>
+                  </>
+                )}
               </th>
               {row.cells.map((status) => (
                 <td class="px-4 py-4 text-center text-xs">
@@ -60,15 +84,6 @@ import Status from "./Status.astro";
       </tbody>
     </table>
   </div>
-
-  <p class="max-w-[68ch] text-xs leading-5 text-gray-400">
-    <strong class="font-medium text-gray-300">Rendezvous</strong>: el paso en el
-    que dos dispositivos detrás de NAT se encuentran. Un tercero con IP pública
-    les pasa las direcciones candidatas del otro, y los dos envían paquetes a la
-    vez (hole punching) para abrir un camino directo. En Atenea One lo hace el
-    coordinator, que solo da pistas sin autenticar: el túnel lo crea únicamente
-    un handshake válido.
-  </p>
 
   <ul class="flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs text-gray-400">
     {
@@ -88,4 +103,91 @@ import Status from "./Status.astro";
       >comparación técnica completa y fuentes</a
     >
   </p>
+
+  <!-- Un solo globo para toda la tabla, con `position: fixed`: la tabla
+       desplaza en horizontal en pantallas estrechas y un globo dentro de ella
+       quedaría recortado. El texto ya está en el HTML para el lector de
+       pantalla, así que el globo es solo visual. -->
+  <div
+    id="cmp-tip"
+    aria-hidden="true"
+    hidden
+    class="pointer-events-none fixed z-50 w-72 max-w-[calc(100vw-1.5rem)] border border-rule-strong bg-raise px-3 py-2 text-xs leading-5 text-gray-200"
+  >
+  </div>
 </div>
+
+<script>
+  const tip = document.getElementById("cmp-tip");
+  // `position: fixed` mide contra el ancestro con `transform` más cercano, y la
+  // sección de la portada se anima con uno: se cuelga del `<body>` para que el
+  // globo mida contra la ventana.
+  if (tip) document.body.appendChild(tip);
+  const triggers = document.querySelectorAll<HTMLButtonElement>(".tip-trigger");
+  let active: HTMLButtonElement | null = null;
+
+  function place(button: HTMLButtonElement) {
+    if (!tip) return;
+    const rect = button.getBoundingClientRect();
+    const margin = 12;
+    const width = tip.offsetWidth;
+    const left = Math.min(
+      Math.max(margin, rect.left - 8),
+      window.innerWidth - width - margin,
+    );
+    // Debajo del icono; si no cabe, encima.
+    const below = rect.bottom + 8;
+    const top =
+      below + tip.offsetHeight > window.innerHeight - margin
+        ? Math.max(margin, rect.top - 8 - tip.offsetHeight)
+        : below;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+
+  function show(button: HTMLButtonElement) {
+    if (!tip) return;
+    active = button;
+    tip.textContent = button.dataset.tip ?? "";
+    tip.hidden = false;
+    place(button);
+  }
+
+  function hide() {
+    if (!tip) return;
+    active = null;
+    tip.hidden = true;
+  }
+
+  // Cómo se abrió el globo: un toque en pantalla táctil dispara `mouseenter` y
+  // después `click`, y sin esta marca el `click` lo cerraría al instante.
+  let openedBy: "hover" | "click" | null = null;
+
+  for (const button of triggers) {
+    button.addEventListener("mouseenter", () => {
+      openedBy = "hover";
+      show(button);
+    });
+    button.addEventListener("mouseleave", hide);
+    button.addEventListener("focus", () => show(button));
+    button.addEventListener("blur", hide);
+    button.addEventListener("click", () => {
+      if (active === button && openedBy === "click") {
+        hide();
+        return;
+      }
+      openedBy = "click";
+      show(button);
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hide();
+  });
+  // Un toque fuera de un icono cierra el globo.
+  document.addEventListener("click", (event) => {
+    if (!(event.target as Element).closest(".tip-trigger")) hide();
+  });
+  // Al desplazar, el icono se mueve y el globo se quedaría suelto.
+  window.addEventListener("scroll", hide, { passive: true });
+</script>
