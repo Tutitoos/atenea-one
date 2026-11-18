@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-029: Redes gestionadas por el servidor (crear una red con solo un nombre)
 
-- **Estado:** **Propuesto** (2026-11-18). Pendiente de aceptar D1 a D6. **Sin código.**
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. Implementación en curso.
 - **Relacionados:** [ADR-005](ADR-005-custodia-clave-raiz.md) (modifica su regla «raíz en el host del control plane: prohibido» solo para las redes gestionadas), [ADR-028](ADR-028-cuentas-propias-y-redes-por-cuenta.md) (D1: raíz bajo custodia del usuario, que pasa a ser el modo avanzado), [ADR-018](ADR-018-union-solo-con-el-codigo.md) (el coordinator lee las anclas de las redes por API), [ADR-002](ADR-002-revocacion-lease.md).
 
 ## Contexto
