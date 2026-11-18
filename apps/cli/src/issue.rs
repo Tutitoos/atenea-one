@@ -153,8 +153,17 @@ pub fn issuer_init(
 pub struct IssuerCertArgs {
     #[arg(long)]
     root: PathBuf,
+    /// Semilla de la clave de emisor (fichero), si se tiene. Alternativa a `--issuer-pub`.
+    #[arg(
+        long,
+        required_unless_present = "issuer_pub",
+        conflicts_with = "issuer_pub"
+    )]
+    issuer_key: Option<PathBuf>,
+    /// Clave pública del emisor en hexadecimal (64 dígitos), la que muestra el panel (`GET /api/v1/issuer`):
+    /// permite firmar el certificado sin tener la clave privada del servidor.
     #[arg(long)]
-    issuer_key: PathBuf,
+    issuer_pub: Option<String>,
     #[arg(long)]
     network_id: String,
     #[arg(long)]
@@ -169,7 +178,18 @@ pub struct IssuerCertArgs {
 
 pub fn issuer_cert(args: IssuerCertArgs) -> Result<(), String> {
     let root = read_seed(&args.root)?;
-    let issuer = read_seed(&args.issuer_key)?;
+    let issuer_pub = match (&args.issuer_key, &args.issuer_pub) {
+        (Some(path), _) => read_seed(path)?.verifying_key().to_bytes(),
+        (None, Some(hex_pub)) => {
+            let bytes =
+                hex::decode::<32>(hex_pub).ok_or("issuer-pub: se esperan 64 dígitos hex")?;
+            if atenea_identity::VerifyingKey::from_bytes(&bytes).map_or(true, |key| key.is_weak()) {
+                return Err("issuer-pub: clave pública no válida".into());
+            }
+            bytes
+        }
+        (None, None) => return Err("falta --issuer-key o --issuer-pub".into()),
+    };
     let network =
         hex::decode::<16>(&args.network_id).ok_or("network-id: se esperan 32 dígitos hex")?;
     if !(1..=90).contains(&args.valid_days) {
@@ -187,7 +207,7 @@ pub fn issuer_cert(args: IssuerCertArgs) -> Result<(), String> {
         args.serial,
         now,
         now + args.valid_days * 86400,
-        issuer.verifying_key().to_bytes(),
+        issuer_pub,
         next,
     )
     .map_err(|e| format!("certificado: {e:?}"))?;

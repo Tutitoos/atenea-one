@@ -941,3 +941,7 @@ svg.copy-icon {
   grid-column: 2;
   margin: 0;
 }
+
+/* ADR-028: pasos numerados del asistente de red y lista de códigos de recuperación. */
+.dialog ol, .card ol { padding-left: 1.4rem; list-style: decimal; display: grid; gap: .6rem; }
+.card ol code { overflow-wrap: anywhere; }

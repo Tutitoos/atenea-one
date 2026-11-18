@@ -50,17 +50,29 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
     await members.refetch();
   };
   const createNetwork = current.role !== 'member' ? <Dialog trigger="Crear red" title="Crear red"
-    description="Las claves no se generan en el panel. Prepara el ancla pública offline con atenea root-init (ADR-005).">
-    <pre>atenea root-init --out raiz-offline</pre>
-    <p>Guarda la raíz en la estación offline. Copia únicamente su clave pública hexadecimal al campo ancla. El emisor se configura fuera del panel.</p>
+    description="La clave raíz de la red la generas tú y nunca llega a este servidor (ADR-005). Solo se envía su clave pública.">
+    <ol>
+      <li>En tu equipo, genera la raíz:<pre>atenea root-init --out raiz-offline</pre>
+        Guarda el fichero <code>raiz-offline</code> en un lugar seguro y con copia. <strong>Si lo pierdes no hay recuperación:</strong>
+        la red dejará de emitir configuraciones cuando caduque su certificado de emisor y habrá que reincorporar cada dispositivo.</li>
+      <li>Copia la clave pública que imprime (64 caracteres) en el campo de ancla.</li>
+      <li>Tras crear la red, en «DNS y certificado» firma el certificado de emisor con tu raíz y súbelo. Hasta entonces la red no emite configuraciones.</li>
+    </ol>
     <ActionForm label="Crear red" fields={[
       { name: 'name', label: 'Nombre' }, { name: 'ipv4_cidr', label: 'CIDR IPv4' },
       { name: 'ipv6_cidr', label: 'CIDR IPv6' }, { name: 'root_anchor', label: 'Ancla pública raíz (64 hex)' },
     ]} submit={async values => {
-      const created = await result(api.POST('/api/v1/orgs/{org}/networks', {
-        params: { path: { org: current.id } }, body: networkSchema.parse(values),
-      }));
-      await networks.refetch(); choose(created.id);
+      try {
+        const created = await result(api.POST('/api/v1/orgs/{org}/networks', {
+          params: { path: { org: current.id } }, body: networkSchema.parse(values),
+        }));
+        await networks.refetch(); choose(created.id);
+      } catch (error) {
+        if (error instanceof ApiError && error.detail.error.code === 'network_limit') {
+          throw new Error('Esta organización personal ya tiene el máximo de redes. Elimina una o pide al operador que amplíe el límite.', { cause: error });
+        }
+        throw error;
+      }
     }}/>
   </Dialog> : null;
   return <section><PageHeader title={current.name} description={`Rol: ${current.role}`} actions={createOrganization}/>

@@ -15,6 +15,8 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
   const [certificateError, setCertificateError] = useState('');
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState(false);
+  const issuer = useQuery({ queryKey: ['issuer'], enabled: canEdit, retry: false,
+    queryFn: () => result(api.GET('/api/v1/issuer')) });
   const join = useQuery({ queryKey: ['network', net, 'join-code'], enabled: canEdit, retry: false,
     queryFn: () => result(api.GET('/api/v1/networks/{net}/join-code', { params: { path: { net } } })) });
   const data = network.data;
@@ -47,7 +49,9 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
         description="Solo se sube issuer.cert público (178 bytes). Nunca subas claves privadas. Raíz y emisor se preparan offline (ADR-005).">
         <p>{data?.has_issuer_cert ? 'Hay un certificado instalado. Subir uno lo reemplaza.' : 'Falta el certificado de emisor.'}</p>
         {data?.has_issuer_cert && <p>El serial debe ser mayor que el del certificado instalado (Auditoría, último evento «network.issuer_cert»). El servidor rechaza uno menor porque los agentes lo descartarían y perderían su configuración.</p>}
-        <pre>{`atenea issuer-cert --root raiz-offline --issuer-key emisor-offline --network-id ${net} --serial ${data?.has_issuer_cert ? '<serial vigente + 1>' : 1} --valid-days ${data?.has_issuer_cert ? 90 : 30} --out issuer.cert`}</pre>
+        <p>La clave pública del emisor de este servidor es <code>{issuer.data?.issuer_pubkey ?? '(no disponible: consulta al operador)'}</code>
+          {issuer.data && <CopyButton value={issuer.data.issuer_pubkey} label="Copiar clave pública del emisor"/>}</p>
+        <pre>{`atenea issuer-cert --root raiz-offline --issuer-pub ${issuer.data?.issuer_pubkey ?? '<clave pública del emisor>'} --network-id ${net.replaceAll('-', '')} --serial ${data?.has_issuer_cert ? '<serial vigente + 1>' : 1} --valid-days ${data?.has_issuer_cert ? 90 : 30} --out issuer.cert`}</pre>
         <form className="incorporar-form" onSubmit={async event => {
           event.preventDefault(); setCertificateError(''); setMessage('');
           const form = event.currentTarget;

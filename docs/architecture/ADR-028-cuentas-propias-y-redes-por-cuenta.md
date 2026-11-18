@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-028: Cuentas propias, redes por cuenta e invitaciones
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las nueve decisiones D1 a D9 tal como se propusieron. Bases elegidas: raíz bajo custodia del usuario, Dex se mantiene, registro propio abierto con límites, organización personal automática e invitado que genera códigos y aprueba. **Sin código todavía** (fase 2 por empezar).
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las nueve decisiones D1 a D9 tal como se propusieron. Bases elegidas: raíz bajo custodia del usuario, Dex se mantiene, registro propio abierto con límites, organización personal automática e invitado que genera códigos y aprueba. **Implementado en `main`, sin publicar ni desplegar:** control plane (fase 2: migraciones `0015` y `0016`, cuentas locales, organización personal, `GET /api/v1/issuer`, miembros por red, invitaciones, cuotas), panel (fase 3: registro, entrada y recuperación, códigos, asistente de red, Compartir, «Compartidas conmigo», aprobar como `enroller`) y `atenea issuer-cert --issuer-pub`. Guía: [cuentas y redes compartidas](../operations/cuentas-y-redes-compartidas.md). **Pendiente:** comandos de CLI para invitar y listar miembros (fase 4), GitHub en Dex, prueba con cuentas reales en el piloto y que un miembro pueda abandonar una red.
 - **Relacionados:** [ADR-005](ADR-005-custodia-clave-raiz.md) (la raíz no vive en el servidor; se mantiene), [ADR-015](ADR-015-bloque-b-miembros-y-renombrado.md) (miembros por correo), [ADR-020](ADR-020-token-de-servicio-de-solo-lectura.md), [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) y [ADR-027](ADR-027-concesion-delegada-de-permisos.md) (permisos por dispositivo).
 
 ## Contexto
@@ -119,4 +119,4 @@ SMTP y correo; verificación de identidad más allá de GitHub; facturación o p
 
 ## Sin comprobar
 
-Todo: aún no hay código. En concreto, la compatibilidad de WebCrypto Ed25519 con la verificación estricta, los parámetros de argon2id y los límites reales hay que fijarlos y medirlos al implementar.
+Comprobado con un navegador real contra un servidor local: registro, códigos, creación de red con raíz propia, firma con `--issuer-pub`, invitación, aceptación y permisos del `enroller`. **No comprobado:** Dex y GitHub, dos navegadores a la vez, un servidor de producción, la carga con el registro abierto y la raíz generada en el navegador (no se implementó: se mantiene el CLI, D1). Los parámetros de argon2id son los de la biblioteca (19 MiB, 2 pasadas, 1 hilo) y no se midieron en el hardware del piloto.
