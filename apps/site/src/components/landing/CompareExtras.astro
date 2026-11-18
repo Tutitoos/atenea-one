@@ -1,0 +1,71 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { FIT, NOTES, OPERATORS } from "../../comparison.mjs";
+---
+
+<div class="not-content space-y-10">
+  <div>
+    <p class="font-mono text-xs text-gray-400">quién opera la coordinación</p>
+    <dl class="mt-3 grid grid-cols-1 gap-10 sm:grid-cols-3">
+      {
+        OPERATORS.map((operator) => (
+          <div>
+            <dd
+              class:list={[
+                "font-mono text-3xl font-medium tracking-tight",
+                operator.highlight ? "text-graph-exact" : "text-gray-100",
+              ]}
+            >
+              {operator.value}
+            </dd>
+            <dt class="mt-2 text-xs text-gray-300">{operator.name}</dt>
+            <p class="mt-1 max-w-[34ch] text-xs leading-5 text-gray-400">
+              {operator.detail}
+            </p>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+
+  <div class="grid grid-cols-1 gap-px border border-rule bg-rule md:grid-cols-3">
+    {
+      FIT.map((item) => (
+        <div class="bg-panel p-5">
+          <p
+            class:list={[
+              "font-mono text-sm",
+              item.highlight ? "text-graph-exact" : "text-gray-100",
+            ]}
+          >
+            {item.name}
+          </p>
+          <ul class="mt-3 list-none space-y-2 p-0 text-xs leading-5 text-gray-300">
+            {item.points.map((point) => (
+              <li class="flex gap-2">
+                <span class="text-gray-400" aria-hidden="true">
+                  ·
+                </span>
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </div>
+
+  <ol class="list-none divide-y divide-rule border-y border-rule p-0 text-sm leading-6 text-gray-300">
+    {
+      NOTES.map((note, index) => (
+        <li class="flex gap-3 py-4">
+          <span class="font-mono text-xs leading-6 text-graph-exact" aria-hidden="true">
+            {String(index + 1).padStart(2, "0")}
+          </span>
+          <span class="max-w-[90ch]">{note}</span>
+        </li>
+      ))
+    }
+  </ol>
+</div>

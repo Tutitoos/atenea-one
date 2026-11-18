@@ -1,0 +1,203 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { withBase } from "../../lib/url";
+
+const facts = [
+  "self-hosted",
+  "cifrado extremo a extremo",
+  "relays propios",
+  "Apache-2.0",
+];
+---
+
+<section class="stage" data-hero>
+  <div class="plane" data-hero-field aria-hidden="true"></div>
+  <div class="veil" aria-hidden="true"></div>
+  <!-- The halo is declared here rather than created by the motion layer:
+    an element appended at runtime carries no scope attribute, so this
+    component's scoped CSS would not reach it. It rests invisible because it
+    holds no content -- if the module never runs there is nothing to reveal. -->
+  <div class="halo" data-hero-halo aria-hidden="true"></div>
+
+  <div
+    class="mx-auto box-border w-full max-w-6xl px-6 py-20 text-center sm:py-24"
+  >
+    <p
+      data-hero-item="eyebrow"
+      class="font-mono text-xs tracking-[0.16em] text-gray-400 uppercase"
+    >
+      vpn p2p self-hosted
+    </p>
+    {/* `max-w-4xl`: una cara monoespaciada compone mucho más ancha que una
+      proporcional al mismo cuerpo, y el titular solo cabe en dos líneas con
+      una columna de más de 52rem. */}
+    <h1
+      data-hero-item="title"
+      class="mx-auto mt-6 max-w-4xl font-mono text-3xl leading-tight font-medium tracking-tight text-gray-100 sm:text-4xl lg:text-5xl"
+    >
+      Tu red privada, en tu infraestructura.
+    </h1>
+    <p
+      data-hero-item="lede"
+      class="mx-auto mt-6 max-w-2xl text-sm leading-6 text-gray-300"
+    >
+      Atenea One crea redes privadas desde un panel web. Los dispositivos se
+      comunican cifrados directamente entre sí o, si no hay camino directo, a
+      través de relays tuyos. Sin WireGuard como protocolo y sin servicios
+      externos de coordinación.
+    </p>
+
+    <div
+      data-hero-item="actions"
+      class="mt-10 flex flex-wrap items-center justify-center gap-3 font-mono text-xs"
+    >
+      <a
+        href={withBase("/instalacion/")}
+        class="border border-graph-exact bg-graph-exact px-4 py-2 text-shell hover:border-gray-100 hover:bg-gray-100"
+        >instalar</a
+      >
+      <a
+        href={withBase("/como-funciona/")}
+        class="border border-graph-exact bg-raise px-4 py-2 text-gray-100 hover:border-gray-700"
+        >cómo funciona</a
+      >
+    </div>
+
+    <ul
+      data-hero-item="facts"
+      class="mt-12 flex flex-wrap justify-center gap-y-2 font-mono text-xs text-gray-400"
+    >
+      {
+        facts.map((fact) => (
+          <li class="mx-3 border-l border-rule-strong pl-3 first:border-l-0 first:pl-0">
+            {fact}
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<style>
+  /* The backdrop is CSS and nothing else: a static grid and one highlight that
+     travels over it. It replaces a 2D canvas that cost 415 lines, a
+     `requestAnimationFrame` loop, a `ResizeObserver`, an `IntersectionObserver`
+     and a palette read out of the cascade, and drew a field whose node
+     positions encoded no relation in the graph.
+
+     There is deliberately no border-bottom on the stage: the first Section band
+     draws its own border-top, and two adjacent hairlines read as one 2px rule
+     that no other seam on the page has. */
+  .stage {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  /* The structure never moves. The mask dissolves it before it reaches any
+     edge, which is what keeps it a backdrop rather than a texture with a
+     border of its own. */
+  .plane {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background-image:
+      repeating-linear-gradient(
+        to right,
+        var(--color-rule-strong) 0 1px,
+        transparent 1px 72px
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        var(--color-rule-strong) 0 1px,
+        transparent 1px 72px
+      );
+    -webkit-mask-image: radial-gradient(
+      ellipse 76% 66% at 50% 50%,
+      #000 0%,
+      transparent 80%
+    );
+    mask-image: radial-gradient(
+      ellipse 76% 66% at 50% 50%,
+      #000 0%,
+      transparent 80%
+    );
+  }
+
+  /* The sheen is the grid's own `::after` so the grid's mask clips it too: a
+     sibling would light the band's edges the mask exists to hide. It
+     ping-pongs rather than looping, so there is no restart to disguise -- a
+     one-way sweep would snap back to its starting position every 15s. */
+  .plane::after {
+    position: absolute;
+    content: "";
+    inset: -50% -100%;
+    background: linear-gradient(
+      100deg,
+      transparent 42%,
+      color-mix(in oklab, var(--color-gray-100) 7%, transparent) 50%,
+      transparent 58%
+    );
+    /* The duration is a variable so an entrance animation can borrow the loop
+       for one fast pass and then hand it back by removing the property. */
+    animation: sheen var(--sheen-duration, 15s) ease-in-out infinite alternate;
+  }
+
+  @keyframes sheen {
+    from {
+      translate: -34% 0;
+    }
+    to {
+      translate: 34% 0;
+    }
+  }
+
+  /* The veil is a seam, not a scrim: it closes the pattern at the band's edges
+     so it never butts against the header's hairline. A wash heavy enough to
+     "protect" the copy erases the grid instead; 1px lines at `rule-strong` do
+     not compete with text at any weight here. */
+  .veil {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        ellipse 56% 46% at 50% 44%,
+        color-mix(in oklab, var(--color-shell) 28%, transparent),
+        transparent 72%
+      ),
+      linear-gradient(to bottom, var(--color-shell) 0%, transparent 9%),
+      linear-gradient(to top, var(--color-shell) 0%, transparent 11%);
+  }
+
+  /* The pointer halo. It is a figure, not a control: no pointer events, and a
+     radius large enough that the grid under it reads as lit rather than as
+     spotlit. The motion layer translates it and fades it in; a page without
+     that module keeps it at zero and loses nothing. */
+  .halo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 22rem;
+    height: 22rem;
+    margin: -11rem 0 0 -11rem;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      color-mix(in oklab, var(--color-graph-repository) 24%, transparent),
+      transparent 68%
+    );
+    filter: blur(30px);
+    opacity: 0;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .plane::after {
+      animation: none;
+    }
+  }
+</style>

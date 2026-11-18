@@ -1,0 +1,117 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { COLUMNS, CONSULTED, GROUPS, SOURCES } from "../../comparison.mjs";
+import Status from "./Status.astro";
+
+// La tabla y su lista de fuentes van juntas porque los superíndices de una
+// apuntan a la otra. La usan la portada y `/comparacion/`, así que los colores
+// y márgenes son utilities con `!` donde Starlight los pisaría, y el contenedor
+// lleva `not-content` para salir de la prosa de la documentación.
+const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
+const numberOf = (key: string) => keys.indexOf(key as keyof typeof SOURCES) + 1;
+---
+
+<div class="not-content space-y-10">
+  {
+    GROUPS.map((group) => (
+      <div>
+        <h3 class="flex items-baseline gap-2 font-mono text-sm font-medium tracking-tight text-gray-100 sm:text-base">
+          <span class="text-xs font-normal text-gray-400" aria-hidden="true">
+            #
+          </span>
+          {group.title}
+        </h3>
+        <div class="mt-5 overflow-x-auto border border-rule">
+          <table class="w-full min-w-[44rem] table-fixed border-collapse text-left text-xs">
+            <caption class="sr-only">{group.title}</caption>
+            <colgroup>
+              <col class="w-[16%]" />
+              <col class="w-[28%]" />
+              <col class="w-[28%]" />
+              <col class="w-[28%]" />
+            </colgroup>
+            <thead>
+              <tr class="border-b border-rule bg-panel font-mono text-gray-400">
+                <th scope="col" class="px-4 py-3 font-normal">
+                  <span class="sr-only">aspecto</span>
+                </th>
+                {COLUMNS.map((column, index) => (
+                  <th
+                    scope="col"
+                    class:list={[
+                      "px-4 py-3 font-normal",
+                      index === 0 && "text-graph-exact",
+                    ]}
+                  >
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {group.rows.map((row) => (
+                <tr class="border-b border-rule align-top last:border-b-0">
+                  <th
+                    scope="row"
+                    class="px-4 py-3 font-mono font-normal text-gray-400"
+                  >
+                    {row.topic}
+                  </th>
+                  {row.cells.map(([text, ...sources]) => (
+                    <td
+                      class:list={[
+                        "px-4 py-3 leading-5 [overflow-wrap:anywhere]",
+                        text === "—" ? "text-gray-400" : "text-gray-300",
+                      ]}
+                    >
+                      {text === "❌" ? (
+                        <Status status="no" label="ninguno" />
+                      ) : (
+                        text
+                      )}
+                      {sources.map((source) => (
+                        <sup class="ml-0.5 font-mono">
+                          <a
+                            href={`#fuente-${numberOf(source)}`}
+                            class="text-accent-200 no-underline hover:underline"
+                            aria-label={`Fuente ${numberOf(source)}`}
+                          >
+                            {numberOf(source)}
+                          </a>
+                        </sup>
+                      ))}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ))
+  }
+
+  <div>
+    <p class="font-mono text-xs text-gray-400">
+      fuentes, consultadas el {CONSULTED}
+    </p>
+    <ol class="mt-3 grid list-none grid-cols-1 gap-x-10 gap-y-2 p-0 font-mono text-xs sm:grid-cols-2">
+      {
+        keys.map((key, index) => (
+          <li id={`fuente-${index + 1}`} class="flex gap-2">
+            <span class="text-gray-400">{index + 1}</span>
+            <a
+              href={SOURCES[key].url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-accent-200 underline underline-offset-4"
+            >
+              {SOURCES[key].label}
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</div>

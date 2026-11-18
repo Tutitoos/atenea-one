@@ -1,0 +1,53 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import CopyButton from "./CopyButton.astro";
+import SubHead from "./SubHead.astro";
+import { withBase } from "../../lib/url";
+
+// Los comandos son los de `docs/operations/instalacion-linux.md`, con un dominio
+// sintético. El token se recibe por argumento y puede verse en la lista de
+// procesos: la página lo dice en `/instalacion/`.
+const steps = [
+  {
+    title: "Crea la red",
+    text: "En el panel, un administrador crea la red y un token de un solo uso. El objeto join se entrega por un canal de confianza y su ancla raíz se comprueba fuera de banda.",
+  },
+  {
+    title: "Enrola el dispositivo",
+    text: "Genera las claves en el dispositivo y enrólalo con el token. Después, un administrador compara la huella y lo aprueba.",
+    command:
+      'sudo atenea device-init --dir /var/lib/atenea/device\nsudo atenea enroll --url https://control.example.test --token "$TOKEN" --dir /var/lib/atenea/device',
+  },
+  {
+    title: "Arranca el agente",
+    text: "Genera la configuración y arranca el servicio. Sin configuración firmada vigente el tráfico queda denegado.",
+    command:
+      "sudo atenea agent-config --join /root/join.json --dir /var/lib/atenea/device --out /etc/atenea/agent.toml\nsudo systemctl enable --now atenea-agent.service\nsudo atenea status --socket /run/atenea/control.sock",
+  },
+];
+---
+
+<ol class="grid grid-cols-1 gap-10 lg:grid-cols-3">
+  {
+    steps.map((step, index) => (
+      <li class="min-w-0">
+        <SubHead title={step.title} marker={String(index + 1).padStart(2, "0")} />
+        <p class="mt-5 max-w-[68ch] text-sm leading-6 text-gray-300">{step.text}</p>
+        {step.command && (
+          <div class="mt-5 min-w-0 border border-rule bg-panel text-left">
+            <div class="flex justify-end border-b border-rule px-4 py-2">
+              <CopyButton value={step.command} />
+            </div>
+            <pre class="overflow-x-auto px-4 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words"><code>{step.command}</code></pre>
+          </div>
+        )}
+      </li>
+    ))
+  }
+</ol>
+<p class="mt-10 text-xs">
+  <a href={withBase("/instalacion/")} class="font-mono text-accent-200 underline underline-offset-4"
+    >guía de instalación completa</a
+  >
+</p>

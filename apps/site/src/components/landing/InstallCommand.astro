@@ -1,0 +1,134 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import { REPOSITORY_URL } from "../../site.mjs";
+import CopyButton from "./CopyButton.astro";
+
+interface Props {
+  /** Nombra el grupo de radios, para que dos cajas en una página no compartan selección. */
+  where: string;
+  class?: string;
+}
+
+const { where, class: className = "" } = Astro.props;
+
+// Los instaladores aún no existen: la URL es la que tendrán en la última
+// release de GitHub. `install.sh` se ejecuta con `bash`, no `sh`.
+const base = `${REPOSITORY_URL}/releases/latest/download`;
+const posix = `curl -fsSL ${base}/install.sh | bash`;
+
+const platforms = [
+  { id: "macos", label: "macOS", prompt: "$", command: posix },
+  { id: "linux", label: "Linux", prompt: "$", command: posix },
+  {
+    id: "windows",
+    label: "Windows",
+    prompt: "PS>",
+    command: `irm ${base}/install.ps1 | iex`,
+  },
+];
+---
+
+{/* Un grupo de radios sin JavaScript: se maneja con teclado, se anuncia sin una
+  línea de script y los tres comandos quedan en el HTML servido. Los inputs son
+  `sr-only` y nunca `display: none`, porque un radio oculto no puede recibir
+  foco. Las reglas leen `data-platform` y no un id, lo que permite que el
+  componente aparezca dos veces en una página. */}
+<fieldset class:list={["installer border-0", className]}>
+  <legend class="sr-only">Elige tu plataforma</legend>
+
+  {
+    platforms.map((platform, index) => (
+      <input
+        class="sr-only"
+        type="radio"
+        name={`install-${where}`}
+        id={`install-${where}-${platform.id}`}
+        data-platform={platform.id}
+        checked={index === 0}
+      />
+    ))
+  }
+
+  <div class="border border-rule bg-panel text-left">
+    <div
+      class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-rule px-4 py-2 font-mono text-xs"
+    >
+      <div class="tabs flex flex-wrap gap-x-4 gap-y-1">
+        {
+          platforms.map((platform) => (
+            <label
+              class="cursor-pointer border-b-2 border-transparent pb-1 text-gray-400 hover:text-gray-100"
+              for={`install-${where}-${platform.id}`}
+              data-tab={platform.id}
+            >
+              {platform.label}
+            </label>
+          ))
+        }
+      </div>
+
+      {/* Un botón por panel: el valor de copia se renderiza en el servidor y un
+        solo botón no podría seguir la selección sin el script que este control
+        existe para evitar. Solo se muestra el panel marcado. */}
+      <div class="panels flex">
+        {
+          platforms.map((platform) => (
+            <div class="panel" data-panel={platform.id}>
+              <CopyButton value={platform.command} />
+            </div>
+          ))
+        }
+      </div>
+    </div>
+
+    <div class="panels">
+      {
+        platforms.map((platform) => (
+          <pre
+            class="panel px-4 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words"
+            data-panel={platform.id}
+          ><code><span class="text-graph-exact select-none">{platform.prompt} </span>{platform.command}</code></pre>
+        ))
+      }
+    </div>
+  </div>
+</fieldset>
+
+<style>
+  /* Un `<fieldset>` solo por la semántica. `margin: 0` NO va aquí: sin preflight
+     una regla de componente fuera de capa gana a cualquier utility y se
+     comería el `mt-*` del llamador. */
+  .installer {
+    min-width: 0;
+    padding: 0;
+  }
+
+  /* Los paneles sin marcar siguen en el HTML: sin CSS se ven los tres comandos,
+     cada uno bajo su plataforma. */
+  .panel {
+    display: none;
+  }
+
+  input[data-platform="macos"]:checked ~ * .panels [data-panel="macos"],
+  input[data-platform="linux"]:checked ~ * .panels [data-panel="linux"],
+  input[data-platform="windows"]:checked ~ * .panels [data-panel="windows"] {
+    display: block;
+  }
+
+  input[data-platform="macos"]:checked ~ * .tabs [data-tab="macos"],
+  input[data-platform="linux"]:checked ~ * .tabs [data-tab="linux"],
+  input[data-platform="windows"]:checked ~ * .tabs [data-tab="windows"] {
+    border-bottom-color: var(--color-graph-exact);
+    color: var(--color-gray-100);
+  }
+
+  /* El anillo de foco va en la etiqueta, porque el input que tiene el foco es lo
+     único que nadie ve. */
+  input[data-platform="macos"]:focus-visible ~ * .tabs [data-tab="macos"],
+  input[data-platform="linux"]:focus-visible ~ * .tabs [data-tab="linux"],
+  input[data-platform="windows"]:focus-visible ~ * .tabs [data-tab="windows"] {
+    outline: 1px solid var(--color-accent-200);
+    outline-offset: 3px;
+  }
+</style>

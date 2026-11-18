@@ -1,0 +1,178 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import SubHead from "./SubHead.astro";
+import { withBase } from "../../lib/url";
+
+// Cada cifra sale de `docs/operations/rendimiento-y-presupuestos.md`: medias de
+// dos repeticiones por escenario salvo donde se dice otra cosa. Ninguna está
+// redondeada hacia arriba ni extrapolada, y el laboratorio es una VM de Docker
+// Desktop en un Mac arm64, no un VPS ni un enlace WAN.
+const stats = [
+  {
+    value: "≈1 Gbit/s",
+    label: "TCP por camino directo",
+    detail: "media 1009,8 Mbit/s",
+  },
+  {
+    value: "21,6 Mbit/s",
+    label: "TCP por relay (UDP o TLS)",
+    detail: "con la cuota por defecto de 24 Mbit/s",
+  },
+  {
+    value: "0,55 ms",
+    label: "RTT p50 por camino directo",
+    detail: "sin túnel: 0,12 ms",
+  },
+  {
+    value: "≈5,3 s",
+    label: "reconexión de un par nuevo",
+    detail: "máximo en 21 de 21 experimentos",
+  },
+];
+
+const paths = [
+  {
+    path: "directo",
+    tcp: "1009,8",
+    p50: "0,55",
+    p95: "0,95",
+    p99: "1,53",
+    cpu: "118,9",
+    rss: "6,7",
+  },
+  {
+    path: "relay UDP",
+    tcp: "21,6",
+    p50: "0,76",
+    p95: "1,57",
+    p99: "3,25",
+    cpu: "7,3",
+    rss: "7,4",
+  },
+  {
+    path: "relay TLS 443",
+    tcp: "21,6",
+    p50: "0,72",
+    p95: "1,54",
+    p99: "2,90",
+    cpu: "9,9",
+    rss: "7,5",
+  },
+];
+
+const steady = [
+  {
+    value: "12 / 12",
+    label: "transferencias SHA-256 íntegras",
+    detail: "soak de 12 min, media 24,99 Mbit/s",
+  },
+  {
+    value: "0,057 %",
+    label: "pérdida de ping en el soak",
+    detail: "3515 enviados, 3513 recibidos",
+  },
+  {
+    value: "788 / s",
+    label: "lecturas del control plane",
+    detail: "200 clientes, p95 ≈0,43 s",
+  },
+  {
+    value: "4096",
+    label: "asignaciones simultáneas del relay",
+    detail: "la 4097 se rechaza por diseño",
+  },
+];
+---
+
+<div class="space-y-10">
+  <p class="max-w-[68ch] text-sm leading-6 text-gray-300">
+    Medido en laboratorio: una VM Linux de 5 vCPU en Docker Desktop sobre un Mac
+    arm64, con dos repeticiones por escenario. <strong class="font-medium text-gray-100"
+      >No es un VPS ni una red WAN</strong
+    >, así que no dimensiona un despliegue: son alarmas de regresión, no promesas.
+  </p>
+
+  <dl class="grid grid-cols-1 gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-4">
+    {
+      stats.map((stat) => (
+        <div class="bg-panel p-5">
+          <dd class="font-mono text-2xl font-medium tracking-tight text-gray-100">
+            {stat.value}
+          </dd>
+          <dt class="mt-2 text-xs text-gray-300">{stat.label}</dt>
+          <p class="mt-1 text-xs text-gray-400">{stat.detail}</p>
+        </div>
+      ))
+    }
+  </dl>
+
+  <div>
+    <SubHead title="por camino" />
+    <div class="mt-5 overflow-x-auto border border-rule">
+      <table class="min-w-[36rem] font-mono text-xs">
+        <caption class="sr-only">
+          Rendimiento del túnel por camino: directo, relay UDP y relay TLS
+        </caption>
+        <thead>
+          <tr class="border-b border-rule bg-panel text-gray-400">
+            <th scope="col" class="px-4 py-3 font-normal">camino</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">TCP Mbit/s</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">RTT p50 ms</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">p95 ms</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">p99 ms</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">CPU agente %</th>
+            <th scope="col" class="px-4 py-3 text-right font-normal">RSS MiB</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            paths.map((row) => (
+              <tr class="border-b border-rule last:border-b-0">
+                <th scope="row" class="px-4 py-3 font-normal text-gray-100">{row.path}</th>
+                <td class="px-4 py-3 text-right text-gray-300">{row.tcp}</td>
+                <td class="px-4 py-3 text-right text-gray-300">{row.p50}</td>
+                <td class="px-4 py-3 text-right text-gray-300">{row.p95}</td>
+                <td class="px-4 py-3 text-right text-gray-300">{row.p99}</td>
+                <td class="px-4 py-3 text-right text-gray-300">{row.cpu}</td>
+                <td class="px-4 py-3 text-right text-gray-300">{row.rss}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-3 max-w-[68ch] text-xs leading-5 text-gray-400">
+      512 MiB por transferencia con SHA-256 en ambos extremos; 2000 ecos por
+      repetición; CPU y RSS del peor agente, donde 100 % es un núcleo. La meseta
+      del relay es compatible con su cuota de 24 Mbit/s por asignación: no es
+      saturación de CPU ni una promesa de caudal.
+    </p>
+  </div>
+
+  <div>
+    <SubHead title="estabilidad y escala" />
+    <dl class="mt-5 grid grid-cols-1 gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-4">
+      {
+        steady.map((stat) => (
+          <div class="bg-panel p-5">
+            <dd class="font-mono text-2xl font-medium tracking-tight text-gray-100">
+              {stat.value}
+            </dd>
+            <dt class="mt-2 text-xs text-gray-300">{stat.label}</dt>
+            <p class="mt-1 text-xs text-gray-400">{stat.detail}</p>
+          </div>
+        ))
+      }
+    </dl>
+    <p class="mt-3 max-w-[68ch] text-xs leading-5 text-gray-400">
+      Aún no hay soak de 72 h ni mediciones en hardware o redes reales.
+    </p>
+  </div>
+
+  <p class="text-xs">
+    <a href={withBase("/rendimiento/")} class="font-mono text-accent-200 underline underline-offset-4"
+      >metodología, tablas completas y presupuestos</a
+    >
+  </p>
+</div>

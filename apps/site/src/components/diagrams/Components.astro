@@ -1,0 +1,68 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import DiagramFrame from "./DiagramFrame.astro";
+import { arrow, box, label, zone } from "./diagram";
+
+// Las piezas del sistema y quién habla con quién. Los ocho servicios del stack
+// (`netns`, HAProxy, Caddy, PostgreSQL, Dex, control plane, coordinator y relay)
+// están dentro de la zona del servidor; `netns` solo posee el namespace de red
+// que comparten HAProxy y el relay, y no tiene lógica, así que no se dibuja.
+// PostgreSQL y Dex solo los usa el control plane y van como nota bajo su caja.
+const shapes = [
+  zone(200, 16, 600, 292, "tu servidor"),
+
+  box(16, 140, 156, 80, "administración", "raíz Ed25519 offline", "gold"),
+  label(94, 242, "firma certificados", { size: 11 }),
+  label(94, 258, "de emisor", { size: 11 }),
+
+  box(220, 52, 150, 52, "HAProxy", "TCP 443 · SNI y ALPN"),
+  box(400, 52, 150, 52, "Caddy", "TLS · panel y API"),
+  box(220, 150, 190, 72, "control plane", "panel · emisor · leases"),
+  label(315, 244, "con PostgreSQL 17 y Dex (OIDC)", { size: 11 }),
+  box(440, 150, 190, 72, "coordinator + STUN", "UDP 3478 y 3479"),
+  label(535, 244, "no consulta la base de datos", { size: 11 }),
+  box(660, 150, 120, 72, "relay", "UDP 443 · TLS", "relay"),
+
+  box(240, 372, 170, 60, "agente A", "túnel atenea0"),
+  box(590, 372, 170, 60, "agente B", "túnel atenea0"),
+
+  // El administrador entrega al control plane un certificado de emisor.
+  arrow("M172 180 L218 180", "gold", { dash: true }),
+
+  // Entrada compartida.
+  arrow("M370 78 L398 78"),
+  arrow("M295 52 C 295 26 720 26 720 148", "relay"),
+  label(510, 38, "SNI del relay y ALPN atenea-relay/2", {
+    tone: "relay",
+    size: 11,
+  }),
+  arrow("M440 104 L345 148"),
+  arrow("M500 104 L530 148"),
+
+  // Agentes: sincronización, anuncio y relay.
+  arrow("M290 372 L290 224", "plain", { dash: true }),
+  label(298, 310, "config firmada", { anchor: "start", size: 11 }),
+  arrow("M370 372 L490 224", "plain", { dash: true }),
+  arrow("M640 372 L580 224", "plain", { dash: true }),
+  label(535, 330, "anuncio y STUN", { size: 11 }),
+  arrow("M710 372 L722 224", "relay", { dash: true }),
+  label(730, 310, "relay", { anchor: "start", tone: "relay", size: 11 }),
+  arrow("M412 402 L588 402", "gold", { both: true, width: 2.5 }),
+  label(500, 394, "camino directo", { tone: "gold", size: 11 }),
+].join("");
+---
+
+<DiagramFrame
+  title="Componentes de Atenea One"
+  description="El servidor aloja HAProxy, Caddy, el control plane con su base de datos PostgreSQL y Dex, el coordinator con STUN y el relay. La raíz de firma queda fuera, en una estación de administración. Los agentes de los dispositivos hablan con el control plane, el coordinator y el relay, y entre sí por un camino directo."
+  viewBox="0 0 960 452"
+  minWidth={44}
+>
+  <Fragment set:html={shapes} />
+  <Fragment slot="caption">
+    Línea discontinua: señalización y sincronización. Dorado: autoridad de firma y
+    datos directos. Claro: el relay. HAProxy y el relay comparten un namespace de
+    red, y la raíz de firma nunca se monta en el servidor.
+  </Fragment>
+</DiagramFrame>

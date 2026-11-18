@@ -1,0 +1,31 @@
+{
+  "name": "@atenea/site",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Web oficial y documentación de Atenea One",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "astro dev",
+    "format": "biome format --write .",
+    "lint": "biome lint . && biome format .",
+    "preview": "astro preview",
+    "typecheck": "astro check"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@astrojs/markdown-remark": "7.3.9",
+    "@astrojs/sitemap": "3.7.5",
+    "@astrojs/starlight": "0.41.7",
+    "@astrojs/starlight-tailwind": "5.0.0",
+    "@biomejs/biome": "2.5.7",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@tailwindcss/vite": "4.3.5",
+    "astro": "7.4.12",
+    "gsap": "^3.15.1",
+    "rehype-external-links": "^3.0.0",
+    "tailwindcss": "4.3.5",
+    "typescript": "5.9.3"
+  }
+}

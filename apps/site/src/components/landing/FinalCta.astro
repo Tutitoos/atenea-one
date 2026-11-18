@@ -1,0 +1,43 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import InstallCommand from "./InstallCommand.astro";
+import { withBase } from "../../lib/url";
+
+// Esta banda no es una `Section`: lleva su propio `h2` porque el titular *es*
+// la llamada a la acción. Repite la geometría de `Section` -- `border-t`,
+// gutter `max-w-6xl`, `py-14` y `data-reveal` -- para que el ritmo sea idéntico.
+---
+
+<section id="instalar" class="border-t border-rule">
+  <div class="mx-auto box-border w-full max-w-6xl px-6 py-14" data-reveal>
+    <div class="mx-auto max-w-2xl text-center">
+      <h2
+        class="font-mono text-lg font-medium tracking-tight text-gray-100 sm:text-2xl"
+      >
+        Monta tu primera red.
+      </h2>
+      <p class="mx-auto mt-5 max-w-[60ch] text-sm leading-6 text-gray-300">
+        Clientes para Linux, macOS y Windows. Verifica siempre la descarga
+        contra el manifiesto firmado antes de enrolar el dispositivo.
+      </p>
+
+      <InstallCommand where="final_cta" class="mt-10" />
+
+      <div
+        class="mt-10 flex flex-wrap items-center justify-center gap-3 font-mono text-xs"
+      >
+        <a
+          href={withBase("/instalacion/")}
+          class="border border-graph-exact bg-raise px-4 py-2 text-gray-100 transition-colors hover:border-gray-700"
+          >instalar Atenea One</a
+        >
+        <a
+          href={withBase("/como-funciona/")}
+          class="border border-rule px-4 py-2 text-gray-300 transition-colors hover:border-rule-strong hover:text-gray-100"
+          >leer la documentación</a
+        >
+      </div>
+    </div>
+  </div>
+</section>

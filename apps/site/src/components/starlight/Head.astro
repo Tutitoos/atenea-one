@@ -1,0 +1,99 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+// El `<head>` de Starlight ya acierta con título, descripción, canónica,
+// favicon y OpenGraph. Este override lo renderiza intacto y añade solo lo que
+// no emite: la imagen de previsualización, los iconos, la cabecera de robots y
+// el JSON-LD de la página.
+import Default from "@astrojs/starlight/components/Head.astro";
+import { withBase } from "../../lib/url";
+import {
+  LICENSE_URL,
+  PREVIEW_ALT,
+  PROJECT_NAME,
+  absoluteUrl,
+  docDescription,
+  docPathname,
+  isNotFoundPage,
+} from "../../pages/_seo";
+
+const { entry } = Astro.locals.starlightRoute;
+
+// La 404 no tiene dirección que indexar.
+const isNotFound = isNotFoundPage(entry.id);
+
+const preview = absoluteUrl(Astro.site, "/og.png");
+const description = docDescription(entry);
+
+// Derivada de la entrada y no de `Astro.url`, para que coincida byte a byte con
+// el `rel="canonical"` de Starlight.
+const canonical = absoluteUrl(Astro.site, docPathname(entry.id));
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": `${canonical}#article`,
+      headline: entry.data.title,
+      description,
+      url: canonical,
+      inLanguage: "es",
+      isAccessibleForFree: true,
+      license: LICENSE_URL,
+      isPartOf: { "@id": absoluteUrl(Astro.site, "/#website") },
+      about: { "@id": absoluteUrl(Astro.site, "/#software") },
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": `${canonical}#breadcrumb`,
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: PROJECT_NAME,
+          item: absoluteUrl(Astro.site, "/"),
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: entry.data.title,
+          item: canonical,
+        },
+      ],
+    },
+  ],
+};
+---
+
+<Default {...Astro.props}><slot /></Default>
+
+<meta name="theme-color" content="#0a0b0d" />
+<meta property="og:image" content={preview} />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={PREVIEW_ALT} />
+<meta name="twitter:image" content={preview} />
+<meta name="twitter:image:alt" content={PREVIEW_ALT} />
+<link rel="icon" href={withBase("/favicon-32.png")} sizes="32x32" type="image/png" />
+<link rel="icon" href={withBase("/favicon-16.png")} sizes="16x16" type="image/png" />
+<link rel="apple-touch-icon" href={withBase("/apple-touch-icon.png")} sizes="180x180" />
+<link rel="manifest" href={withBase("/site.webmanifest")} />
+<link rel="license" href={LICENSE_URL} />
+<meta
+  name="robots"
+  content={isNotFound
+    ? "noindex, follow"
+    : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"}
+/>
+
+{
+  !isNotFound && (
+    <script
+      type="application/ld+json"
+      is:inline
+      set:html={JSON.stringify(structuredData)}
+    />
+  )
+}

@@ -1,0 +1,398 @@
+---
+// Copyright 2026 Tutitoos
+// SPDX-License-Identifier: Apache-2.0
+import SubHead from "./SubHead.astro";
+
+// Un diagrama de flujo de decisión: lo que cuenta de Atenea One no es qué cajas
+// hay sino qué ocurre en cada bifurcación -- sin configuración vigente se
+// deniega; sin hole punching se usa un relay; sin UDP, el relay TLS. El SVG se
+// genera desde estos datos y solo usa tokens del tema. La lista ordenada del
+// lado es su texto alternativo completo, y lo que se lee donde el SVG se
+// desplaza en horizontal.
+type Tone = "plain" | "ok" | "no" | "relay";
+
+const stroke: Record<Tone, string> = {
+  plain: "var(--color-rule-strong)",
+  ok: "var(--color-ok)",
+  no: "var(--color-no)",
+  relay: "var(--color-accent-200)",
+};
+const marker: Record<Tone, string> = {
+  plain: "flow-arrow",
+  ok: "flow-arrow-ok",
+  no: "flow-arrow-no",
+  relay: "flow-arrow-relay",
+};
+
+const boxes: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  sub?: string;
+  tone: Tone;
+}[] = [
+  {
+    x: 380,
+    y: 16,
+    w: 200,
+    h: 44,
+    title: "A quiere hablar con B",
+    tone: "plain",
+  },
+  {
+    x: 704,
+    y: 106,
+    w: 200,
+    h: 48,
+    title: "tráfico denegado",
+    sub: "falla cerrado",
+    tone: "no",
+  },
+  {
+    x: 330,
+    y: 208,
+    w: 300,
+    h: 52,
+    title: "anuncio + rendezvous",
+    sub: "el coordinator da pistas sin autenticar",
+    tone: "plain",
+  },
+  {
+    x: 60,
+    y: 310,
+    w: 190,
+    h: 48,
+    title: "camino directo",
+    sub: "datos cifrados E2E",
+    tone: "ok",
+  },
+  {
+    x: 60,
+    y: 426,
+    w: 190,
+    h: 48,
+    title: "relay UDP",
+    sub: "ALLOC + reenvío opaco",
+    tone: "relay",
+  },
+  {
+    x: 704,
+    y: 426,
+    w: 200,
+    h: 48,
+    title: "relay TLS 443",
+    sub: "SNI + ALPN",
+    tone: "relay",
+  },
+];
+
+const diamonds = [
+  {
+    cx: 480,
+    cy: 130,
+    w: 260,
+    h: 72,
+    t1: "¿configuración vigente?",
+    t2: "lease de 300 s",
+  },
+  {
+    cx: 480,
+    cy: 334,
+    w: 300,
+    h: 76,
+    t1: "¿funciona el hole punching?",
+    t2: "INIT Noise IK con MAC1",
+  },
+  { cx: 480, cy: 450, w: 240, h: 72, t1: "¿UDP permitido?", t2: "" },
+];
+
+const arrows: { d: string; tone: Tone }[] = [
+  { d: "M480 60 L480 94", tone: "plain" },
+  { d: "M610 130 L702 130", tone: "no" },
+  { d: "M480 166 L480 206", tone: "plain" },
+  { d: "M480 260 L480 294", tone: "plain" },
+  { d: "M330 334 L252 334", tone: "ok" },
+  { d: "M480 372 L480 412", tone: "plain" },
+  { d: "M360 450 L252 450", tone: "relay" },
+  { d: "M600 450 L702 450", tone: "relay" },
+];
+
+const labels: {
+  x: number;
+  y: number;
+  text: string;
+  tone: Tone;
+  anchor?: string;
+}[] = [
+  { x: 656, y: 121, text: "no", tone: "no" },
+  { x: 492, y: 190, text: "sí", tone: "ok", anchor: "start" },
+  { x: 291, y: 325, text: "sí", tone: "ok" },
+  { x: 492, y: 396, text: "no", tone: "no", anchor: "start" },
+  { x: 306, y: 442, text: "sí", tone: "ok" },
+  { x: 651, y: 442, text: "no", tone: "no" },
+];
+
+const steps = [
+  {
+    title: "Autorización",
+    text: "Sin una configuración firmada vigente el tráfico se deniega: el agente falla cerrado. El control plane la reemite cada 60 s con un lease de 300 s.",
+  },
+  {
+    title: "Anuncio y rendezvous",
+    text: "El agente se anuncia al coordinator, que pasa a cada par las direcciones candidatas del otro. Son pistas sin autenticar: no crean ninguna ruta por sí solas.",
+  },
+  {
+    title: "Camino directo",
+    text: "Los agentes hacen hole punching y negocian una sesión Noise IK. Solo un handshake válido crea la ruta, y los datos van cifrados de extremo a extremo.",
+  },
+  {
+    title: "Relay de respaldo",
+    text: "Sin camino directo, el tráfico va por un relay UDP o, si la red bloquea UDP, por TLS sobre el puerto 443. La misma sesión y los mismos contadores valen en cualquier camino; el relay solo ve datagramas cifrados.",
+  },
+];
+
+// En la documentación el diagrama va solo, en la columna del texto: sin la lista
+// de pasos de al lado, que ahí ya está escrita en la página.
+interface Props {
+  compact?: boolean;
+}
+const { compact = false } = Astro.props;
+---
+
+<div
+  class:list={[
+    "grid grid-cols-1 items-start gap-10",
+    !compact && "lg:grid-cols-[minmax(0,5fr)_minmax(0,3fr)]",
+  ]}
+>
+  <figure class="min-w-0">
+    <div class="relative">
+      <div class="overflow-x-auto border border-rule bg-panel p-4">
+        <svg
+          data-flow-svg
+          viewBox="40 0 880 500"
+          class="mx-auto block h-auto w-full min-w-[32rem]"
+          role="img"
+          aria-labelledby="flow-title flow-desc"
+          font-family="var(--font-mono)"
+          font-size="14"
+        >
+          <title id="flow-title">Cómo se conectan dos dispositivos</title>
+          <desc id="flow-desc">
+            Diagrama de flujo. Si no hay configuración firmada vigente, el tráfico
+            se deniega. Si la hay, el agente se anuncia y hace rendezvous. Si el
+            hole punching funciona, hay camino directo; si no, el tráfico va por
+            un relay UDP o, si UDP está bloqueado, por un relay TLS por el puerto
+            443.
+          </desc>
+
+          <defs>
+            {
+              (Object.keys(marker) as Tone[]).map((tone) => (
+                <marker
+                  id={marker[tone]}
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto"
+                >
+                  <path
+                    d="M0 0 10 5 0 10z"
+                    style={`fill: ${tone === "plain" ? "var(--color-gray-400)" : stroke[tone]}`}
+                  />
+                </marker>
+              ))
+            }
+          </defs>
+
+          {
+            arrows.map((arrow) => (
+              <path
+                d={arrow.d}
+                fill="none"
+                style={`stroke: ${arrow.tone === "plain" ? "var(--color-gray-400)" : stroke[arrow.tone]}; stroke-width: 1.5`}
+                marker-end={`url(#${marker[arrow.tone]})`}
+              />
+            ))
+          }
+
+          {
+            diamonds.map((node) => (
+              <g>
+                <polygon
+                  points={`${node.cx},${node.cy - node.h / 2} ${node.cx + node.w / 2},${node.cy} ${node.cx},${node.cy + node.h / 2} ${node.cx - node.w / 2},${node.cy}`}
+                  style="fill: var(--color-raise); stroke: var(--color-accent-200); stroke-width: 1"
+                />
+                <text
+                  x={node.cx}
+                  y={node.t2 ? node.cy - 1 : node.cy + 4}
+                  text-anchor="middle"
+                  font-weight="500"
+                  style="fill: var(--color-gray-100)"
+                >
+                  {node.t1}
+                </text>
+                {node.t2 && (
+                  <text
+                    x={node.cx}
+                    y={node.cy + 14}
+                    text-anchor="middle"
+                    font-size="11.5"
+                    style="fill: var(--color-gray-400)"
+                  >
+                    {node.t2}
+                  </text>
+                )}
+              </g>
+            ))
+          }
+
+          {
+            boxes.map((node) => (
+              <g>
+                <rect
+                  x={node.x}
+                  y={node.y}
+                  width={node.w}
+                  height={node.h}
+                  style={`fill: ${node.tone === "plain" ? "var(--color-raise)" : "var(--color-panel)"}; stroke: ${stroke[node.tone]}; stroke-width: 1`}
+                />
+                <text
+                  x={node.x + node.w / 2}
+                  y={node.sub ? node.y + node.h / 2 - 2 : node.y + node.h / 2 + 4}
+                  text-anchor="middle"
+                  font-weight="500"
+                  style={`fill: ${node.tone === "plain" ? "var(--color-gray-100)" : stroke[node.tone]}`}
+                >
+                  {node.title}
+                </text>
+                {node.sub && (
+                  <text
+                    x={node.x + node.w / 2}
+                    y={node.y + node.h / 2 + 13}
+                    text-anchor="middle"
+                    font-size="11.5"
+                    style="fill: var(--color-gray-400)"
+                  >
+                    {node.sub}
+                  </text>
+                )}
+              </g>
+            ))
+          }
+
+          {
+            labels.map((label) => (
+              <text
+                x={label.x}
+                y={label.y}
+                text-anchor={label.anchor ?? "middle"}
+                font-size="13"
+                style={`fill: ${stroke[label.tone]}`}
+              >
+                {label.text}
+              </text>
+            ))
+          }
+        </svg>
+      </div>
+      <button
+        type="button"
+        data-flow-open
+        class="absolute top-3 right-3 flex items-center gap-2 border border-rule-strong bg-raise px-3 py-1.5 font-mono text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-gray-100"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="square"
+          aria-hidden="true"
+        >
+          <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" />
+        </svg>
+        ampliar
+        <span class="sr-only">el diagrama</span>
+      </button>
+    </div>
+    <figcaption class="mt-3 max-w-[68ch] text-xs leading-5 text-gray-400">
+      Verde: camino directo. Claro: relay. Rojo: tráfico denegado. Los rombos son
+      decisiones que toma el agente en cada conexión. En cualquier camino rige la
+      misma sesión Noise con los mismos contadores, el relay solo ve datagramas
+      cifrados, y el camino directo se reintenta periódicamente (histéresis de
+      5 s).
+    </figcaption>
+  </figure>
+
+  {!compact && (
+  <ol class="space-y-5">
+    {
+      steps.map((step, index) => (
+        <li>
+          <SubHead title={step.title} marker={String(index + 1).padStart(2, "0")} />
+          <p class="mt-3 max-w-[68ch] text-sm leading-6 text-gray-300">{step.text}</p>
+        </li>
+      ))
+    }
+  </ol>
+  )}
+</div>
+
+<dialog
+  id="flow-dialog"
+  aria-label="Diagrama de cómo se conectan dos dispositivos, ampliado"
+  class="m-auto max-h-[94vh] w-[min(96vw,1500px)] max-w-none overflow-hidden border border-rule-strong bg-panel p-0 text-gray-100 backdrop:bg-black/85"
+>
+  <div class="flex items-center justify-between border-b border-rule px-4 py-3 font-mono text-xs text-gray-400">
+    <span>cómo se conectan dos dispositivos</span>
+    <button
+      type="button"
+      data-flow-close
+      class="border border-rule-strong bg-raise px-3 py-1 text-gray-300 transition-colors hover:text-gray-100"
+    >
+      cerrar
+    </button>
+  </div>
+  <div data-flow-body class="max-h-[calc(94vh-3.25rem)] overflow-auto p-4"></div>
+</dialog>
+
+<script>
+  const open = document.querySelector<HTMLButtonElement>("[data-flow-open]");
+  const source = document.querySelector<SVGSVGElement>("[data-flow-svg]");
+  const dialog = document.getElementById("flow-dialog") as HTMLDialogElement | null;
+  const body = dialog?.querySelector<HTMLElement>("[data-flow-body]");
+
+  if (open && source && dialog && body) {
+    open.addEventListener("click", () => {
+      // Una copia del SVG, no el original: así el de la página no se mueve.
+      // Los ids de `<defs>` repetidos resuelven al primero, que es idéntico; el
+      // título y la descripción se quitan porque el diálogo ya lleva su etiqueta.
+      const copy = source.cloneNode(true) as SVGSVGElement;
+      copy.removeAttribute("aria-labelledby");
+      copy.removeAttribute("data-flow-svg");
+      copy.setAttribute("aria-hidden", "true");
+      copy.classList.remove("min-w-[32rem]");
+      copy.classList.add("min-w-[56rem]");
+      // Que quepa entera sin desplazar: el alto disponible (la ventana menos la
+      // cabecera y los márgenes del diálogo) fija el ancho máximo, y `min-w`
+      // lo sube en pantallas estrechas, donde sí se desplaza.
+      const box = source.viewBox.baseVal;
+      const availableHeight = window.innerHeight * 0.94 - 110;
+      copy.style.maxWidth = `${(availableHeight * box.width) / box.height}px`;
+      body.replaceChildren(copy);
+      dialog.showModal();
+    });
+
+    dialog.querySelector("[data-flow-close]")?.addEventListener("click", () => dialog.close());
+    // Un clic en el fondo oscuro, fuera del cuadro, cierra el diálogo.
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => body.replaceChildren());
+  }
+</script>
