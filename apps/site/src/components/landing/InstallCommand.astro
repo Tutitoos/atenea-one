@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { REPOSITORY_URL } from "../../site.mjs";
+import { withBase } from "../../lib/url";
 import CopyButton from "./CopyButton.astro";
 
 interface Props {
@@ -12,19 +13,29 @@ interface Props {
 
 const { where, class: className = "" } = Astro.props;
 
-// Los instaladores aún no existen: la URL es la que tendrán en la última
-// release de GitHub. `install.sh` se ejecuta con `bash`, no `sh`.
-const base = `${REPOSITORY_URL}/releases/latest/download`;
-const posix = `curl -fsSL ${base}/install.sh | bash`;
+// La release publica paquetes, no scripts de instalación (ADR-022 y ADR-023).
+// Solo `atenea.deb` tiene nombre estable (alias del `.deb` del CLI, amd64); los
+// demás llevan la versión en el nombre y no hay una URL fija que descargar.
+const releases = `${REPOSITORY_URL}/releases/latest`;
 
 const platforms = [
-  { id: "macos", label: "macOS", prompt: "$", command: posix },
-  { id: "linux", label: "Linux", prompt: "$", command: posix },
+  {
+    id: "macos",
+    label: "macOS",
+    prompt: "$",
+    command: `# descarga atenea-one-<versión>-macos-arm64.pkg de ${releases}\nsudo installer -pkg atenea-one-*-macos-arm64.pkg -target /`,
+  },
+  {
+    id: "linux",
+    label: "Linux",
+    prompt: "$",
+    command: `curl -fsSLO ${releases}/download/atenea.deb\nsudo apt install ./atenea.deb`,
+  },
   {
     id: "windows",
     label: "Windows",
     prompt: "PS>",
-    command: `irm ${base}/install.ps1 | iex`,
+    command: `# descarga atenea-one-<versión>-windows-amd64.exe de ${releases}\n.\\atenea-one-<versión>-windows-amd64.exe /S`,
   },
 ];
 ---
@@ -93,6 +104,15 @@ const platforms = [
       }
     </div>
   </div>
+
+  <p class="mt-3 text-left text-xs text-gray-400">
+    Paquetes sin firma de desarrollador ni notarización.
+    <a
+      href={withBase("/instalacion/#verificar-la-descarga")}
+      class="text-accent-200 underline underline-offset-4"
+      >Verifica la descarga</a
+    > antes de instalar.
+  </p>
 </fieldset>
 
 <style>
