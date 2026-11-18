@@ -264,6 +264,223 @@
         ]
       }
     },
+    "/api/v1/device/admin/devices/{dev}/grant": {
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concede o sustituye permisos de un dispositivo del alcance; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "setDelegatedGrant",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceGrantInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegatedGrantEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Retira una concesión que dio este dispositivo; cuerpo vacío; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "removeDelegatedGrant",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/device/admin/devices/{dev}/revoke": {
       "post": {
         "tags": [
@@ -387,6 +604,106 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DelegatedGrant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/grants": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concesiones de los dispositivos del alcance; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "listDelegatedGrants",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DelegatedGrantEntry"
+                  }
                 }
               }
             }
@@ -6512,6 +6829,43 @@
           }
         }
       },
+      "DelegatedGrantEntry": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "scopes",
+          "scope",
+          "granted_by_device",
+          "granted_at"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "granted_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Dispositivo que la concedió; null si fue un administrador."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DeviceGrantScope"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceGrantPermission"
+            }
+          }
+        }
+      },
       "DelegatedPolicy": {
         "type": "object",
         "required": [
@@ -6722,6 +7076,7 @@
           "scopes",
           "scope",
           "granted_by",
+          "granted_by_device",
           "granted_at"
         ],
         "properties": {
@@ -6736,6 +7091,14 @@
           "granted_by": {
             "type": "string",
             "format": "uuid"
+          },
+          "granted_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Dispositivo que la concedió (ADR-027); null si fue un administrador."
           },
           "scope": {
             "$ref": "#/components/schemas/DeviceGrantScope"
@@ -6784,7 +7147,7 @@
             "items": {
               "$ref": "#/components/schemas/DeviceGrantPermission"
             },
-            "maxItems": 6,
+            "maxItems": 7,
             "minItems": 1
           }
         }
@@ -6797,7 +7160,8 @@
           "write:join-codes",
           "write:approve-devices",
           "write:policies",
-          "write:revoke-devices"
+          "write:revoke-devices",
+          "write:grants"
         ]
       },
       "DeviceGrantScope": {

@@ -173,6 +173,14 @@ pub fn router(s: AppState) -> Router {
             "/api/v1/device/admin/devices/{dev}/revoke",
             post(crate::delegated::revoke),
         )
+        .route(
+            "/api/v1/device/admin/grants",
+            get(crate::delegated::list_grants),
+        )
+        .route(
+            "/api/v1/device/admin/devices/{dev}/grant",
+            put(crate::delegated::set_grant).delete(crate::delegated::remove_grant),
+        )
         .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
         .route(
             "/api/v1/networks/{net}/routes/{id}/approve",

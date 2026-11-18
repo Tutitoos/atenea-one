@@ -13,32 +13,33 @@ use sqlx::{PgConnection, Row, postgres::PgRow};
 use uuid::Uuid;
 
 /// Lista cerrada, en el orden en que se guarda y se devuelve.
-pub const SCOPES: [&str; 6] = [
+pub const SCOPES: [&str; 7] = [
     "read:devices",
     "read:policies",
     "write:join-codes",
     "write:approve-devices",
     "write:policies",
     "write:revoke-devices",
+    "write:grants",
 ];
 const MAX_SCOPE_DEVICES: usize = 64;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
-    kind: String,
+    pub(crate) kind: String,
     #[serde(default)]
-    devices: Vec<Uuid>,
+    pub(crate) devices: Vec<Uuid>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grant {
-    scopes: Vec<String>,
-    scope: Scope,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) scope: Scope,
 }
 
 /// Permisos en orden canónico, o `None` si la lista está vacía, repite alguno o nombra uno desconocido.
-fn canonical_scopes(requested: &[String]) -> Option<Vec<&'static str>> {
+pub(crate) fn canonical_scopes(requested: &[String]) -> Option<Vec<&'static str>> {
     let known = requested.iter().all(|s| SCOPES.contains(&s.as_str()));
     let unique = requested
         .iter()
@@ -53,7 +54,7 @@ fn canonical_scopes(requested: &[String]) -> Option<Vec<&'static str>> {
 }
 
 /// La lista de dispositivos solo existe con `devices`: de 1 a 64, sin repetir.
-fn valid_scope(scope: &Scope) -> bool {
+pub(crate) fn valid_scope(scope: &Scope) -> bool {
     let unique = scope
         .devices
         .iter()
@@ -66,8 +67,8 @@ fn valid_scope(scope: &Scope) -> bool {
     }
 }
 
-fn view(r: &PgRow) -> Value {
-    json!({"device_id":r.get::<Uuid,_>("device_id"),"scopes":r.get::<Value,_>("scopes"),"scope":{"kind":r.get::<String,_>("scope_kind"),"devices":r.get::<Value,_>("scope_devices")},"granted_by":r.get::<Uuid,_>("granted_by"),"granted_at":r.get::<chrono::DateTime<chrono::Utc>,_>("granted_at")})
+pub(crate) fn view(r: &PgRow) -> Value {
+    json!({"device_id":r.get::<Uuid,_>("device_id"),"scopes":r.get::<Value,_>("scopes"),"scope":{"kind":r.get::<String,_>("scope_kind"),"devices":r.get::<Value,_>("scope_devices")},"granted_by":r.get::<Uuid,_>("granted_by"),"granted_by_device":r.get::<Option<Uuid>,_>("granted_by_device"),"granted_at":r.get::<chrono::DateTime<chrono::Utc>,_>("granted_at")})
 }
 
 pub async fn list(
@@ -76,7 +77,7 @@ pub async fn list(
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     networks::access(&s, &h, net, false).await?;
-    let rows = sqlx::query("SELECT device_id,scopes,scope_kind,scope_devices,granted_by,granted_at FROM device_grants WHERE network_id=$1 ORDER BY granted_at,device_id").bind(net).fetch_all(&s.pool).await?;
+    let rows = sqlx::query("SELECT device_id,scopes,scope_kind,scope_devices,granted_by,granted_by_device,granted_at FROM device_grants WHERE network_id=$1 ORDER BY granted_at,device_id").bind(net).fetch_all(&s.pool).await?;
     Ok(Json(json!(rows.iter().map(view).collect::<Vec<_>>())))
 }
 
@@ -108,17 +109,12 @@ pub async fn set(
         Some("approved") => {}
         Some(_) => return Err(ApiError::conflict("device_not_approved")),
     }
-    let members: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM devices WHERE network_id=$1 AND status<>'revoked' AND id=ANY($2)",
-    )
-    .bind(net)
-    .bind(&b.scope.devices)
-    .fetch_one(&mut *tx)
-    .await?;
-    if members != b.scope.devices.len() as i64 {
+    if !members_ok(&mut tx, net, &b.scope.devices).await? {
         return Err(ApiError::bad("invalid_grant"));
     }
-    let row = sqlx::query("INSERT INTO device_grants(device_id,network_id,scopes,scope_kind,scope_devices,granted_by) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (device_id) DO UPDATE SET scopes=EXCLUDED.scopes,scope_kind=EXCLUDED.scope_kind,scope_devices=EXCLUDED.scope_devices,granted_by=EXCLUDED.granted_by,granted_at=now() RETURNING device_id,scopes,scope_kind,scope_devices,granted_by,granted_at").bind(dev).bind(net).bind(json!(scopes)).bind(&b.scope.kind).bind(json!(b.scope.devices)).bind(user).fetch_one(&mut *tx).await?;
+    // Cambiar la concesión de quien concede retira lo que él dio (ADR-027, D5).
+    cascade(&mut tx, net, dev, "user", user, org).await?;
+    let row = store(&mut tx, net, dev, &scopes, &b.scope, user, None).await?;
     audit::record(
         &mut tx,
         "user",
@@ -181,7 +177,76 @@ pub async fn withdraw(
         json!({"reason":reason,"scopes":row.get::<Value,_>("scopes"),"scope":{"kind":row.get::<String,_>("scope_kind")}}),
     )
     .await?;
+    cascade(c, net, dev, actor_kind, actor, org).await?;
     Ok(true)
+}
+
+/// D5 (ADR-027): lo que concedió un dispositivo no sobrevive a un cambio ni a la retirada de su propia concesión.
+pub async fn cascade(
+    c: &mut PgConnection,
+    net: Uuid,
+    grantor: Uuid,
+    actor_kind: &str,
+    actor: Uuid,
+    org: Uuid,
+) -> Result<(), ApiError> {
+    let gone = sqlx::query("DELETE FROM device_grants WHERE granted_by_device=$1 AND network_id=$2 RETURNING device_id,scopes,scope_kind")
+        .bind(grantor)
+        .bind(net)
+        .fetch_all(&mut *c)
+        .await?;
+    for row in gone {
+        audit::record(
+            c,
+            actor_kind,
+            actor,
+            Some(org),
+            Some(net),
+            "device.grant_revoke",
+            row.get::<Uuid, _>("device_id"),
+            json!({"reason":"grantor_changed","grantor":grantor,"scopes":row.get::<Value,_>("scopes"),"scope":{"kind":row.get::<String,_>("scope_kind")}}),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Los dispositivos de un alcance `devices` son de la red y no están revocados.
+pub(crate) async fn members_ok(
+    c: &mut PgConnection,
+    net: Uuid,
+    devices: &[Uuid],
+) -> Result<bool, ApiError> {
+    let members: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE network_id=$1 AND status<>'revoked' AND id=ANY($2)",
+    )
+    .bind(net)
+    .bind(devices)
+    .fetch_one(c)
+    .await?;
+    Ok(members == devices.len() as i64)
+}
+
+/// Concede o sustituye. `granted_by` es siempre un usuario; `by_device` solo en una concesión delegada.
+pub(crate) async fn store(
+    c: &mut PgConnection,
+    net: Uuid,
+    dev: Uuid,
+    scopes: &[&str],
+    scope: &Scope,
+    granted_by: Uuid,
+    by_device: Option<Uuid>,
+) -> Result<PgRow, ApiError> {
+    Ok(sqlx::query("INSERT INTO device_grants(device_id,network_id,scopes,scope_kind,scope_devices,granted_by,granted_by_device) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (device_id) DO UPDATE SET scopes=EXCLUDED.scopes,scope_kind=EXCLUDED.scope_kind,scope_devices=EXCLUDED.scope_devices,granted_by=EXCLUDED.granted_by,granted_by_device=EXCLUDED.granted_by_device,granted_at=now() RETURNING device_id,scopes,scope_kind,scope_devices,granted_by,granted_by_device,granted_at")
+        .bind(dev)
+        .bind(net)
+        .bind(json!(scopes))
+        .bind(&scope.kind)
+        .bind(json!(scope.devices))
+        .bind(granted_by)
+        .bind(by_device)
+        .fetch_one(c)
+        .await?)
 }
 
 #[cfg(test)]
