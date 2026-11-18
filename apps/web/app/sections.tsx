@@ -11,6 +11,7 @@ import { Subnets } from './subnets';
 import { NetworkSettings } from './network-settings';
 import { Audit, Metrics, Relays, Topology } from './observability';
 import { Overview } from './overview';
+import { Sharing } from './sharing';
 import { Status } from './ui';
 
 // Contrato del registro: las vistas nuevas reciben contexto; las existentes conservan sus props.
@@ -21,6 +22,8 @@ export type SectionProps = {
   routes: UseQueryResult<Model<'Route'>[]>;
   role: Model<'Role'>;
   canEdit: boolean;
+  /** Puede generar códigos y aprobar con la huella (enroller de la red, ADR-028 D6) sin ser administrador. */
+  enroll?: boolean;
   elapsed: number;
   refresh: () => Promise<unknown>;
 };
@@ -35,12 +38,12 @@ function DeviceSection(props: SectionProps) {
     {props.routes.isError && <p className="warning">No se han podido consultar las rutas aprobadas; no se puede evaluar la advertencia de forwarding del router.</p>}
     {props.devices.data && <Devices key={pendingOnly ? 'pending' : 'all'}
       devices={props.devices.data} status={pendingOnly ? 'pending' : 'all'}
-      accessRole={props.role} net={props.net} elapsed={props.elapsed}
+      accessRole={props.role} net={props.net} elapsed={props.elapsed} enroll={props.enroll}
       refresh={props.refresh} routes={props.routes.data} grants={grants.data}/>}</>;
 }
-function EnrollmentSection({ network, net, canEdit }: SectionProps) {
+function EnrollmentSection({ network, net, canEdit, enroll }: SectionProps) {
   return <>{network.data && <JoinNetwork net={net} canEdit={canEdit} policy={network.data.join_policy}/>}
-    {canEdit ? <Enrollment net={net}/> : <p>Solo administradores y propietarios pueden crear tokens.</p>}</>;
+    {canEdit || enroll ? <Enrollment net={net}/> : <p>Solo administradores y propietarios pueden crear tokens.</p>}</>;
 }
 function ObservabilitySection({ net, devices, elapsed }: SectionProps) {
   return <><Status query={devices}/>{devices.data && <>
@@ -75,4 +78,5 @@ export const sections: { id: string; label: string; group: string; Component: Re
   },
   { id: 'Auditoría', label: 'Auditoría', group: 'Observabilidad',
     Component: props => <Audit net={props.net} devices={props.devices.data ?? []}/> },
+  { id: 'Compartir', label: 'Compartir', group: 'Red', Component: props => <Sharing net={props.net} canManage={props.role === 'owner'}/> },
 ];
