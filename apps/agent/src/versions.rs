@@ -7,9 +7,9 @@
 //! entorno vacío, plazo y tope de salida, y solo si la ruta es de confianza (root o Administradores, sin enlaces ni
 //! escritura de otros). Cualquier fallo omite ese componente: no es un error del agente.
 use serde::Serialize;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Uno por componente como máximo (ADR-025).
@@ -18,6 +18,8 @@ const MAX_VERSION_CHARS: usize = 32;
 /// Plazo de cada `--version` y tope de lo que se lee de su salida.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const PROBE_OUTPUT_LIMIT: usize = 256;
+/// Intentos de `exec` si el núcleo responde `ETXTBSY` (10 ms entre ellos: la ventana dura microsegundos).
+const SPAWN_BUSY_RETRIES: u32 = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,17 +104,37 @@ pub fn parse_line(component: Component, output: &[u8]) -> Option<ComponentVersio
     })
 }
 
+/// Lanza `programa --version` con el entorno vacío. Reintenta si el núcleo responde «fichero de texto ocupado»
+/// (`ETXTBSY`): un `fork` concurrente de otro hilo puede heredar durante unos microsegundos el descriptor con el que
+/// se acaba de escribir el binario (una actualización en curso, o un instalador) y `exec` falla aunque el fichero ya
+/// esté cerrado. Pasa en cuanto ese hijo hace su propio `exec`.
+fn spawn_version(program: &Path) -> Option<Child> {
+    for attempt in 0..SPAWN_BUSY_RETRIES {
+        match Command::new(program)
+            .arg("--version")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => return Some(child),
+            Err(e)
+                if e.kind() == ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < SPAWN_BUSY_RETRIES =>
+            {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Ejecuta `programa --version` con el entorno vacío y devuelve su salida; `None` si no arranca, tarda más del plazo o
 /// escribe más del tope.
 fn run_version(program: &Path) -> Option<Vec<u8>> {
-    let mut child = Command::new(program)
-        .arg("--version")
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child = spawn_version(program)?;
     let mut stdout = child.stdout.take()?;
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
