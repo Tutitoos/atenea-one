@@ -29,8 +29,9 @@ it('crear una red solo envía el nombre; la raíz propia queda en Avanzado', asy
   await user.click((await screen.findAllByRole('button', { name: 'Crear red' }))[0]);
   const dialog = await screen.findByRole('dialog');
   // Lo único que se pide en la vista principal es el nombre.
-  expect(within(dialog).getByLabelText('Nombre')).toBeVisible();
-  expect(within(dialog).getByText('Avanzado: usar mi propia clave raíz')).toBeVisible();
+  // El diálogo entra con una transición de opacidad: en jsdom no siempre ha terminado, así que se comprueba presencia.
+  expect(within(dialog).getByLabelText('Nombre')).toBeInTheDocument();
+  expect(within(dialog).getByText('Avanzado: usar mi propia clave raíz')).toBeInTheDocument();
   await user.type(within(dialog).getByLabelText('Nombre'), 'casa');
   await user.click(within(dialog).getAllByRole('button', { name: 'Crear red' })[0]);
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/orgs/{org}/networks', { params: { path: { org: org.id } }, body: { name: 'casa' } }));
