@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-029: Redes gestionadas por el servidor (crear una red con solo un nombre)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. Implementación en curso.
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. **Implementado en `main`, sin publicar ni desplegar** (control plane: migración `0017`, `managed.rs`, renovación automática, CIDR automáticos; panel: crear solo con nombre, «Añadir equipo», «Permitir todo entre equipos»). Guía: [cuentas y redes compartidas](../operations/cuentas-y-redes-compartidas.md). **Pendiente:** rotación de la clave de envoltura, prueba con un equipo real, y simulacro de restauración con la clave.
 - **Relacionados:** [ADR-005](ADR-005-custodia-clave-raiz.md) (modifica su regla «raíz en el host del control plane: prohibido» solo para las redes gestionadas), [ADR-028](ADR-028-cuentas-propias-y-redes-por-cuenta.md) (D1: raíz bajo custodia del usuario, que pasa a ser el modo avanzado), [ADR-018](ADR-018-union-solo-con-el-codigo.md) (el coordinator lee las anclas de las redes por API), [ADR-002](ADR-002-revocacion-lease.md).
 
 ## Contexto
@@ -68,4 +68,4 @@ Tras crear la red, el panel muestra «Añadir equipo» con un único comando lis
 
 ## Sin comprobar
 
-Todo: aún no hay código. En concreto, el AEAD exacto, el bloque de direcciones por defecto frente a las redes del piloto, y cómo se comporta la renovación con el servidor parado varios días.
+Comprobado con PostgreSQL 17 y un navegador real contra un servidor local: crear solo con nombre, certificado firmado y validado, renovación, comando de unión y política en un clic. **No comprobado:** unir un equipo real con ese comando, el simulacro de restauración con la clave de envoltura y la rotación de esa clave. Sin comprobar también: el bloque de direcciones por defecto frente a las redes del piloto, y cómo se comporta la renovación con el servidor parado varios días.

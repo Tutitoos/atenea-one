@@ -560,3 +560,14 @@ La migración `0016_network_members.sql` añade `network_members` (`viewer` o `e
 - `GET /api/v1/shared-networks` (sesión): las redes a las que la cuenta pertenece por invitación, con su `role`.
 - **Cuotas (D4)**, solo en organizaciones personales; las demás no tienen tope: `ATENEA_CP_PERSONAL_MAX_NETWORKS` (3, `409 network_limit`) y `ATENEA_CP_PERSONAL_MAX_DEVICES` (64 no revocados por red, `409 device_limit`, también al enrolar y al pedir unión).
 - **Auditoría:** `invitation.create`, `invitation.revoke`, `network_member.join`, `network_member.set`, `network_member.remove` y `network_member.leave`.
+
+## 28. Redes gestionadas por el servidor (ADR-029)
+
+La migración `0017_managed_networks.sql` añade `networks.root_mode` (`own` por defecto, `managed`) y `networks.root_wrapped` (la semilla de la raíz cifrada; solo en las gestionadas). Es aditiva.
+
+- `POST /api/v1/orgs/{org}/networks` solo exige `name`. **Sin `root_anchor`** la red es gestionada: el servidor genera la raíz Ed25519, la guarda cifrada con XChaCha20-Poly1305 (clave de envoltura `ATENEA_CP_ROOT_WRAP_KEY_FILE`, el id de la red como dato asociado) y firma el primer certificado de emisor (30 días, `issuer_serial` 1, auditoría `network.issuer_cert` con `{serial, managed: true}` y `actor_kind = system`). `409 managed_unavailable` si el servidor no tiene la clave de envoltura. **Con `root_anchor`** (64 hex) la raíz es del usuario (§26 y ADR-028) y el certificado se sube a mano.
+- Sin `ipv4_cidr`/`ipv6_cidr` se asignan solos: el primer `/24` libre de `10.64.0.0/10` que no se solape con ninguna red existente (`409 address_pool_exhausted` si no queda) y un `/64` ULA derivado de bits aleatorios del id de la red. Los CIDR indicados se validan como siempre.
+- `Network` y `SharedNetwork` añaden `root_mode`.
+- `PUT /api/v1/networks/{net}/issuer-cert` responde `409 managed_network` en una red gestionada: el servidor firma y renueva su certificado.
+- **Renovación:** una tarea del control plane revisa cada hora las redes gestionadas y firma un certificado con serial mayor cuando el instalado ha consumido dos tercios de su vida (o falta). La raíz se descifra solo en memoria durante la firma. Si no se puede descifrar (clave de envoltura distinta) no se toca el certificado vigente.
+- El agente y los formatos firmados **no cambian**: el certificado es el de ADR-005.

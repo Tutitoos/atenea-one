@@ -80,8 +80,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(a) => Some(tokio::net::TcpListener::bind(&a.listen).await?),
         None => None,
     };
+    // Con la clave de envoltura (ADR-029) el servidor crea redes gestionadas y renueva sus certificados; si el fichero
+    // se configura pero no se puede leer, no arranca: nunca se queda a medias.
+    let wrap = config
+        .root_wrap_key_file
+        .as_deref()
+        .map(atenea_control_plane::managed::Wrap::load)
+        .transpose()?;
     let state = AppState::new(pool, config, atenea_identity::signing_key(bytes))
-        .with_connectivity(connectivity);
+        .with_connectivity(connectivity)
+        .with_wrap(wrap);
     let internal_task = internal_listener.zip(internal).map(|(listener, access)| {
         tracing::info!("listener interno de raíces activado");
         use std::future::IntoFuture;
@@ -106,7 +114,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .await?;
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let sampler = tokio::spawn(atenea_control_plane::panel::sampler(state.clone(), stop_rx));
+    let sampler = tokio::spawn(atenea_control_plane::panel::sampler(
+        state.clone(),
+        stop_rx.clone(),
+    ));
+    let renewer = tokio::spawn(atenea_control_plane::managed::renewer(
+        state.clone(),
+        stop_rx,
+    ));
     axum::serve(
         listener,
         atenea_control_plane::router(state)
@@ -118,6 +133,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .await?;
     let _ = stop_tx.send(true);
     sampler.await?;
+    renewer.await?;
     metrics_task.abort();
     if let Some(task) = internal_task {
         task.abort();

@@ -12,7 +12,7 @@ import { Dns } from './dns';
 const network: Model<'Network'> = {
   id: '00000000-0000-4000-8000-000000000002', org_id: '00000000-0000-4000-8000-000000000001',
   name: 'Red sintética', ipv4_cidr: '10.42.0.0/24', ipv6_cidr: 'fd42::/64',
-  root_anchor: 'ab'.repeat(32), has_issuer_cert: false, join_policy: 'cerrada',
+  root_anchor: 'ab'.repeat(32), root_mode: 'own', has_issuer_cert: false, join_policy: 'cerrada',
   issuer_cert_not_after: null,
 };
 function Settings({ canEdit = true, installed = false, refresh = async () => {} }: {

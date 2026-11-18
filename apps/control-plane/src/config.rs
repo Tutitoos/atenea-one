@@ -33,6 +33,9 @@ pub struct Config {
     pub register_global_per_minute: u32,
     /// Mínimo de caracteres de una contraseña local; 12 por defecto y nunca menos de 8, aunque se configure menos.
     pub password_min_chars: usize,
+    /// Fichero (0400/0600, 64 hex) con la clave que cifra las raíces de las redes gestionadas (ADR-029). Sin él no se
+    /// crean redes gestionadas; las de raíz propia siguen funcionando.
+    pub root_wrap_key_file: Option<std::path::PathBuf>,
     /// Redes que puede tener una organización personal (ADR-028 D4). Las demás organizaciones no tienen tope.
     pub personal_max_networks: u32,
     /// Dispositivos vivos (no revocados) por red de una organización personal.
@@ -85,6 +88,7 @@ impl Default for Config {
             password_min_chars: 12,
             personal_max_devices: 64,
             max_open_invitations: 10,
+            root_wrap_key_file: None,
             device_per_minute: 30,
             trusted_proxies: Vec::new(),
             application_role: None,

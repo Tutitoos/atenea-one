@@ -165,13 +165,14 @@ fn schemas() -> ComponentsBuilder {
         ("NetworkAccess", complete(&[("network_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
         ("NetworkMember", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"])), ("display_name", nullable_text()), ("created_at", timestamp())])),
         ("NetworkMemberRole", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
-        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("role", choices(&["viewer", "enroller"]))])),
-        ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
+        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("role", choices(&["viewer", "enroller"]))])),
+        ("RootMode", choices(&["own", "managed"])),
+        ("NewNetwork", object(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))], &["name"])),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
         ("JoinConnectivity", complete(&[("stun_host", text()), ("relay_ca_sha256", utoipa::openapi::schema::OneOfBuilder::new().item(hex(32)).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
-        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
+        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
@@ -1406,7 +1407,13 @@ pub fn document() -> OpenApi {
             operation = operation.description(Some("Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan."));
         }
         if matches!(id, "getNetwork" | "listNetworks" | "createNetwork") {
-            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado."));
+            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028)."));
+        }
+        if id == "createNetwork" {
+            operation = operation.description(Some("Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan."));
+        }
+        if id == "setIssuerCertificate" {
+            operation = operation.description(Some("409 managed_network en una red gestionada: el servidor firma y renueva su certificado. En una red de raíz propia valida que parsea, que lo firma su raíz y que es de la clave de emisor del servidor (400 wrong_issuer); 409 serial_rollback con un serial menor que el instalado."));
         }
         if id == "getServer" {
             operation = operation.description(Some("Sesión válida y al menos una membresía, de cualquier rol. 401 invalid_session; 403 forbidden sin membresías. Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited. Cache-Control: no-store. control_plane.version=CARGO_PKG_VERSION y commit=ATENEA_BUILD_COMMIT o unknown; server_time es string(date-time). No incluye coordinator ni relay: no hay canal real para conocer sus versiones."));

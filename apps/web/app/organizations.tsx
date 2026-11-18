@@ -49,31 +49,50 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
     await api.PUT('/api/v1/orgs/{org}/members/{user}', { params: { path: { org: current.id, user } }, body: { role } });
     await members.refetch();
   };
+  const createFailure = (error: unknown) => {
+    const code = error instanceof ApiError ? error.detail.error.code : '';
+    const text: Record<string, string> = {
+      network_limit: 'Esta organización personal ya tiene el máximo de redes. Elimina una o pide al operador que amplíe el límite.',
+      managed_unavailable: 'Este servidor no tiene activadas las redes gestionadas. Pide al operador que lo configure o usa el modo avanzado con tu propia raíz.',
+      address_pool_exhausted: 'No quedan rangos de direcciones libres para asignar solos. Usa el modo avanzado e indica los rangos.',
+      overlapping_network: 'Esos rangos se solapan con otra red de la organización.',
+    };
+    return text[code] ? new Error(text[code], { cause: error }) : error;
+  };
   const createNetwork = current.role !== 'member' ? <Dialog trigger="Crear red" title="Crear red"
-    description="La clave raíz de la red la generas tú y nunca llega a este servidor (ADR-005). Solo se envía su clave pública.">
-    <ol>
-      <li>En tu equipo, genera la raíz:<pre>atenea root-init --out raiz-offline</pre>
-        Guarda el fichero <code>raiz-offline</code> en un lugar seguro y con copia. <strong>Si lo pierdes no hay recuperación:</strong>
-        la red dejará de emitir configuraciones cuando caduque su certificado de emisor y habrá que reincorporar cada dispositivo.</li>
-      <li>Copia la clave pública que imprime (64 caracteres) en el campo de ancla.</li>
-      <li>Tras crear la red, en «DNS y certificado» firma el certificado de emisor con tu raíz y súbelo. Hasta entonces la red no emite configuraciones.</li>
-    </ol>
-    <ActionForm label="Crear red" fields={[
-      { name: 'name', label: 'Nombre' }, { name: 'ipv4_cidr', label: 'CIDR IPv4' },
-      { name: 'ipv6_cidr', label: 'CIDR IPv6' }, { name: 'root_anchor', label: 'Ancla pública raíz (64 hex)' },
-    ]} submit={async values => {
+    description="Solo hace falta un nombre: el servidor se encarga de las claves, de los rangos de direcciones y del certificado.">
+    <ActionForm label="Crear red" fields={[{ name: 'name', label: 'Nombre' }]} submit={async values => {
       try {
         const created = await result(api.POST('/api/v1/orgs/{org}/networks', {
-          params: { path: { org: current.id } }, body: networkSchema.parse(values),
+          params: { path: { org: current.id } }, body: { name: nameSchema.parse(values.name) },
         }));
         await networks.refetch(); choose(created.id);
-      } catch (error) {
-        if (error instanceof ApiError && error.detail.error.code === 'network_limit') {
-          throw new Error('Esta organización personal ya tiene el máximo de redes. Elimina una o pide al operador que amplíe el límite.', { cause: error });
-        }
-        throw error;
-      }
+      } catch (error) { throw createFailure(error); }
     }}/>
+    <details>
+      <summary>Avanzado: usar mi propia clave raíz</summary>
+      <p>La raíz la generas tú y nunca llega al servidor (ADR-005): solo se envía su clave pública. Así el servidor no puede emitir por tu red,
+        pero firmar y renovar el certificado de emisor es cosa tuya.</p>
+      <ol>
+        <li>En tu equipo, genera la raíz:<pre>atenea root-init --out raiz-offline</pre>
+          Guarda el fichero <code>raiz-offline</code> en un lugar seguro y con copia. <strong>Si lo pierdes no hay recuperación:</strong>
+          la red dejará de emitir configuraciones cuando caduque su certificado de emisor y habrá que reincorporar cada dispositivo.</li>
+        <li>Copia la clave pública que imprime (64 caracteres) en el campo de ancla. Los rangos son opcionales: sin ellos se asignan solos.</li>
+        <li>Tras crear la red, en «DNS y certificado» firma el certificado de emisor con tu raíz y súbelo. Hasta entonces la red no emite configuraciones.</li>
+      </ol>
+      <ActionForm label="Crear red con raíz propia" fields={[
+        { name: 'name', label: 'Nombre (raíz propia)' },
+        { name: 'ipv4_cidr', label: 'CIDR IPv4 (opcional)', required: false },
+        { name: 'ipv6_cidr', label: 'CIDR IPv6 (opcional)', required: false },
+        { name: 'root_anchor', label: 'Ancla pública raíz (64 hex)' },
+      ]} submit={async values => {
+        try {
+          const body = networkSchema.parse({ ...values, ipv4_cidr: values.ipv4_cidr || undefined, ipv6_cidr: values.ipv6_cidr || undefined });
+          const created = await result(api.POST('/api/v1/orgs/{org}/networks', { params: { path: { org: current.id } }, body }));
+          await networks.refetch(); choose(created.id);
+        } catch (error) { throw createFailure(error); }
+      }}/>
+    </details>
   </Dialog> : null;
   return <section><PageHeader title={current.name} description={`Rol: ${current.role}`} actions={createOrganization}/>
     <Tabs.Root defaultValue="networks" key={current.id}>
