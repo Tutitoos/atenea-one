@@ -33,7 +33,7 @@ Por API: `PUT`/`DELETE /api/v1/networks/{net}/devices/{dev}/grant` y `GET …/gr
 ## Usarla
 
 - **CLI** (root en Linux y macOS, consola elevada en Windows): `atenea network permissions|devices|join-code|approve|revoke|policy …`; ver [redes múltiples](redes-multiples-cli.md#administración-delegada-adr-026).
-- **Aplicación de escritorio**: «Administración» en el detalle del propio equipo si hay concesión. Las lecturas no piden autorización; cada escritura pide la de administrador del sistema. **En Windows la aplicación no hace escrituras**: usa la CLI.
+- **Aplicación de escritorio**: el detalle del propio equipo se organiza en pestañas. «General» incluye el resumen de la concesión; con concesión aparecen, según los permisos, «Código de unión», «Dispositivos» (pendientes de aprobar y revocar) y «Políticas». El detalle de un dispositivo ajeno tiene «General», «Servicios» y «Tráfico». Las lecturas no piden autorización; cada escritura pide la de administrador del sistema. **En Windows la aplicación no hace escrituras**: usa la CLI.
 
 Alta típica de un equipo nuevo por un delegado: `join-code` → el equipo nuevo ejecuta `atenea network join` y muestra su huella → el delegado compara la huella completa y ejecuta `approve <huella>` → `policy add --from … --to …`.
 
