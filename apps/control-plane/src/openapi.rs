@@ -158,6 +158,14 @@ fn schemas() -> ComponentsBuilder {
         ("LocalLogin", complete(&[("login", text()), ("password", text())])),
         ("LocalRecover", complete(&[("login", text()), ("recovery_code", text()), ("new_password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(12)).max_length(Some(128)).into())])),
         ("Issuer", complete(&[("issuer_pubkey", hex(32))])),
+        ("NewInvitation", complete(&[("role", choices(&["viewer", "enroller"]))])),
+        ("InvitationCreated", complete(&[("id", uuid()), ("token", text()), ("role", choices(&["viewer", "enroller"])), ("expires_at", timestamp())])),
+        ("Invitation", complete(&[("id", uuid()), ("role", choices(&["viewer", "enroller"])), ("created_at", timestamp()), ("expires_at", timestamp()), ("used_at", nullable_timestamp()), ("revoked_at", nullable_timestamp())])),
+        ("AcceptInvitation", complete(&[("token", text())])),
+        ("NetworkAccess", complete(&[("network_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
+        ("NetworkMember", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"])), ("display_name", nullable_text()), ("created_at", timestamp())])),
+        ("NetworkMemberRole", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
+        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("role", choices(&["viewer", "enroller"]))])),
         ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
@@ -318,6 +326,86 @@ pub fn document() -> OpenApi {
             "200",
             "",
             "Issuer",
+        ),
+        (
+            Post,
+            "/api/v1/networks/{net}/invitations",
+            "createInvitation",
+            "Crea un enlace de invitación de un solo uso; requiere owner",
+            "write",
+            "201",
+            "NewInvitation",
+            "InvitationCreated",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/invitations",
+            "listInvitations",
+            "Lista las invitaciones recientes, sin el token; requiere owner",
+            "read",
+            "200",
+            "",
+            "[]Invitation",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/invitations/{id}",
+            "revokeInvitation",
+            "Anula una invitación sin usar; requiere owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Post,
+            "/api/v1/invitations/accept",
+            "acceptInvitation",
+            "Canjea una invitación con la cuenta de la sesión",
+            "write",
+            "200",
+            "AcceptInvitation",
+            "NetworkAccess",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/members",
+            "listNetworkMembers",
+            "Lista los miembros por invitación de la red; requiere owner",
+            "read",
+            "200",
+            "",
+            "[]NetworkMember",
+        ),
+        (
+            Put,
+            "/api/v1/networks/{net}/members/{user}",
+            "setNetworkMember",
+            "Cambia el rol de un miembro por invitación; requiere owner",
+            "write",
+            "200",
+            "NewInvitation",
+            "NetworkMemberRole",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/members/{user}",
+            "removeNetworkMember",
+            "Quita a un miembro por invitación; requiere owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/shared-networks",
+            "listSharedNetworks",
+            "Redes a las que la cuenta pertenece por invitación, con su rol",
+            "read",
+            "200",
+            "",
+            "[]SharedNetwork",
         ),
         (
             Get,
@@ -944,7 +1032,7 @@ pub fn document() -> OpenApi {
                 || id == "createEnrollmentToken"
             {
                 "devices"
-            } else if path.contains("networks") {
+            } else if path.contains("networks") || path.contains("invitations") {
                 "networks"
             } else if path.contains("orgs") {
                 "orgs"
@@ -967,6 +1055,9 @@ pub fn document() -> OpenApi {
                         | "listServiceTokens"
                         | "getJoinCode"
                         | "getIssuer"
+                        | "listInvitations"
+                        | "listNetworkMembers"
+                        | "listSharedNetworks"
                 )
             {
                 operation = operation.security(SecurityRequirement::new(
@@ -1071,6 +1162,17 @@ pub fn document() -> OpenApi {
                 RequestBodyBuilder::new()
                     .required(Some(Required::True))
                     .content(media, Content::new(Some(named(body))))
+                    .build(),
+            ));
+        }
+        if id == "approveDevice" {
+            operation = operation.request_body(Some(
+                RequestBodyBuilder::new()
+                    .required(Some(Required::False))
+                    .content(
+                        "application/json",
+                        Content::new(Some(named("DelegatedApproval"))),
+                    )
                     .build(),
             ));
         }
@@ -1190,6 +1292,8 @@ pub fn document() -> OpenApi {
                 | "loginLocal"
                 | "recoverAccount"
                 | "getIssuer"
+                | "createInvitation"
+                | "acceptInvitation"
         ) || id.contains("Delegated")
         {
             operation = operation.response(
@@ -1303,6 +1407,22 @@ pub fn document() -> OpenApi {
         if id == "getIssuer" {
             operation = operation.description(Some("Sesión válida. issuer_pubkey es la clave pública Ed25519 del emisor del servidor, en hexadecimal: el usuario la pone en el certificado de emisor que firma con su raíz (ADR-028 D1). Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited."));
         }
+        if matches!(
+            id,
+            "createInvitation"
+                | "listInvitations"
+                | "revokeInvitation"
+                | "acceptInvitation"
+                | "listNetworkMembers"
+                | "setNetworkMember"
+                | "removeNetworkMember"
+                | "listSharedNetworks"
+        ) {
+            operation = operation.description(Some("ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación."));
+        }
+        if id == "approveDevice" {
+            operation = operation.description(Some("Admin u owner de la organización, o enroller de la red. El cuerpo es opcional para un administrador; un enroller debe enviar {fingerprint} con la huella completa del dispositivo pendiente (400 invalid_request si falta, 409 fingerprint_mismatch si no coincide). Auditoría device.approve con {addresses}; si aprueba un enroller añade by=enroller."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -1317,7 +1437,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 56);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 62);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

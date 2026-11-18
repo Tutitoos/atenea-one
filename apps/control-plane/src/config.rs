@@ -31,6 +31,12 @@ pub struct Config {
     pub register_per_minute: u32,
     /// Registros por minuto en todo el servidor.
     pub register_global_per_minute: u32,
+    /// Redes que puede tener una organización personal (ADR-028 D4). Las demás organizaciones no tienen tope.
+    pub personal_max_networks: u32,
+    /// Dispositivos vivos (no revocados) por red de una organización personal.
+    pub personal_max_devices: u32,
+    /// Invitaciones vigentes (sin usar, sin anular y sin caducar) por red.
+    pub max_open_invitations: u32,
     /// Peticiones firmadas por minuto y dispositivo (config, estado, rutas).
     pub device_per_minute: u32,
     /// Peticiones por minuto y token de servicio de solo lectura (ADR-020).
@@ -73,6 +79,9 @@ impl Default for Config {
             registration_open: false,
             register_per_minute: 5,
             register_global_per_minute: 30,
+            personal_max_networks: 3,
+            personal_max_devices: 64,
+            max_open_invitations: 10,
             device_per_minute: 30,
             trusted_proxies: Vec::new(),
             application_role: None,

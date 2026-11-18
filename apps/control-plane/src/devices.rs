@@ -51,7 +51,7 @@ pub async fn token(
     Json(b): Json<Token>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let with_connectivity = q.wants_connectivity()?;
-    let (u, org) = networks::access(&s, &h, net, true).await?;
+    let (u, org, _) = networks::access_enroll(&s, &h, net).await?;
     let role = b.role.as_ref().map(role).transpose()?.unwrap_or("device");
     if !(60..=86400).contains(&b.ttl_secs) {
         return Err(ApiError::bad("invalid_ttl"));
@@ -155,6 +155,7 @@ pub async fn enroll(
         .bind(net)
         .execute(&mut *tx)
         .await?;
+    networks::check_device_quota(&mut tx, net, s.config.personal_max_devices).await?;
     insert(
         &mut tx,
         net,
@@ -273,6 +274,7 @@ pub async fn request_join(
     if pending >= i64::from(s.config.max_pending_join_requests) {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too_many_pending"));
     }
+    networks::check_device_quota(&mut tx, net, s.config.personal_max_devices).await?;
     insert(
         &mut tx,
         net,
@@ -342,9 +344,32 @@ pub async fn approve(
     State(s): State<AppState>,
     Path((net, dev)): Path<(Uuid, Uuid)>,
     h: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    let (u, org) = networks::access(&s, &h, net, true).await?;
+    let (u, org, enroller_only) = networks::access_enroll(&s, &h, net).await?;
     let mut tx = s.pool.begin().await?;
+    // ADR-028 D6: quien solo es `enroller` aprueba escribiendo la huella completa, como un delegado (ADR-026).
+    // Un administrador no la necesita: el cuerpo, si lo hay, se ignora.
+    if enroller_only {
+        #[derive(Deserialize)]
+        struct Approval {
+            fingerprint: String,
+        }
+        let approval: Approval =
+            serde_json::from_slice(&body).map_err(|_| ApiError::bad("invalid_request"))?;
+        let bundle: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT bundle FROM devices WHERE id=$1 AND network_id=$2")
+                .bind(dev)
+                .bind(net)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let bundle = bundle.ok_or_else(ApiError::not_found)?;
+        let bundle =
+            atenea_identity::DeviceBundle::parse(&bundle).map_err(|_| ApiError::internal())?;
+        if bundle.fingerprint() != approval.fingerprint {
+            return Err(ApiError::conflict("fingerprint_mismatch"));
+        }
+    }
     let addresses = approve_pending(&mut tx, net, dev).await?;
     audit::record(
         &mut tx,
@@ -354,7 +379,11 @@ pub async fn approve(
         Some(net),
         "device.approve",
         dev,
-        json!({"addresses":addresses}),
+        if enroller_only {
+            json!({"addresses":addresses,"by":"enroller"})
+        } else {
+            json!({"addresses":addresses})
+        },
     )
     .await?;
     tx.commit().await?;

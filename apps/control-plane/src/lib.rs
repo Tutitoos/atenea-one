@@ -13,6 +13,7 @@ pub mod dns;
 pub mod grants;
 pub mod internal;
 pub mod issue;
+pub mod members;
 pub mod networks;
 mod openapi;
 pub mod orgs;

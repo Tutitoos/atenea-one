@@ -20,7 +20,28 @@ pub async fn access(
 ) -> Result<(Uuid, Uuid), ApiError> {
     access_as(s, h, net, write, if write { "admin" } else { "member" }).await
 }
-async fn access_as(
+async fn org_of(s: &AppState, net: Uuid) -> Result<Uuid, ApiError> {
+    sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
+        .bind(net)
+        .fetch_optional(&s.pool)
+        .await?
+        .ok_or_else(ApiError::not_found)
+}
+/// Rol del usuario en la red por invitación (`viewer` o `enroller`, ADR-028 D6); nulo si no es miembro de la red.
+pub(crate) async fn member_role(
+    s: &AppState,
+    user: Uuid,
+    net: Uuid,
+) -> Result<Option<String>, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT role FROM network_members WHERE network_id=$1 AND user_id=$2")
+            .bind(net)
+            .bind(user)
+            .fetch_optional(&s.pool)
+            .await?,
+    )
+}
+pub(crate) async fn access_as(
     s: &AppState,
     h: &HeaderMap,
     net: Uuid,
@@ -28,13 +49,54 @@ async fn access_as(
     role: &str,
 ) -> Result<(Uuid, Uuid), ApiError> {
     let u = auth::session(s, h, write).await?;
-    let org: Option<Uuid> = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
-        .bind(net)
-        .fetch_optional(&s.pool)
-        .await?;
-    let org = org.ok_or_else(ApiError::not_found)?;
-    orgs::role(s, u, org, role).await?;
-    Ok((u, org))
+    let org = org_of(s, net).await?;
+    match orgs::role(s, u, org, role).await {
+        Ok(()) => Ok((u, org)),
+        Err(e) => match member_role(s, u, net).await? {
+            // Un miembro por invitación solo lee los datos generales de la red; nada que exija admin u owner.
+            Some(_) if !write && role == "member" => Ok((u, org)),
+            Some(_) => Err(ApiError::forbidden("forbidden")),
+            None => Err(e),
+        },
+    }
+}
+/// Generar códigos y aprobar dispositivos: admin u owner de la organización, o `enroller` de la red (ADR-028 D6).
+/// El tercer valor es `true` cuando solo es `enroller`: quien aprueba así debe aportar la huella completa.
+pub async fn access_enroll(
+    s: &AppState,
+    h: &HeaderMap,
+    net: Uuid,
+) -> Result<(Uuid, Uuid, bool), ApiError> {
+    let u = auth::session(s, h, true).await?;
+    let org = org_of(s, net).await?;
+    match orgs::role(s, u, org, "admin").await {
+        Ok(()) => Ok((u, org, false)),
+        Err(e) => match member_role(s, u, net).await?.as_deref() {
+            Some("enroller") => Ok((u, org, true)),
+            Some(_) => Err(ApiError::forbidden("forbidden")),
+            None => Err(e),
+        },
+    }
+}
+/// Tope de dispositivos vivos de una red de organización personal (ADR-028 D4). Se llama con la fila de la red
+/// bloqueada. Las organizaciones normales no tienen tope.
+pub async fn check_device_quota(
+    tx: &mut PgConnection,
+    net: Uuid,
+    limit: u32,
+) -> Result<(), ApiError> {
+    let full: bool = sqlx::query_scalar(
+        "SELECT o.personal AND (SELECT count(*) FROM devices WHERE network_id=n.id AND status<>'revoked') >= $2 \
+         FROM networks n JOIN organizations o ON o.id=n.org_id WHERE n.id=$1",
+    )
+    .bind(net)
+    .bind(i64::from(limit))
+    .fetch_one(&mut *tx)
+    .await?;
+    if full {
+        return Err(ApiError::conflict("device_limit"));
+    }
+    Ok(())
 }
 #[derive(Deserialize)]
 pub struct NewNetwork {
@@ -43,7 +105,7 @@ pub struct NewNetwork {
     pub ipv6_cidr: String,
     pub root_anchor: String,
 }
-fn value(r: &PgRow) -> Result<Value, ApiError> {
+pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
     let certificate = r.get::<Option<&[u8]>, _>("issuer_cert");
     let expires = certificate
         .map(|bytes| {
@@ -59,7 +121,7 @@ fn value(r: &PgRow) -> Result<Value, ApiError> {
         json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
     )
 }
-const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,issuer_cert,join_policy FROM networks";
+pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,issuer_cert,join_policy FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
 /// Con `with_connectivity` y el servidor configurado (ADR-018) lleva además el STUN y el hash de la CA del relay;
 /// si con eso el texto supera 512 caracteres, `409 code_too_long` (con `?conectividad=0` sigue siendo válido).
@@ -224,6 +286,17 @@ pub async fn create(
         .bind(org)
         .execute(&mut *tx)
         .await?;
+    // ADR-028 D4: tope de redes de una organización personal; las demás no tienen tope.
+    let full: bool = sqlx::query_scalar(
+        "SELECT personal AND (SELECT count(*) FROM networks WHERE org_id=$1) >= $2 FROM organizations WHERE id=$1",
+    )
+    .bind(org)
+    .bind(i64::from(s.config.personal_max_networks))
+    .fetch_one(&mut *tx)
+    .await?;
+    if full {
+        return Err(ApiError::conflict("network_limit"));
+    }
     let overlap:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM networks WHERE org_id=$1 AND (ipv4_cidr && $2::cidr OR ipv6_cidr && $3::cidr))").bind(org).bind(v4.to_string()).bind(v6.to_string()).fetch_one(&mut *tx).await?;
     if overlap {
         return Err(ApiError::conflict("overlapping_network"));
