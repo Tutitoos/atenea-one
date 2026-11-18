@@ -473,7 +473,7 @@ La gestión es de un administrador; el dispositivo ejerce su concesión con las 
 
 - `GET /api/v1/networks/{net}/grants` (pertenencia; también el token de servicio): lista `[{"device_id","scopes","scope":{"kind","devices"},"granted_by","granted_at"}]`.
 - `PUT /api/v1/networks/{net}/devices/{dev}/grant` (`owner` o `admin`, CSRF) con `{"scopes":[…],"scope":{"kind":"enrolled"|"devices"|"network","devices"?:[uuid]}}`: concede o **sustituye** la concesión del dispositivo y devuelve la concesión guardada.
-  - `scopes`: lista cerrada (`read:devices`, `read:policies`, `write:join-codes`, `write:approve-devices`, `write:policies`, `write:revoke-devices`), no vacía y sin repetir; se guarda y se devuelve en ese orden.
+  - `scopes`: lista cerrada (`read:devices`, `read:policies`, `write:join-codes`, `write:approve-devices`, `write:policies`, `write:revoke-devices`, `write:grants`), no vacía y sin repetir; se guarda y se devuelve en ese orden. Sustituir o retirar la concesión de un dispositivo retira las que él dio (§25).
   - `scope.devices` solo con `kind = "devices"`: de 1 a 64 dispositivos de la misma red, no revocados y sin repetir; con los otros dos tipos debe faltar o estar vacía.
   - Cualquier otra cosa → `400 invalid_grant`; un campo desconocido o un tipo erróneo se rechaza al leer el cuerpo. `404 not_found` si el dispositivo no es de la red; `409 device_not_approved` si está pendiente o revocado.
 - `DELETE` de la misma ruta (`owner` o `admin`, CSRF): `204`; `404 not_found` si no tenía concesión.
@@ -505,4 +505,29 @@ Un dispositivo **aprobado** con concesión ejerce sus permisos con la firma `AtD
 - **Límites:** 60 peticiones por minuto y dispositivo en estas rutas (`429 rate_limited`), además de la cuota general de dispositivo; 256 políticas creadas por delegado (`409 policy_overflow`).
 - **Concurrencia:** cada escritura bloquea la fila de la red y lee la concesión dentro de la misma transacción; revocar al delegado borra la concesión bajo ese bloqueo.
 - **Auditoría:** `token.create`, `device.approve`, `device.revoke`, `policy.create` y `policy.delete` con `actor_kind = device` y el delegado como autor. Eventos SSE: `devices` o `policies`, y `audit`.
-- **Lo que un delegado no puede hacer** no tiene ruta: conceder o cambiar permisos, cambiar nombre, rol o política de unión, aprobar rutas de subred, DNS ni el certificado de emisor.
+- **Lo que un delegado no puede hacer** no tiene ruta: cambiar nombre, rol o política de unión, aprobar rutas de subred, DNS ni el certificado de emisor. Conceder permisos solo existe con `write:grants` (§25, ADR-027).
+
+## 25. Concesión delegada de permisos (ADR-027, fase 2)
+
+La migración `0014_device_grants_delegated.sql` añade `device_grants.granted_by_device` (nulo si la concesión la dio un administrador) con borrado en cascada. `granted_by` sigue siendo no nulo: en una concesión delegada guarda al administrador que dio `write:grants` a quien la concede, de modo que el control plane anterior sigue listándola. Es aditiva.
+
+El permiso nuevo **`write:grants`** (el séptimo de la lista cerrada) solo lo concede un administrador (§23). Un dispositivo que lo tiene, con la firma `AtDevice` y las mismas reglas de ventana, anti-repetición y tasa que §24:
+
+- `GET /api/v1/device/admin/grants`: las concesiones de los dispositivos **de su alcance** (`[{"device_id","scopes","scope","granted_by_device","granted_at"}]`, sin `granted_by`).
+- `PUT /api/v1/device/admin/devices/{dev}/grant` con el cuerpo de §23: concede o sustituye los permisos de un dispositivo de su alcance.
+- `DELETE /api/v1/device/admin/devices/{dev}/grant` (cuerpo vacío): `204`; `404` si el destino no existe o no tiene concesión.
+
+Reglas, por orden (`403` con código estable salvo indicación):
+
+1. Sin `write:grants` en su concesión: `grant_missing`.
+2. El destino es él mismo: `grant_self`. No existe o es de otra red: `404 not_found`. Fuera de su alcance: `out_of_scope`.
+3. Cuerpo inválido: `400 invalid_grant` (lista vacía, repetida o desconocida; alcance mal formado o con dispositivos revocados o de otra red); destino no aprobado: `409 device_not_approved`.
+4. **D2:** los permisos concedidos son un subconjunto de los suyos y no incluyen `write:grants`: `grant_exceeds_own`.
+5. **D3:** con alcance `network` puede dar cualquier alcance; con `enrolled` o `devices` solo `devices` con una lista contenida en el suyo: `grant_exceeds_own`.
+6. **D4:** solo sustituye o retira concesiones que él dio (`granted_by_device` = él): `grant_not_yours`.
+7. Como mucho 64 concesiones dadas vivas por dispositivo: `409 grant_limit` (sustituir una propia no cuenta).
+
+- **D5, cascada:** al sustituir o retirar la concesión de un dispositivo (por un administrador o desde `PUT`/`DELETE`), o al revocarlo, se retiran en la misma transacción las concesiones que él dio, con `device.grant_revoke` y `reason = grantor_changed`.
+- **Auditoría:** `device.grant` y `device.grant_revoke` con `actor_kind = device` (`reason = delegate` al retirar una concesión propia). Eventos SSE: `devices` y `audit`.
+- `GET /api/v1/networks/{net}/grants` (§23) añade `granted_by_device`.
+- **Lo que no cambia:** un delegado sigue sin dar `write:grants`, sin cambiar la suya y sin tocar la de un administrador; el token de servicio sigue siendo de solo lectura.

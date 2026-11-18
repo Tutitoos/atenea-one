@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! ADR-026: administración delegada. Un dispositivo aprobado ejerce con su firma la concesión que le dio un
 //! administrador. Las lecturas cubren la red; el alcance limita las escrituras.
-use crate::{AppState, api::ApiError, audit, devices, policies};
+use crate::{AppState, api::ApiError, audit, devices, grants, policies};
 use axum::{
     Json,
     body::Bytes,
@@ -19,6 +19,7 @@ const PER_MINUTE: u32 = 60;
 const MAX_LIVE_CODES: i64 = 8;
 const MAX_POLICIES: i64 = 256;
 const MAX_CODE_TTL_SECS: u64 = 3600;
+const MAX_GIVEN: i64 = 64;
 
 fn missing() -> ApiError {
     ApiError::forbidden("grant_missing")
@@ -391,6 +392,153 @@ pub async fn revoke(
     tx.commit().await?;
     changed(&s, d.net, "devices");
     Ok(Json(json!({"device_id":dev,"status":"revoked"})))
+}
+
+fn exceeds() -> ApiError {
+    ApiError::forbidden("grant_exceeds_own")
+}
+
+/// Una concesión delegada no expone al usuario que dio `write:grants`.
+fn entry(row: &sqlx::postgres::PgRow) -> Value {
+    let mut v = grants::view(row);
+    if let Some(o) = v.as_object_mut() {
+        o.remove("granted_by");
+    }
+    v
+}
+
+/// ADR-027, D6: las concesiones de los dispositivos del alcance.
+pub async fn list_grants(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    uri: Uri,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let (mut tx, d) = begin(&s, &h, &uri, &body, "GET", Some("write:grants")).await?;
+    let rows = sqlx::query("SELECT device_id,scopes,scope_kind,scope_devices,granted_by,granted_by_device,granted_at FROM device_grants WHERE network_id=$1 ORDER BY granted_at,device_id")
+        .bind(d.net)
+        .fetch_all(&mut *tx)
+        .await?;
+    let mut out = Vec::new();
+    for r in &rows {
+        if d.covers(&mut tx, r.get("device_id")).await? {
+            out.push(entry(r));
+        }
+    }
+    Ok(Json(json!(out)))
+}
+
+/// ADR-027, D2 a D4: concede o sustituye los permisos de un dispositivo del alcance, sin dar más de lo que se tiene.
+pub async fn set_grant(
+    State(s): State<AppState>,
+    Path(dev): Path<Uuid>,
+    h: HeaderMap,
+    uri: Uri,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let (mut tx, d) = begin(&s, &h, &uri, &body, "PUT", Some("write:grants")).await?;
+    let b: grants::Grant =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad("invalid_request"))?;
+    if dev == d.me {
+        return Err(ApiError::forbidden("grant_self"));
+    }
+    let (status, _) = target(&mut tx, &d, dev).await?;
+    let scopes =
+        grants::canonical_scopes(&b.scopes).ok_or_else(|| ApiError::bad("invalid_grant"))?;
+    if !grants::valid_scope(&b.scope) {
+        return Err(ApiError::bad("invalid_grant"));
+    }
+    if status != "approved" {
+        return Err(ApiError::conflict("device_not_approved"));
+    }
+    if !grants::members_ok(&mut tx, d.net, &b.scope.devices).await? {
+        return Err(ApiError::bad("invalid_grant"));
+    }
+    // D2: ni más permisos de los propios ni `write:grants`.
+    let own = d.scopes.as_array().ok_or_else(ApiError::internal)?;
+    if scopes
+        .iter()
+        .any(|p| *p == "write:grants" || !own.iter().any(|o| o == p))
+    {
+        return Err(exceeds());
+    }
+    // D3: salvo con alcance `network`, solo una lista de dispositivos contenida en el alcance propio.
+    if d.kind != "network" {
+        if b.scope.kind != "devices" {
+            return Err(exceeds());
+        }
+        for x in &b.scope.devices {
+            if !d.covers(&mut tx, *x).await? {
+                return Err(exceeds());
+            }
+        }
+    }
+    // D4: solo sustituye lo que él dio.
+    let current: Option<Option<Uuid>> =
+        sqlx::query_scalar("SELECT granted_by_device FROM device_grants WHERE device_id=$1")
+            .bind(dev)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if current.is_some_and(|by| by != Some(d.me)) {
+        return Err(ApiError::forbidden("grant_not_yours"));
+    }
+    if current.is_none() {
+        let given: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM device_grants WHERE granted_by_device=$1")
+                .bind(d.me)
+                .fetch_one(&mut *tx)
+                .await?;
+        if given >= MAX_GIVEN {
+            return Err(ApiError::conflict("grant_limit"));
+        }
+    }
+    // `granted_by` conserva al administrador que dio `write:grants` a quien concede.
+    let root: Uuid = sqlx::query_scalar("SELECT granted_by FROM device_grants WHERE device_id=$1")
+        .bind(d.me)
+        .fetch_one(&mut *tx)
+        .await?;
+    let row = grants::store(&mut tx, d.net, dev, &scopes, &b.scope, root, Some(d.me)).await?;
+    d.audit(
+        &mut tx,
+        "device.grant",
+        dev,
+        json!({"scopes":scopes,"scope":{"kind":b.scope.kind,"devices":b.scope.devices}}),
+    )
+    .await?;
+    tx.commit().await?;
+    changed(&s, d.net, "devices");
+    Ok(Json(entry(&row)))
+}
+
+pub async fn remove_grant(
+    State(s): State<AppState>,
+    Path(dev): Path<Uuid>,
+    h: HeaderMap,
+    uri: Uri,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let (mut tx, d) = begin(&s, &h, &uri, &body, "DELETE", Some("write:grants")).await?;
+    if !body.is_empty() {
+        return Err(ApiError::bad("invalid_request"));
+    }
+    if dev == d.me {
+        return Err(ApiError::forbidden("grant_self"));
+    }
+    target(&mut tx, &d, dev).await?;
+    let current: Option<Option<Uuid>> =
+        sqlx::query_scalar("SELECT granted_by_device FROM device_grants WHERE device_id=$1")
+            .bind(dev)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match current {
+        None => return Err(ApiError::not_found()),
+        Some(by) if by != Some(d.me) => return Err(ApiError::forbidden("grant_not_yours")),
+        Some(_) => {}
+    }
+    grants::withdraw(&mut tx, d.net, dev, "device", d.me, d.org, "delegate").await?;
+    tx.commit().await?;
+    changed(&s, d.net, "devices");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

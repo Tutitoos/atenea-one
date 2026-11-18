@@ -173,9 +173,10 @@ fn schemas() -> ComponentsBuilder {
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceGrantPermission", choices(&crate::grants::SCOPES)),
         ("DeviceGrantScope", complete(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).description(Some("Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.")).into())])),
-        ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(6)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
-        ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_at", timestamp())])),
+        ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(7)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
+        ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_by_device", nullable_uuid("Dispositivo que la concedió (ADR-027); null si fue un administrador.")), ("granted_at", timestamp())])),
         ("DelegatedGrant", complete(&[("device_id", uuid()), ("network_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_at", timestamp())])),
+        ("DelegatedGrantEntry", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by_device", nullable_uuid("Dispositivo que la concedió; null si fue un administrador.")), ("granted_at", timestamp())])),
         ("DelegatedDevice", complete(&[("id", uuid()), ("name", text()), ("role", named("DeviceRole")), ("status", named("DeviceStatus")), ("fingerprint", text()), ("ipv4", nullable_text()), ("ipv6", nullable_text()), ("enrolled_at", timestamp()), ("enrolled_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado cuyo código lo dio de alta; null si fue un usuario o una solicitud.")).into()), ("in_scope", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true si el alcance de quien pregunta lo incluye.")).into())])),
         ("DelegatedPolicy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer()), ("created_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado que la creó; null si fue un administrador.")).into())])),
         ("NewDelegatedJoinCode", object(&[("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(3600)).into())], &["ttl_secs"])),
@@ -735,6 +736,36 @@ pub fn document() -> OpenApi {
         ),
         (
             Get,
+            "/api/v1/device/admin/grants",
+            "listDelegatedGrants",
+            "Concesiones de los dispositivos del alcance; requiere write:grants",
+            "device",
+            "200",
+            "",
+            "[]DelegatedGrantEntry",
+        ),
+        (
+            Put,
+            "/api/v1/device/admin/devices/{dev}/grant",
+            "setDelegatedGrant",
+            "Concede o sustituye permisos de un dispositivo del alcance; requiere write:grants",
+            "device",
+            "200",
+            "DeviceGrantInput",
+            "DelegatedGrantEntry",
+        ),
+        (
+            Delete,
+            "/api/v1/device/admin/devices/{dev}/grant",
+            "removeDelegatedGrant",
+            "Retira una concesión que dio este dispositivo; cuerpo vacío; requiere write:grants",
+            "device",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
             "/api/v1/networks/{net}/routes",
             "listRoutes",
             "Lista las declaraciones y sus decisiones",
@@ -1146,6 +1177,12 @@ pub fn document() -> OpenApi {
         ) {
             operation = operation.description(Some("ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar."));
         }
+        if matches!(
+            id,
+            "listDelegatedGrants" | "setDelegatedGrant" | "removeDelegatedGrant"
+        ) {
+            operation = operation.description(Some("ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by."));
+        }
         if id == "setDeviceGrant" {
             operation = operation.response(
                 "409",
@@ -1213,7 +1250,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 50);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 52);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

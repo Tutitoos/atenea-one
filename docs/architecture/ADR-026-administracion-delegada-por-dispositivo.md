@@ -53,7 +53,7 @@ El alcance limita las escrituras. Las lecturas (`read:*`) cubren siempre toda la
 1. **Políticas delegadas.** Origen y destino deben ser dispositivos (`kind: device`) y **ambos** deben estar dentro del alcance. Un delegado no crea políticas `any` ni por prefijo. Así, con el alcance por defecto, un equipo de desarrollo puede conectar entre sí lo que él dio de alta y consigo mismo, y **no** puede crear ninguna política que nombre a un dispositivo ajeno.
 2. **Borrado.** Un delegado solo borra políticas creadas por un delegado (él u otro) cuyos dos extremos estén en su alcance. Nunca las de un administrador.
 3. **Aprobación.** Solo de dispositivos pendientes que entraron con un código suyo (o cualquiera, con alcance `network`), y la petición lleva la huella completa; si no coincide se rechaza.
-4. **Sin escalada.** Un dispositivo no concede, amplía ni delega permisos; no puede cambiar el rol, el nombre administrativo ni la política de unión de la red; no aprueba rutas de subred ni toca DNS o el certificado de emisor.
+4. **Sin escalada.** Un dispositivo no concede, amplía ni delega permisos (**salvo con `write:grants`, ADR-027, con los topes que allí se fijan**); no puede cambiar el rol, el nombre administrativo ni la política de unión de la red; no aprueba rutas de subred ni toca DNS o el certificado de emisor.
 5. **Ciclo de vida.** Revocar un dispositivo (o que se retire) borra su concesión. Lo que creó se conserva y sigue siendo administrable por un administrador. Un dispositivo que deja de estar aprobado pierde el efecto de la concesión de inmediato.
 6. **Auditoría.** Cada acción delegada se registra con `actor_kind = device` y el dispositivo autor; conceder y retirar permisos también.
 7. **Límites.** Por dispositivo delegado: tasa de peticiones propia, como mucho 8 códigos vivos y 256 políticas creadas. Los códigos delegados caducan como máximo a la hora.
@@ -89,7 +89,7 @@ En el detalle del dispositivo: permisos concedidos, alcance, quién los concedi�
 | Dar de alta un equipo hostil con un código delegado | El equipo entra pendiente y solo gana los accesos que el delegado le cree, siempre dentro del alcance del delegado. No hereda permisos |
 | Aprobar el dispositivo equivocado | La aprobación exige la huella completa y solo vale para pendientes de un código propio (salvo alcance `network`) |
 | La regla inversa de ADR-016 da más acceso del esperado | No cambia: una política delegada tiene la misma regla inversa que cualquier otra, y la interfaz lo dice al crearla |
-| Escalada: el delegado se concede permisos o cambia el alcance | No existe ninguna ruta de dispositivo que escriba concesiones; solo sesión de `owner` o `admin` |
+| Escalada: el delegado se concede permisos o cambia el alcance | No existe ninguna ruta de dispositivo que escriba concesiones; solo sesión de `owner` o `admin`. **Desde el ADR-027** existe una, con `write:grants`, que no puede tocar la propia concesión, dar más de lo que se tiene ni dar `write:grants` |
 | Fuga del código de unión | Un solo uso, caducidad máxima de una hora, tope de códigos vivos; no se guarda en disco ni en registros |
 | Más superficie elevada en la aplicación | Cuatro operaciones nuevas, cada una con argumentos de formato cerrado y una prueba de la cadena exacta; las lecturas no elevan |
 | Un servidor anterior con una CLI nueva | Las rutas nuevas responden `404`: la CLI lo muestra como «el servidor no admite administración delegada». Se despliega el servidor antes |
@@ -121,4 +121,4 @@ Cada fase es un cambio revisable con CI. No se publica una versión por fase (v�
 
 ## Qué no se hace en esta versión
 
-Etiquetas y grupos; aprobación automática sin huella; una política por defecto de red («todos con todos»); tokens de servicio con escritura; conceder permisos desde la CLI o la aplicación; que un delegado apruebe rutas de subred, cambie DNS, roles o la política de unión; delegación en cadena.
+Etiquetas y grupos; aprobación automática sin huella; una política por defecto de red («todos con todos»); tokens de servicio con escritura; conceder permisos desde la CLI o la aplicación (**salvo con el permiso `write:grants` de [ADR-027](ADR-027-concesion-delegada-de-permisos.md), que lo permite de forma acotada**); que un delegado apruebe rutas de subred, cambie DNS, roles o la política de unión; delegación en cadena.
