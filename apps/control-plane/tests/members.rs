@@ -527,3 +527,47 @@ async fn la_organizacion_personal_tiene_tope_de_redes_y_dispositivos() {
         .await;
     t.finish().await;
 }
+
+#[tokio::test]
+async fn un_miembro_abandona_la_red_y_un_ajeno_o_un_miembro_de_la_organizacion_no() {
+    let Some(w) = world(Config::default()).await else {
+        return;
+    };
+    join(&w, &w.other, "enroller").await;
+    let leave = format!("/api/v1/networks/{}/membership", w.net);
+    // Quien no es miembro por invitación (ajeno u owner de la organización) recibe 404 y no cambia nada.
+    let stranger = w.t.user().await;
+    call(&w, "DELETE", &leave, &stranger, json!(null))
+        .await
+        .error(StatusCode::NOT_FOUND, "not_found");
+    call(&w, "DELETE", &leave, &w.owner, json!(null))
+        .await
+        .error(StatusCode::NOT_FOUND, "not_found");
+    assert_eq!(
+        call(&w, "DELETE", &leave, &w.other, json!(null))
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    call(
+        &w,
+        "GET",
+        &format!("/api/v1/networks/{}", w.net),
+        &w.other,
+        json!(null),
+    )
+    .await
+    .error(StatusCode::NOT_FOUND, "not_found");
+    call(&w, "DELETE", &leave, &w.other, json!(null))
+        .await
+        .error(StatusCode::NOT_FOUND, "not_found");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE action='network_member.leave' AND actor_id=$1",
+    )
+    .bind(w.other.user.to_string())
+    .fetch_one(&w.t.pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    w.t.finish().await;
+}

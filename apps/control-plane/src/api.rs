@@ -62,6 +62,10 @@ pub fn router(s: AppState) -> Router {
         .route("/auth/local/login", post(crate::accounts::login))
         .route("/auth/local/recover", post(crate::accounts::recover))
         .route("/api/v1/session", get(auth::get_session))
+        .route(
+            "/api/v1/networks/{net}/membership",
+            delete(crate::members::leave),
+        )
         .route("/api/v1/issuer", get(crate::accounts::issuer))
         .route(
             "/api/v1/networks/{net}/invitations",

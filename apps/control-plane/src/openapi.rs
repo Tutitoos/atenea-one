@@ -398,6 +398,16 @@ pub fn document() -> OpenApi {
             "",
         ),
         (
+            Delete,
+            "/api/v1/networks/{net}/membership",
+            "leaveNetwork",
+            "El miembro por invitación abandona la red",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
             Get,
             "/api/v1/shared-networks",
             "listSharedNetworks",
@@ -1437,7 +1447,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 62);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 63);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

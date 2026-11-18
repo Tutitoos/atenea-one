@@ -312,6 +312,44 @@ pub async fn set_member(
     Ok(Json(json!({"user_id": user, "role": b.role})))
 }
 
+/// El propio miembro por invitación abandona la red. No revoca los dispositivos que aprobó. Un miembro de la
+/// organización no pasa por aquí: su acceso no es por invitación y `404` lo deja igual que a un ajeno.
+pub async fn leave(
+    State(s): State<AppState>,
+    Path(net): Path<Uuid>,
+    h: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let u = auth::session(&s, &h, true).await?;
+    let mut tx = s.pool.begin().await?;
+    let removed = sqlx::query("DELETE FROM network_members WHERE network_id=$1 AND user_id=$2")
+        .bind(net)
+        .bind(u)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if removed != 1 {
+        return Err(ApiError::not_found());
+    }
+    let org: Uuid = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
+        .bind(net)
+        .fetch_one(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "network_member.leave",
+        u,
+        json!({}),
+    )
+    .await?;
+    tx.commit().await?;
+    s.panel.changed(net, "audit");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Quita a un miembro. No revoca los dispositivos que aprobó: la auditoría dice quién aprobó cada uno y el
 /// propietario decide.
 pub async fn remove_member(

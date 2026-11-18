@@ -71,6 +71,12 @@ export function SharedNetworks({ choose }: { choose: (net: string) => void }) {
     {query.data && query.data.length > 0 && <ul className="cards">{query.data.map(network => <li className="card" key={network.id}>
       <h3><Link to={`/?org=compartidas&net=${network.id}&view=Resumen`} onClick={() => choose(network.id)}>{network.name}</Link></h3>
       <code>{network.ipv4_cidr} · {network.ipv6_cidr}</code>
+      <ConfirmDialog trigger="Abandonar" title={`Abandonar ${network.name}`}
+        description="Perderás el acceso a esta red hasta que su propietario te invite de nuevo. Los dispositivos que aprobaste siguen aprobados."
+        label="Abandonar la red" confirm={async () => {
+          await api.DELETE('/api/v1/networks/{net}/membership', { params: { path: { net: network.id } } });
+          await query.refetch();
+        }}/>
       <p><StatusBadge tone={network.role === 'enroller' ? 'warn' : 'neutral'}>{roleLabels[network.role]}</StatusBadge></p>
     </li>)}</ul>}
   </section>;
