@@ -1819,6 +1819,103 @@
         }
       }
     },
+    "/api/v1/issuer": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Clave pública del emisor del servidor, para firmar el certificado de emisor de una red",
+        "description": "Sesión válida. issuer_pubkey es la clave pública Ed25519 del emisor del servidor, en hexadecimal: el usuario la pone en el certificado de emisor que firma con su raíz (ADR-028 D1). Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited.",
+        "operationId": "getIssuer",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Issuer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}": {
       "get": {
         "tags": [
@@ -6462,6 +6559,312 @@
         }
       }
     },
+    "/auth/local/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Inicia sesión con correo y contraseña",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "loginLocal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/recover": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Cambia la contraseña con un código de recuperación",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "recoverAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalRecover"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Crea una cuenta con correo y contraseña y abre sesión (ADR-028)",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "registerAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalRegister"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRegistered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "get": {
         "tags": [
@@ -7726,6 +8129,20 @@
           }
         }
       },
+      "Issuer": {
+        "type": "object",
+        "required": [
+          "issuer_pubkey"
+        ],
+        "properties": {
+          "issuer_pubkey": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]+$"
+          }
+        }
+      },
       "IssuerCertificate": {
         "type": "string",
         "format": "binary",
@@ -7859,6 +8276,87 @@
             "type": "boolean",
             "description": "true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.",
             "default": false
+          }
+        }
+      },
+      "LocalLogin": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalRecover": {
+        "type": "object",
+        "required": [
+          "login",
+          "recovery_code",
+          "new_password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12
+          },
+          "recovery_code": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalRegister": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12
+          }
+        }
+      },
+      "LocalRegistered": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "recovery_codes"
+        ],
+        "properties": {
+          "recovery_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Diez códigos de un solo uso; solo se muestran ahora y se guardan como hash.",
+            "maxItems": 10,
+            "minItems": 10
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

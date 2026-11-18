@@ -58,7 +58,11 @@ pub fn router(s: AppState) -> Router {
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/local/register", post(crate::accounts::register))
+        .route("/auth/local/login", post(crate::accounts::login))
+        .route("/auth/local/recover", post(crate::accounts::recover))
         .route("/api/v1/session", get(auth::get_session))
+        .route("/api/v1/issuer", get(crate::accounts::issuer))
         .route("/api/v1/orgs", get(orgs::list).post(orgs::create))
         .route(
             "/api/v1/orgs/{org}",

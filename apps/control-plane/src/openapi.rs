@@ -153,6 +153,11 @@ fn schemas() -> ComponentsBuilder {
         ("User", complete(&[("id", uuid()), ("email", nullable_text()), ("display_name", nullable_text())])),
         ("Membership", complete(&[("org_id", uuid()), ("role", named("Role"))])),
         ("Session", complete(&[("user", named("User")), ("csrf_token", text()), ("memberships", named("[]Membership"))])),
+        ("LocalRegister", object(&[("login", text()), ("password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(12)).max_length(Some(128)).into()), ("display_name", name.clone())], &["login", "password"])),
+        ("LocalRegistered", complete(&[("user_id", uuid()), ("recovery_codes", ArrayBuilder::new().items(text()).min_items(Some(10)).max_items(Some(10)).description(Some("Diez códigos de un solo uso; solo se muestran ahora y se guardan como hash.")).into())])),
+        ("LocalLogin", complete(&[("login", text()), ("password", text())])),
+        ("LocalRecover", complete(&[("login", text()), ("recovery_code", text()), ("new_password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(12)).max_length(Some(128)).into())])),
+        ("Issuer", complete(&[("issuer_pubkey", hex(32))])),
         ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
@@ -273,6 +278,46 @@ pub fn document() -> OpenApi {
             "204",
             "",
             "",
+        ),
+        (
+            Post,
+            "/auth/local/register",
+            "registerAccount",
+            "Crea una cuenta con correo y contraseña y abre sesión (ADR-028)",
+            "public",
+            "201",
+            "LocalRegister",
+            "LocalRegistered",
+        ),
+        (
+            Post,
+            "/auth/local/login",
+            "loginLocal",
+            "Inicia sesión con correo y contraseña",
+            "public",
+            "204",
+            "LocalLogin",
+            "",
+        ),
+        (
+            Post,
+            "/auth/local/recover",
+            "recoverAccount",
+            "Cambia la contraseña con un código de recuperación",
+            "public",
+            "204",
+            "LocalRecover",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/issuer",
+            "getIssuer",
+            "Clave pública del emisor del servidor, para firmar el certificado de emisor de una red",
+            "read",
+            "200",
+            "",
+            "Issuer",
         ),
         (
             Get,
@@ -917,7 +962,11 @@ pub fn document() -> OpenApi {
             if access == "read"
                 && !matches!(
                     id,
-                    "getSession" | "networkEvents" | "listServiceTokens" | "getJoinCode"
+                    "getSession"
+                        | "networkEvents"
+                        | "listServiceTokens"
+                        | "getJoinCode"
+                        | "getIssuer"
                 )
             {
                 operation = operation.security(SecurityRequirement::new(
@@ -1046,7 +1095,7 @@ pub fn document() -> OpenApi {
                 .header("Location", Header::new(text()))
                 .header("Set-Cookie", Header::new(text()));
         }
-        if id == "logout" {
+        if matches!(id, "logout" | "registerAccount" | "loginLocal") {
             response = response.header("Set-Cookie", Header::new(text()));
         }
         if id == "getDeviceConfiguration" {
@@ -1096,7 +1145,15 @@ pub fn document() -> OpenApi {
             if code == "500"
                 || code == "400"
                 || access != "public"
-                || matches!(id, "oidcCallback" | "enrollDevice" | "requestJoin")
+                || matches!(
+                    id,
+                    "oidcCallback"
+                        | "enrollDevice"
+                        | "requestJoin"
+                        | "registerAccount"
+                        | "loginLocal"
+                        | "recoverAccount"
+                )
             {
                 operation = operation.response(
                     code,
@@ -1129,6 +1186,10 @@ pub fn document() -> OpenApi {
                 | "addMemberByEmail"
                 | "createServiceToken"
                 | "getServer"
+                | "registerAccount"
+                | "loginLocal"
+                | "recoverAccount"
+                | "getIssuer"
         ) || id.contains("Delegated")
         {
             operation = operation.response(
@@ -1236,6 +1297,12 @@ pub fn document() -> OpenApi {
         if id == "getServer" {
             operation = operation.description(Some("Sesión válida y al menos una membresía, de cualquier rol. 401 invalid_session; 403 forbidden sin membresías. Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited. Cache-Control: no-store. control_plane.version=CARGO_PKG_VERSION y commit=ATENEA_BUILD_COMMIT o unknown; server_time es string(date-time). No incluye coordinator ni relay: no hay canal real para conocer sus versiones."));
         }
+        if matches!(id, "registerAccount" | "loginLocal" | "recoverAccount") {
+            operation = operation.description(Some("ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión."));
+        }
+        if id == "getIssuer" {
+            operation = operation.description(Some("Sesión válida. issuer_pubkey es la clave pública Ed25519 del emisor del servidor, en hexadecimal: el usuario la pone en el certificado de emisor que firma con su raíz (ADR-028 D1). Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited."));
+        }
         paths = paths.path(path, PathItem::new(method, operation));
     }
     OpenApiBuilder::new()
@@ -1250,7 +1317,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 52);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 56);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());
