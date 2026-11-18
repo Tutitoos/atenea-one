@@ -11,7 +11,7 @@ Los datos de las cuentas viven en el servidor, en la misma base PostgreSQL que e
 ## Operador
 
 - **Abrir el registro.** Está cerrado por defecto. Se abre con `ATENEA_CP_REGISTRATION_OPEN=true` y se cierra quitándolo. Actualizar el control plane no lo abre.
-- **Límites** (variables `ATENEA_CP_*`): `REGISTER_PER_MINUTE` (5 por IP, IPv6 por /64), `REGISTER_GLOBAL_PER_MINUTE` (30), `LOGIN_PER_MINUTE` (20, compartido con el inicio OIDC), `PERSONAL_MAX_NETWORKS` (3), `PERSONAL_MAX_DEVICES` (64 no revocados por red) y `MAX_OPEN_INVITATIONS` (10 por red). Los topes de redes y dispositivos solo afectan a las organizaciones personales; las demás no los tienen.
+- **Límites** (variables `ATENEA_CP_*`): `REGISTER_PER_MINUTE` (5 por IP, IPv6 por /64), `REGISTER_GLOBAL_PER_MINUTE` (30), `LOGIN_PER_MINUTE` (20, compartido con el inicio OIDC), `PASSWORD_MIN_CHARS` (12; se puede bajar, pero nunca de 8), `PERSONAL_MAX_NETWORKS` (3), `PERSONAL_MAX_DEVICES` (64 no revocados por red) y `MAX_OPEN_INVITATIONS` (10 por red). Los topes de redes y dispositivos solo afectan a las organizaciones personales; las demás no los tienen.
 - **GitHub y otros proveedores.** Siguen entrando por OIDC. Añadir GitHub es configuración de Dex en el despliegue (un conector `github`), no del control plane. No está probado en el piloto.
 - **Sin correo.** El servidor no envía correos: no hay verificación ni recuperación por correo. Quien pierde la contraseña y los códigos pierde la cuenta; el operador puede restablecerla desde la base, con auditoría.
 - **Una cuenta nueva ve la red de otra solo por invitación.** El enlace da acceso a una red, no a la organización de quien invita.

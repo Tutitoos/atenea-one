@@ -359,3 +359,50 @@ async fn el_emisor_se_expone_solo_con_sesion() {
     );
     app.finish().await;
 }
+
+#[tokio::test]
+async fn el_minimo_de_contrasena_es_configurable_pero_nunca_baja_de_ocho() {
+    for (configured, accepted, rejected) in
+        [(8usize, "Admin123", "Admin12"), (3, "Admin123", "Admin12")]
+    {
+        let Some(app) = TestApp::configured(Config {
+            registration_open: true,
+            password_min_chars: configured,
+            ..Config::default()
+        })
+        .await
+        else {
+            return;
+        };
+        let body = |password: &str, login: &str| json!({"login": login, "password": password});
+        app.json(
+            "POST",
+            "/auth/local/register",
+            None,
+            body(rejected, "a@example.test"),
+        )
+        .await
+        .error(StatusCode::BAD_REQUEST, "invalid_password");
+        let ok = app
+            .json(
+                "POST",
+                "/auth/local/register",
+                None,
+                body(accepted, "b@example.test"),
+            )
+            .await;
+        assert_eq!(ok.status, StatusCode::CREATED, "{}", ok.json);
+        app.finish().await;
+    }
+    // Por defecto sigue pidiendo 12.
+    let Some(app) = app(true).await else { return };
+    app.json(
+        "POST",
+        "/auth/local/register",
+        None,
+        json!({"login": "c@example.test", "password": "Admin123456"}),
+    )
+    .await
+    .error(StatusCode::BAD_REQUEST, "invalid_password");
+    app.finish().await;
+}

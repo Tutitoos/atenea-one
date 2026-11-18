@@ -9,8 +9,8 @@ const messages: Record<string, string> = {
   rate_limited: 'Demasiados intentos. Espera unos minutos y vuelve a probar.',
   registration_closed: 'El registro de cuentas está cerrado en este servidor.',
   invalid_login: 'Escribe un correo con formato válido.',
-  invalid_password: 'La contraseña debe tener al menos 12 caracteres (máximo 128 bytes).',
   conflict: 'Ya existe una cuenta con ese correo.',
+  invalid_password: 'La contraseña es demasiado corta (el servidor pide 12 caracteres o más por defecto) o supera los 128 bytes.',
 };
 
 // Sin sesión no hay token CSRF: estas rutas no pasan por el cliente con sesión y exigen cuerpo JSON.
@@ -76,8 +76,8 @@ export function LocalAccess({ onDone = () => window.location.assign('/') }: { on
     {mode === 'recuperar' && <Field label="Código de recuperación">{props =>
       <input {...props} type="text" autoComplete="off" required value={values.code} onChange={set('code')}/>}</Field>}
     <Field label={mode === 'recuperar' ? 'Contraseña nueva' : 'Contraseña'}
-      help={mode === 'entrar' ? undefined : 'Al menos 12 caracteres.'}>{props =>
-      <input {...props} type="password" required minLength={mode === 'entrar' ? undefined : 12}
+      help={mode === 'entrar' ? undefined : 'Mejor una frase larga. El servidor rechaza las demasiado cortas.'}>{props =>
+      <input {...props} type="password" required
         autoComplete={mode === 'entrar' ? 'current-password' : 'new-password'} value={values.password} onChange={set('password')}/>}</Field>
     <Button type="submit" variant="primary" loading={pending}>{{ entrar: 'Entrar', registrar: 'Crear cuenta', recuperar: 'Cambiar contraseña' }[mode]}</Button>
     <p role="status">{message}</p>
