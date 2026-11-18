@@ -2030,7 +2030,7 @@
           "networks"
         ],
         "summary": "Obtiene una red; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
         "operationId": "getNetwork",
         "parameters": [
           {
@@ -3963,6 +3963,7 @@
           "networks"
         ],
         "summary": "Valida y guarda el certificado del emisor; requiere admin u owner",
+        "description": "409 managed_network en una red gestionada: el servidor firma y renueva su certificado. En una red de raíz propia valida que parsea, que lo firma su raíz y que es de la clave de emisor del servidor (400 wrong_issuer); 409 serial_rollback con un serial menor que el instalado.",
         "operationId": "setIssuerCertificate",
         "parameters": [
           {
@@ -6391,7 +6392,7 @@
           "networks"
         ],
         "summary": "Lista redes; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
         "operationId": "listNetworks",
         "parameters": [
           {
@@ -6493,7 +6494,7 @@
           "networks"
         ],
         "summary": "Crea una red sin CIDR solapados; requiere admin u owner",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan.",
         "operationId": "createNetwork",
         "parameters": [
           {
@@ -9466,6 +9467,7 @@
           "ipv4_cidr",
           "ipv6_cidr",
           "root_anchor",
+          "root_mode",
           "has_issuer_cert",
           "issuer_cert_not_after",
           "join_policy"
@@ -9506,6 +9508,9 @@
             "maxLength": 64,
             "minLength": 64,
             "pattern": "^[0-9a-fA-F]+$"
+          },
+          "root_mode": {
+            "$ref": "#/components/schemas/RootMode"
           }
         }
       },
@@ -9699,10 +9704,7 @@
       "NewNetwork": {
         "type": "object",
         "required": [
-          "name",
-          "ipv4_cidr",
-          "ipv6_cidr",
-          "root_anchor"
+          "name"
         ],
         "properties": {
           "ipv4_cidr": {
@@ -9895,6 +9897,13 @@
           "owner",
           "admin",
           "member"
+        ]
+      },
+      "RootMode": {
+        "type": "string",
+        "enum": [
+          "own",
+          "managed"
         ]
       },
       "Route": {
@@ -10201,6 +10210,7 @@
           "ipv4_cidr",
           "ipv6_cidr",
           "root_anchor",
+          "root_mode",
           "has_issuer_cert",
           "issuer_cert_not_after",
           "join_policy",
@@ -10249,6 +10259,9 @@
             "maxLength": 64,
             "minLength": 64,
             "pattern": "^[0-9a-fA-F]+$"
+          },
+          "root_mode": {
+            "$ref": "#/components/schemas/RootMode"
           }
         }
       },

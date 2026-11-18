@@ -101,9 +101,11 @@ pub async fn check_device_quota(
 #[derive(Deserialize)]
 pub struct NewNetwork {
     pub name: String,
-    pub ipv4_cidr: String,
-    pub ipv6_cidr: String,
-    pub root_anchor: String,
+    /// Sin CIDR se asignan solos (ADR-029 D2).
+    pub ipv4_cidr: Option<String>,
+    pub ipv6_cidr: Option<String>,
+    /// Con ancla la raíz es del usuario (modo propio, ADR-028); sin ella la red es gestionada por el servidor.
+    pub root_anchor: Option<String>,
 }
 pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
     let certificate = r.get::<Option<&[u8]>, _>("issuer_cert");
@@ -118,10 +120,10 @@ pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
         })
         .transpose()?;
     Ok(
-        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
+        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"root_mode":r.get::<String,_>("root_mode"),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
     )
 }
-pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,issuer_cert,join_policy FROM networks";
+pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,root_mode,issuer_cert,join_policy FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
 /// Con `with_connectivity` y el servidor configurado (ADR-018) lleva además el STUN y el hash de la CA del relay;
 /// si con eso el texto supera 512 caracteres, `409 code_too_long` (con `?conectividad=0` sigue siendo válido).
@@ -251,36 +253,33 @@ pub async fn create(
     let u = auth::session(&s, &h, true).await?;
     orgs::role(&s, u, org, "admin").await?;
     orgs::name(&b.name)?;
-    let v4: IpNet = b
-        .ipv4_cidr
-        .parse()
-        .map_err(|_| ApiError::bad("invalid_cidr"))?;
-    let v6: IpNet = b
-        .ipv6_cidr
-        .parse()
-        .map_err(|_| ApiError::bad("invalid_cidr"))?;
-    let prefix = |n: &IpNet| atenea_identity::Prefix {
-        addr: n.addr(),
-        len: n.prefix_len(),
+    // ADR-029: sin ancla la red es gestionada (el servidor genera y cifra la raíz); con ancla, la raíz es del usuario.
+    let managed = b.root_anchor.is_none();
+    if managed && s.wrap.is_none() {
+        return Err(ApiError::conflict("managed_unavailable"));
+    }
+    let parse = |text: &Option<String>| -> Result<Option<IpNet>, ApiError> {
+        text.as_deref()
+            .map(|t| t.parse().map_err(|_| ApiError::bad("invalid_cidr")))
+            .transpose()
     };
-    if !v4.addr().is_ipv4()
-        || !v6.addr().is_ipv6()
-        || v4.addr() != v4.network()
-        || v6.addr() != v6.network()
-        || !prefix(&v4).valid_route()
-        || !prefix(&v6).valid_route()
-    {
-        return Err(ApiError::bad("invalid_cidr"));
-    }
-    let root: [u8; 32] = hex::decode(&b.root_anchor)
-        .ok()
-        .and_then(|x| x.try_into().ok())
-        .ok_or_else(|| ApiError::bad("invalid_root"))?;
-    if root == [0; 32]
-        || atenea_identity::VerifyingKey::from_bytes(&root).map_or(true, |k| k.is_weak())
-    {
-        return Err(ApiError::bad("invalid_root"));
-    }
+    let (given_v4, given_v6) = (parse(&b.ipv4_cidr)?, parse(&b.ipv6_cidr)?);
+    let provided_root: Option<[u8; 32]> = b
+        .root_anchor
+        .as_deref()
+        .map(|text| {
+            hex::decode(text)
+                .ok()
+                .and_then(|x| x.try_into().ok())
+                .filter(|root: &[u8; 32]| {
+                    *root != [0; 32]
+                        && atenea_identity::VerifyingKey::from_bytes(root)
+                            .is_ok_and(|k| !k.is_weak())
+                })
+                .ok_or_else(|| ApiError::bad("invalid_root"))
+        })
+        .transpose()?;
+    let id = Uuid::now_v7();
     let mut tx = s.pool.begin().await?;
     sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
         .bind(org)
@@ -297,12 +296,46 @@ pub async fn create(
     if full {
         return Err(ApiError::conflict("network_limit"));
     }
+    let v4 = match given_v4 {
+        Some(net) => net,
+        None => auto_v4(&mut tx).await?,
+    };
+    let v6 = given_v6.unwrap_or_else(|| auto_v6(id));
+    let prefix = |n: &IpNet| atenea_identity::Prefix {
+        addr: n.addr(),
+        len: n.prefix_len(),
+    };
+    if !v4.addr().is_ipv4()
+        || !v6.addr().is_ipv6()
+        || v4.addr() != v4.network()
+        || v6.addr() != v6.network()
+        || !prefix(&v4).valid_route()
+        || !prefix(&v6).valid_route()
+    {
+        return Err(ApiError::bad("invalid_cidr"));
+    }
     let overlap:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM networks WHERE org_id=$1 AND (ipv4_cidr && $2::cidr OR ipv6_cidr && $3::cidr))").bind(org).bind(v4.to_string()).bind(v6.to_string()).fetch_one(&mut *tx).await?;
     if overlap {
         return Err(ApiError::conflict("overlapping_network"));
     }
-    let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6)").bind(id).bind(org).bind(&b.name).bind(v4.to_string()).bind(v6.to_string()).bind(root.as_slice()).execute(&mut *tx).await?;
+    let new_root = match (&provided_root, s.wrap.as_deref()) {
+        (None, Some(wrap)) => Some(crate::managed::generate(wrap, id)?),
+        _ => None,
+    };
+    let anchor = provided_root
+        .or_else(|| new_root.as_ref().map(|r| r.anchor))
+        .ok_or_else(ApiError::internal)?;
+    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor,root_mode,root_wrapped) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6,$7,$8)")
+        .bind(id)
+        .bind(org)
+        .bind(&b.name)
+        .bind(v4.to_string())
+        .bind(v6.to_string())
+        .bind(anchor.as_slice())
+        .bind(if managed { "managed" } else { "own" })
+        .bind(new_root.as_ref().map(|r| r.wrapped.as_slice()))
+        .execute(&mut *tx)
+        .await?;
     audit::record(
         &mut tx,
         "user",
@@ -311,18 +344,55 @@ pub async fn create(
         Some(id),
         "network.create",
         id,
-        json!({}),
+        if managed {
+            json!({"managed": true})
+        } else {
+            json!({})
+        },
     )
     .await?;
+    if let Some(root) = &new_root {
+        crate::managed::sign_first(&s, &mut tx, id, org, root).await?;
+    }
+    let row = sqlx::query(&format!("{SELECT} WHERE id=$1"))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
     s.panel.changed(id, "network");
     s.panel.changed(id, "audit");
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            json!({"id":id,"org_id":org,"name":b.name,"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":b.root_anchor,"has_issuer_cert":false,"issuer_cert_not_after":null,"join_policy":"cerrada"}),
-        ),
-    ))
+    Ok((StatusCode::CREATED, Json(value(&row)?)))
+}
+/// Siguiente /24 libre del bloque privado reservado `10.64.0.0/10` (ADR-029 D2), sin solaparse con ninguna red
+/// existente de ningún usuario: un equipo puede unirse a varias redes sin conflicto de rutas.
+async fn auto_v4(tx: &mut PgConnection) -> Result<IpNet, ApiError> {
+    let used: Vec<IpNet> = sqlx::query_scalar::<_, String>(
+        "SELECT ipv4_cidr::text FROM networks WHERE ipv4_cidr && '10.64.0.0/10'::cidr",
+    )
+    .fetch_all(&mut *tx)
+    .await?
+    .iter()
+    .filter_map(|text| text.parse().ok())
+    .collect();
+    (0..16384u32)
+        .filter_map(|i| {
+            let addr = std::net::Ipv4Addr::from(0x0A40_0000 + (i << 8));
+            ipnet::Ipv4Net::new(addr, 24).ok().map(IpNet::V4)
+        })
+        .find(|candidate| {
+            !used
+                .iter()
+                .any(|u| u.contains(candidate) || candidate.contains(u))
+        })
+        .ok_or_else(|| ApiError::conflict("address_pool_exhausted"))
+}
+/// ULA /64 derivado de bits aleatorios del identificador (`fd` + 40 bits): sin consultar la base, con colisión
+/// despreciable; si ocurriera, el solape se rechaza como cualquier otro.
+fn auto_v6(id: Uuid) -> IpNet {
+    let mut bytes = [0u8; 16];
+    bytes[0] = 0xfd;
+    bytes[1..6].copy_from_slice(&id.as_bytes()[9..14]);
+    IpNet::V6(ipnet::Ipv6Net::new(std::net::Ipv6Addr::from(bytes), 64).expect("prefijo 64 válido"))
 }
 pub async fn list(
     State(s): State<AppState>,
@@ -435,10 +505,16 @@ pub async fn certificate(
 ) -> Result<StatusCode, ApiError> {
     let (u, org) = access(&s, &h, net, true).await?;
     let mut tx = s.pool.begin().await?;
-    let row = sqlx::query("SELECT root_anchor,issuer_cert FROM networks WHERE id=$1 FOR UPDATE")
-        .bind(net)
-        .fetch_one(&mut *tx)
-        .await?;
+    let row = sqlx::query(
+        "SELECT root_anchor,issuer_cert,root_mode FROM networks WHERE id=$1 FOR UPDATE",
+    )
+    .bind(net)
+    .fetch_one(&mut *tx)
+    .await?;
+    // ADR-029: el servidor firma y renueva solo el certificado de una red gestionada; subir uno a mano no tiene sentido.
+    if row.get::<String, _>("root_mode") == "managed" {
+        return Err(ApiError::conflict("managed_network"));
+    }
     let root: [u8; 32] = row
         .get::<Vec<u8>, _>("root_anchor")
         .try_into()

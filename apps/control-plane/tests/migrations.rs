@@ -109,7 +109,7 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
             .unwrap();
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     );
     // Reconstruye el estado 0006: redes y dispositivos previos quedan `cerrada` y `token`.
     t.pool

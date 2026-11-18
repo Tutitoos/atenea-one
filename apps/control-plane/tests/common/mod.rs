@@ -37,15 +37,29 @@ impl TestApp {
     }
 
     pub async fn configured(config: Config) -> Option<Self> {
-        Self::build(config, None).await
+        Self::build(config, None, None).await
     }
 
     /// Control plane con el bloque de conectividad del código de unión activado (ADR-018).
     pub async fn with_connectivity(config: Config, connectivity: Connectivity) -> Option<Self> {
-        Self::build(config, Some(connectivity)).await
+        Self::build(config, Some(connectivity), None).await
     }
 
-    async fn build(config: Config, connectivity: Option<Connectivity>) -> Option<Self> {
+    /// Control plane con clave de envoltura: crea redes gestionadas (ADR-029).
+    pub async fn with_wrap(config: Config, key: [u8; 32]) -> Option<Self> {
+        Self::build(
+            config,
+            None,
+            Some(atenea_control_plane::managed::Wrap::new(&key)),
+        )
+        .await
+    }
+
+    async fn build(
+        config: Config,
+        connectivity: Option<Connectivity>,
+        wrap: Option<atenea_control_plane::managed::Wrap>,
+    ) -> Option<Self> {
         let Ok(url) = std::env::var("ATENEA_TEST_DATABASE_URL") else {
             eprintln!(
                 "OMITIDA integración PostgreSQL: falta ATENEA_TEST_DATABASE_URL; ejecute apps/control-plane/tests/run.sh para exigir una base real."
@@ -69,7 +83,9 @@ impl TestApp {
             .unwrap();
         let issuer = signing_key(generate_seed());
         let app = router(
-            AppState::new(pool.clone(), config, issuer.clone()).with_connectivity(connectivity),
+            AppState::new(pool.clone(), config, issuer.clone())
+                .with_connectivity(connectivity)
+                .with_wrap(wrap),
         );
         Some(Self {
             app,

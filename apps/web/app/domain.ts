@@ -27,7 +27,7 @@ function networkAddress(value: string) {
 }
 const ipv4Cidr = z.cidrv4().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
 const ipv6Cidr = z.cidrv6().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
-export const networkSchema = z.object({ name: nameSchema, ipv4_cidr: ipv4Cidr, ipv6_cidr: ipv6Cidr, root_anchor: rootAnchor });
+export const networkSchema = z.object({ name: nameSchema, ipv4_cidr: ipv4Cidr.optional(), ipv6_cidr: ipv6Cidr.optional(), root_anchor: rootAnchor });
 export const privatePrefix = z.union([ipv4Cidr, ipv6Cidr]).refine(value => {
   const [address, length] = value.split('/');
   if (address.includes(':')) return Number(length) >= 32 && (parseInt(address.split(':')[0], 16) & 0xfe00) === 0xfc00;

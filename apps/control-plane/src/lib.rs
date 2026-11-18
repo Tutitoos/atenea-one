@@ -13,6 +13,7 @@ pub mod dns;
 pub mod grants;
 pub mod internal;
 pub mod issue;
+pub mod managed;
 pub mod members;
 pub mod networks;
 mod openapi;
@@ -62,6 +63,8 @@ pub struct AppState {
     pub metrics: atenea_observability::Metrics,
     /// Conectividad que anuncia el código de unión (ADR-018); `None` = como la v0.1.8.
     pub connectivity: Option<Arc<connectivity::Connectivity>>,
+    /// Clave que cifra las raíces de las redes gestionadas (ADR-029); `None` = no se crean redes gestionadas.
+    pub wrap: Option<Arc<managed::Wrap>>,
 }
 impl AppState {
     pub fn new(
@@ -85,12 +88,19 @@ impl AppState {
             panel: Arc::new(panel::Live::default()),
             metrics: Default::default(),
             connectivity: None,
+            wrap: None,
         }
     }
 
     /// Activa la conectividad del código de unión. Lo llama `main` tras validar la configuración.
     pub fn with_connectivity(mut self, connectivity: Option<connectivity::Connectivity>) -> Self {
         self.connectivity = connectivity.map(Arc::new);
+        self
+    }
+
+    /// Activa las redes gestionadas con su clave de envoltura. Lo llama `main` tras leerla.
+    pub fn with_wrap(mut self, wrap: Option<managed::Wrap>) -> Self {
+        self.wrap = wrap.map(Arc::new);
         self
     }
 }
