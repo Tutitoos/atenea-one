@@ -8,8 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 )
+
+// grantablePermissions son los que un dispositivo puede dar: `write:grants` solo lo concede un administrador de la red.
+var grantablePermissions = []string{
+	"read:devices", "read:policies", "write:join-codes", "write:approve-devices", "write:policies", "write:revoke-devices",
+}
 
 // AdminParams son los argumentos de una operación de administración delegada (ADR-026, fase 6). Cada operación usa
 // solo los suyos y los valida con un alfabeto cerrado antes de componer la orden elevada.
@@ -22,6 +28,10 @@ type AdminParams struct {
 	To          string `json:"to"`
 	Proto       string `json:"proto"`
 	Ports       string `json:"ports"`
+	// Conceder permisos (ADR-027): lista cerrada de permisos y alcance; `Device` es el destinatario.
+	Permissions []string `json:"permissions"`
+	Scope       string   `json:"scope"`
+	Devices     []string `json:"devices"`
 }
 
 // AdminOp es la lista cerrada de escrituras delegadas. La lectura (concesión, inventario, políticas) no pasa por aquí:
@@ -34,9 +44,11 @@ const (
 	AdminRevoke
 	AdminPolicyAdd
 	AdminPolicyRemove
+	AdminGrant
+	AdminUngrant
 )
 
-// ParseAdminOp acepta exactamente las cinco operaciones permitidas.
+// ParseAdminOp acepta exactamente las siete operaciones permitidas.
 func ParseAdminOp(s string) (AdminOp, error) {
 	switch s {
 	case "join-code":
@@ -49,6 +61,10 @@ func ParseAdminOp(s string) (AdminOp, error) {
 		return AdminPolicyAdd, nil
 	case "policy-remove":
 		return AdminPolicyRemove, nil
+	case "grant":
+		return AdminGrant, nil
+	case "ungrant":
+		return AdminUngrant, nil
 	}
 	return 0, errors.New("operación no permitida")
 }
@@ -168,6 +184,45 @@ func AdminScript(cli string, op AdminOp, network string, p AdminParams) (string,
 			return "", err
 		}
 		return fmt.Sprintf("%s network policy remove %s --network %s --yes", cli, pol, network), nil
+	case AdminGrant:
+		d, err := id(p.Device, "dispositivo")
+		if err != nil {
+			return "", err
+		}
+		if len(p.Permissions) == 0 {
+			return "", errors.New("indica al menos un permiso")
+		}
+		for i, perm := range p.Permissions {
+			if !slices.Contains(grantablePermissions, perm) || slices.Contains(p.Permissions[:i], perm) {
+				return "", errors.New("permiso no válido")
+			}
+		}
+		script := fmt.Sprintf("%s network grant %s --network %s --permission %s --scope %s", cli, d, network, strings.Join(p.Permissions, ","), p.Scope)
+		switch p.Scope {
+		case "enrolled", "network":
+			if len(p.Devices) != 0 {
+				return "", errors.New("solo el alcance de una lista admite dispositivos")
+			}
+		case "devices":
+			if len(p.Devices) == 0 || len(p.Devices) > 64 {
+				return "", errors.New("el alcance de una lista pide de 1 a 64 dispositivos")
+			}
+			for i, dev := range p.Devices {
+				if _, err := id(dev, "dispositivo del alcance"); err != nil || slices.Contains(p.Devices[:i], dev) {
+					return "", errors.New("dispositivo del alcance no válido")
+				}
+			}
+			script += " --devices " + strings.Join(p.Devices, ",")
+		default:
+			return "", errors.New("alcance no válido")
+		}
+		return script, nil
+	case AdminUngrant:
+		d, err := id(p.Device, "dispositivo")
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s network ungrant %s --network %s --yes", cli, d, network), nil
 	}
 	return "", errors.New("operación no permitida")
 }
@@ -182,6 +237,10 @@ func adminPrompt(op AdminOp) string {
 		return "Atenea One quiere revocar un dispositivo de una red."
 	case AdminPolicyAdd:
 		return "Atenea One quiere crear una política de acceso en una red."
+	case AdminGrant:
+		return "Atenea One quiere cambiar los permisos de un dispositivo en una red."
+	case AdminUngrant:
+		return "Atenea One quiere retirar los permisos de un dispositivo en una red."
 	}
 	return "Atenea One quiere borrar una política de acceso de una red."
 }

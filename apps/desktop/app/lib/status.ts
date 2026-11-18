@@ -73,6 +73,7 @@ const status = z.object({
   // ausente = agente o servidor anteriores. Datos de presentación: el servidor decide cada escritura.
   admin: z.object({
     grant: z.object({
+      device_id: z.string().nullish(),
       scopes: z.array(z.string()),
       scope: z.object({ kind: z.enum(['enrolled', 'devices', 'network']), devices: z.array(z.string()).default([]) }),
       granted_at: z.string(),
@@ -85,6 +86,12 @@ const status = z.object({
       id: z.string(), src: z.object({ kind: z.string(), device_id: z.string().nullish(), prefix: z.string().nullish() }),
       dst: z.object({ kind: z.string(), device_id: z.string().nullish(), prefix: z.string().nullish() }),
       proto: z.number(), port_min: z.number(), port_max: z.number(), created_by_device: z.string().nullish(),
+    })),
+    // ADR-027: concesiones de los dispositivos del alcance; solo las lee quien tiene `write:grants`.
+    grants: tolerant(z.object({
+      device_id: z.string(), scopes: z.array(z.string()),
+      scope: z.object({ kind: z.enum(['enrolled', 'devices', 'network']), devices: z.array(z.string()).default([]) }),
+      granted_by_device: z.string().nullish(), granted_at: z.string(),
     })),
     fetched_unix: z.number().nullish(), last_error: z.string().nullish(),
   }).nullish(),
