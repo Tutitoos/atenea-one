@@ -53,6 +53,19 @@ La `0013` no se deshace. El control plane **anterior arranca con normalidad sobr
 - `--migrate` de N sobre una base con `0013` falla sin cambiar nada.
 - Para retroceder: parar, arrancar el binario anterior **sin** `--migrate`. No borrar `device_grants` ni las columnas.
 
+### Retroceso de la 0014
+
+La `0014` (ADR-027) añade `device_grants.granted_by_device` y tampoco se deshace. El control plane `0.1.33` **arranca con normalidad sobre ella** (ensayo `tests/stack/rollback-0014.sh`, 68 comprobaciones, con binarios de desarrollo y PostgreSQL sintético, no con Ansible, Compose ni imágenes reales). `granted_by` sigue siendo no nulo, de modo que `GET …/grants` de la `0.1.33` lista también las concesiones delegadas.
+
+Lo que el binario anterior **no** hace, medido en el ensayo:
+
+- **No retira lo que concedió quien revoca.** Borra la concesión del delegado revocado pero deja las que él dio. Esas concesiones **se siguen ejerciendo** (el destinatario sigue aprobado) y, al volver a la `0.1.34`, aparecen atribuidas a un delegado revocado. Un administrador las retira con `DELETE …/devices/{dev}/grant` (o desde el panel).
+- **No borra la autoría al reescribir.** Si un administrador sustituye una concesión delegada con la `0.1.33`, `granted_by_device` no cambia: al volver, el delegado original sigue figurando como autor y podría cambiarla o retirarla. Basta con que un administrador la conceda de nuevo con la `0.1.34` (la sustituye con autoría de administrador).
+- **No conoce `write:grants`** (lo rechaza con `400 invalid_grant`) ni las rutas `/device/admin/grants` y `…/devices/{dev}/grant` (`404`).
+- `--migrate` de la `0.1.33` sobre una base con `0014` falla sin cambiar nada.
+
+Tras un retroceso y la nueva subida conviene revisar `GET …/grants` y retirar o rehacer las concesiones cuyo autor figure como revocado.
+
 ## Auditoría
 
 Cada acción delegada queda con `actor_kind = device` y el dispositivo autor: `token.create`, `device.approve`, `device.revoke`, `policy.create`, `policy.delete`. Conceder y retirar: `device.grant` y `device.grant_revoke` (con `reason`: `admin` o `device_revoked`) como `user`. En el panel, «Auditoría» y los campos «Dado de alta por» y «Creada por».
@@ -67,6 +80,10 @@ Cada acción delegada queda con `actor_kind = device` y el dispositivo autor: `t
 | `401` | Firma inválida: comprueba el reloj del equipo (±60 s) y que no esté revocado. |
 | `409 fingerprint_mismatch` | La huella no es la del dispositivo: no aprobar hasta aclararlo con quien se une. |
 | `409 join_code_limit` | Hay 8 códigos vivos de ese delegado: esperar a que caduquen o se usen. |
+| `403 grant_self` | Un dispositivo no cambia sus propios permisos (ADR-027). |
+| `403 grant_exceeds_own` | Se intenta dar un permiso que no se tiene, `write:grants`, o un alcance que no cabe en el propio. |
+| `403 grant_not_yours` | La concesión la dio un administrador u otro dispositivo: solo se cambia o retira lo que diste tú. |
+| `409 grant_limit` | Hay 64 concesiones dadas por este dispositivo: retirar alguna. |
 | `404` en `/device/admin/*` | Servidor anterior a la `0013`. |
 | La aplicación no muestra «Administración» | Sin concesión, servidor o agente anteriores, o la lectura aún no llegó (hasta 30 s). |
 

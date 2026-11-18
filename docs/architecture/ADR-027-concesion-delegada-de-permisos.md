@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-027: Concesión delegada de permisos (administrar permisos desde un dispositivo)
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. **Implementadas** (sin publicar): control plane (fase 2: migración `0014`, rutas y reglas D2 a D5, probadas contra PostgreSQL 17), CLI (fase 3: `grants`, `grant`, `ungrant`), la etiqueta del permiso en el panel (fase 4) y el agente y la aplicación de escritorio (fase 5: lectura `grants`, pestaña «Permisos» en cada dispositivo y las operaciones `grant` y `ungrant`). **Pendiente:** la guía de operación, el ensayo de retroceso de la `0014` y la prueba en el piloto (fase 6). **Modifica** una regla de [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (§3.4 «Sin escalada», la parte de que un dispositivo no concede permisos) y lo hace de forma acotada.
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. **Implementadas** (sin publicar): control plane (fase 2: migración `0014`, rutas y reglas D2 a D5, probadas contra PostgreSQL 17), CLI (fase 3: `grants`, `grant`, `ungrant`), la etiqueta del permiso en el panel (fase 4) y el agente y la aplicación de escritorio (fase 5: lectura `grants`, pestaña «Permisos» en cada dispositivo y las operaciones `grant` y `ungrant`). Fase 6: guía de operación y ensayo de retroceso `tests/stack/rollback-0014.sh` (68 comprobaciones) hechos. **Pendiente:** la prueba en el piloto. **Modifica** una regla de [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (§3.4 «Sin escalada», la parte de que un dispositivo no concede permisos) y lo hace de forma acotada.
 - **Relacionados:** [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (concesiones, alcance y rutas `/device/admin/`), [ADR-020](ADR-020-token-de-servicio-de-solo-lectura.md) (el token de servicio sigue siendo de solo lectura), [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) y [ADR-024](ADR-024-servicios-expuestos-por-dispositivo.md) (lista cerrada de operaciones elevadas de la aplicación).
 
 ## Contexto
@@ -73,7 +73,7 @@ Cada fase es un cambio revisable con CI. No se publica una versión por fase.
 3. **CLI:** `grants`, `grant`, `ungrant`.
 4. **Panel:** el permiso nuevo y la autoría.
 5. **Agente y aplicación** (implementados): lectura `grants`, pestaña «Permisos» en cada dispositivo y las dos operaciones elevadas.
-6. **Guía de operación y retroceso:** ensayo de la `0014` y pruebas en el piloto.
+6. **Guía de operación y retroceso:** guía y ensayo de la `0014` (hechos); pruebas en el piloto (pendientes).
 
 ## Pruebas de aceptación
 
