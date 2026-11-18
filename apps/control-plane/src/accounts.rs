@@ -23,7 +23,8 @@ use uuid::Uuid;
 
 /// Emisor de las identidades locales en `users.oidc_issuer`. No es una URL: ningún proveedor OIDC puede colisionar.
 const LOCAL: &str = "local";
-const MIN_PASSWORD_CHARS: usize = 12;
+/// Suelo del mínimo configurable (`Config::password_min_chars`, 12 por defecto): un valor menor se sube a 8.
+pub const FLOOR_PASSWORD_CHARS: usize = 8;
 const MAX_PASSWORD_BYTES: usize = 128;
 const RECOVERY_CODES: usize = 10;
 /// Fallos seguidos tras los que la cuenta se bloquea; el bloqueo se duplica por fallo hasta `MAX_LOCK_SECS`.
@@ -57,8 +58,10 @@ fn normalize_login(raw: &str) -> Result<String, ApiError> {
     }
 }
 
-fn check_password(password: &str) -> Result<(), ApiError> {
-    if password.chars().count() < MIN_PASSWORD_CHARS || password.len() > MAX_PASSWORD_BYTES {
+fn check_password(password: &str, min_chars: usize) -> Result<(), ApiError> {
+    if password.chars().count() < min_chars.max(FLOOR_PASSWORD_CHARS)
+        || password.len() > MAX_PASSWORD_BYTES
+    {
         Err(ApiError::bad("invalid_password"))
     } else {
         Ok(())
@@ -220,7 +223,7 @@ pub async fn register(
     }
     limit_registration(&state, source.map(|e| e.0), &headers)?;
     let login = normalize_login(&body.login)?;
-    check_password(&body.password)?;
+    check_password(&body.password, state.config.password_min_chars)?;
     let display = body
         .display_name
         .as_deref()
@@ -350,7 +353,7 @@ pub async fn recover(
 ) -> Result<StatusCode, ApiError> {
     limit_login(&state, source.map(|e| e.0), &headers)?;
     let login = normalize_login(&body.login).map_err(|_| invalid_credentials())?;
-    check_password(&body.new_password)?;
+    check_password(&body.new_password, state.config.password_min_chars)?;
     // Se hace el hash antes de buscar la cuenta: el tiempo no revela si existe.
     let password_hash = hash_password(&state, body.new_password).await?;
     let mut tx = state.pool.begin().await?;

@@ -31,6 +31,8 @@ pub struct Config {
     pub register_per_minute: u32,
     /// Registros por minuto en todo el servidor.
     pub register_global_per_minute: u32,
+    /// Mínimo de caracteres de una contraseña local; 12 por defecto y nunca menos de 8, aunque se configure menos.
+    pub password_min_chars: usize,
     /// Redes que puede tener una organización personal (ADR-028 D4). Las demás organizaciones no tienen tope.
     pub personal_max_networks: u32,
     /// Dispositivos vivos (no revocados) por red de una organización personal.
@@ -80,6 +82,7 @@ impl Default for Config {
             register_per_minute: 5,
             register_global_per_minute: 30,
             personal_max_networks: 3,
+            password_min_chars: 12,
             personal_max_devices: 64,
             max_open_invitations: 10,
             device_per_minute: 30,
