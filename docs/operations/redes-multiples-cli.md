@@ -48,6 +48,9 @@ sudo atenea network revoke  DISPOSITIVO --network RED [--yes]
 sudo atenea network policy list   --network RED
 sudo atenea network policy add    --network RED --from A --to B [--proto tcp --ports 22]
 sudo atenea network policy remove ID --network RED [--yes]
+sudo atenea network grants     --network RED
+sudo atenea network grant DISPOSITIVO --network RED --permission read:devices[,…] [--scope devices --devices A,B]
+sudo atenea network ungrant DISPOSITIVO --network RED [--yes]
 ```
 
 - **`permissions`**: los permisos y el alcance de las escrituras de este dispositivo. **`devices`** y **`policy list`** muestran toda la red (permisos `read:devices` y `read:policies`); `devices` marca con `*` lo que está dentro del alcance.
@@ -55,6 +58,7 @@ sudo atenea network policy remove ID --network RED [--yes]
 - **`approve <huella>`** (`write:approve-devices`): exige la huella completa (8 grupos de 4 hex en minúsculas, la que muestra el equipo al unirse). Busca el dispositivo con esa huella, comprueba que está pendiente y envía la aprobación **con la huella**; el servidor la vuelve a comparar. Si no hay ninguno o ya no está pendiente, no se envía nada.
 - **`revoke <dispositivo>`** (`write:revoke-devices`) y **`policy remove <id>`** (`write:policies`): piden confirmación; sin terminal interactiva exigen `--yes`.
 - **`policy add`** (`write:policies`): `--from` y `--to` son id o nombre (un nombre debe ser único entre los no revocados) y solo se envían dispositivos, nunca `any` ni prefijos. `--proto` es `any` (por defecto), `icmp`, `tcp`, `udp` o `icmpv6`; `--ports` (`22` o `8000-8100`) solo con tcp o udp.
+- **`grants`, `grant` y `ungrant`** ([ADR-027](../architecture/ADR-027-concesion-delegada-de-permisos.md); permiso `write:grants`, que concede un administrador desde el panel): `grants` lista las concesiones de los dispositivos del alcance y quién las dio. `grant <dispositivo> --permission P[,P…] [--scope devices --devices A,B]` concede o sustituye los permisos de un dispositivo del alcance; `--scope devices` (por defecto) pide una lista contenida en el propio alcance, y `enrolled` o `network` solo valen si el propio alcance es toda la red. No se puede dar más de lo que se tiene, ni `write:grants`, ni cambiar los propios permisos o los de un administrador. `ungrant <dispositivo>` retira lo que diste tú (y lo que ese dispositivo hubiera dado) y pide confirmación; sin terminal interactiva exige `--yes`.
 - Los errores del servidor se traducen a un mensaje: sin permiso (`grant_missing`), fuera de alcance (`out_of_scope`), huella distinta, demasiados códigos vivos, etc. Un `401` suele indicar el reloj del equipo o un dispositivo revocado.
 
 ## Disposición en disco
