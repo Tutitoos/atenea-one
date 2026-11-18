@@ -12,9 +12,9 @@ import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
 import type { Peer, Reply } from '../lib/status';
 import { PeerServices } from '../services';
-import { Administration } from '../admin';
+import { AdminSummary, adminTabs } from '../admin';
 import { readClient } from '../lib/networks';
-import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton } from '../ui';
+import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton, Tabs } from '../ui';
 
 function Title({ id, name, editable, rename = false }: { id: string; name: string; editable: boolean; rename?: boolean }) {
   const names = useNames();
@@ -96,21 +96,26 @@ function SelfDetail({ reply, network, stale }: { reply: Reply; network: string; 
     <>
       <Title id={status.public_key} name={selfName(status, names)} editable />
       <State tone={levelTone(health.level)}>{health.text}</State>
-      <Addresses addrs={status.addrs} />
-      <Heading>Detalles</Heading>
-      <Card>
-        <Row label="Nombre del sistema">{status.hostname}</Row>
-        <Versions list={status.versions} reported={status.versions != null} />
-        <Row label="Lease">{left == null ? null : left > 0 ? `quedan ${ago(left)}` : 'caducado'}</Row>
-        <Row label="Configuración">{`v${status.config.version}`}</Row>
-        <Row label="NAT">{status.nat?.mapping}</Row>
-        <Row label="IP pública vista">{status.nat?.reflexive}</Row>
-        <Row label="Control plane">{seen(status.sync?.last_ok_unix)}</Row>
-        <Row label="Coordinator">{seen(status.coordinator?.last_announce_ok_unix)}</Row>
-        <Row label="Relays asignados">{String(status.relay?.allocations ?? 0)}</Row>
-        <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} label="clave pública" /></Row>
-      </Card>
-      <Administration status={status} network={network} canWrite={canWrite} stale={stale} />
+      <Tabs label="Secciones del equipo" tabs={[
+        { id: 'general', label: 'General', panel: <>
+          <Addresses addrs={status.addrs} />
+          <Heading>Detalles</Heading>
+          <Card>
+            <Row label="Nombre del sistema">{status.hostname}</Row>
+            <Versions list={status.versions} reported={status.versions != null} />
+            <Row label="Lease">{left == null ? null : left > 0 ? `quedan ${ago(left)}` : 'caducado'}</Row>
+            <Row label="Configuración">{`v${status.config.version}`}</Row>
+            <Row label="NAT">{status.nat?.mapping}</Row>
+            <Row label="IP pública vista">{status.nat?.reflexive}</Row>
+            <Row label="Control plane">{seen(status.sync?.last_ok_unix)}</Row>
+            <Row label="Coordinator">{seen(status.coordinator?.last_announce_ok_unix)}</Row>
+            <Row label="Relays asignados">{String(status.relay?.allocations ?? 0)}</Row>
+            <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} label="clave pública" /></Row>
+          </Card>
+          <AdminSummary status={status} canWrite={canWrite} />
+        </> },
+        ...adminTabs({ status, network, canWrite, stale }),
+      ]} />
     </>
   );
 }
@@ -131,24 +136,28 @@ function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { pee
       {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
       {/* Con datos de otra red, `fieldset disabled` apaga los botones de acción sin tocarlos uno a uno. */}
       <fieldset disabled={stale} className="mb-4 flex flex-wrap gap-3 border-0 p-0"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></fieldset>
-      <Addresses addrs={peer.addrs} />
-      <PeerServices peer={peer} network={network} stale={stale} />
-      <Heading>Detalles</Heading>
-      <Card>
-        <Row label="Nombre en la red">{peer.name}</Row>
-        <Versions list={peer.versions} reported={peer.versions_at != null} />
-        <Row label="Camino en uso">{label}</Row>
-        {ready}
-        {latency}
-        <Row label="Recibido">{traffic(peer.rx_bytes, rate?.down)}</Row>
-        <Row label="Enviado">{traffic(peer.tx_bytes, rate?.up)}</Row>
-        <Row label="Última sesión">{peer.session ? (peer.last_handshake_secs_ago == null ? '—' : `hace ${ago(peer.last_handshake_secs_ago)}`) : 'sin sesión'}</Row>
-        <Row label="Dirección remota">{peer.endpoint}</Row>
-        <Row label="Direcciones conocidas">{int(peer.candidates)}</Row>
-        {peer.probe && (peer.probe.failures > 0 || peer.probe.hold_secs != null) && <Row label="Reintentos de conexión">{`${peer.probe.failures} fallos · ${peer.probe.hold_secs == null ? 'sin espera de sondeo' : `${peer.probe.hold_secs} s hasta el próximo intento`}`}</Row>}
-        <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
-      </Card>
-      <TrafficHistory history={history} />
+      <Tabs label="Secciones del dispositivo" tabs={[
+        { id: 'general', label: 'General', panel: <>
+          <Addresses addrs={peer.addrs} />
+          <Heading>Detalles</Heading>
+          <Card>
+            <Row label="Nombre en la red">{peer.name}</Row>
+            <Versions list={peer.versions} reported={peer.versions_at != null} />
+            <Row label="Camino en uso">{label}</Row>
+            {ready}
+            {latency}
+            <Row label="Recibido">{traffic(peer.rx_bytes, rate?.down)}</Row>
+            <Row label="Enviado">{traffic(peer.tx_bytes, rate?.up)}</Row>
+            <Row label="Última sesión">{peer.session ? (peer.last_handshake_secs_ago == null ? '—' : `hace ${ago(peer.last_handshake_secs_ago)}`) : 'sin sesión'}</Row>
+            <Row label="Dirección remota">{peer.endpoint}</Row>
+            <Row label="Direcciones conocidas">{int(peer.candidates)}</Row>
+            {peer.probe && (peer.probe.failures > 0 || peer.probe.hold_secs != null) && <Row label="Reintentos de conexión">{`${peer.probe.failures} fallos · ${peer.probe.hold_secs == null ? 'sin espera de sondeo' : `${peer.probe.hold_secs} s hasta el próximo intento`}`}</Row>}
+            <Row label="Clave pública">{`${peer.public_key.slice(0, 16)}…`}<CopyButton value={peer.public_key} label="clave pública" /></Row>
+          </Card>
+        </> },
+        { id: 'services', label: 'Servicios', panel: <PeerServices peer={peer} network={network} stale={stale} /> },
+        { id: 'traffic', label: 'Tráfico', panel: <TrafficHistory history={history} /> },
+      ]} />
     </>
   );
 }

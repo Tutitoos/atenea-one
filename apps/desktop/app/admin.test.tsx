@@ -85,8 +85,10 @@ it('con concesión muestra permisos, alcance, pendientes y políticas, y axe sal
   await screen.findByRole('heading', { name: 'Administración' });
   expect(screen.getByText(/los dispositivos que este equipo da de alta, y él mismo/)).toBeVisible();
   expect(screen.getByRole('list', { name: 'Permisos concedidos' })).toHaveTextContent('write:approve-devices');
+  await userEvent.click(screen.getByRole('tab', { name: 'Dispositivos' }));
   expect(screen.getByRole('region', { name: 'Pendientes' })).toHaveTextContent('nuevo');
   expect(screen.getByText(/ajeno/).textContent).toContain('fuera de tu alcance');
+  await userEvent.click(screen.getByRole('tab', { name: 'Políticas' }));
   expect(screen.getByText(/de un administrador/)).toBeVisible();
   expect((await axe(container, { rules: { 'color-contrast': { enabled: false } } })).violations).toEqual([]);
 });
@@ -95,6 +97,7 @@ it('aprobar muestra la huella completa y envía solo esa huella tras confirmar',
   serve(admin(grant(all)));
   const user = userEvent.setup();
   open();
+  await user.click(await screen.findByRole('tab', { name: 'Dispositivos' }));
   await user.click(await screen.findByRole('button', { name: 'Aprobar…' }));
   expect(screen.getByLabelText('Huella de nuevo')).toHaveTextContent(FP);
   expect(writes()).toEqual([]);
@@ -106,6 +109,7 @@ it('genera un código una vez y solo muestra el código y su caducidad', async (
   serve(admin(grant(all)), linux, () => JSON.stringify({ code: 'ATENEA1-SINTETICO', expires_at: '2026-11-17T10:10:00Z' }));
   const user = userEvent.setup();
   open();
+  await user.click(await screen.findByRole('tab', { name: 'Código de unión' }));
   await user.click(await screen.findByRole('button', { name: 'Generar código' }));
   expect(await screen.findByLabelText('Código de unión generado')).toHaveTextContent('ATENEA1-SINTETICO');
   expect(writes()).toEqual([{ op: 'join-code', network: NET_ID, params: { ttl: 600 } }]);
@@ -116,6 +120,7 @@ it('revocar pide confirmar y solo ofrece dispositivos del alcance', async () => 
   const user = userEvent.setup();
   open();
   await screen.findByRole('heading', { name: 'Administración' });
+  await user.click(screen.getByRole('tab', { name: 'Dispositivos' }));
   const revoke = await screen.findByRole('button', { name: 'Revocar nuevo' });
   expect(screen.queryByRole('button', { name: 'Revocar ajeno' })).not.toBeInTheDocument();
   await user.click(revoke);
@@ -129,6 +134,7 @@ it('crea políticas solo entre dispositivos del alcance y borra solo las delegad
   const user = userEvent.setup();
   open();
   await screen.findByRole('heading', { name: 'Administración' });
+  await user.click(screen.getByRole('tab', { name: 'Políticas' }));
   const origin = await screen.findByLabelText('Origen');
   expect([...origin.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['—', 'este equipo']);
   await user.selectOptions(origin, ME);
@@ -144,12 +150,18 @@ it('con permisos de lectura no ofrece escrituras y en Windows indica la CLI', as
   serve(admin(grant(['read:devices', 'read:policies'])));
   const first = open();
   await screen.findByRole('heading', { name: 'Administración' });
-  for (const name of ['Generar código', 'Crear política', 'Revocar nuevo', 'Aprobar…']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Generar código' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Código de unión' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab', { name: 'Dispositivos' }));
+  for (const name of ['Revocar nuevo', 'Aprobar…']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab', { name: 'Políticas' }));
+  expect(screen.queryByRole('button', { name: 'Crear política' })).not.toBeInTheDocument();
   first.unmount();
   vi.mocked(invoke).mockReset();
   serve(admin(grant(all)), windows);
   open();
   expect(await screen.findByText(/usa/)).toHaveTextContent('atenea network');
+  await userEvent.click(screen.getByRole('tab', { name: 'Código de unión' }));
   expect(screen.getByRole('button', { name: 'Generar código' })).toBeDisabled();
 });
 
@@ -157,7 +169,24 @@ it('cancelar el diálogo del sistema muestra el error y no deja nada a medias', 
   serve(admin(grant(all)), linux, () => { throw 'Cancelado'; });
   const user = userEvent.setup();
   open();
+  await user.click(await screen.findByRole('tab', { name: 'Dispositivos' }));
   await user.click(await screen.findByRole('button', { name: 'Revocar nuevo' }));
   await user.click(screen.getByRole('button', { name: 'Confirmar revocación de nuevo' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/Cancelado|falló/);
+});
+
+it('las pestañas se recorren con las flechas y solo se monta la activa', async () => {
+  serve(admin(grant(all)));
+  const user = userEvent.setup();
+  open();
+  const general = await screen.findByRole('tab', { name: 'General' });
+  expect(general).toHaveAttribute('aria-selected', 'true');
+  general.focus();
+  await user.keyboard('{ArrowRight}');
+  expect(screen.getByRole('tab', { name: 'Código de unión' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.queryByRole('heading', { name: 'Administración' })).not.toBeInTheDocument();
+  await user.keyboard('{End}');
+  expect(screen.getByRole('tab', { name: 'Políticas' })).toHaveFocus();
+  await user.keyboard('{ArrowRight}');
+  expect(screen.getByRole('tab', { name: 'General' })).toHaveFocus();
 });
