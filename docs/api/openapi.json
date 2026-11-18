@@ -1819,6 +1819,114 @@
         }
       }
     },
+    "/api/v1/invitations/accept": {
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Canjea una invitación con la cuenta de la sesión",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "acceptInvitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/issuer": {
       "get": {
         "tags": [
@@ -2562,6 +2670,7 @@
           "devices"
         ],
         "summary": "Aprueba y asigna IPv4/IPv6; requiere admin u owner",
+        "description": "Admin u owner de la organización, o enroller de la red. El cuerpo es opcional para un administrador; un enroller debe enviar {fingerprint} con la huella completa del dispositivo pendiente (400 invalid_request si falta, 409 fingerprint_mismatch si no coincide). Auditoría device.approve con {addresses}; si aprueba un enroller añade by=enroller.",
         "operationId": "approveDevice",
         "parameters": [
           {
@@ -2583,6 +2692,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegatedApproval"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "description": "Operación completada",
@@ -3519,6 +3638,325 @@
         ]
       }
     },
+    "/api/v1/networks/{net}/invitations": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista las invitaciones recientes, sin el token; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listInvitations",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Invitation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Crea un enlace de invitación de un solo uso; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "createInvitation",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/invitations/{id}": {
+      "delete": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Anula una invitación sin usar; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "revokeInvitation",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}/issuer-cert": {
       "put": {
         "tags": [
@@ -3961,6 +4399,324 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/networks/{net}/members": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista los miembros por invitación de la red; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listNetworkMembers",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NetworkMember"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/members/{user}": {
+      "put": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Cambia el rol de un miembro por invitación; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "setNetworkMember",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkMemberRole"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Quita a un miembro por invitación; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "removeNetworkMember",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
       }
     },
     "/api/v1/networks/{net}/metrics": {
@@ -6420,6 +7176,96 @@
         ]
       }
     },
+    "/api/v1/shared-networks": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Redes a las que la cuenta pertenece por invitación, con su rol",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listSharedNetworks",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SharedNetwork"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/auth/callback": {
       "get": {
         "tags": [
@@ -7061,6 +7907,17 @@
   },
   "components": {
     "schemas": {
+      "AcceptInvitation": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "AddMember": {
         "type": "object",
         "required": [
@@ -8129,6 +8986,81 @@
           }
         }
       },
+      "Invitation": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "created_at",
+          "expires_at",
+          "used_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "InvitationCreated": {
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "role",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "Issuer": {
         "type": "object",
         "required": [
@@ -8484,6 +9416,26 @@
           }
         }
       },
+      "NetworkAccess": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "role"
+        ],
+        "properties": {
+          "network_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          }
+        }
+      },
       "NetworkEvent": {
         "type": "object",
         "required": [
@@ -8512,6 +9464,58 @@
               "hello",
               "changed"
             ]
+          }
+        }
+      },
+      "NetworkMember": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role",
+          "display_name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "NetworkMemberRole": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -8581,6 +9585,21 @@
             "type": "integer",
             "maximum": 86400,
             "minimum": 60
+          }
+        }
+      },
+      "NewInvitation": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
           }
         }
       },
@@ -9077,6 +10096,66 @@
         "properties": {
           "role": {
             "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "SharedNetwork": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "ipv4_cidr",
+          "ipv6_cidr",
+          "root_anchor",
+          "has_issuer_cert",
+          "issuer_cert_not_after",
+          "join_policy",
+          "role"
+        ],
+        "properties": {
+          "has_issuer_cert": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ipv4_cidr": {
+            "type": "string"
+          },
+          "ipv6_cidr": {
+            "type": "string"
+          },
+          "issuer_cert_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "root_anchor": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]+$"
           }
         }
       },
