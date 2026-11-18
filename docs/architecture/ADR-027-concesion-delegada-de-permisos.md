@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-027: Concesión delegada de permisos (administrar permisos desde un dispositivo)
 
-- **Estado:** **Propuesto** (2026-11-18), pendiente de que el responsable acepte o cambie las decisiones D1 a D6. No hay código. Si se acepta, **modifica** una regla de [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (§3.4 «Sin escalada», la parte de que un dispositivo no concede permisos) y lo hace de forma acotada.
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las seis decisiones D1 a D6 tal como se propusieron. Fases 2 a 6 en curso. **Modifica** una regla de [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (§3.4 «Sin escalada», la parte de que un dispositivo no concede permisos) y lo hace de forma acotada.
 - **Relacionados:** [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) (concesiones, alcance y rutas `/device/admin/`), [ADR-020](ADR-020-token-de-servicio-de-solo-lectura.md) (el token de servicio sigue siendo de solo lectura), [ADR-021](ADR-021-asistente-de-primera-ejecucion.md) y [ADR-024](ADR-024-servicios-expuestos-por-dispositivo.md) (lista cerrada de operaciones elevadas de la aplicación).
 
 ## Contexto
