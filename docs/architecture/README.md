@@ -28,6 +28,7 @@
 | [024](ADR-024-servicios-expuestos-por-dispositivo.md) | Servicios expuestos por dispositivo: publicarlos y abrirlos con un clic | Aceptado el 2026-11-08 con las cuatro recomendaciones (fases 2 a 5 publicadas en la 0.1.22; fase 6, el panel, implementada y sin publicar) |
 | [025](ADR-025-versiones-instaladas-por-dispositivo.md) | Versiones instaladas de cada dispositivo (agente, CLI y aplicación) | Aceptado el 2026-11-16 con las decisiones D1, D2 y las tres propuestas P1 a P3 (fases 2 a 6 implementadas; publicadas en la 0.1.32 y desplegadas salvo en el Windows apagado) |
 | [026](ADR-026-administracion-delegada-por-dispositivo.md) | Administración delegada por dispositivo: permisos por red con alcance, desde la CLI y la aplicación | Aceptado el 2026-11-17 con las cinco recomendaciones (fases 2 a 7 implementadas; publicadas en la 0.1.33 y desplegadas en el piloto; ensayo de retroceso `rollback-0013` y [guía](../operations/administracion-delegada.md); la aplicación no hace escrituras en Windows) |
+| [027](ADR-027-concesion-delegada-de-permisos.md) | Concesión delegada de permisos: administrar permisos desde un dispositivo con `write:grants` | Propuesto el 2026-11-18, pendiente de aceptar D1 a D6 (sin código; modificaría una regla de ADR-026) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
