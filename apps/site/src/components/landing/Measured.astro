@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import SubHead from "./SubHead.astro";
+import { withBase } from "../../lib/url";
 
 // Cada cifra sale de `docs/operations/rendimiento-y-presupuestos.md`: medias de
 // dos repeticiones por escenario salvo donde se dice otra cosa. Ninguna está
@@ -170,7 +171,7 @@ const steady = [
   </div>
 
   <p class="text-xs">
-    <a href="/rendimiento/" class="font-mono text-accent-200 underline underline-offset-4"
+    <a href={withBase("/rendimiento/")} class="font-mono text-accent-200 underline underline-offset-4"
       >metodología, tablas completas y presupuestos</a
     >
   </p>

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import CopyButton from "./CopyButton.astro";
 import SubHead from "./SubHead.astro";
+import { withBase } from "../../lib/url";
 
 // Los comandos son los de `docs/operations/instalacion-linux.md`, con un dominio
 // sintético. El token se recibe por argumento y puede verse en la lista de
@@ -46,7 +47,7 @@ const steps = [
   }
 </ol>
 <p class="mt-10 text-xs">
-  <a href="/instalacion/" class="font-mono text-accent-200 underline underline-offset-4"
+  <a href={withBase("/instalacion/")} class="font-mono text-accent-200 underline underline-offset-4"
     >guía de instalación completa</a
   >
 </p>

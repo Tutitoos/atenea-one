@@ -3,6 +3,7 @@
 
 import type { CollectionEntry } from "astro:content";
 import { PROJECT_TAGLINE } from "../site.mjs";
+import { hasBase, withBase } from "../lib/url";
 
 // Los hechos que repiten varias superficies (cabeceras, `robots.txt`, JSON-LD)
 // viven en `src/site.mjs` y se reexportan aquí. El guion bajo evita que Astro
@@ -21,9 +22,13 @@ export {
 /** Una página de la colección `docs`. */
 export type DocEntry = CollectionEntry<"docs">;
 
-/** Une una ruta al `site` configurado. */
+/**
+ * Une una ruta al `site` configurado, con la base del sitio puesta. Acepta tanto
+ * `/og.png` como `Astro.url.pathname`, que ya la lleva: no se duplica.
+ */
 export function absoluteUrl(site: URL | undefined, pathname: string): string {
-  return new URL(pathname, site ?? "http://localhost").href;
+  const full = hasBase(pathname) ? pathname : withBase(pathname);
+  return new URL(full, site ?? "http://localhost").href;
 }
 
 /** Ruta HTML de una página de documentación (siempre con barra final). */

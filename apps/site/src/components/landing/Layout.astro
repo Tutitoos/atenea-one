@@ -13,6 +13,7 @@
 // early at `sm:text-5xl`, and left the Geist Sans this page already downloads
 // entirely unused.
 import "../../styles/global.css";
+import { withBase } from "../../lib/url";
 import {
   LICENSE_NAME,
   PREVIEW_ALT,
@@ -93,11 +94,11 @@ const preview = absoluteUrl(Astro.site, "/og.png");
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
 
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
-    <link rel="icon" href="/favicon-16.png" sizes="16x16" type="image/png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
-    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="icon" href={withBase("/favicon.svg")} type="image/svg+xml" />
+    <link rel="icon" href={withBase("/favicon-32.png")} sizes="32x32" type="image/png" />
+    <link rel="icon" href={withBase("/favicon-16.png")} sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" href={withBase("/apple-touch-icon.png")} sizes="180x180" />
+    <link rel="manifest" href={withBase("/site.webmanifest")} />
     <meta name="theme-color" content="#0a0b0d" />
 
     <meta property="og:type" content={type} />

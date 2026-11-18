@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import { withBase } from "../lib/url";
 
 export const prerender = true;
 ---
@@ -15,7 +16,7 @@ export const prerender = true;
   }}
 >
   <p>
-    Esa página no existe. Empieza por la <a href="/instalacion/">instalación</a>
-    o por <a href="/como-funciona/">cómo funciona</a>.
+    Esa página no existe. Empieza por la <a href={withBase("/instalacion/")}>instalación</a>
+    o por <a href={withBase("/como-funciona/")}>cómo funciona</a>.
   </p>
 </StarlightPage>

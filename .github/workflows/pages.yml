@@ -1,0 +1,61 @@
+name: Sitio web
+
+# Publica apps/site en GitHub Pages (https://tutitoos.github.io/atenea-one/).
+# Solo se ejecuta al entrar cambios del sitio en main, o a demanda
+# (`gh workflow run "Sitio web"`). La comprobación del sitio en los pull
+# requests la hace `scripts/check.sh` desde el job `check` de CI: aquí solo se
+# construye y se publica.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - package.json
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Una publicación a la vez y sin cancelar la que está en curso: cancelar a mitad
+# de un despliegue dejaría el sitio a medias.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Instalar pnpm fijado
+        run: scripts/install-pnpm.sh
+      - name: Instalar solo lo que necesita el sitio
+        run: pnpm install --frozen-lockfile --filter "@atenea/site..."
+      - name: Construir el sitio
+        run: pnpm --filter @atenea/site run build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -15,6 +15,7 @@ import SubHead from "../components/landing/SubHead.astro";
 import TopBar from "../components/landing/TopBar.astro";
 import { FAQ } from "../faq.mjs";
 import { PROJECT_TAGLINE } from "../site.mjs";
+import { withBase } from "../lib/url";
 
 // El orden es el argumento: cómo funciona (el diagrama) -> los principios que
 // lo sostienen -> lo que se ha medido -> en qué se confía y en qué no -> cómo
@@ -76,7 +77,7 @@ const faqGraph = [
       <Flow />
       <p class="mt-10 text-xs">
         <a
-          href="/arquitectura/"
+          href={withBase("/arquitectura/")}
           class="font-mono text-accent-200 underline underline-offset-4"
           >la arquitectura completa</a
         >
@@ -117,7 +118,7 @@ const faqGraph = [
       </div>
       <p class="mt-10 text-xs">
         <a
-          href="/seguridad/"
+          href={withBase("/seguridad/")}
           class="font-mono text-accent-200 underline underline-offset-4"
           >modelo de amenazas y límites</a
         >

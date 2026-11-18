@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { REPOSITORY_URL } from "../../site.mjs";
+import { withBase } from "../../lib/url";
 
 // El pie no lleva encabezados: los títulos de columna nombran un grupo de
 // enlaces y nada más, así que son etiquetas y quedan fuera de la jerarquía.
@@ -36,7 +37,7 @@ const groups = [
   >
     <div>
       <p class="flex items-center gap-2 text-gray-100">
-        <img src="/favicon.svg" alt="" width="20" height="20" class="size-5" />
+        <img src={withBase("/favicon.svg")} alt="" width="20" height="20" class="size-5" />
         atenea one
       </p>
       <p class="mt-3 max-w-xs text-gray-400">
@@ -72,7 +73,7 @@ const groups = [
             {group.links.map((link) => (
               <li>
                 <a
-                  href={link.href}
+                  href={/^https?:\/\//.test(link.href) ? link.href : withBase(link.href)}
                   target={
                     /^https?:\/\//.test(link.href) ? "_blank" : undefined
                   }

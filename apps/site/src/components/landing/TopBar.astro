@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { REPOSITORY_URL } from "../../site.mjs";
+import { withBase } from "../../lib/url";
 
 // La navegación es generada: si un enlace sale del sitio se lee de su propio
 // `href`, así que una entrada nueva no puede olvidar la regla.
@@ -40,8 +41,8 @@ const links = rows.map((link) => ({
   <div
     class="mx-auto box-border flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3 font-mono text-xs lg:flex-nowrap"
   >
-    <a href="/" class="flex items-center gap-2 text-gray-100">
-      <img src="/favicon.svg" alt="" width="20" height="20" class="size-5" />
+    <a href={withBase("/")} class="flex items-center gap-2 text-gray-100">
+      <img src={withBase("/favicon.svg")} alt="" width="20" height="20" class="size-5" />
       atenea one
     </a>
 
@@ -84,7 +85,7 @@ const links = rows.map((link) => ({
       {
         links.map((link) => (
           <a
-            href={link.href}
+            href={link.external ? link.href : withBase(link.href)}
             target={link.external ? "_blank" : undefined}
             rel={link.external ? "noopener noreferrer" : undefined}
             class="text-gray-400 underline-offset-4 transition-colors hover:text-gray-100 hover:underline"

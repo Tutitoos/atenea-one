@@ -1,6 +1,8 @@
 ---
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
+import { withBase } from "../../lib/url";
+
 const facts = [
   "self-hosted",
   "cifrado extremo a extremo",
@@ -51,12 +53,12 @@ const facts = [
       class="mt-10 flex flex-wrap items-center justify-center gap-3 font-mono text-xs"
     >
       <a
-        href="/instalacion/"
+        href={withBase("/instalacion/")}
         class="border border-graph-exact bg-graph-exact px-4 py-2 text-shell hover:border-gray-100 hover:bg-gray-100"
         >instalar</a
       >
       <a
-        href="/como-funciona/"
+        href={withBase("/como-funciona/")}
         class="border border-graph-exact bg-raise px-4 py-2 text-gray-100 hover:border-gray-700"
         >cómo funciona</a
       >

@@ -6,7 +6,8 @@ Astro + Starlight + Tailwind 4, sitio estático en español. Estas reglas se sum
 
 - La portada no es una página de Starlight: su shell es `src/components/landing/Layout.astro`. Solo `src/content/docs/` lleva el chrome de Starlight. Es oscura por construcción (`ThemeProvider` fija `data-theme="dark"` y no hay selector).
 - Solo portada y documentación. Sin blog ni releases hasta que se pidan.
-- Repositorio público: ni analítica con claves, ni dominios o IPs reales de servidores, ni capturas reales. El único origen es `PRODUCTION_ORIGIN` en `src/site.mjs`.
+- Repositorio público: ni analítica con claves, ni dominios o IPs reales de servidores, ni capturas reales. El único origen es `PRODUCTION_ORIGIN` en `src/site.mjs` (GitHub Pages) y la ruta es `BASE_PATH`.
+- El sitio vive bajo `/atenea-one/`, no en la raíz. Todo enlace o recurso interno de un componente pasa por `withBase()` de `src/lib/url.ts`; en Markdown y MDX se escriben rutas absolutas (`/instalacion/`) y `rehypeBaseLinks` les pone la base. Un dominio propio solo exige `ATENEA_SITE_URL` y `ATENEA_SITE_BASE=/`.
 - Los datos que el sitio afirma salen de `docs/` del repositorio: no inventes estado, versiones ni garantías. El estado honesto (MVP de laboratorio, sin auditoría independiente) debe seguir visible.
 
 ## Estilo

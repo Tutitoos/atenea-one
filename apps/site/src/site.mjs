@@ -5,8 +5,18 @@
 // importarla: ese fichero no pasa por Vite y no puede importar `_seo.ts`, que
 // depende de `astro:content`. Nada de aquí puede importar de `astro:*`.
 
-/** Origen en el que se publica el sitio; `ATENEA_SITE_URL` lo sustituye en desarrollo. */
-export const PRODUCTION_ORIGIN = "https://atenea.one";
+/**
+ * Origen en el que se publica el sitio: GitHub Pages. `ATENEA_SITE_URL` lo
+ * sustituye (en desarrollo, o al pasar a un dominio propio).
+ */
+export const PRODUCTION_ORIGIN = "https://tutitoos.github.io";
+
+/**
+ * Ruta bajo la que se publica: un sitio de proyecto de GitHub Pages vive en
+ * `/<repositorio>/`. Con un dominio propio sería `/`, y `ATENEA_SITE_BASE=/` lo
+ * cambia sin tocar nada más.
+ */
+export const BASE_PATH = "/atenea-one";
 
 export const PROJECT_NAME = "Atenea One";
 

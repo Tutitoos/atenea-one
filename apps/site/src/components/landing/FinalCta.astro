@@ -2,6 +2,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import InstallCommand from "./InstallCommand.astro";
+import { withBase } from "../../lib/url";
 
 // Esta banda no es una `Section`: lleva su propio `h2` porque el titular *es*
 // la llamada a la acción. Repite la geometría de `Section` -- `border-t`,
@@ -27,12 +28,12 @@ import InstallCommand from "./InstallCommand.astro";
         class="mt-10 flex flex-wrap items-center justify-center gap-3 font-mono text-xs"
       >
         <a
-          href="/instalacion/"
+          href={withBase("/instalacion/")}
           class="border border-graph-exact bg-raise px-4 py-2 text-gray-100 transition-colors hover:border-gray-700"
           >instalar Atenea One</a
         >
         <a
-          href="/como-funciona/"
+          href={withBase("/como-funciona/")}
           class="border border-rule px-4 py-2 text-gray-300 transition-colors hover:border-rule-strong hover:text-gray-100"
           >leer la documentación</a
         >

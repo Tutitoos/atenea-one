@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { COLUMNS, LEGEND, SUMMARY } from "../../comparison.mjs";
 import Status from "./Status.astro";
+import { withBase } from "../../lib/url";
 ---
 
 <div class="space-y-6">
@@ -98,7 +99,7 @@ import Status from "./Status.astro";
 
   <p class="text-xs">
     <a
-      href="/comparacion/"
+      href={withBase("/comparacion/")}
       class="font-mono text-accent-200 underline underline-offset-4"
       >comparación técnica completa y fuentes</a
     >

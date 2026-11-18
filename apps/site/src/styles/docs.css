@@ -507,7 +507,7 @@
   }
 
   /* The site title, matched to the landing's TopBar: gray-100 at the body step
-     beside the helmet mark. */
+     beside the helmet mark, which Starlight renders from the `logo` option. */
   .site-title {
     gap: 0.5rem;
     color: var(--color-gray-100);
@@ -515,12 +515,10 @@
     font-weight: 500;
   }
 
-  .site-title::before {
-    content: "";
+  .site-title img {
     flex-shrink: 0;
     width: 1.25rem;
     height: 1.25rem;
-    background: url("/favicon.svg") center / contain no-repeat;
   }
 }
 
