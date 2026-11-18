@@ -5,7 +5,7 @@ import type { CollectionEntry } from "astro:content";
 import { PROJECT_TAGLINE } from "../site.mjs";
 import { hasBase, withBase } from "../lib/url";
 
-// Los hechos que repiten varias superficies (cabeceras, `robots.txt`, JSON-LD)
+// Los hechos que repiten varias superficies (cabeceras, JSON-LD)
 // viven en `src/site.mjs` y se reexportan aquí. El guion bajo evita que Astro
 // enrute este fichero.
 
