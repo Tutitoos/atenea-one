@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Administración delegada por dispositivo: guía de operación
 
-- **Estado:** publicada en la [0.1.33](v0.1.33.md) (fases 2 a 7 de [ADR-026](../architecture/ADR-026-administracion-delegada-por-dispositivo.md)) y desplegada en el piloto el 2026-11-17. Probada con datos sintéticos (pruebas de integración, Vitest, Go y el ensayo [`rollback-0013.sh`](../../tests/stack/rollback-0013.sh)) y, en el piloto, con una concesión de solo lectura y códigos de unión leída por el agente y ejercida con la CLI real. **No se ha ejercido en el piloto la aprobación por huella ni las políticas delegadas**, ni se ha visto la aplicación con una concesión en una ventana ni el diálogo de administrador del sistema desde ella.
+- **Estado:** publicada en la [0.1.33](v0.1.33.md) (fases 2 a 7 de [ADR-026](../architecture/ADR-026-administracion-delegada-por-dispositivo.md)) y desplegada en el piloto el 2026-11-17. Probada con datos sintéticos (pruebas de integración, Vitest, Go y el ensayo [`rollback-0013.sh`](../../tests/stack/rollback-0013.sh)) y, en el piloto, de extremo a extremo (2026-11-18) con la CLI real y un equipo desechable: código, unión pendiente, aprobación por huella completa y una política delegada con tráfico solo al puerto concedido. **No se han ejercido en el piloto los rechazos**, ni se ha visto la aplicación con una concesión en una ventana ni el diálogo de administrador del sistema desde ella.
 - **Para quién:** quien administra una red y quien opera el servidor.
 
 ## Qué permite
@@ -76,4 +76,4 @@ Un delegado comprometido puede, dentro de su alcance, crear políticas entre dis
 
 ## Sin comprobar
 
-La aprobación por huella y las políticas delegadas en el piloto (solo están ejercidas en el ensayo con PostgreSQL sintético), la aplicación con una ventana abierta contra un servidor con concesiones y su diálogo de administrador del sistema, el panel en un navegador, y la rama de Windows de la CLI en un equipo Windows (solo se compila en la CI).
+Los rechazos de la delegación (huella distinta, pendiente ajeno, política `any`, borrar la de un administrador) en el piloto (solo están ejercidos en el ensayo con PostgreSQL sintético), la aplicación con una ventana abierta contra un servidor con concesiones y su diálogo de administrador del sistema, el panel en un navegador, y la rama de Windows de la CLI en un equipo Windows (solo se compila en la CI).
