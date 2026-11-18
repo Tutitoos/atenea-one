@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, accounts, api::ApiError};
 
 fn unauthorized(code: &'static str) -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, code)
@@ -46,7 +46,7 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     found
 }
 
-fn set_cookie(
+pub(crate) fn set_cookie(
     state: &AppState,
     name: &str,
     value: &str,
@@ -64,7 +64,7 @@ fn set_cookie(
     .map_err(|_| ApiError::internal())
 }
 
-fn private_response(mut response: Response) -> Response {
+pub(crate) fn private_response(mut response: Response) -> Response {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -73,6 +73,36 @@ fn private_response(mut response: Response) -> Response {
         HeaderValue::from_static("no-referrer"),
     );
     response
+}
+
+/// Abre una sesión de 8 h para `user` dentro de `tx` y rota la previa del navegador; devuelve su cookie.
+/// La confirmación de `tx` es del llamador: sin ella la sesión no existe.
+pub(crate) async fn start_session(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    headers: &HeaderMap,
+    user: Uuid,
+) -> Result<HeaderValue, ApiError> {
+    let token = CsrfToken::new_random_len(32);
+    let csrf = CsrfToken::new_random_len(32);
+    if let Some(previous) = cookie(headers, "atenea_session") {
+        sqlx::query("DELETE FROM sessions WHERE id = $1")
+            .bind(hash(previous).as_slice())
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "INSERT INTO sessions \
+         (id, user_id, csrf_hash, csrf_token, created_at, expires_at, last_seen_at) \
+         VALUES ($1, $2, $3, $4, now(), now() + interval '8 hours', now())",
+    )
+    .bind(hash(token.secret()).as_slice())
+    .bind(user)
+    .bind(hash(csrf.secret()).as_slice())
+    .bind(csrf.secret())
+    .execute(&mut *tx)
+    .await?;
+    set_cookie(state, "atenea_session", token.secret(), "/", 28800)
 }
 
 async fn discover(state: &AppState) -> Result<(CoreProviderMetadata, reqwest::Client), ApiError> {
@@ -273,8 +303,10 @@ pub async fn callback(
             return Err(unauthorized("invalid_oidc"));
         }
     }
-    let token = CsrfToken::new_random_len(32);
-    let csrf = CsrfToken::new_random_len(32);
+    let display = claims
+        .name()
+        .and_then(|name| name.get(None))
+        .map(|name| name.as_str().to_owned());
     // Solo un correo verificado por el IdP puede servir de clave de membresía (`orgs::add_member`).
     let email = claims
         .email()
@@ -291,33 +323,11 @@ pub async fn callback(
     .bind(claims.issuer().as_str())
     .bind(claims.subject().as_str())
     .bind(email)
-    .bind(
-        claims
-            .name()
-            .and_then(|name| name.get(None))
-            .map(|name| name.as_str()),
-    )
+    .bind(display.as_deref())
     .fetch_one(&mut *tx)
     .await?;
-    // Una autenticación nueva rota también la sesión previa del navegador.
-    if let Some(previous) = cookie(&headers, "atenea_session") {
-        sqlx::query("DELETE FROM sessions WHERE id = $1")
-            .bind(hash(previous).as_slice())
-            .execute(&mut *tx)
-            .await?;
-    }
-    sqlx::query(
-        "INSERT INTO sessions \
-         (id, user_id, csrf_hash, csrf_token, created_at, expires_at, last_seen_at) \
-         VALUES ($1, $2, $3, $4, now(), now() + interval '8 hours', now())",
-    )
-    .bind(hash(token.secret()).as_slice())
-    .bind(user_id)
-    .bind(hash(csrf.secret()).as_slice())
-    .bind(csrf.secret())
-    .execute(&mut *tx)
-    .await?;
-    let session_cookie = set_cookie(&state, "atenea_session", token.secret(), "/", 28800)?;
+    accounts::ensure_personal(&mut tx, user_id, display.as_deref()).await?;
+    let session_cookie = start_session(&state, &mut tx, &headers, user_id).await?;
     let flow_cookie = set_cookie(&state, "atenea_oidc", "", "/auth/callback", 0)?;
     let mut response = private_response(Redirect::to(&state.config.public_url).into_response());
     tx.commit().await?;

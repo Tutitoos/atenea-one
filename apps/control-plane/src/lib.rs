@@ -1,5 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
+pub mod accounts;
 pub mod api;
 pub mod audit;
 pub mod auth;
@@ -48,6 +49,10 @@ pub struct AppState {
     pub nonces: NonceCache,
     pub rate: Rates<IpAddr>,
     pub login_rate: Rates<IpAddr>,
+    pub register_rate: Rates<IpAddr>,
+    pub register_global_rate: Rates<()>,
+    /// Hashes de contraseña simultáneos (argon2 usa 19 MiB y CPU): sin tope, el registro agotaría el servidor.
+    pub hash_gate: Arc<tokio::sync::Semaphore>,
     pub device_rate: Rates<Uuid>,
     /// Tasa propia de la administración delegada (ADR-026).
     pub admin_rate: Rates<Uuid>,
@@ -70,6 +75,9 @@ impl AppState {
             nonces: Default::default(),
             rate: Default::default(),
             login_rate: Default::default(),
+            register_rate: Default::default(),
+            register_global_rate: Default::default(),
+            hash_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             device_rate: Default::default(),
             admin_rate: Default::default(),
             session_rate: Default::default(),

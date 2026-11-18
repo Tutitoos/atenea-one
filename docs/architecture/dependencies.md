@@ -39,6 +39,7 @@ Requisitos directos de `apps/control-plane/Cargo.toml` (versiones exactas resuel
 | `axum` | 0.8 | MIT | Router HTTP |
 | `sqlx` | 0.8 | MIT OR Apache-2.0 | PostgreSQL, consultas en ejecución y migraciones |
 | `openidconnect` | 4 | MIT | Discovery, PKCE y validación de ID tokens |
+| `argon2` | 0.5 | MIT OR Apache-2.0 | Hash argon2id de las contraseñas de cuentas propias (ADR-028); parámetros por defecto de la biblioteca |
 | `reqwest` | 0.12 | MIT OR Apache-2.0 | Transporte OIDC con rustls, sin redirecciones |
 | `figment` | 0.10 | MIT OR Apache-2.0 | TOML opcional y variables de entorno |
 | `utoipa` | 5 | MIT OR Apache-2.0 | Contrato OpenAPI del router |

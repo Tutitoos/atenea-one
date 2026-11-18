@@ -531,3 +531,18 @@ Reglas, por orden (`403` con código estable salvo indicación):
 - **Auditoría:** `device.grant` y `device.grant_revoke` con `actor_kind = device` (`reason = delegate` al retirar una concesión propia). Eventos SSE: `devices` y `audit`.
 - `GET /api/v1/networks/{net}/grants` (§23) añade `granted_by_device`.
 - **Lo que no cambia:** un delegado sigue sin dar `write:grants`, sin cambiar la suya y sin tocar la de un administrador; el token de servicio sigue siendo de solo lectura.
+
+## 26. Cuentas propias (ADR-028, fase 2: cuentas y organización personal)
+
+Los datos de las cuentas viven en el servidor, en la misma base PostgreSQL que el resto (y por tanto en sus copias): usuarios, hash de la contraseña, hashes de los códigos de recuperación, organizaciones, redes y membresías. **Lo único que no guarda es la clave privada raíz de cada red**, que queda con su dueño (ADR-005, ADR-028 D1).
+
+La migración `0015_local_accounts.sql` es aditiva: `users.personal_org_done`, `organizations.personal` y las tablas `local_credentials` y `recovery_codes`. El binario anterior las ignora.
+
+- **Identidad local:** un `users` con `oidc_issuer = 'local'` y `oidc_subject` = el correo en minúsculas. El correo **no está verificado** y no se copia a `users.email`, así que «añadir por correo» (§17) no encuentra estas cuentas.
+- `POST /auth/local/register` `{login, password, display_name?}` → `201 {user_id, recovery_codes[10]}` y `Set-Cookie` de sesión. La contraseña tiene de 12 caracteres a 128 bytes y se guarda con argon2id (19 MiB, 2 pasadas, 1 hilo; como mucho 4 hashes a la vez, `429 rate_limited` si no hay hueco). `403 registration_closed` salvo que el operador ponga `ATENEA_CP_REGISTRATION_OPEN=true` (cerrado por defecto: actualizar no abre el registro). `400 invalid_login` o `invalid_password`; `409 conflict` si el correo existe (sin distinguir mayúsculas). Cupos `ATENEA_CP_REGISTER_PER_MINUTE` (5 por IP, IPv6 por /64) y `ATENEA_CP_REGISTER_GLOBAL_PER_MINUTE` (30). Los diez códigos de recuperación se muestran una sola vez y se guardan como SHA-256.
+- `POST /auth/local/login` `{login, password}` → `204` y `Set-Cookie`. `401 invalid_credentials` igual para un correo desconocido y una contraseña errónea (se verifica contra un hash falso para igualar el tiempo). Cinco fallos seguidos bloquean la cuenta con espera creciente de 30 s a 15 min: `429 rate_limited`, incluso con la contraseña correcta. Comparte `login_per_minute` por IP con el inicio OIDC.
+- `POST /auth/local/recover` `{login, recovery_code, new_password}` → `204`. Consume el código (un solo uso), cambia la contraseña, repone el contador de fallos y **cierra todas las sesiones** de la cuenta; no inicia sesión. Sin recuperación por correo (no hay SMTP): quien pierde la contraseña y los códigos pierde la cuenta, y el operador puede restablecerla.
+- **Organización personal (D5):** cada cuenta, local u OIDC, recibe una vez una organización de la que es `owner` (`organizations.personal`); `users.personal_org_done` impide recrearla si la borra. Un usuario OIDC existente la recibe al volver a entrar. **No admite miembros**: `409 personal_org` en `POST/PUT …/members`.
+- `GET /api/v1/issuer` (sesión) → `{"issuer_pubkey": <hex 32>}`: la clave pública del emisor del servidor, que el usuario pone en el certificado de emisor que firma con su raíz.
+- Los cuerpos de registro, inicio de sesión y recuperación exigen `application/json`; sin CORS configurado, otro origen no puede enviarlos desde un navegador.
+- **Pendiente de la fase 2, parte 2:** cuotas por organización personal, pertenencia por red, invitaciones por enlace y los permisos `viewer` y `enroller`. GitHub como conector de Dex es configuración del despliegue, no del control plane.
