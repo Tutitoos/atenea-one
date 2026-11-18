@@ -33,6 +33,26 @@ sudo apt install ./atenea-cli-*-linux-*.deb
 
 El paquete instala el agente y la CLI como servicio systemd endurecido. Crea solo el grupo `atenea`; no genera claves ni configuración.
 
+## macOS
+
+Descarga `atenea-one-<versión>-macos-<arq>.pkg` de la [última release](https://github.com/Tutitoos/atenea-one/releases/latest), verifícalo y ejecútalo con doble clic o desde la terminal:
+
+```sh
+sudo installer -pkg atenea-one-*-macos-*.pkg -target /
+```
+
+Instala el cliente en `/Library/Atenea/bin` y `Atenea One.app` en `/Applications`, con una sola autorización. Sin firma de Apple ni notarización: Gatekeeper avisará.
+
+## Windows
+
+Descarga `atenea-one-<versión>-windows-amd64.exe` de la [última release](https://github.com/Tutitoos/atenea-one/releases/latest) y ejecútalo con doble clic (UAC) o, en silencio, desde una consola elevada:
+
+```powershell
+.\atenea-one-<versión>-windows-amd64.exe /S
+```
+
+Instala por equipo el cliente, el agente y la aplicación en `%ProgramFiles%\Atenea`. Sin firma de código: SmartScreen puede avisar. No hay `install.ps1` ni ZIP; el instalador es el único camino.
+
 ## Enrolar un dispositivo
 
 1. En el panel, un administrador crea la red y un token de un solo uso, y entrega el objeto `join` por un canal de confianza. Comprueba su `root_anchor` fuera de banda.
