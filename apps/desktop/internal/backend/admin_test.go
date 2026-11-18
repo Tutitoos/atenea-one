@@ -31,6 +31,9 @@ func TestAdminScriptsAreTheExactClosedCommands(t *testing.T) {
 		{AdminPolicyAdd, AdminParams{From: adminDev, To: adminDev2, Proto: "tcp", Ports: "22"}, cli + " network policy add --network " + testID + " --from " + adminDev + " --to " + adminDev2 + " --proto tcp --ports 22"},
 		{AdminPolicyAdd, AdminParams{From: adminDev, To: adminDev2, Proto: "any"}, cli + " network policy add --network " + testID + " --from " + adminDev + " --to " + adminDev2 + " --proto any"},
 		{AdminPolicyRemove, AdminParams{Policy: adminDev}, cli + " network policy remove " + adminDev + " --network " + testID + " --yes"},
+		{AdminGrant, AdminParams{Device: adminDev, Permissions: []string{"read:devices", "write:policies"}, Scope: "devices", Devices: []string{adminDev2}}, cli + " network grant " + adminDev + " --network " + testID + " --permission read:devices,write:policies --scope devices --devices " + adminDev2},
+		{AdminGrant, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "network"}, cli + " network grant " + adminDev + " --network " + testID + " --permission read:devices --scope network"},
+		{AdminUngrant, AdminParams{Device: adminDev}, cli + " network ungrant " + adminDev + " --network " + testID + " --yes"},
 	} {
 		got, err := AdminScript(cli, tc.op, testID, tc.p)
 		if err != nil || got != tc.want {
@@ -62,6 +65,17 @@ func TestAdminScriptRejectsAnythingOutsideTheClosedAlphabets(t *testing.T) {
 		{"puerto 0", AdminPolicyAdd, testID, AdminParams{From: adminDev, To: adminDev2, Proto: "tcp", Ports: "0"}},
 		{"puerto enorme", AdminPolicyAdd, testID, AdminParams{From: adminDev, To: adminDev2, Proto: "udp", Ports: "70000"}},
 		{"puertos con orden", AdminPolicyAdd, testID, AdminParams{From: adminDev, To: adminDev2, Proto: "tcp", Ports: "22; id"}},
+		{"conceder sin permisos", AdminGrant, testID, AdminParams{Device: adminDev, Scope: "network"}},
+		{"conceder write:grants", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"write:grants"}, Scope: "network"}},
+		{"conceder permiso ajeno", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices; id"}, Scope: "network"}},
+		{"conceder permiso repetido", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices", "read:devices"}, Scope: "network"}},
+		{"conceder alcance", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "todo"}},
+		{"conceder lista vacía", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "devices"}},
+		{"conceder dispositivos con red", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "network", Devices: []string{adminDev2}}},
+		{"conceder dispositivo del alcance", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "devices", Devices: []string{"web"}}},
+		{"conceder dispositivo repetido", AdminGrant, testID, AdminParams{Device: adminDev, Permissions: []string{"read:devices"}, Scope: "devices", Devices: []string{adminDev2, adminDev2}}},
+		{"conceder destinatario", AdminGrant, testID, AdminParams{Device: "--all", Permissions: []string{"read:devices"}, Scope: "network"}},
+		{"retirar destinatario", AdminUngrant, testID, AdminParams{Device: "x"}},
 	}
 	for _, tc := range bad {
 		if got, err := AdminScript(cli, tc.op, tc.net+"", tc.p); err == nil {

@@ -12,7 +12,7 @@ import (
 // decisión 10): todo método exportado de un servicio registrado es invocable desde JavaScript, así que este tipo
 // tiene exactamente estos quince métodos (ClientStatus es de solo lectura: ADR-021; OpenService y ServicesPublishSet son
 // de ADR-024: la primera no recibe URL, solo id de par y puerto; la segunda es una operación elevada con argumentos fijos;
-// AdminApply es de ADR-026: una lista cerrada de cinco escrituras delegadas, cada una una sola llamada al CLI) y la
+// AdminApply es de ADR-026 y ADR-027: una lista cerrada de siete escrituras delegadas, cada una una sola llamada al CLI) y la
 // lógica vive en `internal/app`, sin vincular. Añadir un método exportado es un cambio de seguridad: rompe
 // TestServiceSurface y exige revisión.
 type AteneaService struct {

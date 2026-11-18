@@ -15,6 +15,8 @@ pub struct Scope {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Grant {
+    /// Este dispositivo: la aplicación lo compara con `granted_by_device` para saber qué concesiones dio él.
+    pub device_id: String,
     pub scopes: Vec<String>,
     pub scope: Scope,
     pub granted_at: String,
@@ -154,6 +156,7 @@ mod tests {
                     devices: vec![],
                 },
                 granted_at: "2026-11-17T10:00:00Z".into(),
+                device_id: "d".into(),
             }),
             fetched_unix: 100,
             ..Status::default()

@@ -10,9 +10,10 @@ import type { Rate } from '../lib/agent';
 import { ago, bytes, int, ipKind, levelTone, pathLabel, peerName, selfName, type Tone } from '../lib/format';
 import { useAgent } from '../lib/live';
 import { setName, useNames } from '../lib/names';
-import type { Peer, Reply } from '../lib/status';
+import type { Peer, Reply, Status } from '../lib/status';
 import { PeerServices } from '../services';
-import { AdminSummary, adminTabs } from '../admin';
+import { adminTabs } from '../admin';
+import { OwnPermissions, PeerPermissions } from '../permissions';
 import { readClient } from '../lib/networks';
 import { Card, CopyButton, Dot, Empty, Heading, Loading, Row, Skeleton, Tabs } from '../ui';
 
@@ -84,12 +85,16 @@ function Versions({ list, reported }: { list?: Installed | null; reported: boole
   );
 }
 
+/** La aplicación eleva donde puede unir redes; en Windows las escrituras delegadas aún no están soportadas (usa la CLI). */
+function useCanWrite() {
+  const info = useQuery({ queryKey: ['client'], queryFn: readClient });
+  return info.data?.can_join === true && info.data.os !== 'windows';
+}
+
 function SelfDetail({ reply, network, stale }: { reply: Reply; network: string; stale: boolean }) {
   const { status, health } = reply;
   const names = useNames();
-  const info = useQuery({ queryKey: ['client'], queryFn: readClient });
-  // La aplicación eleva donde puede unir redes; en Windows las escrituras delegadas aún no están soportadas (usa la CLI).
-  const canWrite = info.data?.can_join === true && info.data.os !== 'windows';
+  const canWrite = useCanWrite();
   const left = status.config.valid_until_unix ? Math.round(status.config.valid_until_unix - Date.now() / 1000) : null;
   const seen = (unix?: number | null) => (unix ? `ok hace ${ago(Date.now() / 1000 - unix)}` : null);
   return (
@@ -112,8 +117,8 @@ function SelfDetail({ reply, network, stale }: { reply: Reply; network: string; 
             <Row label="Relays asignados">{String(status.relay?.allocations ?? 0)}</Row>
             <Row label="Clave pública">{`${status.public_key.slice(0, 16)}…`}<CopyButton value={status.public_key} label="clave pública" /></Row>
           </Card>
-          <AdminSummary status={status} canWrite={canWrite} />
         </> },
+        { id: 'permissions', label: 'Permisos', panel: <OwnPermissions status={status} canWrite={canWrite} /> },
         ...adminTabs({ status, network, canWrite, stale }),
       ]} />
     </>
@@ -121,8 +126,9 @@ function SelfDetail({ reply, network, stale }: { reply: Reply; network: string; 
 }
 
 
-function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { peer: Peer; rate?: Rate; network: string; history?: DeviceHistory; rename: boolean; ping: boolean; stale: boolean }) {
+function PeerDetail({ peer, status, rate, network, history, rename, ping, stale }: { peer: Peer; status: Status; rate?: Rate; network: string; history?: DeviceHistory; rename: boolean; ping: boolean; stale: boolean }) {
   const names = useNames();
+  const canWrite = useCanWrite();
   const { label, tone } = pathLabel(peer.path);
   const used = peer.paths.find((p) => p.kind === peer.path);
   const ready = peer.paths.map((p) => <Row key={p.kind} label={`Camino ${pathLabel(p.kind).label.toLowerCase()}`}>{[p.ready ? 'listo' : 'no listo', p.healthy ? 'sano' : 'con fallos', p.last_rx_secs == null ? 'sin recepción' : `sin recibir desde hace ${ago(p.last_rx_secs)}`].join(' · ')}</Row>);
@@ -157,6 +163,7 @@ function PeerDetail({ peer, rate, network, history, rename, ping, stale }: { pee
         </> },
         { id: 'services', label: 'Servicios', panel: <PeerServices peer={peer} network={network} stale={stale} /> },
         { id: 'traffic', label: 'Tráfico', panel: <TrafficHistory history={history} /> },
+        { id: 'permissions', label: 'Permisos', panel: <PeerPermissions deviceId={peer.device_id} status={status} network={network} canWrite={canWrite} stale={stale} /> },
       ]} />
     </>
   );
@@ -180,5 +187,5 @@ export default function Device() {
   );
   if (id === 'self') return <SelfDetail reply={sample.reply} network={network} stale={stale} />;
   const peer = sample.reply.status.peers.find((p) => p.public_key === id);
-  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true && !stale} ping={asked?.ping === true && !stale} stale={stale} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
+  return peer ? <PeerDetail key={`${network}-${id}`} peer={peer} status={sample.reply.status} network={network} history={sample.history?.devices[id]} rate={sample.rates[id]} rename={asked?.rename === true && !stale} ping={asked?.ping === true && !stale} stale={stale} /> : <Empty>Este dispositivo ya no está en la configuración.</Empty>;
 }
