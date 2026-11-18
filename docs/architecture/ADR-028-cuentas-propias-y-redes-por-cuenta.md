@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-028: Cuentas propias, redes por cuenta e invitaciones
 
-- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las nueve decisiones D1 a D9 tal como se propusieron. Bases elegidas: raíz bajo custodia del usuario, Dex se mantiene, registro propio abierto con límites, organización personal automática e invitado que genera códigos y aprueba. **Implementado en `main`, sin publicar ni desplegar:** control plane (fase 2: migraciones `0015` y `0016`, cuentas locales, organización personal, `GET /api/v1/issuer`, miembros por red, invitaciones, cuotas), panel (fase 3: registro, entrada y recuperación, códigos, asistente de red, Compartir, «Compartidas conmigo», aprobar como `enroller`) y `atenea issuer-cert --issuer-pub`. Guía: [cuentas y redes compartidas](../operations/cuentas-y-redes-compartidas.md). **Pendiente:** comandos de CLI para invitar y listar miembros (fase 4), GitHub en Dex, prueba con cuentas reales en el piloto y que un miembro pueda abandonar una red.
+- **Estado:** **Aceptado** por el responsable el 2026-11-18, con las nueve decisiones D1 a D9 tal como se propusieron. Bases elegidas: raíz bajo custodia del usuario, Dex se mantiene, registro propio abierto con límites, organización personal automática e invitado que genera códigos y aprueba. **Implementado en `main`, sin publicar ni desplegar:** control plane (fase 2: migraciones `0015` y `0016`, cuentas locales, organización personal, `GET /api/v1/issuer`, miembros por red, invitaciones, cuotas), panel (fase 3: registro, entrada y recuperación, códigos, asistente de red, Compartir, «Compartidas conmigo», aprobar como `enroller`) y `atenea issuer-cert --issuer-pub`. Guía: [cuentas y redes compartidas](../operations/cuentas-y-redes-compartidas.md). **Fase 4 (CLI): decidido no hacerla** (2026-11-18, opción A): invitar y gestionar miembros son acciones de la cuenta propietaria y el CLI solo tiene la identidad del dispositivo; una credencial de cuenta para el CLI exigiría su propio ADR. Solo se añadió `--issuer-pub`. **Pendiente:** GitHub en Dex, prueba con cuentas reales en el piloto y que un miembro pueda abandonar una red.
 - **Relacionados:** [ADR-005](ADR-005-custodia-clave-raiz.md) (la raíz no vive en el servidor; se mantiene), [ADR-015](ADR-015-bloque-b-miembros-y-renombrado.md) (miembros por correo), [ADR-020](ADR-020-token-de-servicio-de-solo-lectura.md), [ADR-026](ADR-026-administracion-delegada-por-dispositivo.md) y [ADR-027](ADR-027-concesion-delegada-de-permisos.md) (permisos por dispositivo).
 
 ## Contexto
@@ -83,7 +83,7 @@ Sin correo, la invitación es un **enlace de un solo uso**: token de 256 bits, g
 - Las organizaciones, los roles y los inicios de sesión OIDC existentes no cambian. Los usuarios de Dex siguen igual y reciben su organización personal al entrar de nuevo, sin tocar las que ya tienen.
 - Las cinco redes del piloto no cambian. El token de servicio (ADR-020) sigue siendo de solo lectura por organización.
 - El control plane 0.1.34 ignora la tabla nueva: un retroceso deja las invitaciones y miembros de red sin efecto pero no rompe las redes. Se ensaya como `rollback-0013` y `rollback-0014`.
-- Esto es una versión de superficie nueva: contrato OpenAPI, CLI (`atenea network invitar`, `atenea network miembros`), panel y la pestaña de la aplicación.
+- Esto es una versión de superficie nueva: contrato OpenAPI, panel y, para firmar el certificado de emisor, `atenea issuer-cert --issuer-pub`. No hay comandos de CLI para invitar ni para listar miembros (ver Fases).
 
 ### D9. Qué no se decide aquí
 
@@ -113,7 +113,7 @@ SMTP y correo; verificación de identidad más allá de GitHub; facturación o p
 1. Aceptar este ADR.
 2. Control plane: migraciones (`local_credentials`, `network_members`, invitaciones, organización personal), registro e inicio de sesión locales, GitHub, `GET /api/v1/issuer`, miembros e invitaciones, cuotas y límites; OpenAPI y pruebas con PostgreSQL real.
 3. Panel: registro, organización personal, flujo de creación de red (D1), miembros e invitaciones, estado de caducidad del emisor.
-4. CLI: `atenea network invitar`, `miembros`, y la firma del certificado de emisor con la pública del servidor.
+4. CLI: solo `atenea issuer-cert --issuer-pub` (firma con la pública del servidor). **Sin `invitar` ni `miembros`:** el CLI no tiene sesión de cuenta (solo identidad de dispositivo) y una credencial de cuenta para el CLI, o delegar en un permiso de dispositivo, exigiría un ADR propio. Se gestiona desde el panel.
 5. Guía de operación, retroceso, y prueba con cuentas reales en el piloto.
 6. Una versión solo si el responsable la pide.
 
