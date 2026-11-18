@@ -9,7 +9,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api, ApiError, type Model } from '@atenea/api-client';
 import { device } from './device.fixture';
 import { Devices } from './devices';
-import { AcceptInvitation, Sharing, useInvitationToken } from './sharing';
+import { AcceptInvitation, Sharing, SharedNetworks, useInvitationToken } from './sharing';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
@@ -130,4 +130,17 @@ it('el token del enlace se guarda en la sesión del navegador y sale de la URL',
   wrap(<Probe/>, '/?invitacion=atinv_enlace&net=x');
   expect(await screen.findByText('token=atinv_enlace;param=ninguno')).toBeVisible();
   expect(sessionStorage.getItem('atenea-invitacion')).toBe('atinv_enlace');
+});
+
+it('abandonar una red compartida pide confirmación y llama a la ruta propia', async () => {
+  const network = { id: 'net-1', org_id: 'o', name: 'red-ana', ipv4_cidr: '10.0.0.0/24', ipv6_cidr: 'fd00::/64',
+    root_anchor: 'a'.repeat(64), has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada', role: 'viewer' };
+  vi.spyOn(api, 'GET').mockResolvedValue(reply([network]) as never);
+  const del = vi.spyOn(api, 'DELETE').mockResolvedValue(reply(undefined) as never);
+  const user = userEvent.setup();
+  wrap(<SharedNetworks choose={() => {}}/>);
+  await user.click(await screen.findByRole('button', { name: 'Abandonar' }));
+  expect(del).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Abandonar la red' }));
+  await waitFor(() => expect(del).toHaveBeenCalledWith('/api/v1/networks/{net}/membership', { params: { path: { net: 'net-1' } } }));
 });

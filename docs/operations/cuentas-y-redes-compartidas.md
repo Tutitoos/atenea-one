@@ -45,7 +45,7 @@ Solo el propietario de la organización de la red. En la sección **Compartir**:
 
 El panel entrega un enlace de un solo uso que caduca a los 7 días y se muestra una vez; el propietario lo envía por el canal que prefiera. Quien lo abre inicia sesión (o crea una cuenta: la invitación se conserva) y confirma con «Aceptar invitación». Las redes aparecen en «Compartidas conmigo».
 
-El propietario puede anular un enlace sin usar, cambiar el rol de un miembro o quitarle el acceso. **Quitar a un miembro no revoca los dispositivos que aprobó**: la auditoría (`device.approve`, con el autor) dice quién aprobó cada uno y el propietario decide. Aprobar no da acceso por sí solo: las políticas siguen siendo deny por defecto y solo un administrador las crea.
+El invitado puede abandonar la red desde «Compartidas conmigo». El propietario puede anular un enlace sin usar, cambiar el rol de un miembro o quitarle el acceso. **Quitar a un miembro no revoca los dispositivos que aprobó**: la auditoría (`device.approve`, con el autor) dice quién aprobó cada uno y el propietario decide. Aprobar no da acceso por sí solo: las políticas siguen siendo deny por defecto y solo un administrador las crea.
 
 ## Retroceso
 
