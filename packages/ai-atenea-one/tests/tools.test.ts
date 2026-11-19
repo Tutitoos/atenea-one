@@ -107,7 +107,7 @@ describe("Client", () => {
     const derived = Object.entries<Record<string, unknown>>(spec.paths)
       .filter(([p, v]) => "get" in v && p.startsWith("/api/v1/"))
       .map(([p]) => p)
-      .filter((p) => !/join-code|events|session|^\/api\/v1\/device\/|service-tokens|members/.test(p))
+      .filter((p) => !/join-code|events|session|^\/api\/v1\/device\/|service-tokens|members|invitations|shared-networks|^\/api\/v1\/issuer$|^\/auth\/local\/options$/.test(p))
       .sort();
     expect([...ALLOWED_TEMPLATES].sort()).toEqual(derived);
   });

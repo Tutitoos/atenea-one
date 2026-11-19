@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { Fragment, useState } from 'react';
-import { api, type Model } from '@atenea/api-client';
+import { api, ApiError, type Model } from '@atenea/api-client';
 import {
   Button, Card, ConfirmDialog, CopyButton, Dialog, EmptyState, Field, RunButton, Select, StatusBadge,
 } from './ui';
@@ -16,10 +16,37 @@ const columns = [
 ] as const;
 type SortColumn = typeof columns[number][0];
 
-export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all', grants }: {
+// Un enroller (ADR-028 D6) aprueba escribiendo la huella completa, como un delegado: no basta pulsar.
+function ApproveByFingerprint({ device, net, refresh }: { device: Model<'Device'>; net: string; refresh: () => Promise<unknown> }) {
+  const [value, setValue] = useState('');
+  const [message, setMessage] = useState('');
+  return <Dialog trigger="Aprobar" title={`Aprobar ${device.name}`}
+    description="Escribe la huella completa que muestra el propio dispositivo, no la que ves aquí.">
+    <form className="action-form" onSubmit={event => {
+      event.preventDefault(); setMessage('');
+      void (async () => {
+        try {
+          await api.POST('/api/v1/networks/{net}/devices/{dev}/approve', {
+            params: { path: { net, dev: device.id } }, body: { fingerprint: value.trim() },
+          });
+          await refresh();
+        } catch (error) {
+          setMessage(error instanceof ApiError && error.detail.error.code === 'fingerprint_mismatch' ?
+            'La huella no coincide con la del dispositivo pendiente.' : error instanceof Error ? error.message : 'No se pudo aprobar.');
+        }
+      })();
+    }}>
+      <Field label="Huella completa">{props => <input {...props} type="text" required autoComplete="off"
+        value={value} onChange={event => setValue(event.target.value)}/>}</Field>
+      <Button type="submit" variant="primary">Confirmar aprobación</Button><p role="status">{message}</p>
+    </form>
+  </Dialog>;
+}
+
+export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all', grants, enroll = false }: {
   devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number;
   refresh: () => Promise<unknown>; routes?: Model<'Route'>[]; status?: string;
-  grants?: Model<'DeviceGrant'>[];
+  grants?: Model<'DeviceGrant'>[]; enroll?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState(status);
@@ -68,7 +95,7 @@ export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [
                 await api.POST('/api/v1/networks/{net}/devices/{dev}/revoke', { params });
                 await refresh();
               }}/>
-          </div> : <p>Solo lectura</p>}
+          </div> : enroll ? <div className="actions"><ApproveByFingerprint device={device} net={net} refresh={refresh}/></div> : <p>Solo lectura</p>}
         </li>;
       })}</ul>
     </Card>}

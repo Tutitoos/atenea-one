@@ -58,7 +58,37 @@ pub fn router(s: AppState) -> Router {
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/local/register", post(crate::accounts::register))
+        .route("/auth/local/login", post(crate::accounts::login))
+        .route("/auth/local/recover", post(crate::accounts::recover))
+        .route("/auth/local/options", get(crate::accounts::options))
         .route("/api/v1/session", get(auth::get_session))
+        .route(
+            "/api/v1/networks/{net}/membership",
+            delete(crate::members::leave),
+        )
+        .route("/api/v1/issuer", get(crate::accounts::issuer))
+        .route(
+            "/api/v1/networks/{net}/invitations",
+            get(crate::members::list_invitations).post(crate::members::create_invitation),
+        )
+        .route(
+            "/api/v1/networks/{net}/invitations/{id}",
+            delete(crate::members::revoke_invitation),
+        )
+        .route("/api/v1/invitations/accept", post(crate::members::accept))
+        .route(
+            "/api/v1/networks/{net}/members",
+            get(crate::members::list_members),
+        )
+        .route(
+            "/api/v1/networks/{net}/members/{user}",
+            put(crate::members::set_member).delete(crate::members::remove_member),
+        )
+        .route(
+            "/api/v1/shared-networks",
+            get(crate::members::shared_networks),
+        )
         .route("/api/v1/orgs", get(orgs::list).post(orgs::create))
         .route(
             "/api/v1/orgs/{org}",
@@ -172,6 +202,14 @@ pub fn router(s: AppState) -> Router {
         .route(
             "/api/v1/device/admin/devices/{dev}/revoke",
             post(crate::delegated::revoke),
+        )
+        .route(
+            "/api/v1/device/admin/grants",
+            get(crate::delegated::list_grants),
+        )
+        .route(
+            "/api/v1/device/admin/devices/{dev}/grant",
+            put(crate::delegated::set_grant).delete(crate::delegated::remove_grant),
         )
         .route("/api/v1/networks/{net}/routes", get(crate::routes::list))
         .route(

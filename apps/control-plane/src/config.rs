@@ -25,6 +25,23 @@ pub struct Config {
     pub join_request_ttl_secs: u64,
     /// Intentos de `GET /auth/login` por minuto y IP cliente.
     pub login_per_minute: u32,
+    /// Registro de cuentas con correo y contraseña (ADR-028 D4). Cerrado por defecto: actualizar no lo abre.
+    pub registration_open: bool,
+    /// Registros por minuto y IP cliente (IPv6 agrupada por /64).
+    pub register_per_minute: u32,
+    /// Registros por minuto en todo el servidor.
+    pub register_global_per_minute: u32,
+    /// Mínimo de caracteres de una contraseña local; 12 por defecto y nunca menos de 8, aunque se configure menos.
+    pub password_min_chars: usize,
+    /// Fichero (0400/0600, 64 hex) con la clave que cifra las raíces de las redes gestionadas (ADR-029). Sin él no se
+    /// crean redes gestionadas; las de raíz propia siguen funcionando.
+    pub root_wrap_key_file: Option<std::path::PathBuf>,
+    /// Redes que puede tener una organización personal (ADR-028 D4). Las demás organizaciones no tienen tope.
+    pub personal_max_networks: u32,
+    /// Dispositivos vivos (no revocados) por red de una organización personal.
+    pub personal_max_devices: u32,
+    /// Invitaciones vigentes (sin usar, sin anular y sin caducar) por red.
+    pub max_open_invitations: u32,
     /// Peticiones firmadas por minuto y dispositivo (config, estado, rutas).
     pub device_per_minute: u32,
     /// Peticiones por minuto y token de servicio de solo lectura (ADR-020).
@@ -64,6 +81,14 @@ impl Default for Config {
             max_pending_join_requests: 20,
             join_request_ttl_secs: 7 * 86400,
             login_per_minute: 20,
+            registration_open: false,
+            register_per_minute: 5,
+            register_global_per_minute: 30,
+            personal_max_networks: 3,
+            password_min_chars: 12,
+            personal_max_devices: 64,
+            max_open_invitations: 10,
+            root_wrap_key_file: None,
             device_per_minute: 30,
             trusted_proxies: Vec::new(),
             application_role: None,

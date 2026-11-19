@@ -43,6 +43,23 @@ impl Proto {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ScopeArg {
+    Enrolled,
+    Devices,
+    Network,
+}
+
+impl ScopeArg {
+    fn name(self) -> &'static str {
+        match self {
+            ScopeArg::Enrolled => "enrolled",
+            ScopeArg::Devices => "devices",
+            ScopeArg::Network => "network",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum PolicyCmd {
     /// Lista las políticas de la red (permiso `read:policies`).
@@ -107,6 +124,37 @@ pub enum AdminCmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Lista las concesiones de los dispositivos de este alcance (permiso `write:grants`).
+    Grants(#[command(flatten)] Common),
+    /// Concede o sustituye los permisos de un dispositivo de este alcance (permiso `write:grants`). No se puede dar más de
+    /// lo que se tiene ni `write:grants`, ni cambiar los propios permisos ni los de un administrador (ADR-027).
+    Grant {
+        /// Id o nombre del dispositivo.
+        device: String,
+        #[command(flatten)]
+        common: Common,
+        /// Permiso (repetible o separado por comas): read:devices, read:policies, write:join-codes,
+        /// write:approve-devices, write:policies, write:revoke-devices.
+        #[arg(long, value_delimiter = ',', required = true)]
+        permission: Vec<String>,
+        /// Alcance de las escrituras: `devices` (con --devices, contenido en el propio), o `enrolled` y `network` si el
+        /// propio alcance es toda la red.
+        #[arg(long, value_enum, default_value = "devices")]
+        scope: ScopeArg,
+        /// Dispositivos del alcance (ids o nombres, separados por comas); solo con `--scope devices`.
+        #[arg(long, value_delimiter = ',')]
+        devices: Vec<String>,
+    },
+    /// Retira los permisos de un dispositivo que diste tú, y los que él haya dado (permiso `write:grants`).
+    Ungrant {
+        /// Id o nombre del dispositivo.
+        device: String,
+        #[command(flatten)]
+        common: Common,
+        /// No pregunta: confirma el retiro (obligatorio sin terminal interactiva).
+        #[arg(long)]
+        yes: bool,
+    },
     /// Políticas de la red.
     Policy {
         #[command(subcommand)]
@@ -117,10 +165,12 @@ pub enum AdminCmd {
 impl AdminCmd {
     pub fn network(&self) -> &str {
         match self {
-            AdminCmd::Permissions(c) | AdminCmd::Devices(c) => &c.network,
+            AdminCmd::Permissions(c) | AdminCmd::Devices(c) | AdminCmd::Grants(c) => &c.network,
             AdminCmd::JoinCode { common, .. }
             | AdminCmd::Approve { common, .. }
-            | AdminCmd::Revoke { common, .. } => &common.network,
+            | AdminCmd::Revoke { common, .. }
+            | AdminCmd::Grant { common, .. }
+            | AdminCmd::Ungrant { common, .. } => &common.network,
             AdminCmd::Policy { cmd } => match cmd {
                 PolicyCmd::List(c) => &c.network,
                 PolicyCmd::Add { common, .. } | PolicyCmd::Remove { common, .. } => &common.network,
@@ -160,6 +210,16 @@ fn message(status: u16, body: &str) -> String {
             "hay demasiados códigos vivos de este dispositivo: espera a que caduquen o se usen"
         }
         (409, Some("policy_overflow")) => "se alcanzó el máximo de políticas",
+        (409, Some("grant_limit")) => "se alcanzó el máximo de permisos concedidos",
+        (409, Some("device_not_approved")) => "el dispositivo de destino no está aprobado",
+        (403, Some("grant_self")) => "un dispositivo no cambia sus propios permisos",
+        (403, Some("grant_exceeds_own")) => {
+            "no se pueden dar más permisos ni más alcance de los propios, ni write:grants"
+        }
+        (403, Some("grant_not_yours")) => {
+            "solo se cambian o retiran los permisos que diste tú, no los de un administrador"
+        }
+        (400, Some("invalid_grant")) => "permisos o alcance no válidos",
         (400, Some("invalid_ttl")) => "la caducidad debe estar entre 60 y 3600 segundos",
         (400, Some("invalid_selector")) => {
             "un dispositivo de la política no existe en la red o está revocado"
@@ -276,6 +336,50 @@ fn selector(list: &[Value], s: &Value) -> String {
     }
 }
 
+fn scope_text(scope: &Value) -> String {
+    match text(scope, "kind") {
+        "network" => "toda la red".to_owned(),
+        "devices" => format!(
+            "{} dispositivo(s) concretos",
+            scope["devices"].as_array().map_or(0, Vec::len)
+        ),
+        _ => "los dispositivos que dio de alta y él mismo".into(),
+    }
+}
+
+/// Permisos que un dispositivo puede conceder: la lista cerrada del servidor sin `write:grants`, que solo da un administrador.
+const GRANTABLE: [&str; 6] = [
+    "read:devices",
+    "read:policies",
+    "write:join-codes",
+    "write:approve-devices",
+    "write:policies",
+    "write:revoke-devices",
+];
+
+fn permissions(list: &[String]) -> Result<Vec<String>, String> {
+    if list.is_empty() {
+        return Err("indica al menos un permiso con --permission".into());
+    }
+    for (i, p) in list.iter().enumerate() {
+        if p == "write:grants" {
+            return Err(
+                "write:grants solo lo concede un administrador de la red desde el panel".into(),
+            );
+        }
+        if !GRANTABLE.contains(&p.as_str()) {
+            return Err(format!(
+                "permiso desconocido: {p} (válidos: {})",
+                GRANTABLE.join(", ")
+            ));
+        }
+        if list[..i].contains(p) {
+            return Err(format!("permiso repetido: {p}"));
+        }
+    }
+    Ok(list.to_vec())
+}
+
 fn show(out: &mut dyn Write, v: &Value) -> Result<(), String> {
     writeln!(out, "{v}").map_err(|e| e.to_string())
 }
@@ -302,15 +406,10 @@ pub fn run(
                 .map(|a| a.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
             line(out, format!("Permisos: {}", scopes.join(", ")))?;
-            let alcance = match text(&g["scope"], "kind") {
-                "network" => "toda la red".to_owned(),
-                "devices" => format!(
-                    "{} dispositivo(s) concretos",
-                    g["scope"]["devices"].as_array().map_or(0, Vec::len)
-                ),
-                _ => "los dispositivos que dio de alta y él mismo".into(),
-            };
-            line(out, format!("Alcance de las escrituras: {alcance}"))
+            line(
+                out,
+                format!("Alcance de las escrituras: {}", scope_text(&g["scope"])),
+            )
         }
         AdminCmd::Devices(c) => {
             let list = call(t, "GET", "/devices", None)?;
@@ -405,6 +504,99 @@ pub fn run(
                 return show(out, &r);
             }
             line(out, format!("Revocado {id}."))
+        }
+        AdminCmd::Grants(c) => {
+            let list = call(t, "GET", "/grants", None)?;
+            if c.json {
+                return show(out, &list);
+            }
+            // Los nombres son un añadido: sin `read:devices` se muestran los ids.
+            let names = devices(t).unwrap_or_default();
+            for g in list.as_array().into_iter().flatten() {
+                let by = match g["granted_by_device"].as_str() {
+                    Some(id) => format!("dado por {}", name_of(&names, id)),
+                    None => "un administrador".to_owned(),
+                };
+                let scopes: Vec<&str> = g["scopes"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                line(
+                    out,
+                    format!(
+                        "{} ({}): {} | {} | {by}",
+                        name_of(&names, text(g, "device_id")),
+                        text(g, "device_id"),
+                        scopes.join(", "),
+                        scope_text(&g["scope"])
+                    ),
+                )?;
+            }
+            Ok(())
+        }
+        AdminCmd::Grant {
+            device,
+            common,
+            permission,
+            scope,
+            devices: members,
+        } => {
+            let scopes = permissions(&permission)?;
+            let target_id = device_id(t, &device)?;
+            let mut scope_body = json!({"kind": scope.name()});
+            match scope {
+                ScopeArg::Devices => {
+                    if members.is_empty() || members.len() > 64 {
+                        return Err(
+                            "--scope devices pide de 1 a 64 dispositivos en --devices".into()
+                        );
+                    }
+                    let ids = members
+                        .iter()
+                        .map(|m| device_id(t, m))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    scope_body["devices"] = json!(ids);
+                }
+                _ if !members.is_empty() => {
+                    return Err("--devices solo existe con --scope devices".into());
+                }
+                _ => {}
+            }
+            let r = call(
+                t,
+                "PUT",
+                &format!("/devices/{target_id}/grant"),
+                Some(&json!({"scopes": scopes, "scope": scope_body})),
+            )?;
+            if common.json {
+                return show(out, &r);
+            }
+            line(
+                out,
+                format!(
+                    "Permisos de «{device}» ({target_id}): {} | {}",
+                    scopes.join(", "),
+                    scope_text(&r["scope"])
+                ),
+            )
+        }
+        AdminCmd::Ungrant {
+            device,
+            common,
+            yes,
+        } => {
+            let id = device_id(t, &device)?;
+            crate::network_common::confirm(
+                &format!("¿Retirar los permisos de {id}? También se retiran los que él haya dado"),
+                yes,
+                interactive,
+                input,
+            )?;
+            call(t, "DELETE", &format!("/devices/{id}/grant"), None)?;
+            if common.json {
+                return show(out, &json!({"device_id": id, "withdrawn": true}));
+            }
+            line(out, format!("Permisos de {id} retirados."))
         }
         AdminCmd::Policy { cmd } => policy(t, cmd, input, interactive, out),
     }
@@ -549,6 +741,46 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_needs_permissions_and_a_scope_that_matches_its_devices() {
+        assert!(parse(&["grant", "web", "--network", "n"]).is_err());
+        let c = parse(&[
+            "grant",
+            "web",
+            "--network",
+            "n",
+            "--permission",
+            "read:devices,read:policies",
+            "--scope",
+            "network",
+        ])
+        .unwrap();
+        let AdminCmd::Grant {
+            permission, scope, ..
+        } = c
+        else {
+            panic!()
+        };
+        assert_eq!((permission.len(), scope), (2, ScopeArg::Network));
+        assert_eq!(
+            parse(&["ungrant", "web", "--network", "n"])
+                .unwrap()
+                .network(),
+            "n"
+        );
+        assert_eq!(parse(&["grants", "--network", "n"]).unwrap().network(), "n");
+        assert!(permissions(&["read:devices".into(), "write:policies".into()]).is_ok());
+        for bad in [
+            vec!["write:grants"],
+            vec!["nada"],
+            vec!["read:devices", "read:devices"],
+            vec![],
+        ] {
+            let list: Vec<String> = bad.into_iter().map(String::from).collect();
+            assert!(permissions(&list).is_err(), "{list:?}");
+        }
+    }
+
+    #[test]
     fn ports_are_validated_before_any_request() {
         assert_eq!(ports(Proto::Tcp, None), Ok((0, 0)));
         assert_eq!(ports(Proto::Tcp, Some("22")), Ok((22, 22)));
@@ -604,6 +836,10 @@ mod tests {
         assert!(message(404, &body("invalid_request")).contains("no admite"));
         assert!(message(404, "").contains("no admite"));
         assert!(message(502, "<html>").contains("no disponible"));
+        assert!(message(403, &body("grant_self")).contains("propios"));
+        assert!(message(403, &body("grant_exceeds_own")).contains("más"));
+        assert!(message(403, &body("grant_not_yours")).contains("diste"));
+        assert!(message(409, &body("grant_limit")).contains("máximo"));
         assert!(message(418, "").contains("418"));
     }
 
@@ -755,6 +991,87 @@ mod tests {
             assert!(r.unwrap_err().contains("ningún dispositivo"));
             assert_eq!(h.join().unwrap().len(), 1);
             std::fs::remove_dir_all(&t.dir).unwrap();
+        }
+
+        #[test]
+        fn grant_resolves_names_and_sends_one_signed_put() {
+            let devices = json!([
+                {"id":"d1","name":"web","status":"approved"},
+                {"id":"d2","name":"db","status":"approved"}
+            ]);
+            let (port, h) = serve(vec![
+                (200, devices.to_string()),
+                (200, devices.to_string()),
+                (
+                    200,
+                    r#"{"device_id":"d1","scopes":["read:devices"],"scope":{"kind":"devices","devices":["d2"]},"granted_by_device":"x","granted_at":"2026-11-18T10:00:00Z"}"#.into(),
+                ),
+            ]);
+            let t = target(port, "conceder");
+            let c = parse(&[
+                "grant",
+                "web",
+                "--network",
+                "n",
+                "--permission",
+                "read:devices",
+                "--devices",
+                "db",
+            ])
+            .unwrap();
+            let (r, out) = exec(&t, c, "");
+            r.unwrap();
+            assert!(out.contains("Permisos de «web»"), "{out}");
+            let seen = h.join().unwrap();
+            verify(
+                &seen[2],
+                "PUT",
+                "/api/v1/device/admin/devices/d1/grant",
+                &json!({"scopes":["read:devices"],"scope":{"kind":"devices","devices":["d2"]}})
+                    .to_string(),
+            );
+            std::fs::remove_dir_all(&t.dir).unwrap();
+        }
+
+        #[test]
+        fn grants_lists_with_names_and_ungrant_asks_before_deleting() {
+            let devices = json!([{"id":"d1","name":"web","status":"approved"},{"id":"d2","name":"db","status":"approved"}]);
+            let grants = json!([
+                {"device_id":"d1","scopes":["read:devices","write:policies"],"scope":{"kind":"devices","devices":["d2"]},"granted_by_device":"d2","granted_at":"2026-11-18T10:00:00Z"},
+                {"device_id":"d2","scopes":["read:devices"],"scope":{"kind":"network","devices":[]},"granted_by_device":null,"granted_at":"2026-11-18T10:00:00Z"}
+            ]);
+            let (port, h) = serve(vec![(200, grants.to_string()), (200, devices.to_string())]);
+            let t = target(port, "conceder-lista");
+            let (r, out) = exec(&t, parse(&["grants", "--network", "n"]).unwrap(), "");
+            r.unwrap();
+            assert!(
+                out.contains("web")
+                    && out.contains("dado por db")
+                    && out.contains("un administrador"),
+                "{out}"
+            );
+            h.join().unwrap();
+            // Sin confirmar no se envía nada.
+            let (port, h) = serve(vec![]);
+            let t = target(port, "conceder-no");
+            let id = "01a1ea9d-0a5e-7000-8000-000000000002";
+            let (r, _) = exec(&t, parse(&["ungrant", id, "--network", "n"]).unwrap(), "");
+            assert!(r.is_err());
+            assert!(h.join().unwrap().is_empty());
+            let (port, h) = serve(vec![(204, String::new())]);
+            let t = target(port, "conceder-borra");
+            let (r, _) = exec(
+                &t,
+                parse(&["ungrant", id, "--network", "n", "--yes"]).unwrap(),
+                "",
+            );
+            r.unwrap();
+            verify(
+                &h.join().unwrap()[0],
+                "DELETE",
+                &format!("/api/v1/device/admin/devices/{id}/grant"),
+                "",
+            );
         }
 
         #[test]

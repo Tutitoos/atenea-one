@@ -1,5 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
+pub mod accounts;
 pub mod api;
 pub mod audit;
 pub mod auth;
@@ -12,6 +13,8 @@ pub mod dns;
 pub mod grants;
 pub mod internal;
 pub mod issue;
+pub mod managed;
+pub mod members;
 pub mod networks;
 mod openapi;
 pub mod orgs;
@@ -48,6 +51,10 @@ pub struct AppState {
     pub nonces: NonceCache,
     pub rate: Rates<IpAddr>,
     pub login_rate: Rates<IpAddr>,
+    pub register_rate: Rates<IpAddr>,
+    pub register_global_rate: Rates<()>,
+    /// Hashes de contraseña simultáneos (argon2 usa 19 MiB y CPU): sin tope, el registro agotaría el servidor.
+    pub hash_gate: Arc<tokio::sync::Semaphore>,
     pub device_rate: Rates<Uuid>,
     /// Tasa propia de la administración delegada (ADR-026).
     pub admin_rate: Rates<Uuid>,
@@ -56,6 +63,8 @@ pub struct AppState {
     pub metrics: atenea_observability::Metrics,
     /// Conectividad que anuncia el código de unión (ADR-018); `None` = como la v0.1.8.
     pub connectivity: Option<Arc<connectivity::Connectivity>>,
+    /// Clave que cifra las raíces de las redes gestionadas (ADR-029); `None` = no se crean redes gestionadas.
+    pub wrap: Option<Arc<managed::Wrap>>,
 }
 impl AppState {
     pub fn new(
@@ -70,18 +79,28 @@ impl AppState {
             nonces: Default::default(),
             rate: Default::default(),
             login_rate: Default::default(),
+            register_rate: Default::default(),
+            register_global_rate: Default::default(),
+            hash_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             device_rate: Default::default(),
             admin_rate: Default::default(),
             session_rate: Default::default(),
             panel: Arc::new(panel::Live::default()),
             metrics: Default::default(),
             connectivity: None,
+            wrap: None,
         }
     }
 
     /// Activa la conectividad del código de unión. Lo llama `main` tras validar la configuración.
     pub fn with_connectivity(mut self, connectivity: Option<connectivity::Connectivity>) -> Self {
         self.connectivity = connectivity.map(Arc::new);
+        self
+    }
+
+    /// Activa las redes gestionadas con su clave de envoltura. Lo llama `main` tras leerla.
+    pub fn with_wrap(mut self, wrap: Option<managed::Wrap>) -> Self {
+        self.wrap = wrap.map(Arc::new);
         self
     }
 }

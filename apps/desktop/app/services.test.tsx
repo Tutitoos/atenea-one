@@ -72,6 +72,7 @@ beforeEach(() => { localStorage.clear(); resetHistoryStore(); vi.mocked(invoke).
 it('el detalle del par lista sus servicios con el aviso de que publicar no los hace alcanzables, y axe sale limpio', async () => {
   serve();
   const { container } = app(`/devices/${KEY}`);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Servicios' }));
   const section = within(await screen.findByRole('region', { name: 'Servicios' }));
   expect(section.getByText(/Que un servicio figure aquí no significa que se pueda alcanzar/)).toHaveTextContent('políticas');
   expect(section.getByText('Storybook', { exact: false })).toBeInTheDocument();
@@ -83,6 +84,7 @@ it('el detalle del par lista sus servicios con el aviso de que publicar no los h
 it('sin servicios (o con el campo ausente) explica que el par no publica', async () => {
   serve({ peers: [peer(undefined)] });
   const { container } = app(`/devices/${KEY}`);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Servicios' }));
   expect(await screen.findByText(/no publica servicios en esta red/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Abrir el puerto/ })).not.toBeInTheDocument();
   expect((await axe(container)).violations).toEqual([]);
@@ -91,6 +93,7 @@ it('sin servicios (o con el campo ausente) explica que el par no publica', async
 it('Abrir llama a la orden con la red, el par y el puerto, sin ninguna URL', async () => {
   serve({ extra: { open_service: () => undefined } });
   app(`/devices/${KEY}`);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Servicios' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Abrir el puerto 8443' }));
   await waitFor(() => expect(calls('open_service')).toHaveLength(1));
   expect(calls('open_service')[0][1]).toEqual({ network: NET_ID, deviceId: PEER_ID, port: 8443 });
@@ -99,6 +102,7 @@ it('Abrir llama a la orden con la red, el par y el puerto, sin ninguna URL', asy
 it('un fallo al abrir se muestra tal cual', async () => {
   serve({ extra: { open_service: () => { throw 'el par no publica ese servicio'; } } });
   app(`/devices/${KEY}`);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Servicios' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Abrir el puerto 8080' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('el par no publica ese servicio');
 });
@@ -107,6 +111,7 @@ it('Copiar dirección copia el esquema publicado y la IPv4 del par', async () =>
   serve();
   app(`/devices/${KEY}`);
   const user = userEvent.setup();
+  await user.click(await screen.findByRole('tab', { name: 'Servicios' }));
   await user.click(await screen.findByRole('button', { name: 'Copiar dirección https://10.99.0.3:8443/' }));
   expect(await navigator.clipboard.readText()).toBe('https://10.99.0.3:8443/');
   await user.click(screen.getByRole('button', { name: 'Copiar dirección http://10.99.0.3:8080/' }));

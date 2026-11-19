@@ -153,12 +153,27 @@ fn schemas() -> ComponentsBuilder {
         ("User", complete(&[("id", uuid()), ("email", nullable_text()), ("display_name", nullable_text())])),
         ("Membership", complete(&[("org_id", uuid()), ("role", named("Role"))])),
         ("Session", complete(&[("user", named("User")), ("csrf_token", text()), ("memberships", named("[]Membership"))])),
-        ("NewNetwork", complete(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))])),
+        ("LocalRegister", object(&[("login", text()), ("password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(8)).max_length(Some(128)).description(Some("De 8 a 128 bytes; el mínimo real lo fija el operador (password_min_chars, 12 por defecto y nunca menos de 8): invalid_password si es menor.")).into()), ("display_name", name.clone())], &["login", "password"])),
+        ("LocalRegistered", complete(&[("user_id", uuid()), ("recovery_codes", ArrayBuilder::new().items(text()).min_items(Some(10)).max_items(Some(10)).description(Some("Diez códigos de un solo uso; solo se muestran ahora y se guardan como hash.")).into())])),
+        ("LocalLogin", complete(&[("login", text()), ("password", text())])),
+        ("LocalRecover", complete(&[("login", text()), ("recovery_code", text()), ("new_password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(8)).max_length(Some(128)).description(Some("Mismo mínimo que la contraseña de registro.")).into())])),
+        ("Issuer", complete(&[("issuer_pubkey", hex(32))])),
+        ("LocalOptions", complete(&[("registration_open", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("false si el operador no ha puesto ATENEA_CP_REGISTRATION_OPEN=true: el registro responde 403 registration_closed.")).into())])),
+        ("NewInvitation", complete(&[("role", choices(&["viewer", "enroller"]))])),
+        ("InvitationCreated", complete(&[("id", uuid()), ("token", text()), ("role", choices(&["viewer", "enroller"])), ("expires_at", timestamp())])),
+        ("Invitation", complete(&[("id", uuid()), ("role", choices(&["viewer", "enroller"])), ("created_at", timestamp()), ("expires_at", timestamp()), ("used_at", nullable_timestamp()), ("revoked_at", nullable_timestamp())])),
+        ("AcceptInvitation", complete(&[("token", text())])),
+        ("NetworkAccess", complete(&[("network_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
+        ("NetworkMember", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"])), ("display_name", nullable_text()), ("created_at", timestamp())])),
+        ("NetworkMemberRole", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
+        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("role", choices(&["viewer", "enroller"]))])),
+        ("RootMode", choices(&["own", "managed"])),
+        ("NewNetwork", object(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32))], &["name"])),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
         ("JoinConnectivity", complete(&[("stun_host", text()), ("relay_ca_sha256", utoipa::openapi::schema::OneOfBuilder::new().item(hex(32)).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
-        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
+        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
@@ -173,9 +188,10 @@ fn schemas() -> ComponentsBuilder {
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceGrantPermission", choices(&crate::grants::SCOPES)),
         ("DeviceGrantScope", complete(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).description(Some("Solo con kind=devices (de 1 a 64, sin repetir, de esta red y no revocados); vacía en los demás.")).into())])),
-        ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(6)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
-        ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_at", timestamp())])),
+        ("DeviceGrantInput", object(&[("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).min_items(Some(1)).max_items(Some(7)).into()), ("scope", object(&[("kind", choices(&["enrolled", "devices", "network"])), ("devices", ArrayBuilder::new().items(uuid()).max_items(Some(64)).into())], &["kind"]))], &["scopes", "scope"])),
+        ("DeviceGrant", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by", uuid()), ("granted_by_device", nullable_uuid("Dispositivo que la concedió (ADR-027); null si fue un administrador.")), ("granted_at", timestamp())])),
         ("DelegatedGrant", complete(&[("device_id", uuid()), ("network_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_at", timestamp())])),
+        ("DelegatedGrantEntry", complete(&[("device_id", uuid()), ("scopes", ArrayBuilder::new().items(named("DeviceGrantPermission")).into()), ("scope", named("DeviceGrantScope")), ("granted_by_device", nullable_uuid("Dispositivo que la concedió; null si fue un administrador.")), ("granted_at", timestamp())])),
         ("DelegatedDevice", complete(&[("id", uuid()), ("name", text()), ("role", named("DeviceRole")), ("status", named("DeviceStatus")), ("fingerprint", text()), ("ipv4", nullable_text()), ("ipv6", nullable_text()), ("enrolled_at", timestamp()), ("enrolled_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado cuyo código lo dio de alta; null si fue un usuario o una solicitud.")).into()), ("in_scope", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("true si el alcance de quien pregunta lo incluye.")).into())])),
         ("DelegatedPolicy", complete(&[("id", uuid()), ("src", named("Selector")), ("dst", named("Selector")), ("proto", integer()), ("port_min", integer()), ("port_max", integer()), ("created_by_device", ObjectBuilder::new().schema_type(SchemaType::from_iter([Type::String, Type::Null])).format(Some(SchemaFormat::Custom("uuid".into()))).description(Some("Delegado que la creó; null si fue un administrador.")).into())])),
         ("NewDelegatedJoinCode", object(&[("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(3600)).into())], &["ttl_secs"])),
@@ -272,6 +288,146 @@ pub fn document() -> OpenApi {
             "204",
             "",
             "",
+        ),
+        (
+            Post,
+            "/auth/local/register",
+            "registerAccount",
+            "Crea una cuenta con correo y contraseña y abre sesión (ADR-028)",
+            "public",
+            "201",
+            "LocalRegister",
+            "LocalRegistered",
+        ),
+        (
+            Post,
+            "/auth/local/login",
+            "loginLocal",
+            "Inicia sesión con correo y contraseña",
+            "public",
+            "204",
+            "LocalLogin",
+            "",
+        ),
+        (
+            Post,
+            "/auth/local/recover",
+            "recoverAccount",
+            "Cambia la contraseña con un código de recuperación",
+            "public",
+            "204",
+            "LocalRecover",
+            "",
+        ),
+        (
+            Get,
+            "/auth/local/options",
+            "getLocalOptions",
+            "Indica si el servidor admite crear cuentas con correo y contraseña",
+            "public",
+            "200",
+            "",
+            "LocalOptions",
+        ),
+        (
+            Get,
+            "/api/v1/issuer",
+            "getIssuer",
+            "Clave pública del emisor del servidor, para firmar el certificado de emisor de una red",
+            "read",
+            "200",
+            "",
+            "Issuer",
+        ),
+        (
+            Post,
+            "/api/v1/networks/{net}/invitations",
+            "createInvitation",
+            "Crea un enlace de invitación de un solo uso; requiere owner",
+            "write",
+            "201",
+            "NewInvitation",
+            "InvitationCreated",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/invitations",
+            "listInvitations",
+            "Lista las invitaciones recientes, sin el token; requiere owner",
+            "read",
+            "200",
+            "",
+            "[]Invitation",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/invitations/{id}",
+            "revokeInvitation",
+            "Anula una invitación sin usar; requiere owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Post,
+            "/api/v1/invitations/accept",
+            "acceptInvitation",
+            "Canjea una invitación con la cuenta de la sesión",
+            "write",
+            "200",
+            "AcceptInvitation",
+            "NetworkAccess",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/members",
+            "listNetworkMembers",
+            "Lista los miembros por invitación de la red; requiere owner",
+            "read",
+            "200",
+            "",
+            "[]NetworkMember",
+        ),
+        (
+            Put,
+            "/api/v1/networks/{net}/members/{user}",
+            "setNetworkMember",
+            "Cambia el rol de un miembro por invitación; requiere owner",
+            "write",
+            "200",
+            "NewInvitation",
+            "NetworkMemberRole",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/members/{user}",
+            "removeNetworkMember",
+            "Quita a un miembro por invitación; requiere owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/membership",
+            "leaveNetwork",
+            "El miembro por invitación abandona la red",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/shared-networks",
+            "listSharedNetworks",
+            "Redes a las que la cuenta pertenece por invitación, con su rol",
+            "read",
+            "200",
+            "",
+            "[]SharedNetwork",
         ),
         (
             Get,
@@ -735,6 +891,36 @@ pub fn document() -> OpenApi {
         ),
         (
             Get,
+            "/api/v1/device/admin/grants",
+            "listDelegatedGrants",
+            "Concesiones de los dispositivos del alcance; requiere write:grants",
+            "device",
+            "200",
+            "",
+            "[]DelegatedGrantEntry",
+        ),
+        (
+            Put,
+            "/api/v1/device/admin/devices/{dev}/grant",
+            "setDelegatedGrant",
+            "Concede o sustituye permisos de un dispositivo del alcance; requiere write:grants",
+            "device",
+            "200",
+            "DeviceGrantInput",
+            "DelegatedGrantEntry",
+        ),
+        (
+            Delete,
+            "/api/v1/device/admin/devices/{dev}/grant",
+            "removeDelegatedGrant",
+            "Retira una concesión que dio este dispositivo; cuerpo vacío; requiere write:grants",
+            "device",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
             "/api/v1/networks/{net}/routes",
             "listRoutes",
             "Lista las declaraciones y sus decisiones",
@@ -868,7 +1054,7 @@ pub fn document() -> OpenApi {
                 || id == "createEnrollmentToken"
             {
                 "devices"
-            } else if path.contains("networks") {
+            } else if path.contains("networks") || path.contains("invitations") {
                 "networks"
             } else if path.contains("orgs") {
                 "orgs"
@@ -886,7 +1072,14 @@ pub fn document() -> OpenApi {
             if access == "read"
                 && !matches!(
                     id,
-                    "getSession" | "networkEvents" | "listServiceTokens" | "getJoinCode"
+                    "getSession"
+                        | "networkEvents"
+                        | "listServiceTokens"
+                        | "getJoinCode"
+                        | "getIssuer"
+                        | "listInvitations"
+                        | "listNetworkMembers"
+                        | "listSharedNetworks"
                 )
             {
                 operation = operation.security(SecurityRequirement::new(
@@ -994,6 +1187,17 @@ pub fn document() -> OpenApi {
                     .build(),
             ));
         }
+        if id == "approveDevice" {
+            operation = operation.request_body(Some(
+                RequestBodyBuilder::new()
+                    .required(Some(Required::False))
+                    .content(
+                        "application/json",
+                        Content::new(Some(named("DelegatedApproval"))),
+                    )
+                    .build(),
+            ));
+        }
         let mut response = ResponseBuilder::new().description("Operación completada");
         if !result.is_empty() {
             response = response.content(
@@ -1015,7 +1219,7 @@ pub fn document() -> OpenApi {
                 .header("Location", Header::new(text()))
                 .header("Set-Cookie", Header::new(text()));
         }
-        if id == "logout" {
+        if matches!(id, "logout" | "registerAccount" | "loginLocal") {
             response = response.header("Set-Cookie", Header::new(text()));
         }
         if id == "getDeviceConfiguration" {
@@ -1065,7 +1269,15 @@ pub fn document() -> OpenApi {
             if code == "500"
                 || code == "400"
                 || access != "public"
-                || matches!(id, "oidcCallback" | "enrollDevice" | "requestJoin")
+                || matches!(
+                    id,
+                    "oidcCallback"
+                        | "enrollDevice"
+                        | "requestJoin"
+                        | "registerAccount"
+                        | "loginLocal"
+                        | "recoverAccount"
+                )
             {
                 operation = operation.response(
                     code,
@@ -1098,6 +1310,12 @@ pub fn document() -> OpenApi {
                 | "addMemberByEmail"
                 | "createServiceToken"
                 | "getServer"
+                | "registerAccount"
+                | "loginLocal"
+                | "recoverAccount"
+                | "getIssuer"
+                | "createInvitation"
+                | "acceptInvitation"
         ) || id.contains("Delegated")
         {
             operation = operation.response(
@@ -1145,6 +1363,12 @@ pub fn document() -> OpenApi {
             "setDeviceGrant" | "removeDeviceGrant" | "listDeviceGrants"
         ) {
             operation = operation.description(Some("ADR-026. Una concesión por dispositivo; PUT la sustituye. scopes: lista cerrada, sin repetir y no vacía (400 invalid_grant). scope.kind: enrolled (los que él dio de alta y él mismo), devices (lista explícita) o network. 404 not_found si el dispositivo no es de la red o no tiene concesión (DELETE); 409 device_not_approved si no está aprobado. Revocar el dispositivo borra su concesión. Queda auditado (device.grant, device.grant_revoke). Un token de servicio solo puede listar."));
+        }
+        if matches!(
+            id,
+            "listDelegatedGrants" | "setDelegatedGrant" | "removeDelegatedGrant"
+        ) {
+            operation = operation.description(Some("ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by."));
         }
         if id == "setDeviceGrant" {
             operation = operation.response(
@@ -1194,10 +1418,38 @@ pub fn document() -> OpenApi {
             operation = operation.description(Some("Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan."));
         }
         if matches!(id, "getNetwork" | "listNetworks" | "createNetwork") {
-            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado."));
+            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028)."));
+        }
+        if id == "createNetwork" {
+            operation = operation.description(Some("Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan."));
+        }
+        if id == "setIssuerCertificate" {
+            operation = operation.description(Some("409 managed_network en una red gestionada: el servidor firma y renueva su certificado. En una red de raíz propia valida que parsea, que lo firma su raíz y que es de la clave de emisor del servidor (400 wrong_issuer); 409 serial_rollback con un serial menor que el instalado."));
         }
         if id == "getServer" {
             operation = operation.description(Some("Sesión válida y al menos una membresía, de cualquier rol. 401 invalid_session; 403 forbidden sin membresías. Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited. Cache-Control: no-store. control_plane.version=CARGO_PKG_VERSION y commit=ATENEA_BUILD_COMMIT o unknown; server_time es string(date-time). No incluye coordinator ni relay: no hay canal real para conocer sus versiones."));
+        }
+        if matches!(id, "registerAccount" | "loginLocal" | "recoverAccount") {
+            operation = operation.description(Some("ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión."));
+        }
+        if id == "getIssuer" {
+            operation = operation.description(Some("Sesión válida. issuer_pubkey es la clave pública Ed25519 del emisor del servidor, en hexadecimal: el usuario la pone en el certificado de emisor que firma con su raíz (ADR-028 D1). Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited."));
+        }
+        if matches!(
+            id,
+            "createInvitation"
+                | "listInvitations"
+                | "revokeInvitation"
+                | "acceptInvitation"
+                | "listNetworkMembers"
+                | "setNetworkMember"
+                | "removeNetworkMember"
+                | "listSharedNetworks"
+        ) {
+            operation = operation.description(Some("ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación."));
+        }
+        if id == "approveDevice" {
+            operation = operation.description(Some("Admin u owner de la organización, o enroller de la red. El cuerpo es opcional para un administrador; un enroller debe enviar {fingerprint} con la huella completa del dispositivo pendiente (400 invalid_request si falta, 409 fingerprint_mismatch si no coincide). Auditoría device.approve con {addresses}; si aprueba un enroller añade by=enroller."));
         }
         paths = paths.path(path, PathItem::new(method, operation));
     }
@@ -1213,7 +1465,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 50);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 64);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

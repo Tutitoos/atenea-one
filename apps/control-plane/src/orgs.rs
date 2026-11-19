@@ -197,6 +197,14 @@ async fn write_member(
             .execute(&mut *tx)
             .await?;
     }
+    // ADR-028 D5: la organización personal no tiene más miembros; se invita a una red (D6), no a la organización.
+    let personal: bool = sqlx::query_scalar("SELECT personal FROM organizations WHERE id=$1")
+        .bind(org)
+        .fetch_one(&mut *tx)
+        .await?;
+    if personal {
+        return Err(ApiError::conflict("personal_org"));
+    }
     let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM users WHERE id=$1")
         .bind(user)
         .fetch_optional(&mut *tx)

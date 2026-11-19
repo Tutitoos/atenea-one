@@ -4,13 +4,14 @@ import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api, result } from '@atenea/api-client';
 import { Card, Status } from './ui';
+import { QuickStart } from './quick-start';
 import { connection, relays } from './domain';
 import type { SectionProps } from './sections';
 import { auditAction, AuditChange, DeviceIdentity } from './observability';
 import { certificateExpiry, CertificateStatus, ServerInfo } from './server-status';
 
 // Reutiliza las claves del shell; cada tarjeta mantiene su propio estado de consulta.
-export function Overview({ net, network, devices, elapsed }: SectionProps) {
+export function Overview({ net, network, devices, elapsed, canEdit, enroll }: SectionProps) {
   const policies = useQuery({ queryKey: ['network', net, 'policies'],
     queryFn: () => result(api.GET('/api/v1/networks/{net}/policies', { params: { path: { net } } })) });
   const audit = useQuery({ queryKey: ['network', net, 'audit', 'overview'],
@@ -20,10 +21,12 @@ export function Overview({ net, network, devices, elapsed }: SectionProps) {
   const relayCount = rows ? relays(rows, elapsed).length : 0;
   const expiry = network.data?.has_issuer_cert ? certificateExpiry(network.data.issuer_cert_not_after) : null;
   return <div className="overview-grid">
+    <QuickStart net={net} canEdit={canEdit} enroll={!!enroll} policies={policies.data?.length}/>
     {expiry && expiry.days <= 14 && <section role="note" aria-label="Caducidad del certificado"
       className={`card overview-audit certificate-notice badge-${expiry.tone}`}>
       <h2>{expiry.days <= 0 ? 'Certificado de emisor caducado' : 'El certificado de emisor caduca pronto'}</h2>
-      <p>Renueva el certificado con la raíz offline y súbelo en DNS y certificado.</p>
+      <p>{network.data?.root_mode === 'managed' ? 'El servidor lo renueva solo; si esto no cambia, avisa al operador: la renovación está fallando.' :
+        'Renueva el certificado con la raíz offline y súbelo en DNS y certificado.'}</p>
     </section>}
     <Card title="Dispositivos"><Status query={devices}/>{rows && <dl className="counts">
       <div><dt>Aprobados</dt><dd>{rows.filter(device => device.status === 'approved').length}</dd></div>

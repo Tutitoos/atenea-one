@@ -264,6 +264,223 @@
         ]
       }
     },
+    "/api/v1/device/admin/devices/{dev}/grant": {
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concede o sustituye permisos de un dispositivo del alcance; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "setDelegatedGrant",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceGrantInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegatedGrantEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Retira una concesión que dio este dispositivo; cuerpo vacío; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "removeDelegatedGrant",
+        "parameters": [
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
     "/api/v1/device/admin/devices/{dev}/revoke": {
       "post": {
         "tags": [
@@ -387,6 +604,106 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DelegatedGrant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "device": []
+          }
+        ]
+      }
+    },
+    "/api/v1/device/admin/grants": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Concesiones de los dispositivos del alcance; requiere write:grants",
+        "description": "ADR-027. Requiere write:grants (403 grant_missing). Un dispositivo concede, sustituye o retira permisos de otro dispositivo de su alcance: nunca los propios (403 grant_self), nunca más permisos de los que tiene ni write:grants (403 grant_exceeds_own), con un alcance contenido en el suyo (devices con una lista dentro del propio; enrolled y network solo con alcance network; 403 grant_exceeds_own), y solo sustituye o retira lo que él dio (403 grant_not_yours). Fuera de su alcance: 403 out_of_scope; destino inexistente o de otra red, o sin concesión al retirar: 404; no aprobado: 409 device_not_approved; más de 64 concesiones dadas: 409 grant_limit. Cambiar o retirar la concesión de quien concede, o revocarlo, retira lo que él dio. Queda auditado (device.grant, device.grant_revoke con actor device). La lista solo incluye dispositivos del alcance y no lleva granted_by.",
+        "operationId": "listDelegatedGrants",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DelegatedGrantEntry"
+                  }
                 }
               }
             }
@@ -1502,13 +1819,218 @@
         }
       }
     },
+    "/api/v1/invitations/accept": {
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Canjea una invitación con la cuenta de la sesión",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "acceptInvitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issuer": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Clave pública del emisor del servidor, para firmar el certificado de emisor de una red",
+        "description": "Sesión válida. issuer_pubkey es la clave pública Ed25519 del emisor del servidor, en hexadecimal: el usuario la pone en el certificado de emisor que firma con su raíz (ADR-028 D1). Ráfaga 60 y reposición 60/minuto por sesión, 429 rate_limited.",
+        "operationId": "getIssuer",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Issuer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}": {
       "get": {
         "tags": [
           "networks"
         ],
         "summary": "Obtiene una red; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
         "operationId": "getNetwork",
         "parameters": [
           {
@@ -2148,6 +2670,7 @@
           "devices"
         ],
         "summary": "Aprueba y asigna IPv4/IPv6; requiere admin u owner",
+        "description": "Admin u owner de la organización, o enroller de la red. El cuerpo es opcional para un administrador; un enroller debe enviar {fingerprint} con la huella completa del dispositivo pendiente (400 invalid_request si falta, 409 fingerprint_mismatch si no coincide). Auditoría device.approve con {addresses}; si aprueba un enroller añade by=enroller.",
         "operationId": "approveDevice",
         "parameters": [
           {
@@ -2169,6 +2692,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegatedApproval"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "description": "Operación completada",
@@ -3105,12 +3638,332 @@
         ]
       }
     },
+    "/api/v1/networks/{net}/invitations": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista las invitaciones recientes, sin el token; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listInvitations",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Invitation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Crea un enlace de invitación de un solo uso; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "createInvitation",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/invitations/{id}": {
+      "delete": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Anula una invitación sin usar; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "revokeInvitation",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/networks/{net}/issuer-cert": {
       "put": {
         "tags": [
           "networks"
         ],
         "summary": "Valida y guarda el certificado del emisor; requiere admin u owner",
+        "description": "409 managed_network en una red gestionada: el servidor firma y renueva su certificado. En una red de raíz propia valida que parsea, que lo firma su raíz y que es de la clave de emisor del servidor (400 wrong_issuer); 409 serial_rollback con un serial menor que el instalado.",
         "operationId": "setIssuerCertificate",
         "parameters": [
           {
@@ -3547,6 +4400,415 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/networks/{net}/members": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Lista los miembros por invitación de la red; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listNetworkMembers",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NetworkMember"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/members/{user}": {
+      "put": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Cambia el rol de un miembro por invitación; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "setNetworkMember",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewInvitation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkMemberRole"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Quita a un miembro por invitación; requiere owner",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "removeNetworkMember",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/membership": {
+      "delete": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "El miembro por invitación abandona la red",
+        "operationId": "leaveNetwork",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
       }
     },
     "/api/v1/networks/{net}/metrics": {
@@ -5130,7 +6392,7 @@
           "networks"
         ],
         "summary": "Lista redes; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
         "operationId": "listNetworks",
         "parameters": [
           {
@@ -5232,7 +6494,7 @@
           "networks"
         ],
         "summary": "Crea una red sin CIDR solapados; requiere admin u owner",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado.",
+        "description": "Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan.",
         "operationId": "createNetwork",
         "parameters": [
           {
@@ -6006,6 +7268,96 @@
         ]
       }
     },
+    "/api/v1/shared-networks": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "summary": "Redes a las que la cuenta pertenece por invitación, con su rol",
+        "description": "ADR-028 D6 y D7. Crear, listar y anular invitaciones, y listar, cambiar o quitar miembros por invitación: solo el owner de la organización de la red (403 forbidden a un miembro de la red, 404 a quien no la ve). Una invitación es un enlace de un solo uso que caduca a los 7 días y lleva el rol viewer (lee) o enroller (además genera códigos de unión y aprueba dispositivos escribiendo su huella completa). create: 400 invalid_role; 409 invitation_limit con el máximo de vigentes (10 por defecto); el token se devuelve una sola vez y solo se guarda su SHA-256; 429 rate_limited. accept: sesión de cualquier cuenta; invitación inexistente, caducada, anulada o ya usada: 404; 409 already_member si ya tiene acceso a la red (la invitación no se consume); 429 rate_limited. Quitar a un miembro no revoca los dispositivos que aprobó; la auditoría dice quién aprobó cada uno. listSharedNetworks: solo las redes a las que la cuenta pertenece por invitación.",
+        "operationId": "listSharedNetworks",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SharedNetwork"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/auth/callback": {
       "get": {
         "tags": [
@@ -6134,6 +7486,353 @@
           },
           "502": {
             "description": "Proveedor OIDC no disponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Inicia sesión con correo y contraseña",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "loginLocal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/options": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Indica si el servidor admite crear cuentas con correo y contraseña",
+        "operationId": "getLocalOptions",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalOptions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/recover": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Cambia la contraseña con un código de recuperación",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "recoverAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalRecover"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Operación completada"
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/local/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Crea una cuenta con correo y contraseña y abre sesión (ADR-028)",
+        "description": "ADR-028. Sin sesión previa; el cuerpo debe ser application/json. El correo es el de la cuenta, sin verificar, en minúsculas; no se guarda como users.email. register: 403 registration_closed si el operador no lo abrió; 400 invalid_login o invalid_password (mínimo 12 caracteres); 409 conflict si el correo ya existe; 429 rate_limited por IP y global. Crea la organización personal, abre sesión (Set-Cookie) y devuelve diez códigos de recuperación una sola vez. login: 401 invalid_credentials igual para correo desconocido y contraseña errónea; 5 fallos seguidos bloquean la cuenta con espera creciente (429 rate_limited). recover: consume un código, cambia la contraseña y cierra todas las sesiones de la cuenta; no inicia sesión.",
+        "operationId": "registerAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalRegister"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Operación completada",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRegistered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Límite de peticiones o conexiones excedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
             "content": {
               "application/json": {
                 "schema": {
@@ -6341,6 +8040,17 @@
   },
   "components": {
     "schemas": {
+      "AcceptInvitation": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "AddMember": {
         "type": "object",
         "required": [
@@ -6500,6 +8210,43 @@
           "network_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DeviceGrantScope"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceGrantPermission"
+            }
+          }
+        }
+      },
+      "DelegatedGrantEntry": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "scopes",
+          "scope",
+          "granted_by_device",
+          "granted_at"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "granted_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Dispositivo que la concedió; null si fue un administrador."
           },
           "scope": {
             "$ref": "#/components/schemas/DeviceGrantScope"
@@ -6722,6 +8469,7 @@
           "scopes",
           "scope",
           "granted_by",
+          "granted_by_device",
           "granted_at"
         ],
         "properties": {
@@ -6736,6 +8484,14 @@
           "granted_by": {
             "type": "string",
             "format": "uuid"
+          },
+          "granted_by_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Dispositivo que la concedió (ADR-027); null si fue un administrador."
           },
           "scope": {
             "$ref": "#/components/schemas/DeviceGrantScope"
@@ -6784,7 +8540,7 @@
             "items": {
               "$ref": "#/components/schemas/DeviceGrantPermission"
             },
-            "maxItems": 6,
+            "maxItems": 7,
             "minItems": 1
           }
         }
@@ -6797,7 +8553,8 @@
           "write:join-codes",
           "write:approve-devices",
           "write:policies",
-          "write:revoke-devices"
+          "write:revoke-devices",
+          "write:grants"
         ]
       },
       "DeviceGrantScope": {
@@ -7362,6 +9119,95 @@
           }
         }
       },
+      "Invitation": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "created_at",
+          "expires_at",
+          "used_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "InvitationCreated": {
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "role",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "Issuer": {
+        "type": "object",
+        "required": [
+          "issuer_pubkey"
+        ],
+        "properties": {
+          "issuer_pubkey": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]+$"
+          }
+        }
+      },
       "IssuerCertificate": {
         "type": "string",
         "format": "binary",
@@ -7498,6 +9344,101 @@
           }
         }
       },
+      "LocalLogin": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalOptions": {
+        "type": "object",
+        "required": [
+          "registration_open"
+        ],
+        "properties": {
+          "registration_open": {
+            "type": "boolean",
+            "description": "false si el operador no ha puesto ATENEA_CP_REGISTRATION_OPEN=true: el registro responde 403 registration_closed."
+          }
+        }
+      },
+      "LocalRecover": {
+        "type": "object",
+        "required": [
+          "login",
+          "recovery_code",
+          "new_password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string",
+            "description": "Mismo mínimo que la contraseña de registro.",
+            "maxLength": 128,
+            "minLength": 8
+          },
+          "recovery_code": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalRegister": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "description": "De 8 a 128 bytes; el mínimo real lo fija el operador (password_min_chars, 12 por defecto y nunca menos de 8): invalid_password si es menor.",
+            "maxLength": 128,
+            "minLength": 8
+          }
+        }
+      },
+      "LocalRegistered": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "recovery_codes"
+        ],
+        "properties": {
+          "recovery_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Diez códigos de un solo uso; solo se muestran ahora y se guardan como hash.",
+            "maxItems": 10,
+            "minItems": 10
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "Member": {
         "type": "object",
         "required": [
@@ -7579,6 +9520,7 @@
           "ipv4_cidr",
           "ipv6_cidr",
           "root_anchor",
+          "root_mode",
           "has_issuer_cert",
           "issuer_cert_not_after",
           "join_policy"
@@ -7619,6 +9561,29 @@
             "maxLength": 64,
             "minLength": 64,
             "pattern": "^[0-9a-fA-F]+$"
+          },
+          "root_mode": {
+            "$ref": "#/components/schemas/RootMode"
+          }
+        }
+      },
+      "NetworkAccess": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "role"
+        ],
+        "properties": {
+          "network_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
           }
         }
       },
@@ -7650,6 +9615,58 @@
               "hello",
               "changed"
             ]
+          }
+        }
+      },
+      "NetworkMember": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role",
+          "display_name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "NetworkMemberRole": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -7722,13 +9739,25 @@
           }
         }
       },
+      "NewInvitation": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          }
+        }
+      },
       "NewNetwork": {
         "type": "object",
         "required": [
-          "name",
-          "ipv4_cidr",
-          "ipv6_cidr",
-          "root_anchor"
+          "name"
         ],
         "properties": {
           "ipv4_cidr": {
@@ -7921,6 +9950,13 @@
           "owner",
           "admin",
           "member"
+        ]
+      },
+      "RootMode": {
+        "type": "string",
+        "enum": [
+          "own",
+          "managed"
         ]
       },
       "Route": {
@@ -8215,6 +10251,70 @@
         "properties": {
           "role": {
             "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "SharedNetwork": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "ipv4_cidr",
+          "ipv6_cidr",
+          "root_anchor",
+          "root_mode",
+          "has_issuer_cert",
+          "issuer_cert_not_after",
+          "join_policy",
+          "role"
+        ],
+        "properties": {
+          "has_issuer_cert": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ipv4_cidr": {
+            "type": "string"
+          },
+          "ipv6_cidr": {
+            "type": "string"
+          },
+          "issuer_cert_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "enroller"
+            ]
+          },
+          "root_anchor": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]+$"
+          },
+          "root_mode": {
+            "$ref": "#/components/schemas/RootMode"
           }
         }
       },

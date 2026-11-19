@@ -11,6 +11,12 @@ import { sections } from './sections';
 import { useClock, useNetworkEvents } from './live';
 import { secondsSince } from './domain';
 import { useServerInfo } from './server-status';
+import { LocalAccess } from './accounts';
+import { AcceptInvitation, SharedNetworks, useInvitationToken } from './sharing';
+
+// Valor de `?org=` para las redes que la cuenta ve por invitación; no es una organización real.
+const SHARED = 'compartidas';
+const sharedOrganization: Model<'Organization'> = { id: SHARED, name: 'Compartidas conmigo', role: 'member' };
 
 export function Login({ expired = false }: { expired?: boolean }) {
   return <main className="login"><div className="card"><p className="eyebrow">ATENEA ONE</p>
@@ -18,6 +24,9 @@ export function Login({ expired = false }: { expired?: boolean }) {
       'Tu sesión ha caducado o no has iniciado sesión. Tus cambios sin guardar no se enviarán.' :
       'Identifícate con el proveedor de tu organización para operar la red privada.'}</p>
     <a className="button primary" href="/auth/login">Iniciar sesión con OIDC</a>
+    <hr/><LocalAccess/>
+    {typeof sessionStorage !== 'undefined' && sessionStorage.getItem('atenea-invitacion') && <p className="muted" role="note">
+      Tienes una invitación pendiente: inicia sesión o crea una cuenta y podrás aceptarla.</p>}
     <p className="muted">Las claves privadas permanecen fuera del panel.</p></div></main>;
 }
 export default function Panel() {
@@ -31,6 +40,12 @@ export default function Panel() {
   const section = sections.find(item => item.id === params.get('view')) ?? sections[0];
   const navigate = (org: string, network = '', view = sections[0].id) =>
     setParams({ org, ...(network ? { net: network, view } : {}) });
+  const shared = params.get('org') === SHARED;
+  const sharedNets = useQuery({ queryKey: ['shared-networks'], enabled: !!session.data, retry: false,
+    queryFn: () => result(api.GET('/api/v1/shared-networks')) });
+  const invitation = useInvitationToken();
+  const orgId = selected?.id ?? SHARED;
+  const sharedRole = sharedNets.data?.find(network => network.id === net)?.role;
   const networks = useQuery({ queryKey: ['org', selected?.id, 'networks'], enabled: !!selected,
     queryFn: () => result(api.GET('/api/v1/orgs/{org}/networks', { params: { path: { org: selected!.id } } })) });
   const selectedNetwork = useQuery({
@@ -44,8 +59,14 @@ export default function Panel() {
   const owner = useQuery({ queryKey: ['network-org', net], enabled: !!session.data && !!net && !params.get('org'),
     queryFn: () => result(api.GET('/api/v1/networks/{net}', { params: { path: { net } } })) });
   useEffect(() => {
-    if (owner.data) setParams({ org: owner.data.org_id, net, view: section.id }, { replace: true });
-  }, [owner.data, net, section.id, setParams]);
+    if (owner.data && !sharedNets.isPending) setParams({
+      org: sharedNets.data?.some(network => network.id === net) ? SHARED : owner.data.org_id, net, view: section.id,
+    }, { replace: true });
+  }, [owner.data, sharedNets.isPending, sharedNets.data, net, section.id, setParams]);
+  // Una cuenta nueva solo tiene su organización personal: se abre sin pedir que la elija.
+  useEffect(() => {
+    if (!params.get('org') && !net && orgs.data?.length === 1) setParams({ org: orgs.data[0].id }, { replace: true });
+  }, [orgs.data, params, net, setParams]);
   if (session.error instanceof ApiError && session.error.status === 401) return <Login expired/>;
   if (!session.data) return <main><h1>Atenea One</h1><Status query={session}/>
     {session.isError && <RunButton run={() => session.refetch()}>Reintentar</RunButton>}</main>;
@@ -53,21 +74,22 @@ export default function Panel() {
     <QueryAnnouncements/>
     <aside className="sidebar"><header><a href="/" className="brand">△ Atenea One</a>
       <p className="eyebrow">PLANO DE CONTROL</p></header>
-      <Field label="Organización">{props => <Select {...props} value={selected?.id ?? ''} onChange={navigate}
+      <Field label="Organización">{props => <Select {...props} value={selected?.id ?? (shared ? SHARED : '')} onChange={navigate}
         placeholder="Selecciona organización"
-        options={(orgs.data ?? []).map(org => ({ value: org.id, label: `${org.name} · ${org.role}` }))}/>}</Field>
+        options={[...(orgs.data ?? []).map(org => ({ value: org.id, label: `${org.name} · ${org.role}` })),
+          ...(sharedNets.data?.length ? [{ value: SHARED, label: 'Compartidas conmigo' }] : [])]}/>}</Field>
       <Status query={orgs}/>
-      {selected && <><Field label="Red">{props => <Select {...props} value={net}
-        onChange={network => navigate(selected.id, network)} options={[{ value: '', label: 'Todas las redes' },
-          ...(net && !networks.data?.some(network => network.id === net) ?
+      {(selected || shared) && <><Field label="Red">{props => <Select {...props} value={net}
+        onChange={network => navigate(orgId, network)} options={[{ value: '', label: 'Todas las redes' },
+          ...(net && !(shared ? sharedNets.data : networks.data)?.some(network => network.id === net) ?
             [{ value: net, label: selectedNetwork.data?.name ?? 'Cargando nombre de red…' }] : []),
-          ...(networks.data ?? []).map(network => ({ value: network.id, label: network.name }))]}/>}</Field>
-      <Status query={networks}/></>}
-      {net && selected && <nav aria-label="Secciones de red">{[...new Set(sections.map(item => item.group))].map(group =>
+          ...((shared ? sharedNets.data : networks.data) ?? []).map(network => ({ value: network.id, label: network.name }))]}/>}</Field>
+      <Status query={shared ? sharedNets : networks}/></>}
+      {net && (selected || shared) && <nav aria-label="Secciones de red">{[...new Set(sections.map(item => item.group))].map(group =>
         <div className="nav-group" key={group}><p className="eyebrow">{group}</p>
-          {sections.filter(item => item.group === group).map(item => <Link key={item.id}
+          {sections.filter(item => item.group === group && (item.id !== 'Compartir' || selected?.role === 'owner')).map(item => <Link key={item.id}
             aria-current={section.id === item.id ? 'page' : undefined}
-            to={`/?org=${selected.id}&net=${net}&view=${encodeURIComponent(item.id)}`}>
+            to={`/?org=${orgId}&net=${net}&view=${encodeURIComponent(item.id)}`}>
             {item.id === 'Observabilidad' ? 'Vista conjunta' : item.label}{item.id === 'Dispositivos' && pending > 0 && <StatusBadge tone="warn">
               <span aria-label={`${pending} solicitud${pending === 1 ? '' : 'es'} pendiente${pending === 1 ? '' : 's'}`}>{pending}</span>
             </StatusBadge>}
@@ -79,15 +101,19 @@ export default function Panel() {
         <RunButton run={async () => { await api.POST('/auth/logout'); cache.clear(); window.location.assign('/'); }}>Cerrar sesión</RunButton>
       </footer>
     </aside>
-    <main id="contenido">{net && selected ? <Network key={net} net={net} section={section}
-      organization={selected} memberships={session.data.memberships}/> : <>
+    <main id="contenido">{invitation.token && <AcceptInvitation token={invitation.token} dismiss={invitation.clear}
+      done={access => { invitation.clear(); setParams({ org: SHARED, net: access.network_id, view: sections[0].id }); }}/>}
+      {net && (selected || shared) ? <Network key={net} net={net} section={section}
+        organization={selected ?? sharedOrganization} memberships={session.data.memberships} sharedRole={sharedRole}/> : <>
       {selected && <Breadcrumbs organization={selected}/>}
-      <Organizations key={selected?.id} org={selected} choose={network => navigate(selected!.id, network)}/>
+      {shared ? <SharedNetworks choose={network => navigate(SHARED, network)}/> :
+        <Organizations key={selected?.id} org={selected} choose={network => navigate(selected!.id, network)}/>}
     </>}</main>
   </div>;
 }
-function Network({ net, section, organization, memberships }: {
+function Network({ net, section, organization, memberships, sharedRole }: {
   net: string; section: typeof sections[number]; organization: Model<'Organization'>; memberships: Model<'Membership'>[];
+  sharedRole?: Model<'NewInvitation'>['role'];
 }) {
   const cache = useQueryClient();
   const connected = useNetworkEvents(net);
@@ -109,6 +135,7 @@ function Network({ net, section, organization, memberships }: {
       'Desconectado: los datos pueden estar desactualizados. Sondeo REST de respaldo cada 30 s.'}</p>
     <p className="muted">Los informes son declaraciones autenticadas de los agentes, no verificaciones independientes.</p>
     <Component net={net} network={network} devices={devices} routes={routes} role={role} canEdit={role !== 'member'}
+      enroll={role !== 'member' || sharedRole === 'enroller'}
       elapsed={secondsSince(devices.dataUpdatedAt, now)} refresh={() => cache.invalidateQueries({ queryKey: ['network', net] })}/>
   </>;
 }

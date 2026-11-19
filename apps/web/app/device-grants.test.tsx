@@ -16,7 +16,7 @@ const lead = { ...device, status: 'approved' as const };
 const other = { ...device, id: '22222222-2222-4222-8222-222222222222', device_id: '22222222-2222-4222-8222-222222222222', name: 'Otro equipo', status: 'approved' as const };
 const grant: Model<'DeviceGrant'> = {
   device_id: lead.id, scopes: ['read:devices', 'write:policies'], scope: { kind: 'enrolled', devices: [] },
-  granted_by: '99999999-9999-4999-8999-999999999999', granted_at: '2026-11-17T10:00:00Z',
+  granted_by: '99999999-9999-4999-8999-999999999999', granted_by_device: null, granted_at: '2026-11-17T10:00:00Z',
 };
 afterEach(() => vi.restoreAllMocks());
 

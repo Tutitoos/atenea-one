@@ -15,6 +15,8 @@ pub struct Scope {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Grant {
+    /// Este dispositivo: la aplicación lo compara con `granted_by_device` para saber qué concesiones dio él.
+    pub device_id: String,
     pub scopes: Vec<String>,
     pub scope: Scope,
     pub granted_at: String,
@@ -44,6 +46,16 @@ pub struct Policy {
     pub created_by_device: Option<String>,
 }
 
+/// Una concesión de un dispositivo del alcance de quien tiene `write:grants` (ADR-027).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct GrantEntry {
+    pub device_id: String,
+    pub scopes: Vec<String>,
+    pub scope: Scope,
+    pub granted_by_device: Option<String>,
+    pub granted_at: String,
+}
+
 /// Lo último leído. `grant` nulo: este dispositivo no tiene concesión (la aplicación no muestra «Administración»).
 /// `devices` y `policies` solo se leen si la concesión incluye `read:devices` y `read:policies`.
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
@@ -51,6 +63,7 @@ pub struct Status {
     pub grant: Option<Grant>,
     pub devices: Option<Vec<Device>>,
     pub policies: Option<Vec<Policy>>,
+    pub grants: Option<Vec<GrantEntry>>,
     pub fetched_unix: u64,
     pub last_error: Option<&'static str>,
 }
@@ -109,6 +122,12 @@ pub fn fetch(
             Err(error) => status.last_error = Some(error),
         }
     }
+    if allowed("write:grants") {
+        match get(cfg, key, device, ts, "grants") {
+            Ok(list) => status.grants = list,
+            Err(error) => status.last_error = Some(error),
+        }
+    }
     status.grant = Some(grant);
     Ok(Some(status))
 }
@@ -137,6 +156,7 @@ mod tests {
                     devices: vec![],
                 },
                 granted_at: "2026-11-17T10:00:00Z".into(),
+                device_id: "d".into(),
             }),
             fetched_unix: 100,
             ..Status::default()
@@ -201,6 +221,9 @@ mod tests {
             ("grant", 200, grant(&["read:devices", "read:policies"])),
             ("devices", 200, "[]".into()),
             ("policies", 500, String::new()),
+            ("grant", 200, grant(&["read:devices", "write:grants"])),
+            ("devices", 200, "[]".into()),
+            ("grants", 200, serde_json::json!([{"device_id":"a","scopes":["read:devices"],"scope":{"kind":"devices","devices":["a"]},"granted_by_device":"x","granted_at":"2026-11-18T10:00:00Z"}]).to_string()),
             ("grant", 200, "{\"scopes\":1}".into()),
         ];
         let server = std::thread::spawn(move || {
@@ -255,6 +278,12 @@ mod tests {
         assert_eq!(partial.devices, Some(vec![]));
         assert!(partial.policies.is_none());
         assert_eq!(partial.last_error, Some("error HTTP del control plane"));
+        // Con `write:grants` se leen además las concesiones del alcance (ADR-027).
+        let giver = f().unwrap().unwrap();
+        assert_eq!(giver.devices, Some(vec![]));
+        let grants = giver.grants.unwrap();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].granted_by_device.as_deref(), Some("x"));
         assert_eq!(f().unwrap_err(), "respuesta de administración inválida");
         server.join().unwrap();
     }

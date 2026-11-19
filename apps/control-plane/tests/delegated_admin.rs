@@ -157,6 +157,13 @@ fn every(target: Uuid) -> Vec<(&'static str, String, Option<Value>)> {
             Some(json!({"fingerprint":"x"})),
         ),
         ("POST", format!("{ADMIN}/devices/{target}/revoke"), None),
+        ("GET", format!("{ADMIN}/grants"), None),
+        (
+            "PUT",
+            format!("{ADMIN}/devices/{target}/grant"),
+            Some(json!({"scopes":["read:devices"],"scope":{"kind":"network"}})),
+        ),
+        ("DELETE", format!("{ADMIN}/devices/{target}/grant"), None),
     ]
 }
 
@@ -178,7 +185,7 @@ async fn sin_concesion_o_sin_el_permiso_todo_responde_grant_missing() {
     .await;
     for (method, path, body) in every(s.other.id) {
         let r = signed(&s.t, &s.lead, method, &path, body).await;
-        if path.ends_with("/grant") || path.ends_with("/admin/devices") {
+        if path == format!("{ADMIN}/grant") || path.ends_with("/admin/devices") {
             assert_eq!(r.status, StatusCode::OK, "{path} {}", r.json);
         } else {
             r.error(StatusCode::FORBIDDEN, "grant_missing");
@@ -579,5 +586,367 @@ async fn revocar_al_delegado_retira_el_permiso_y_conserva_lo_que_creo() {
         )
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.json);
+    s.t.finish().await;
+}
+
+/// Un delegado con `write:grants` y alcance sobre `other` y un tercero aprobado.
+async fn with_grants(s: &Setup) -> Device {
+    let third = Device::new();
+    let token = s.t.token(&s.owner, s.net, true).await;
+    let r = s.t.enroll(&token, &third).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.json);
+    grant(
+        s,
+        &s.lead,
+        json!(["read:devices", "read:policies", "write:grants"]),
+        json!({"kind":"devices","devices":[s.other.id,third.id]}),
+    )
+    .await;
+    third
+}
+
+fn give(scopes: Value, scope: Value) -> Option<Value> {
+    Some(json!({"scopes":scopes,"scope":scope}))
+}
+
+async fn grants_of(s: &Setup) -> Vec<Uuid> {
+    sqlx::query_scalar("SELECT device_id FROM device_grants WHERE network_id=$1 AND granted_by_device IS NOT NULL ORDER BY device_id")
+        .bind(s.net)
+        .fetch_all(&s.t.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn conceder_permisos_no_sube_de_nivel_ni_toca_lo_ajeno() {
+    let Some(s) = setup().await else { return };
+    let third = with_grants(&s).await;
+    let to = |d: Uuid| format!("{ADMIN}/devices/{d}/grant");
+
+    // Lo propio y dentro del alcance: se concede y queda constancia de quién lo dio, sin el usuario.
+    let r = signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(s.other.id),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json["granted_by_device"], s.lead.id.to_string());
+    assert!(r.json.get("granted_by").is_none());
+    assert_eq!(grants_of(&s).await, vec![s.other.id]);
+
+    // D2 y D3: ni permisos que no tiene, ni `write:grants`, ni un alcance mayor, ni salir del suyo.
+    for (scopes, scope) in [
+        (
+            json!(["write:policies"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+        (
+            json!(["write:grants"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+        (json!(["read:devices"]), json!({"kind":"network"})),
+        (json!(["read:devices"]), json!({"kind":"enrolled"})),
+        (
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[s.lead.id]}),
+        ),
+        (
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[s.pending.id]}),
+        ),
+    ] {
+        signed(
+            &s.t,
+            &s.lead,
+            "PUT",
+            &to(third.id),
+            give(scopes.clone(), scope.clone()),
+        )
+        .await
+        .error(StatusCode::FORBIDDEN, "grant_exceeds_own");
+    }
+    // Ni la suya ni un dispositivo fuera del alcance; un destino de otra red o inexistente es 404.
+    signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(s.lead.id),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+    )
+    .await
+    .error(StatusCode::FORBIDDEN, "grant_self");
+    signed(&s.t, &s.lead, "DELETE", &to(s.lead.id), None)
+        .await
+        .error(StatusCode::FORBIDDEN, "grant_self");
+    signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(s.pending.id),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+    )
+    .await
+    .error(StatusCode::FORBIDDEN, "out_of_scope");
+    signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(Uuid::new_v4()),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+    )
+    .await
+    .error(StatusCode::NOT_FOUND, "not_found");
+    // Un cuerpo mal formado se rechaza.
+    signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(third.id),
+        give(json!([]), json!({"kind":"devices","devices":[third.id]})),
+    )
+    .await
+    .error(StatusCode::BAD_REQUEST, "invalid_grant");
+
+    // D4: la concesión de un administrador no se sustituye ni se retira.
+    grant(
+        &s,
+        &third,
+        json!(["read:devices"]),
+        json!({"kind":"enrolled"}),
+    )
+    .await;
+    signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(third.id),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[third.id]}),
+        ),
+    )
+    .await
+    .error(StatusCode::FORBIDDEN, "grant_not_yours");
+    signed(&s.t, &s.lead, "DELETE", &to(third.id), None)
+        .await
+        .error(StatusCode::FORBIDDEN, "grant_not_yours");
+
+    // D6: la lista cubre solo el alcance y no lleva al usuario; el administrador lo ve todo.
+    let r = signed(&s.t, &s.lead, "GET", &format!("{ADMIN}/grants"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let ids: Vec<&str> = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["device_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert!(
+        ids.contains(&s.other.id.to_string().as_str())
+            && ids.contains(&third.id.to_string().as_str())
+    );
+    assert!(
+        r.json
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g.get("granted_by").is_none())
+    );
+
+    // Retirar lo que dio: 204, y una segunda vez no hay nada (404). El de un administrador sigue.
+    assert_eq!(
+        signed(&s.t, &s.lead, "DELETE", &to(s.other.id), None)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    signed(&s.t, &s.lead, "DELETE", &to(s.other.id), None)
+        .await
+        .error(StatusCode::NOT_FOUND, "not_found");
+    assert!(grants_of(&s).await.is_empty());
+    let audit: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_events WHERE network_id=$1 AND actor_kind='device' AND actor_id=$2 AND action LIKE 'device.grant%' ORDER BY id")
+        .bind(s.net)
+        .bind(s.lead.id.to_string())
+        .fetch_all(&s.t.pool)
+        .await
+        .unwrap();
+    assert_eq!(audit, ["device.grant", "device.grant_revoke"]);
+    s.t.finish().await;
+}
+
+async fn give_both(s: &Setup, third: Uuid) {
+    for d in [s.other.id, third] {
+        let r = signed(
+            &s.t,
+            &s.lead,
+            "PUT",
+            &format!("{ADMIN}/devices/{d}/grant"),
+            give(
+                json!(["read:devices"]),
+                json!({"kind":"devices","devices":[s.other.id]}),
+            ),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    }
+}
+
+async fn reasons(s: &Setup) -> Vec<String> {
+    sqlx::query_scalar("SELECT detail->>'reason' FROM audit_events WHERE network_id=$1 AND action='device.grant_revoke' ORDER BY id")
+        .bind(s.net)
+        .fetch_all(&s.t.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn cambiar_retirar_o_revocar_a_quien_concede_retira_lo_que_dio() {
+    let Some(s) = setup().await else { return };
+    let third = with_grants(&s).await;
+
+    // Un administrador sustituye la concesión del que concede: se va lo que dio.
+    give_both(&s, third.id).await;
+    assert_eq!(grants_of(&s).await.len(), 2);
+    grant(
+        &s,
+        &s.lead,
+        json!(["read:devices", "write:grants"]),
+        json!({"kind":"devices","devices":[s.other.id,third.id]}),
+    )
+    .await;
+    assert!(grants_of(&s).await.is_empty());
+    // Retirársela del todo, también.
+    give_both(&s, third.id).await;
+    let r =
+        s.t.json(
+            "DELETE",
+            &format!("/api/v1/networks/{}/devices/{}/grant", s.net, s.lead.id),
+            Some(&s.owner),
+            json!(null),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.json);
+    assert!(grants_of(&s).await.is_empty());
+    // Y revocarlo.
+    grant(
+        &s,
+        &s.lead,
+        json!(["read:devices", "write:grants"]),
+        json!({"kind":"devices","devices":[s.other.id,third.id]}),
+    )
+    .await;
+    give_both(&s, third.id).await;
+    let r =
+        s.t.json(
+            "POST",
+            &format!("/api/v1/networks/{}/devices/{}/revoke", s.net, s.lead.id),
+            Some(&s.owner),
+            json!(null),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert!(grants_of(&s).await.is_empty());
+    let reasons = reasons(&s).await;
+    assert_eq!(
+        reasons.iter().filter(|r| *r == "grantor_changed").count(),
+        6
+    );
+    s.t.finish().await;
+}
+
+#[tokio::test]
+async fn el_alcance_de_lo_concedido_cabe_en_el_de_quien_concede() {
+    let Some(s) = setup().await else { return };
+    let to = |d: Uuid| format!("{ADMIN}/devices/{d}/grant");
+    // Con alcance `network` puede dar cualquier forma de alcance.
+    grant(
+        &s,
+        &s.lead,
+        json!(["read:devices", "write:grants"]),
+        json!({"kind":"network"}),
+    )
+    .await;
+    for scope in [
+        json!({"kind":"network"}),
+        json!({"kind":"enrolled"}),
+        json!({"kind":"devices","devices":[s.pending.id]}),
+    ] {
+        let r = signed(
+            &s.t,
+            &s.lead,
+            "PUT",
+            &to(s.other.id),
+            give(json!(["read:devices"]), scope),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    }
+    // Con `enrolled`, solo una lista dentro de lo que él dio de alta (y él mismo).
+    grant(
+        &s,
+        &s.lead,
+        json!([
+            "read:devices",
+            "write:join-codes",
+            "write:approve-devices",
+            "write:grants"
+        ]),
+        json!({"kind":"enrolled"}),
+    )
+    .await;
+    let new = Device::new();
+    join(&s, &new).await;
+    let r = signed(
+        &s.t,
+        &s.lead,
+        "POST",
+        &format!("{ADMIN}/devices/{}/approve", new.id),
+        Some(json!({"fingerprint":new.bundle.fingerprint()})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let r = signed(
+        &s.t,
+        &s.lead,
+        "PUT",
+        &to(new.id),
+        give(
+            json!(["read:devices"]),
+            json!({"kind":"devices","devices":[new.id,s.lead.id]}),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    for scope in [
+        json!({"kind":"devices","devices":[s.other.id]}),
+        json!({"kind":"enrolled"}),
+        json!({"kind":"network"}),
+    ] {
+        signed(
+            &s.t,
+            &s.lead,
+            "PUT",
+            &to(new.id),
+            give(json!(["read:devices"]), scope),
+        )
+        .await
+        .error(StatusCode::FORBIDDEN, "grant_exceeds_own");
+    }
     s.t.finish().await;
 }

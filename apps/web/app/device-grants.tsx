@@ -15,6 +15,7 @@ export const permissionLabels: Record<Permission, string> = {
   'write:approve-devices': 'Aprobar dispositivos (por huella)',
   'write:policies': 'Crear y borrar políticas entre dispositivos',
   'write:revoke-devices': 'Revocar dispositivos',
+  'write:grants': 'Conceder permisos a otros dispositivos de su alcance',
 };
 const permissions = Object.keys(permissionLabels) as Permission[];
 const scopeLabels: Record<ScopeKind, string> = {

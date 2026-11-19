@@ -473,7 +473,7 @@ La gestión es de un administrador; el dispositivo ejerce su concesión con las 
 
 - `GET /api/v1/networks/{net}/grants` (pertenencia; también el token de servicio): lista `[{"device_id","scopes","scope":{"kind","devices"},"granted_by","granted_at"}]`.
 - `PUT /api/v1/networks/{net}/devices/{dev}/grant` (`owner` o `admin`, CSRF) con `{"scopes":[…],"scope":{"kind":"enrolled"|"devices"|"network","devices"?:[uuid]}}`: concede o **sustituye** la concesión del dispositivo y devuelve la concesión guardada.
-  - `scopes`: lista cerrada (`read:devices`, `read:policies`, `write:join-codes`, `write:approve-devices`, `write:policies`, `write:revoke-devices`), no vacía y sin repetir; se guarda y se devuelve en ese orden.
+  - `scopes`: lista cerrada (`read:devices`, `read:policies`, `write:join-codes`, `write:approve-devices`, `write:policies`, `write:revoke-devices`, `write:grants`), no vacía y sin repetir; se guarda y se devuelve en ese orden. Sustituir o retirar la concesión de un dispositivo retira las que él dio (§25).
   - `scope.devices` solo con `kind = "devices"`: de 1 a 64 dispositivos de la misma red, no revocados y sin repetir; con los otros dos tipos debe faltar o estar vacía.
   - Cualquier otra cosa → `400 invalid_grant`; un campo desconocido o un tipo erróneo se rechaza al leer el cuerpo. `404 not_found` si el dispositivo no es de la red; `409 device_not_approved` si está pendiente o revocado.
 - `DELETE` de la misma ruta (`owner` o `admin`, CSRF): `204`; `404 not_found` si no tenía concesión.
@@ -505,4 +505,70 @@ Un dispositivo **aprobado** con concesión ejerce sus permisos con la firma `AtD
 - **Límites:** 60 peticiones por minuto y dispositivo en estas rutas (`429 rate_limited`), además de la cuota general de dispositivo; 256 políticas creadas por delegado (`409 policy_overflow`).
 - **Concurrencia:** cada escritura bloquea la fila de la red y lee la concesión dentro de la misma transacción; revocar al delegado borra la concesión bajo ese bloqueo.
 - **Auditoría:** `token.create`, `device.approve`, `device.revoke`, `policy.create` y `policy.delete` con `actor_kind = device` y el delegado como autor. Eventos SSE: `devices` o `policies`, y `audit`.
-- **Lo que un delegado no puede hacer** no tiene ruta: conceder o cambiar permisos, cambiar nombre, rol o política de unión, aprobar rutas de subred, DNS ni el certificado de emisor.
+- **Lo que un delegado no puede hacer** no tiene ruta: cambiar nombre, rol o política de unión, aprobar rutas de subred, DNS ni el certificado de emisor. Conceder permisos solo existe con `write:grants` (§25, ADR-027).
+
+## 25. Concesión delegada de permisos (ADR-027, fase 2)
+
+La migración `0014_device_grants_delegated.sql` añade `device_grants.granted_by_device` (nulo si la concesión la dio un administrador) con borrado en cascada. `granted_by` sigue siendo no nulo: en una concesión delegada guarda al administrador que dio `write:grants` a quien la concede, de modo que el control plane anterior sigue listándola. Es aditiva.
+
+El permiso nuevo **`write:grants`** (el séptimo de la lista cerrada) solo lo concede un administrador (§23). Un dispositivo que lo tiene, con la firma `AtDevice` y las mismas reglas de ventana, anti-repetición y tasa que §24:
+
+- `GET /api/v1/device/admin/grants`: las concesiones de los dispositivos **de su alcance** (`[{"device_id","scopes","scope","granted_by_device","granted_at"}]`, sin `granted_by`).
+- `PUT /api/v1/device/admin/devices/{dev}/grant` con el cuerpo de §23: concede o sustituye los permisos de un dispositivo de su alcance.
+- `DELETE /api/v1/device/admin/devices/{dev}/grant` (cuerpo vacío): `204`; `404` si el destino no existe o no tiene concesión.
+
+Reglas, por orden (`403` con código estable salvo indicación):
+
+1. Sin `write:grants` en su concesión: `grant_missing`.
+2. El destino es él mismo: `grant_self`. No existe o es de otra red: `404 not_found`. Fuera de su alcance: `out_of_scope`.
+3. Cuerpo inválido: `400 invalid_grant` (lista vacía, repetida o desconocida; alcance mal formado o con dispositivos revocados o de otra red); destino no aprobado: `409 device_not_approved`.
+4. **D2:** los permisos concedidos son un subconjunto de los suyos y no incluyen `write:grants`: `grant_exceeds_own`.
+5. **D3:** con alcance `network` puede dar cualquier alcance; con `enrolled` o `devices` solo `devices` con una lista contenida en el suyo: `grant_exceeds_own`.
+6. **D4:** solo sustituye o retira concesiones que él dio (`granted_by_device` = él): `grant_not_yours`.
+7. Como mucho 64 concesiones dadas vivas por dispositivo: `409 grant_limit` (sustituir una propia no cuenta).
+
+- **D5, cascada:** al sustituir o retirar la concesión de un dispositivo (por un administrador o desde `PUT`/`DELETE`), o al revocarlo, se retiran en la misma transacción las concesiones que él dio, con `device.grant_revoke` y `reason = grantor_changed`.
+- **Auditoría:** `device.grant` y `device.grant_revoke` con `actor_kind = device` (`reason = delegate` al retirar una concesión propia). Eventos SSE: `devices` y `audit`.
+- `GET /api/v1/networks/{net}/grants` (§23) añade `granted_by_device`.
+- **Lo que no cambia:** un delegado sigue sin dar `write:grants`, sin cambiar la suya y sin tocar la de un administrador; el token de servicio sigue siendo de solo lectura.
+
+## 26. Cuentas propias (ADR-028, fase 2: cuentas y organización personal)
+
+Los datos de las cuentas viven en el servidor, en la misma base PostgreSQL que el resto (y por tanto en sus copias): usuarios, hash de la contraseña, hashes de los códigos de recuperación, organizaciones, redes y membresías. **Lo único que no guarda es la clave privada raíz de cada red**, que queda con su dueño (ADR-005, ADR-028 D1).
+
+La migración `0015_local_accounts.sql` es aditiva: `users.personal_org_done`, `organizations.personal` y las tablas `local_credentials` y `recovery_codes`. El binario anterior las ignora.
+
+- **Identidad local:** un `users` con `oidc_issuer = 'local'` y `oidc_subject` = el correo en minúsculas. El correo **no está verificado** y no se copia a `users.email`, así que «añadir por correo» (§17) no encuentra estas cuentas.
+- `POST /auth/local/register` `{login, password, display_name?}` → `201 {user_id, recovery_codes[10]}` y `Set-Cookie` de sesión. La contraseña tiene de `ATENEA_CP_PASSWORD_MIN_CHARS` (12 por defecto, nunca menos de 8 aunque se configure menos) caracteres a 128 bytes y se guarda con argon2id (19 MiB, 2 pasadas, 1 hilo; como mucho 4 hashes a la vez, `429 rate_limited` si no hay hueco). `403 registration_closed` salvo que el operador ponga `ATENEA_CP_REGISTRATION_OPEN=true` (cerrado por defecto: actualizar no abre el registro). `400 invalid_login` o `invalid_password`; `409 conflict` si el correo existe (sin distinguir mayúsculas). Cupos `ATENEA_CP_REGISTER_PER_MINUTE` (5 por IP, IPv6 por /64) y `ATENEA_CP_REGISTER_GLOBAL_PER_MINUTE` (30). Los diez códigos de recuperación se muestran una sola vez y se guardan como SHA-256.
+- `GET /auth/local/options` (público) → `{"registration_open": bool}`: lo que la pantalla de acceso lee para ocultar «Crear una cuenta» cuando el operador no ha puesto `ATENEA_CP_REGISTRATION_OPEN=true`. Ocultarlo no sustituye al bloqueo: el registro sigue respondiendo `403 registration_closed`. Cambiarlo exige reiniciar el servidor.
+- `POST /auth/local/login` `{login, password}` → `204` y `Set-Cookie`. `401 invalid_credentials` igual para un correo desconocido y una contraseña errónea (se verifica contra un hash falso para igualar el tiempo). Cinco fallos seguidos bloquean la cuenta con espera creciente de 30 s a 15 min: `429 rate_limited`, incluso con la contraseña correcta. Comparte `login_per_minute` por IP con el inicio OIDC.
+- `POST /auth/local/recover` `{login, recovery_code, new_password}` → `204`. Consume el código (un solo uso), cambia la contraseña, repone el contador de fallos y **cierra todas las sesiones** de la cuenta; no inicia sesión. Sin recuperación por correo (no hay SMTP): quien pierde la contraseña y los códigos pierde la cuenta, y el operador puede restablecerla.
+- **Organización personal (D5):** cada cuenta, local u OIDC, recibe una vez una organización de la que es `owner` (`organizations.personal`); `users.personal_org_done` impide recrearla si la borra. Un usuario OIDC existente la recibe al volver a entrar. **No admite miembros**: `409 personal_org` en `POST/PUT …/members`.
+- `GET /api/v1/issuer` (sesión) → `{"issuer_pubkey": <hex 32>}`: la clave pública del emisor del servidor, que el usuario pone en el certificado de emisor que firma con su raíz.
+- Los cuerpos de registro, inicio de sesión y recuperación exigen `application/json`; sin CORS configurado, otro origen no puede enviarlos desde un navegador.
+- GitHub como conector de Dex es configuración del despliegue, no del control plane. Miembros por red, invitaciones y cuotas: §27.
+
+## 27. Miembros por red, invitaciones y cuotas (ADR-028, fase 2: parte B)
+
+La migración `0016_network_members.sql` añade `network_members` (`viewer` o `enroller` por red) y `network_invitations` (solo el SHA-256 del token). Es aditiva: con el binario anterior, quien solo es miembro de una red no ve nada, porque no tiene membresía de organización.
+
+- **Quién puede qué.** `viewer` lee los datos generales de la red (red, dispositivos, políticas, rutas, DNS, concesiones y auditoría). `enroller` además genera códigos de unión (`POST …/enrollment-tokens`) y aprueba dispositivos. Nadie por invitación crea políticas, revoca, cambia DNS o rutas, ve el código de unión (`join-code`), toca el certificado de emisor ni invita: eso sigue siendo de `admin` u `owner` (invitar, de `owner`). Un miembro por invitación recibe `403 forbidden` en lo que no puede; quien no es miembro de nada, `404`.
+- **Aprobar como `enroller`** exige el cuerpo `{"fingerprint": <huella completa>}` (`400 invalid_request` sin él, `409 fingerprint_mismatch` si no coincide), como un delegado (ADR-026). Un administrador no la necesita. La auditoría `device.approve` añade `by = enroller` en ese caso; el detalle del administrador no cambia.
+- `POST /api/v1/networks/{net}/invitations` `{role: viewer|enroller}` (owner) → `201 {id, token, role, expires_at}`. El token (`atinv_…`, 256 bits) se muestra **una vez**; caduca a los 7 días y es de un solo uso. `400 invalid_role`; `409 invitation_limit` con 10 vigentes (`ATENEA_CP_MAX_OPEN_INVITATIONS`; las usadas, anuladas o caducadas no cuentan); `429 rate_limited`.
+- `GET …/invitations` (owner): las 100 más recientes, sin token. `DELETE …/invitations/{id}` (owner): `204`; `404` si no existe, ya se usó o ya se anuló.
+- `POST /api/v1/invitations/accept` `{token}` (sesión de cualquier cuenta, CSRF) → `200 {network_id, role}`. Inexistente, caducada, anulada o usada: `404`. Si la cuenta ya tiene acceso a la red (por su organización o como miembro): `409 already_member` y la invitación sigue vigente. No da acceso a la organización.
+- `GET …/members`, `PUT …/members/{user}` `{role}`, `DELETE …/members/{user}` (owner): listan, cambian y quitan a los miembros por invitación (solo nombre visible, nunca correo). Quitar a alguien **no revoca los dispositivos que aprobó**: la auditoría (`device.approve`, actor) dice quién aprobó cada uno y el propietario decide. `DELETE /api/v1/networks/{net}/membership` (sesión, CSRF): el propio miembro por invitación abandona la red (`204`; `404` si no lo es, también para un miembro de la organización). Tampoco revoca los dispositivos que aprobó. Auditoría `network_member.leave`.
+- `GET /api/v1/shared-networks` (sesión): las redes a las que la cuenta pertenece por invitación, con su `role`.
+- **Cuotas (D4)**, solo en organizaciones personales; las demás no tienen tope: `ATENEA_CP_PERSONAL_MAX_NETWORKS` (3, `409 network_limit`) y `ATENEA_CP_PERSONAL_MAX_DEVICES` (64 no revocados por red, `409 device_limit`, también al enrolar y al pedir unión).
+- **Auditoría:** `invitation.create`, `invitation.revoke`, `network_member.join`, `network_member.set`, `network_member.remove` y `network_member.leave`.
+
+## 28. Redes gestionadas por el servidor (ADR-029)
+
+La migración `0017_managed_networks.sql` añade `networks.root_mode` (`own` por defecto, `managed`) y `networks.root_wrapped` (la semilla de la raíz cifrada; solo en las gestionadas). Es aditiva.
+
+- `POST /api/v1/orgs/{org}/networks` solo exige `name`. **Sin `root_anchor`** la red es gestionada: el servidor genera la raíz Ed25519, la guarda cifrada con XChaCha20-Poly1305 (clave de envoltura `ATENEA_CP_ROOT_WRAP_KEY_FILE`, el id de la red como dato asociado) y firma el primer certificado de emisor (30 días, `issuer_serial` 1, auditoría `network.issuer_cert` con `{serial, managed: true}` y `actor_kind = system`). `409 managed_unavailable` si el servidor no tiene la clave de envoltura. **Con `root_anchor`** (64 hex) la raíz es del usuario (§26 y ADR-028) y el certificado se sube a mano.
+- Sin `ipv4_cidr`/`ipv6_cidr` se asignan solos: el primer `/24` libre de `10.64.0.0/10` que no se solape con ninguna red existente (`409 address_pool_exhausted` si no queda) y un `/64` ULA derivado de bits aleatorios del id de la red. Los CIDR indicados se validan como siempre.
+- `Network` y `SharedNetwork` añaden `root_mode`.
+- `PUT /api/v1/networks/{net}/issuer-cert` responde `409 managed_network` en una red gestionada: el servidor firma y renueva su certificado.
+- **Renovación:** una tarea del control plane revisa cada hora las redes gestionadas y firma un certificado con serial mayor cuando el instalado ha consumido dos tercios de su vida (o falta). La raíz se descifra solo en memoria durante la firma. Si no se puede descifrar (clave de envoltura distinta) no se toca el certificado vigente.
+- El agente y los formatos firmados **no cambian**: el certificado es el de ADR-005.

@@ -7,20 +7,20 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApply, joinCodeReply, type AdminOp, type AdminParams } from './lib/networks';
 import type { Status } from './lib/status';
-import { button, CopyButton, Heading } from './ui';
+import { button, CopyButton, Heading, type TabDef } from './ui';
 
 /** Lista de filas libres: el `Card` común es una `<dl>` y aquí las filas llevan botones y texto, no pares término-definición. */
-const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-panel border border-rule px-3.5">{children}</div>;
+export const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-panel border border-rule px-3.5">{children}</div>;
 
-type Admin = NonNullable<Status['admin']>;
-type Dev = NonNullable<Admin['devices']>[number];
+export type Admin = NonNullable<Status['admin']>;
+export type Dev = NonNullable<Admin['devices']>[number];
 type Pol = NonNullable<Admin['policies']>[number];
 
 const protocols: Record<number, string> = { 0: 'cualquiera', 1: 'ICMP', 6: 'TCP', 17: 'UDP', 58: 'ICMPv6' };
-const scopeText = { enrolled: 'los dispositivos que este equipo da de alta, y él mismo', devices: 'una lista de dispositivos', network: 'toda la red' } as const;
+export const scopeText = { enrolled: 'los dispositivos que este equipo da de alta, y él mismo', devices: 'una lista de dispositivos', network: 'toda la red' } as const;
 
 /** Una escritura: pide la autorización del sistema, espera a que el agente relea el estado (hasta ~30 s) y avisa del resultado. */
-function useWrite(network: string) {
+export function useWrite(network: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ op, params }: { op: AdminOp; params: AdminParams }) => adminApply(op, network, params),
@@ -28,7 +28,7 @@ function useWrite(network: string) {
   });
 }
 
-const nameOf = (devices: Dev[], id?: string | null) => devices.find((d) => d.id === id)?.name ?? (id ? `${id.slice(0, 8)}…` : '—');
+export const nameOf = (devices: Dev[], id?: string | null) => devices.find((d) => d.id === id)?.name ?? (id ? `${id.slice(0, 8)}…` : '—');
 const end = (devices: Dev[], s: Pol['src']) => (s.kind === 'device' ? nameOf(devices, s.device_id) : s.kind === 'prefix' ? (s.prefix ?? '—') : 'cualquiera');
 
 function JoinCode({ network, allowed, stale }: { network: string; allowed: boolean; stale: boolean }) {
@@ -116,24 +116,33 @@ function Policies({ network, devices, policies, canWrite, stale }: { network: st
   </section>;
 }
 
-/** Sección completa; no pinta nada sin concesión. `canWrite` = la aplicación puede elevar en este sistema (no en Windows aún). */
-export function Administration({ status, network, canWrite, stale }: { status: Status; network: string; canWrite: boolean; stale: boolean }) {
+/** Resumen de la concesión (en «General» del propio equipo); no pinta nada sin concesión. `canWrite` = la aplicación puede elevar en este sistema (no en Windows aún). */
+export function AdminSummary({ status, canWrite }: { status: Status; canWrite: boolean }) {
   const admin = status.admin;
   if (!admin?.grant) return null;
   const { scopes, scope } = admin.grant;
-  const may = (p: string) => canWrite && scopes.includes(p);
-  const devices = admin.devices ?? [];
   return <section aria-label="Administración">
     <Heading>Administración</Heading>
     <p className="text-sm text-gray-400">Un administrador concedió a este equipo permisos sobre la red. Alcance de las escrituras: {scopeText[scope.kind]}. Cada cambio pide la autorización de administrador del sistema y puede tardar hasta 30 s en verse.</p>
     <ul className="mt-1 text-sm" aria-label="Permisos concedidos">{scopes.map((s) => <li key={s}><code>{s}</code></li>)}</ul>
     {!canWrite && <p className="mt-1 text-sm text-gray-400">En este sistema la aplicación no puede hacer cambios: usa <code>atenea network</code> en una terminal con privilegios.</p>}
     {admin.last_error && <p className="mt-1 text-sm text-accent-200" role="status">La última lectura falló ({admin.last_error}); se muestra la anterior.</p>}
-    {scopes.includes('write:join-codes') && <JoinCode network={network} allowed={may('write:join-codes')} stale={stale} />}
-    {scopes.includes('read:devices') && <>
-      {scopes.includes('write:approve-devices') && <Pending network={network} devices={devices} allowed={may('write:approve-devices')} stale={stale} />}
-      <Devices network={network} devices={devices} allowed={may('write:revoke-devices')} stale={stale} />
-    </>}
-    {scopes.includes('read:policies') && <Policies network={network} devices={devices} policies={admin.policies ?? []} canWrite={may('write:policies') && scopes.includes('read:devices')} stale={stale} />}
   </section>;
+}
+
+/** Una pestaña por función a la que da acceso la concesión; sin concesión, ninguna. */
+export function adminTabs({ status, network, canWrite, stale }: { status: Status; network: string; canWrite: boolean; stale: boolean }): TabDef[] {
+  const admin = status.admin;
+  if (!admin?.grant) return [];
+  const { scopes } = admin.grant;
+  const may = (p: string) => canWrite && scopes.includes(p);
+  const devices = admin.devices ?? [];
+  const tabs: TabDef[] = [];
+  if (scopes.includes('write:join-codes')) tabs.push({ id: 'code', label: 'Código de unión', panel: <JoinCode network={network} allowed={may('write:join-codes')} stale={stale} /> });
+  if (scopes.includes('read:devices')) tabs.push({ id: 'devices', label: 'Dispositivos', panel: <>
+    {scopes.includes('write:approve-devices') && <Pending network={network} devices={devices} allowed={may('write:approve-devices')} stale={stale} />}
+    <Devices network={network} devices={devices} allowed={may('write:revoke-devices')} stale={stale} />
+  </> });
+  if (scopes.includes('read:policies')) tabs.push({ id: 'policies', label: 'Políticas', panel: <Policies network={network} devices={devices} policies={admin.policies ?? []} canWrite={may('write:policies') && scopes.includes('read:devices')} stale={stale} /> });
+  return tabs;
 }

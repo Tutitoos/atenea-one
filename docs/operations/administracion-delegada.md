@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Administración delegada por dispositivo: guía de operación
 
-- **Estado:** publicada en la [0.1.33](v0.1.33.md) (fases 2 a 7 de [ADR-026](../architecture/ADR-026-administracion-delegada-por-dispositivo.md)) y desplegada en el piloto el 2026-11-17. Probada con datos sintéticos (pruebas de integración, Vitest, Go y el ensayo [`rollback-0013.sh`](../../tests/stack/rollback-0013.sh)) y, en el piloto, con una concesión de solo lectura y códigos de unión leída por el agente y ejercida con la CLI real. **No se ha ejercido en el piloto la aprobación por huella ni las políticas delegadas**, ni se ha visto la aplicación con una concesión en una ventana ni el diálogo de administrador del sistema desde ella.
+- **Estado:** publicada en la [0.1.33](v0.1.33.md) (fases 2 a 7 de [ADR-026](../architecture/ADR-026-administracion-delegada-por-dispositivo.md)) y desplegada en el piloto el 2026-11-17. Probada con datos sintéticos (pruebas de integración, Vitest, Go y el ensayo [`rollback-0013.sh`](../../tests/stack/rollback-0013.sh)) y, en el piloto, de extremo a extremo (2026-11-18) con la CLI real y un equipo desechable: código, unión pendiente, aprobación por huella completa y una política delegada con tráfico solo al puerto concedido. **No se han ejercido en el piloto los rechazos**, ni se ha visto la aplicación con una concesión en una ventana ni el diálogo de administrador del sistema desde ella.
 - **Para quién:** quien administra una red y quien opera el servidor.
 
 ## Qué permite
@@ -33,7 +33,7 @@ Por API: `PUT`/`DELETE /api/v1/networks/{net}/devices/{dev}/grant` y `GET …/gr
 ## Usarla
 
 - **CLI** (root en Linux y macOS, consola elevada en Windows): `atenea network permissions|devices|join-code|approve|revoke|policy …`; ver [redes múltiples](redes-multiples-cli.md#administración-delegada-adr-026).
-- **Aplicación de escritorio**: «Administración» en el detalle del propio equipo si hay concesión. Las lecturas no piden autorización; cada escritura pide la de administrador del sistema. **En Windows la aplicación no hace escrituras**: usa la CLI.
+- **Aplicación de escritorio**: el detalle del propio equipo se organiza en pestañas: «General», **«Permisos»** (resumen de la concesión y, con `write:grants`, lo que este equipo ha concedido) y, con concesión y según los permisos, «Código de unión», «Dispositivos» (pendientes de aprobar y revocar) y «Políticas». El detalle de un dispositivo ajeno tiene «General», «Servicios», «Tráfico» y **«Permisos»**: con `write:grants` se ven sus permisos y se pueden conceder, cambiar y retirar los que dio este equipo ([ADR-027](../architecture/ADR-027-concesion-delegada-de-permisos.md)); sin él, la pestaña explica que solo lo ve un administrador. Las lecturas no piden autorización; cada escritura pide la de administrador del sistema. **En Windows la aplicación no hace escrituras**: usa la CLI.
 
 Alta típica de un equipo nuevo por un delegado: `join-code` → el equipo nuevo ejecuta `atenea network join` y muestra su huella → el delegado compara la huella completa y ejecuta `approve <huella>` → `policy add --from … --to …`.
 
@@ -53,6 +53,19 @@ La `0013` no se deshace. El control plane **anterior arranca con normalidad sobr
 - `--migrate` de N sobre una base con `0013` falla sin cambiar nada.
 - Para retroceder: parar, arrancar el binario anterior **sin** `--migrate`. No borrar `device_grants` ni las columnas.
 
+### Retroceso de la 0014
+
+La `0014` (ADR-027) añade `device_grants.granted_by_device` y tampoco se deshace. El control plane `0.1.33` **arranca con normalidad sobre ella** (ensayo `tests/stack/rollback-0014.sh`, 68 comprobaciones, con binarios de desarrollo y PostgreSQL sintético, no con Ansible, Compose ni imágenes reales). `granted_by` sigue siendo no nulo, de modo que `GET …/grants` de la `0.1.33` lista también las concesiones delegadas.
+
+Lo que el binario anterior **no** hace, medido en el ensayo:
+
+- **No retira lo que concedió quien revoca.** Borra la concesión del delegado revocado pero deja las que él dio. Esas concesiones **se siguen ejerciendo** (el destinatario sigue aprobado) y, al volver a la `0.1.34`, aparecen atribuidas a un delegado revocado. Un administrador las retira con `DELETE …/devices/{dev}/grant` (o desde el panel).
+- **No borra la autoría al reescribir.** Si un administrador sustituye una concesión delegada con la `0.1.33`, `granted_by_device` no cambia: al volver, el delegado original sigue figurando como autor y podría cambiarla o retirarla. Basta con que un administrador la conceda de nuevo con la `0.1.34` (la sustituye con autoría de administrador).
+- **No conoce `write:grants`** (lo rechaza con `400 invalid_grant`) ni las rutas `/device/admin/grants` y `…/devices/{dev}/grant` (`404`).
+- `--migrate` de la `0.1.33` sobre una base con `0014` falla sin cambiar nada.
+
+Tras un retroceso y la nueva subida conviene revisar `GET …/grants` y retirar o rehacer las concesiones cuyo autor figure como revocado.
+
 ## Auditoría
 
 Cada acción delegada queda con `actor_kind = device` y el dispositivo autor: `token.create`, `device.approve`, `device.revoke`, `policy.create`, `policy.delete`. Conceder y retirar: `device.grant` y `device.grant_revoke` (con `reason`: `admin` o `device_revoked`) como `user`. En el panel, «Auditoría» y los campos «Dado de alta por» y «Creada por».
@@ -67,6 +80,10 @@ Cada acción delegada queda con `actor_kind = device` y el dispositivo autor: `t
 | `401` | Firma inválida: comprueba el reloj del equipo (±60 s) y que no esté revocado. |
 | `409 fingerprint_mismatch` | La huella no es la del dispositivo: no aprobar hasta aclararlo con quien se une. |
 | `409 join_code_limit` | Hay 8 códigos vivos de ese delegado: esperar a que caduquen o se usen. |
+| `403 grant_self` | Un dispositivo no cambia sus propios permisos (ADR-027). |
+| `403 grant_exceeds_own` | Se intenta dar un permiso que no se tiene, `write:grants`, o un alcance que no cabe en el propio. |
+| `403 grant_not_yours` | La concesión la dio un administrador u otro dispositivo: solo se cambia o retira lo que diste tú. |
+| `409 grant_limit` | Hay 64 concesiones dadas por este dispositivo: retirar alguna. |
 | `404` en `/device/admin/*` | Servidor anterior a la `0013`. |
 | La aplicación no muestra «Administración» | Sin concesión, servidor o agente anteriores, o la lectura aún no llegó (hasta 30 s). |
 
@@ -76,4 +93,4 @@ Un delegado comprometido puede, dentro de su alcance, crear políticas entre dis
 
 ## Sin comprobar
 
-La aprobación por huella y las políticas delegadas en el piloto (solo están ejercidas en el ensayo con PostgreSQL sintético), la aplicación con una ventana abierta contra un servidor con concesiones y su diálogo de administrador del sistema, el panel en un navegador, y la rama de Windows de la CLI en un equipo Windows (solo se compila en la CI).
+Los rechazos de la delegación (huella distinta, pendiente ajeno, política `any`, borrar la de un administrador) en el piloto (solo están ejercidos en el ensayo con PostgreSQL sintético), la aplicación con una ventana abierta contra un servidor con concesiones y su diálogo de administrador del sistema, el panel en un navegador, y la rama de Windows de la CLI en un equipo Windows (solo se compila en la CI).

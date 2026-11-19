@@ -658,6 +658,7 @@ it('el ping refresca el camino y registra la transición en el historial', async
   // Dos lecturas a menos de 1 s no dan tasa: se espera para que la del ping la tenga.
   await new Promise((resolve) => setTimeout(resolve, 1100));
   await userEvent.click(ping);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Tráfico' }));
   expect(await screen.findByRole('list', { name: 'Historial de eventos' })).toHaveTextContent('Se conectó directamente');
   // El gráfico necesita dos muestras con tasa: la del ping y la del siguiente sondeo (2 s).
   expect(await screen.findByRole('img', { name: /Velocidad de bajada/ }, { timeout: 4000 })).toBeInTheDocument();

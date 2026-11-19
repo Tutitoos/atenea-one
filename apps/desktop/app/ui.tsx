@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Tone } from './lib/format';
 import { useCopy, useToast } from './toast';
@@ -82,3 +82,32 @@ export const NoNetworks = () => (
     <p className="text-gray-400">Sin redes. Únete a una red desde <Link to="/networks" className="text-accent-200 underline">Redes</Link> o sigue el <Link to="/welcome" className="text-accent-200 underline">asistente</Link>.</p>
   </main>
 );
+
+export type TabDef = { id: string; label: string; panel: ReactNode };
+
+/** Pestañas del detalle de un dispositivo. Una sola no pinta barra. Solo se monta el panel activo; flechas, Inicio y Fin cambian de pestaña. */
+export function Tabs({ tabs, label }: { tabs: TabDef[]; label: string }) {
+  const base = useId();
+  const [selected, setSelected] = useState(tabs[0]?.id);
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const active = tabs.find((t) => t.id === selected) ?? tabs[0];
+  if (!active) return null;
+  if (tabs.length === 1) return <>{active.panel}</>;
+  const go = (id: string) => { setSelected(id); refs.current[id]?.focus(); };
+  const onKey = (e: KeyboardEvent) => {
+    const i = tabs.indexOf(active);
+    const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+    if (next >= 0) { e.preventDefault(); go(tabs[next]!.id); }
+  };
+  return (
+    <>
+      <div role="tablist" aria-label={label} className="mb-4 flex flex-wrap gap-1 border-b border-line">
+        {tabs.map((t) => (
+          <button key={t.id} ref={(el) => { refs.current[t.id] = el; }} type="button" role="tab" id={`${base}-${t.id}`} aria-selected={t === active} aria-controls={`${base}-panel`} tabIndex={t === active ? 0 : -1} onClick={() => setSelected(t.id)} onKeyDown={onKey}
+            className={`-mb-px cursor-default border-b-2 px-3 py-1.5 text-sm ${t === active ? 'border-sel font-medium text-fg' : 'border-transparent text-mut'}`}>{t.label}</button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-${active.id}`}>{active.panel}</div>
+    </>
+  );
+}
