@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, result, type Model } from '@atenea/api-client';
-import { Button, ConfirmDialog, Dialog, EmptyState, Field, ShortId, Status } from './ui';
+import { Button, ConfirmDialog, Dialog, EmptyState, Field, Select, ShortId, Status } from './ui';
 import { Author } from './device-grants';
 import { policySchema, selector } from './domain';
 
@@ -22,17 +22,13 @@ function SelectorFields({ label, selection, change, devices, error }: {
   devices: Model<'Device'>[]; error?: string;
 }) {
   return <fieldset><legend>{label === 'origen' ? 'Origen' : 'Destino'}</legend>
-    <Field label={`Selector ${label}`}>{props => <select {...props} value={selection.kind}
-      onChange={event => change({ kind: event.target.value, value: '' })}>
-      <option value="any">Cualquiera</option><option value="device">Dispositivo</option>
-      <option value="prefix">Prefijo</option>
-    </select>}</Field>
+    <Field label={`Selector ${label}`}>{props => <Select {...props} value={selection.kind}
+      onChange={kind => change({ kind, value: '' })}
+      options={[{ value: 'any', label: 'Cualquiera' }, { value: 'device', label: 'Dispositivo' }, { value: 'prefix', label: 'Prefijo' }]}/>}</Field>
     {selection.kind === 'device' && <Field label={`Dispositivo de ${label}`} error={error}>
-      {props => <select {...props} value={selection.value}
-        onChange={event => change({ ...selection, value: event.target.value })}>
-        <option value="">Selecciona un dispositivo</option>
-        {devices.map(device => <option key={device.id} value={device.id}>{device.name}</option>)}
-      </select>}
+      {props => <Select {...props} value={selection.value} placeholder="Selecciona un dispositivo"
+        onChange={value => change({ ...selection, value })}
+        options={devices.map(device => ({ value: device.id, label: device.name }))}/>}
     </Field>}
     {selection.kind === 'prefix' && <Field label={`Prefijo de ${label}`} error={error}
       help="CIDR de red sin bits de host, por ejemplo 10.0.0.0/24 o fd00::/64. Debe pertenecer a la red.">
@@ -77,10 +73,10 @@ function PolicyForm({ devices, save }: {
   }}>
     <SelectorFields label="origen" selection={src} change={setSrc} devices={devices} error={errors.src}/>
     <SelectorFields label="destino" selection={dst} change={setDst} devices={devices} error={errors.dst}/>
-    <Field label="Protocolo">{props => <select {...props} value={proto} onChange={event => {
-      const value = Number(event.target.value); setProto(value);
+    <Field label="Protocolo">{props => <Select {...props} value={String(proto)} onChange={next => {
+      const value = Number(next); setProto(value);
       if (![6, 17].includes(value)) { setMin('0'); setMax('0'); }
-    }}>{Object.entries(protocols).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}</Field>
+    }} options={Object.entries(protocols).map(([value, label]) => ({ value, label }))}/>}</Field>
     <Field label="Puerto mínimo" error={errors.ports} help="Solo TCP/UDP; 0–0 permite cualquier puerto.">
       {props => <input {...props} type="number" min="0" max="65535" step="1" value={min}
         disabled={![6, 17].includes(proto)} onChange={event => setMin(event.target.value)}/>}

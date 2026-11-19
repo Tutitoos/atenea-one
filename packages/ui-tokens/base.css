@@ -9,10 +9,6 @@
   color-scheme: dark;
 }
 
-:root[data-theme=claro] {
-  color-scheme: light;
-}
-
 *,
 *::before,
 *::after {

@@ -13,6 +13,7 @@ import { NetworkSettings } from './network-settings';
 import { certificateExpiry, CertificateStatus, ServerInfo } from './server-status';
 import { Audit } from './observability';
 import { QueryAnnouncements } from './ui';
+import { choose } from './test-setup';
 const org = { id: '00000000-0000-4000-8000-000000000001', name: 'Organización sintética', role: 'owner' as const };
 const member = { user_id: '00000000-0000-4000-8000-000000000002', display_name: 'Persona sintética', email: 'persona@example.test', role: 'owner' };
 const network: Model<'Network'> = { id: '00000000-0000-4000-8000-000000000003', org_id: org.id, name: 'Red sintética', ipv4_cidr: '192.0.2.0/24', ipv6_cidr: '2001:db8::/64', root_anchor: 'ab'.repeat(32), has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada' };
@@ -66,7 +67,7 @@ it('impide retirar al último owner y exige confirmar el cambio de rol', async (
  expect(await screen.findByText('Siempre debe quedar al menos un owner.')).toBeVisible();
  expect(remove).not.toHaveBeenCalled(); await user.keyboard('{Escape}');
  await user.click(screen.getByRole('button', { name: 'Cambiar rol' }));
- await user.selectOptions(within(screen.getByRole('dialog')).getByLabelText('Rol'), 'admin');
+ await choose(user, within(screen.getByRole('dialog')).getByLabelText('Rol'), 'admin');
  expect(put).not.toHaveBeenCalled();
  await user.click(screen.getByRole('button', { name: 'Confirmar cambio de rol' }));
  expect(await screen.findByText('Siempre debe quedar al menos un owner.')).toBeVisible(); expect(put).not.toHaveBeenCalled();
@@ -169,7 +170,7 @@ it('conserva la alternativa UUID plegada y pide confirmar antes del PUT', async 
  await user.click(screen.getByText('Alternativa: añadir o cambiar por UUID'));
  await user.type(screen.getByLabelText('UUID del usuario'), member.user_id);
  const form = screen.getByLabelText('UUID del usuario').closest('form')!;
- await user.selectOptions(within(form).getByLabelText('Rol'), 'owner');
+ await choose(user, within(form).getByLabelText('Rol'), 'owner');
  await user.click(screen.getByRole('button', { name: 'Revisar cambio por UUID' }));
  expect(put).not.toHaveBeenCalled();
  await user.click(await screen.findByRole('button', { name: 'Confirmar operación por UUID' }));

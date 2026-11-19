@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useId, useState } from 'react';
 import { useForm } from '@tanstack/react-form';
-import { Dialog as Primitive } from 'radix-ui';
+import { Dialog as Primitive, Select as SelectPrimitive } from 'radix-ui';
 import { motion, useReducedMotion } from 'motion/react';
 import { useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { secondsSince } from './domain';
@@ -45,6 +45,29 @@ export function Field({ label, help, error, children }: {
     {help && <p id={`${id}-help`} className="muted field-help">{help}</p>}
     {error && <p id={`${id}-error`} className="field-error">{error}</p>}
   </div>;
+}
+export type Option = { value: string; label: string };
+// Radix no admite '' como valor de un elemento: la opción vacía viaja con este centinela.
+const NONE = '__vacio__';
+// Desplegable común del panel (Radix): teclado, lector de pantalla y lista con la piel propia.
+// Acepta los atributos que da Field (id, aria-describedby, aria-invalid) o un aria-label.
+export function Select({ value, onChange, options, placeholder, ...props }: {
+  value: string; onChange: (value: string) => void; options: readonly Option[]; placeholder?: string;
+} & Partial<ControlProps> & { 'aria-label'?: string }) {
+  return <SelectPrimitive.Root value={value || NONE} onValueChange={next => onChange(next === NONE ? '' : next)}>
+    <SelectPrimitive.Trigger className="select" {...props}>
+      <SelectPrimitive.Value placeholder={placeholder}/>
+      <SelectPrimitive.Icon asChild><svg className="select-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+        strokeWidth="1.5" strokeLinecap="square" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+    <SelectPrimitive.Portal><SelectPrimitive.Content className="select-menu" position="popper" sideOffset={4}>
+      <SelectPrimitive.Viewport>{options.map(option =>
+        <SelectPrimitive.Item key={option.value} value={option.value || NONE} data-value={option.value} className="select-item">
+          <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+        </SelectPrimitive.Item>)}
+      </SelectPrimitive.Viewport>
+    </SelectPrimitive.Content></SelectPrimitive.Portal>
+  </SelectPrimitive.Root>;
 }
 export function StatusBadge({ tone = 'neutral', children }: {
   tone?: 'ok' | 'warn' | 'bad' | 'neutral'; children: React.ReactNode;
@@ -116,9 +139,9 @@ export function ActionForm({ fields, label, submit, variant = 'primary' }: {
   return <form className="action-form" onSubmit={event => { event.preventDefault(); void form.handleSubmit(); }}>
     <div className="fields">{fields.map(spec => <form.Field key={spec.name} name={spec.name}>
       {field => <Field label={spec.label} help={spec.help}>{props => spec.options ?
-        <select {...props} value={field.state.value} onChange={e => field.handleChange(e.target.value)}>
-          {spec.options.map(option => <option key={option}>{option}</option>)}
-        </select> : <input {...props} type={spec.type ?? 'text'} required={spec.required !== false}
+        <Select {...props} value={field.state.value} onChange={field.handleChange}
+          options={spec.options.map(option => ({ value: option, label: option }))}/>
+        : <input {...props} type={spec.type ?? 'text'} required={spec.required !== false}
           value={field.state.value} onBlur={field.handleBlur} onChange={e => field.handleChange(e.target.value)}/>}
       </Field>}
     </form.Field>)}</div>

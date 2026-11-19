@@ -3,7 +3,7 @@
 @import '@atenea/ui-tokens/base.css';
 
 /* Alias del panel sobre los tokens compartidos (`@atenea/ui-tokens`): las vistas
-   leen estos nombres y el tema (oscuro o claro) lo decide `data-theme` en <html>. */
+   leen estos nombres. Una sola piel, oscura. */
 :root {
   --bg: var(--color-shell);
   --side: var(--color-panel);
@@ -41,17 +41,17 @@ body {
 }
 
 h1 {
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1.2;
   font-weight: 600;
-  letter-spacing: -.04em;
-  margin: 0 0 14px;
+  letter-spacing: -.02em;
+  margin: 0 0 10px;
 }
 
 h2 {
-  font-size: 21px;
+  font-size: 17px;
   font-weight: 600;
-  margin: 24px 0 16px;
+  margin: 24px 0 14px;
 }
 
 h3 {
@@ -64,19 +64,37 @@ p {
   margin: 10px 0 16px;
 }
 
+fieldset {
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 12px 14px 4px;
+  border: 1px solid var(--line);
+}
+
+legend {
+  padding: 0 6px;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 a {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
+main a:not(.button) {
+  color: var(--sel);
+}
+
 button,.button {
-  border: 1px solid var(--line);
+  border: 1px solid var(--color-rule-strong);
   border-radius: 0;
   background: var(--surface);
   padding: 7px 13px;
-  color: inherit;
-  font: inherit;
-  font-weight: 500;
+  color: var(--fg);
+  font: 500 13px/1.6 var(--font-mono);
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
@@ -100,17 +118,157 @@ button[aria-current=page],.primary {
   font-weight: 650;
 }
 
-input,select {
+input,textarea,.select {
   display: block;
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--color-rule-strong);
   border-radius: 0;
-  background: var(--surface);
-  color: inherit;
-  font: inherit;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 13px/1.6 var(--font-mono);
   padding: 8px 10px;
   margin: 5px 0 12px;
   min-height: 40px;
+}
+
+input:hover,textarea:hover,.select:hover {
+  border-color: var(--color-gray-500);
+  background: var(--bg);
+}
+
+input::placeholder,.select[data-placeholder] {
+  color: var(--muted);
+}
+
+input:disabled,.select:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* Select común (ui.tsx): disparador con la forma de un campo y lista propia. */
+.select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.select:active {
+  transform: none;
+}
+
+.select > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.select[data-state=open] {
+  border-color: var(--sel);
+}
+
+.select[data-state=open] .select-icon {
+  color: var(--sel);
+  transform: rotate(180deg);
+}
+
+.select-menu {
+  z-index: 30;
+  width: var(--radix-select-trigger-width);
+  max-height: min(320px, var(--radix-select-content-available-height));
+  overflow: auto;
+  border: 1px solid var(--color-rule-strong);
+  background: var(--soft);
+  padding: 4px;
+}
+
+.select-item {
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-gray-300);
+  cursor: pointer;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.select-item[data-highlighted] {
+  background: var(--color-rule);
+  color: var(--fg);
+}
+
+.select-item[data-state=checked] {
+  color: var(--sel);
+}
+
+/* Casillas y radios propios: cuadrados, sin el control del sistema. */
+input[type=checkbox],input[type=radio] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+
+input[type=checkbox]::before,input[type=radio]::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--sel);
+  transform: scale(0);
+  transition: transform 80ms ease-out;
+}
+
+/* El radio es un rombo: se distingue de la casilla sin recurrir a un círculo. */
+input[type=radio] {
+  flex-basis: 13px;
+  width: 13px;
+  height: 13px;
+  min-height: 13px;
+  margin: 0 11px 0 2px;
+  transform: rotate(45deg);
+}
+
+input[type=radio]::before {
+  width: 7px;
+  height: 7px;
+}
+
+input[type=checkbox]:checked,input[type=radio]:checked {
+  border-color: var(--sel);
+}
+
+input[type=checkbox]:checked::before {
+  transform: scale(1);
+}
+
+input[type=radio]:checked::before {
+  transform: scale(1);
+}
+
+dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 input[type=file] {
@@ -122,7 +280,7 @@ label {
   font-weight: 500;
 }
 
-input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible {
+input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible {
   outline: 1px solid var(--color-accent-200);
   outline-offset: 2px;
 }
@@ -183,8 +341,10 @@ small,.muted,.status {
 .shell > .sidebar nav a {
   text-align: left;
   text-decoration: none;
-  padding: 7px 10px;
-  border-radius: 0;
+  padding: 6px 10px;
+  border-left: 2px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 
 .shell > .sidebar footer {
@@ -267,6 +427,9 @@ caption {
 th {
   text-align: left;
   font-weight: 500;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
   background: var(--soft);
@@ -404,14 +567,7 @@ summary {
 }
 
 .snat-options input[type=radio] {
-  display: inline-block;
-  flex: 0 0 18px;
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
   margin: 3px 0 0;
-  padding: 0;
-  accent-color: var(--sel);
 }
 
 .snat-options span {
@@ -467,7 +623,7 @@ summary {
     display: none;
   }
 
-  .shell > .sidebar label select {
+  .shell > .sidebar .select {
     margin-bottom: 0;
   }
 
@@ -622,8 +778,9 @@ svg.copy-icon {
 }
 
 .nav-group a[aria-current=page] {
-  background: var(--sel);
-  color: var(--color-shell);
+  background: var(--soft);
+  border-left-color: var(--sel);
+  color: var(--sel);
 }
 
 .tabs {
@@ -654,8 +811,12 @@ svg.copy-icon {
 }
 
 .card h2 {
-  margin: 0 0 12px;
-  font-size: 18px;
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .overview-audit {
@@ -681,18 +842,12 @@ svg.copy-icon {
 }
 
 
-.all-networks {
-  color: var(--fg);
-  font-size: 13px;
-  padding: 0 10px;
-}
-
 .nav-group a:hover {
   background: var(--soft);
 }
 
 .nav-group a[aria-current=page]:hover {
-  background: var(--sel);
+  background: var(--soft);
 }
 
 .overview-grid .card {
@@ -747,7 +902,7 @@ svg.copy-icon {
 }
 
 /* PanelDispositivos: inventario compacto y detalles progresivos. */
-.devices-page { display: grid; gap: 1.25rem; }
+.devices-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
 .devices-pending ul { list-style: none; margin: 0; padding: 0; }
 .devices-pending li {
   display: flex;
@@ -794,7 +949,6 @@ svg.copy-icon {
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: 1rem;
 }
-.devices-metadata dt { font-weight: 600; }
 .devices-metadata dd { margin: .3rem 0 0; overflow-wrap: anywhere; }
 .devices-actions { margin-top: 1.25rem; }
 @media (max-width: 640px) {
@@ -802,14 +956,13 @@ svg.copy-icon {
 }
 
 /* PanelIncorporarRed: incorporación y ajustes de red. */
-.incorporar-cards { display: grid; gap: 1.25rem; }
+.incorporar-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
 .incorporar-form { max-width: 560px; display: grid; gap: 1rem; }
 .incorporar-option { margin-block: .75rem; }
 .incorporar-option label { display: flex; align-items: center; gap: .6rem; }
 .incorporar-option input { width: auto; }
 .incorporar-option p { margin: .35rem 0 0 1.8rem; }
 .incorporar-network-data dd { margin: .35rem 0 1rem; overflow-wrap: anywhere; }
-.incorporar-network-data dt { font-weight: 600; }
 .incorporar-token { margin-top: 1.25rem; }
 .incorporar-danger { margin-top: 1.5rem; border-color: var(--bad); }
 
@@ -898,12 +1051,7 @@ svg.copy-icon {
 .field > input[type=checkbox] {
   grid-column: 1;
   grid-row: 1;
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
   margin: 3px 0 0;
-  padding: 0;
-  accent-color: var(--sel);
 }
 
 .field:has(input[type=checkbox]) > p {

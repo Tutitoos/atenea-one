@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@atenea/api-client';
 import { Devices } from './devices';
 import { device } from './device.fixture';
+import { choose } from './test-setup';
 
 const base = { accessRole: 'admin' as const, net: 'red', elapsed: 0, refresh: async () => {} };
 const approved = { ...device, status: 'approved' as const, name_source: 'device' as const, hostname: 'equipo-sistema' };
@@ -57,12 +58,12 @@ it('busca por nombre, IP y huella, filtra estado y tipo y ordena ambas direccion
     expect(screen.getByRole('button', { name: 'Ver detalle de Alfa' })).toBeVisible();
   }
   await user.clear(search);
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado' }), 'revoked');
+  await choose(user, screen.getByRole('combobox', { name: 'Estado' }), 'revoked');
   expect(screen.getByText('Ningún resultado para el filtro.')).toBeVisible();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado' }), 'all');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Tipo' }), 'server');
+  await choose(user, screen.getByRole('combobox', { name: 'Estado' }), 'all');
+  await choose(user, screen.getByRole('combobox', { name: 'Tipo' }), 'server');
   expect(screen.getAllByRole('row')).toHaveLength(2);
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Tipo' }), 'all');
+  await choose(user, screen.getByRole('combobox', { name: 'Tipo' }), 'all');
   expect(within(screen.getAllByRole('row')[1]).getByText('Alfa')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Ordenar por Nombre' }));
   expect(within(screen.getAllByRole('row')[1]).getByText(device.name)).toBeVisible();
@@ -126,9 +127,9 @@ it('member consulta detalles sin acciones y la pantalla no tiene infracciones ax
 it('aplica el filtro inicial de pendientes y permite limpiarlo sin perder el inventario', async () => {
   const user = userEvent.setup();
   render(<Devices {...base} status="pending" devices={[device, { ...approved, id: 'otro', name: 'Aprobado sintético' }]}/>);
-  expect(screen.getByRole('combobox', { name: 'Estado' })).toHaveValue('pending');
+  expect(screen.getByRole('combobox', { name: 'Estado' })).toHaveTextContent('Pendiente');
   expect(screen.queryByRole('button', { name: 'Ver detalle de Aprobado sintético' })).not.toBeInTheDocument();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado' }), 'all');
+  await choose(user, screen.getByRole('combobox', { name: 'Estado' }), 'all');
   expect(screen.getByRole('button', { name: 'Ver detalle de Aprobado sintético' })).toBeVisible();
 });
 

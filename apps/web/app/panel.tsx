@@ -1,10 +1,10 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
-import { PageHeader, QueryAnnouncements, RunButton, Status, StatusBadge, UpdatedIndicator } from './ui';
+import { Field, PageHeader, QueryAnnouncements, RunButton, Select, Status, StatusBadge, UpdatedIndicator } from './ui';
 import { Organizations } from './organizations';
 import { Breadcrumbs } from './breadcrumbs';
 import { sections } from './sections';
@@ -12,19 +12,6 @@ import { useClock, useNetworkEvents } from './live';
 import { secondsSince } from './domain';
 import { useServerInfo } from './server-status';
 
-function Theme() {
-  const [theme, setTheme] = useState('sistema');
-  useEffect(() => { setTheme(localStorage.getItem('atenea-theme') ?? 'sistema'); }, []);
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => { document.documentElement.dataset.theme = theme === 'sistema' ? (media.matches ? 'oscuro' : 'claro') : theme; };
-    apply(); media.addEventListener('change', apply);
-    return () => media.removeEventListener('change', apply);
-  }, [theme]);
-  return <label>Tema<select value={theme} onChange={event => {
-    setTheme(event.target.value); localStorage.setItem('atenea-theme', event.target.value);
-  }}>{['sistema', 'claro', 'oscuro'].map(value => <option key={value}>{value}</option>)}</select></label>;
-}
 export function Login({ expired = false }: { expired?: boolean }) {
   return <main className="login"><div className="card"><p className="eyebrow">ATENEA ONE</p>
     <h1>Tu red, bajo tu control.</h1><p>{expired ?
@@ -66,16 +53,16 @@ export default function Panel() {
     <QueryAnnouncements/>
     <aside className="sidebar"><header><a href="/" className="brand">△ Atenea One</a>
       <p className="eyebrow">PLANO DE CONTROL</p></header>
-      <label>Organización<select value={selected?.id ?? ''} onChange={event => navigate(event.target.value)}>
-        <option value="">Selecciona organización</option>
-        {orgs.data?.map(org => <option key={org.id} value={org.id}>{org.name} · {org.role}</option>)}
-      </select></label><Status query={orgs}/>
-      {selected && <><label>Red<select value={net} onChange={event => navigate(selected.id, event.target.value)}>
-        <option value="">Selecciona red</option>{net && !networks.data?.some(network => network.id === net) &&
-          <option value={net}>{selectedNetwork.data?.name ?? 'Cargando nombre de red…'}</option>}
-        {networks.data?.map(network => <option key={network.id} value={network.id}>{network.name}</option>)}
-      </select></label><Status query={networks}/></>}
-      {selected && <Link className="all-networks" to={`/?org=${selected.id}`}>Todas las redes</Link>}
+      <Field label="Organización">{props => <Select {...props} value={selected?.id ?? ''} onChange={navigate}
+        placeholder="Selecciona organización"
+        options={(orgs.data ?? []).map(org => ({ value: org.id, label: `${org.name} · ${org.role}` }))}/>}</Field>
+      <Status query={orgs}/>
+      {selected && <><Field label="Red">{props => <Select {...props} value={net}
+        onChange={network => navigate(selected.id, network)} options={[{ value: '', label: 'Todas las redes' },
+          ...(net && !networks.data?.some(network => network.id === net) ?
+            [{ value: net, label: selectedNetwork.data?.name ?? 'Cargando nombre de red…' }] : []),
+          ...(networks.data ?? []).map(network => ({ value: network.id, label: network.name }))]}/>}</Field>
+      <Status query={networks}/></>}
       {net && selected && <nav aria-label="Secciones de red">{[...new Set(sections.map(item => item.group))].map(group =>
         <div className="nav-group" key={group}><p className="eyebrow">{group}</p>
           {sections.filter(item => item.group === group).map(item => <Link key={item.id}
@@ -86,7 +73,7 @@ export default function Panel() {
             </StatusBadge>}
           </Link>)}
         </div>)}</nav>}
-      <footer><Theme/><p className="muted">{session.data.user.display_name ?? session.data.user.email ?? 'Usuario autenticado'}</p>
+      <footer><p className="muted">{session.data.user.display_name ?? session.data.user.email ?? 'Usuario autenticado'}</p>
         <p className="muted">{server.data?.control_plane ? `Control plane ${server.data.control_plane.version}` :
           'Este servidor aún no informa de su versión'}</p>
         <RunButton run={async () => { await api.POST('/auth/logout'); cache.clear(); window.location.assign('/'); }}>Cerrar sesión</RunButton>

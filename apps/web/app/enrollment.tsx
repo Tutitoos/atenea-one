@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, result, type Model } from '@atenea/api-client';
-import { Button, Card, CopyButton, Field } from './ui';
+import { Button, Card, CopyButton, Field, Select } from './ui';
 import { shellQuote, tokenSchema } from './domain';
 import { CopyCode, JoinCommand } from './join-network';
 
@@ -58,9 +58,8 @@ export function Enrollment({ net }: { net: string }) {
       finally { setPending(false); }
     }}>
       <Field label="Tipo" help="Dispositivo: equipo de usuario. Servidor: equipo que puede anunciar subredes y ofrecer servicios a la red.">{props =>
-        <select {...props} value={role} onChange={event => setRole(event.target.value)}>
-          <option>Dispositivo</option><option>Servidor</option>
-        </select>}
+        <Select {...props} value={role} onChange={setRole}
+          options={['Dispositivo', 'Servidor'].map(value => ({ value, label: value }))}/>}
       </Field>
       <Field label="Validez (segundos, 60–86400)" help="Una hora son 3600 segundos. El token deja de permitir inscripciones al caducar."
         error={ttlError}>{props => <input {...props} type="number" min="60" max="86400" step="1"

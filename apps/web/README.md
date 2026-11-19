@@ -1,7 +1,7 @@
 # Panel web de Atenea One
 
 SPA estática de React Router en modo framework (`ssr: false`), Vite y TypeScript
-estricto. Interfaz en español con la misma identidad visual que el sitio (Geist y Geist Mono de `@atenea/ui-tokens`, oro, radios 0) y temas claro/oscuro/sistema.
+estricto. Interfaz en español con la misma identidad visual que el sitio (Geist y Geist Mono de `@atenea/ui-tokens`, oro, radios 0), solo oscura; los desplegables usan el `Select` común de `app/ui.tsx`.
 No genera claves, no implementa identidad ni sustituye las autorizaciones del
 control plane.
 
