@@ -224,12 +224,19 @@ jobs:
         with:
           name: desktop-ui
           path: apps/desktop/build/client
+      - name: Versión de la imagen del runner (Linux)
+        if: runner.os == 'Linux'
+        id: image
+        run: echo "version=${ImageOS:-}-${ImageVersion:-}" >> "$GITHUB_OUTPUT"
+      # La clave incluye la imagen: con solo el hash del script, una caché de otra imagen (la de 2026-11-06 era de antes de
+      # Ubuntu 26.04) seguía acertando, nunca se volvía a guardar (actions/cache no sobrescribe una clave) y apt descargaba
+      # los 72 MB enteros en cada ejecución, expuesto a los cortes de red del runner.
       - name: Caché de paquetes apt (Linux)
         if: runner.os == 'Linux'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/apt-archives # fuera de /home/runner: el usuario _apt de apt no puede entrar allí
-          key: apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-linux-desktop-deps.sh') }}
+          key: apt-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/install-linux-desktop-deps.sh') }}
       - name: Dependencias de WebKitGTK, xvfb y dbus (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 15
