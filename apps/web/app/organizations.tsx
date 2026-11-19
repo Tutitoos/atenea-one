@@ -7,7 +7,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
 import { z } from 'zod';
 import { ActionForm, ConfirmDialog, Dialog, EmptyState, PageHeader, ShortId, Status, StatusBadge } from './ui';
-import { nameSchema, networkSchema } from './domain';
+import { nameSchema, ranges } from './domain';
+import { NewNetworkForm } from './new-network';
 import { CertificateStatus } from './server-status';
 import { RenameDialog } from './rename';
 import { ServiceTokens } from './service-tokens';
@@ -53,46 +54,22 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
     const code = error instanceof ApiError ? error.detail.error.code : '';
     const text: Record<string, string> = {
       network_limit: 'Esta organización personal ya tiene el máximo de redes. Elimina una o pide al operador que amplíe el límite.',
-      managed_unavailable: 'Este servidor no tiene activadas las redes gestionadas. Pide al operador que lo configure o usa el modo avanzado con tu propia raíz.',
-      address_pool_exhausted: 'No quedan rangos de direcciones libres para asignar solos. Usa el modo avanzado e indica los rangos.',
-      overlapping_network: 'Esos rangos se solapan con otra red de la organización.',
+      managed_unavailable: 'Este servidor no tiene activadas las redes gestionadas. Pide al operador que lo configure.',
+      address_pool_exhausted: 'No quedan direcciones libres para asignar solas. Elige un bloque de la lista.',
+      invalid_cidr: 'El servidor no admite ese bloque: usa direcciones privadas (10.x, 172.16-31.x, 192.168.x o fc00::/7) sin bits de host.',
+      invalid_pool: 'El servidor no admite ese rango: usa direcciones privadas (10.x, 172.16-31.x o 192.168.x) y un inicio menor que el fin.',
+      overlapping_network: 'Ese bloque ya lo usa otra red de la organización. Elige otro.',
     };
     return text[code] ? new Error(text[code], { cause: error }) : error;
   };
   const createNetwork = current.role !== 'member' ? <Dialog trigger="Crear red" title="Crear red"
-    description="Solo hace falta un nombre: el servidor se encarga de las claves, de los rangos de direcciones y del certificado.">
-    <ActionForm label="Crear red" fields={[{ name: 'name', label: 'Nombre' }]} submit={async values => {
+    description="Solo hace falta un nombre: el servidor se encarga de las claves y del certificado. Las direcciones se asignan solas, o puedes elegir un bloque.">
+    <NewNetworkForm create={async body => {
       try {
-        const created = await result(api.POST('/api/v1/orgs/{org}/networks', {
-          params: { path: { org: current.id } }, body: { name: nameSchema.parse(values.name) },
-        }));
+        const created = await result(api.POST('/api/v1/orgs/{org}/networks', { params: { path: { org: current.id } }, body }));
         await networks.refetch(); choose(created.id);
       } catch (error) { throw createFailure(error); }
     }}/>
-    <details>
-      <summary>Avanzado: usar mi propia clave raíz</summary>
-      <p>La raíz la generas tú y nunca llega al servidor (ADR-005): solo se envía su clave pública. Así el servidor no puede emitir por tu red,
-        pero firmar y renovar el certificado de emisor es cosa tuya.</p>
-      <ol>
-        <li>En tu equipo, genera la raíz:<pre>atenea root-init --out raiz-offline</pre>
-          Guarda el fichero <code>raiz-offline</code> en un lugar seguro y con copia. <strong>Si lo pierdes no hay recuperación:</strong>
-          la red dejará de emitir configuraciones cuando caduque su certificado de emisor y habrá que reincorporar cada dispositivo.</li>
-        <li>Copia la clave pública que imprime (64 caracteres) en el campo de ancla. Los rangos son opcionales: sin ellos se asignan solos.</li>
-        <li>Tras crear la red, en «DNS y certificado» firma el certificado de emisor con tu raíz y súbelo. Hasta entonces la red no emite configuraciones.</li>
-      </ol>
-      <ActionForm label="Crear red con raíz propia" fields={[
-        { name: 'name', label: 'Nombre (raíz propia)' },
-        { name: 'ipv4_cidr', label: 'CIDR IPv4 (opcional)', required: false },
-        { name: 'ipv6_cidr', label: 'CIDR IPv6 (opcional)', required: false },
-        { name: 'root_anchor', label: 'Ancla pública raíz (64 hex)' },
-      ]} submit={async values => {
-        try {
-          const body = networkSchema.parse({ ...values, ipv4_cidr: values.ipv4_cidr || undefined, ipv6_cidr: values.ipv6_cidr || undefined });
-          const created = await result(api.POST('/api/v1/orgs/{org}/networks', { params: { path: { org: current.id } }, body }));
-          await networks.refetch(); choose(created.id);
-        } catch (error) { throw createFailure(error); }
-      }}/>
-    </details>
   </Dialog> : null;
   return <section><PageHeader title={current.name} description={`Rol: ${current.role}`} actions={createOrganization}/>
     <Tabs.Root defaultValue="networks" key={current.id}>
@@ -103,7 +80,7 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
       <Tabs.Content value="networks"><h2>Redes</h2>{networks.data?.length ? createNetwork : null}<Status query={networks}/>
         {networks.data?.length ? <ul className="cards">{networks.data.map(network => <li className="card" key={network.id}>
           <h3><Link to={`/?org=${current.id}&net=${network.id}&view=Resumen`}>{network.name}</Link></h3>
-          <code>{network.ipv4_cidr} · {network.ipv6_cidr}</code><div>
+          <code>{ranges(network)}</code><div>
             <CertificateStatus installed={network.has_issuer_cert} expires={network.issuer_cert_not_after}/>
           </div>
         </li>)}</ul> : !networks.isPending && !networks.isError &&

@@ -22,6 +22,15 @@ Los datos de las cuentas viven en el servidor, en la misma base PostgreSQL que e
 
 **Quien controle el servidor puede emitir por cualquier red gestionada.** Es el coste de lo automático (como en ZeroTier y Tailscale). La raíz va cifrada en la base con una clave de envoltura que **no** está en la base ni en sus copias.
 
+### Direcciones de la red
+
+El diálogo «Crear red» ofrece dos modos, además del nombre:
+
+- **Fácil:** «Automático» (el servidor elige un bloque libre) o uno de los bloques privados de la cuadrícula.
+- **Avanzado:** inicio y fin del rango del que reciben dirección los equipos. La red es el bloque más pequeño que contiene el rango, y fuera de él no se reparte ninguna dirección.
+
+La casilla «Asignar también direcciones IPv6» viene marcada. Sin ella la red es solo IPv4. Ni el rango ni la elección de IPv6 se pueden cambiar después: hay que crear otra red.
+
 ### Operador: la clave de envoltura
 
 - `ATENEA_CP_ROOT_WRAP_KEY_FILE`: fichero regular 0400 o 0600 con 64 dígitos hexadecimales (32 bytes aleatorios, p. ej. `openssl rand -hex 32`). Sin él **no se crean redes gestionadas** (`409 managed_unavailable`); las redes con raíz propia siguen funcionando. Si el fichero se configura y no se puede leer, el control plane no arranca.
@@ -61,6 +70,8 @@ El panel entrega un enlace de un solo uso que caduca a los 7 días y se muestra 
 El invitado puede abandonar la red desde «Compartidas conmigo». El propietario puede anular un enlace sin usar, cambiar el rol de un miembro o quitarle el acceso. **Quitar a un miembro no revoca los dispositivos que aprobó**: la auditoría (`device.approve`, con el autor) dice quién aprobó cada uno y el propietario decide. Aprobar no da acceso por sí solo: las políticas siguen siendo deny por defecto y solo un administrador las crea.
 
 ## Retroceso
+
+Con la migración 0018, un binario anterior no sabe leer una red solo IPv4 (`ipv6_cidr` nulo): antes de retroceder hay que eliminar esas redes. Las redes con rango de reparto siguen funcionando con un binario anterior, pero éste ignora el rango y reparte todo el bloque.
 
 La migración `0017` (redes gestionadas) también es aditiva. Con el binario 0.1.34 una red gestionada se ve como una red de raíz propia que nadie puede renovar: su certificado caduca a los 30 días y la red deja de emitir. Antes de volver atrás hay que sustituir cada certificado gestionado por uno firmado por su raíz, que solo tiene el servidor: **no hay retroceso limpio con redes gestionadas creadas**; se anota en el ADR-029.
 

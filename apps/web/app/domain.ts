@@ -5,7 +5,6 @@ import type { Model } from '@atenea/api-client';
 // La CSP no permite eval; incluso el sondeo JIT de Zod genera una infracción.
 z.config({ ...z.locales.es(), jitless: true });
 export const nameSchema = z.string().trim().min(1, 'Indica un nombre.').refine(v => new TextEncoder().encode(v).length <= 255, 'Máximo 255 bytes UTF-8.');
-export const rootAnchor = z.string().regex(/^[a-fA-F0-9]{64}$/, 'El ancla debe contener 64 caracteres hexadecimales.');
 function networkAddress(value: string) {
   if (!z.union([z.cidrv4(), z.cidrv6()]).safeParse(value).success) return false;
   const [address, prefix] = value.split('/');
@@ -27,7 +26,6 @@ function networkAddress(value: string) {
 }
 const ipv4Cidr = z.cidrv4().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
 const ipv6Cidr = z.cidrv6().refine(networkAddress, 'El CIDR debe ser una dirección de red, sin bits de host.');
-export const networkSchema = z.object({ name: nameSchema, ipv4_cidr: ipv4Cidr.optional(), ipv6_cidr: ipv6Cidr.optional(), root_anchor: rootAnchor });
 export const privatePrefix = z.union([ipv4Cidr, ipv6Cidr]).refine(value => {
   const [address, length] = value.split('/');
   if (address.includes(':')) return Number(length) >= 32 && (parseInt(address.split(':')[0], 16) & 0xfe00) === 0xfc00;
@@ -62,3 +60,5 @@ export function relays(devices: Model<'Device'>[], elapsed = 0) {
 }
 export function secondsSince(updatedAt: number, now = Date.now()) { return updatedAt ? Math.max(0, Math.floor((now - updatedAt) / 1000)) : 0; }
 export function shellQuote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
+/** Rangos de una red para mostrar: una red solo IPv4 no tiene bloque IPv6. */
+export const ranges = (network: { ipv4_cidr: string; ipv6_cidr?: string | null }) => [network.ipv4_cidr, network.ipv6_cidr].filter(Boolean).join(' · ');
