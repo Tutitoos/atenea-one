@@ -136,12 +136,13 @@ pub async fn insert(
                 }
             }
             Selector::Prefix(p) => {
-                let n: ipnet::IpNet = row
-                    .get::<String, _>(if p.addr.is_ipv4() { "v4" } else { "v6" })
-                    .parse()
-                    .map_err(|_| ApiError::internal())?;
+                // Una red sin IPv6 no tiene bloque de esa familia: el selector solo vale si lo cubre una ruta aprobada.
+                let n: Option<ipnet::IpNet> = row
+                    .get::<Option<String>, _>(if p.addr.is_ipv4() { "v4" } else { "v6" })
+                    .map(|t| t.parse().map_err(|_| ApiError::internal()))
+                    .transpose()?;
                 let approved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_routes r JOIN devices d ON d.id=r.device_id WHERE r.network_id=$1 AND r.status='approved' AND d.status='approved' AND $2::cidr <<= r.prefix)").bind(net).bind(format!("{}/{}",p.addr,p.len)).fetch_one(&mut *tx).await?;
-                if (n.prefix_len() > p.len || !n.contains(&p.addr)) && !approved {
+                if n.is_none_or(|n| n.prefix_len() > p.len || !n.contains(&p.addr)) && !approved {
                     return Err(ApiError::bad("invalid_selector"));
                 }
             }
@@ -159,19 +160,7 @@ pub async fn insert(
     sqlx::query("INSERT INTO access_policies(id,network_id,src,dst,proto,port_min,port_max,created_by,created_by_device) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(id).bind(net).bind(json!(b.src)).bind(json!(b.dst)).bind(i16::from(b.proto)).bind(i32::from(b.port_min)).bind(i32::from(b.port_max)).bind(user).bind(device).execute(&mut *tx).await?;
     let devices = crate::issue::load_devices(&mut *tx, net).await?;
     let rules = rules(&mut *tx, net).await?;
-    let network_prefixes = ["v4", "v6"]
-        .iter()
-        .map(|k| {
-            let n: ipnet::IpNet = row
-                .get::<String, _>(*k)
-                .parse()
-                .map_err(|_| ApiError::internal())?;
-            Ok(Prefix {
-                addr: n.network(),
-                len: n.prefix_len(),
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
+    let network_prefixes = crate::networks::prefixes(&row)?;
     for d in &devices {
         crate::issue::compile(d, &devices, &rules, &network_prefixes)?;
     }

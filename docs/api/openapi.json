@@ -6494,7 +6494,7 @@
           "networks"
         ],
         "summary": "Crea una red sin CIDR solapados; requiere admin u owner",
-        "description": "Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan.",
+        "description": "Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Con ipv6=false la red es solo IPv4 (ipv6_cidr queda null; 400 invalid_cidr si además se da ipv6_cidr). ipv4_pool {start,end} limita el reparto de direcciones a ese rango (409 network_full al agotarlo): debe caber en ipv4_cidr sin usar su dirección de red ni la de difusión, y sin ipv4_cidr la red es el bloque privado más pequeño que lo contiene; 400 invalid_pool si no. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan.",
         "operationId": "createNetwork",
         "parameters": [
           {
@@ -9194,6 +9194,21 @@
           }
         }
       },
+      "Ipv4Pool": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          }
+        }
+      },
       "Issuer": {
         "type": "object",
         "required": [
@@ -9519,6 +9534,7 @@
           "name",
           "ipv4_cidr",
           "ipv6_cidr",
+          "ipv4_pool",
           "root_anchor",
           "root_mode",
           "has_issuer_cert",
@@ -9536,8 +9552,21 @@
           "ipv4_cidr": {
             "type": "string"
           },
+          "ipv4_pool": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Pool"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "ipv6_cidr": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "issuer_cert_not_after": {
             "type": [
@@ -9762,6 +9791,13 @@
         "properties": {
           "ipv4_cidr": {
             "type": "string"
+          },
+          "ipv4_pool": {
+            "$ref": "#/components/schemas/Ipv4Pool"
+          },
+          "ipv6": {
+            "type": "boolean",
+            "description": "Por defecto true; false crea una red solo IPv4."
           },
           "ipv6_cidr": {
             "type": "string"
@@ -10262,6 +10298,7 @@
           "name",
           "ipv4_cidr",
           "ipv6_cidr",
+          "ipv4_pool",
           "root_anchor",
           "root_mode",
           "has_issuer_cert",
@@ -10280,8 +10317,21 @@
           "ipv4_cidr": {
             "type": "string"
           },
+          "ipv4_pool": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Pool"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "ipv6_cidr": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "issuer_cert_not_after": {
             "type": [

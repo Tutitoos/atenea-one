@@ -99,11 +99,20 @@ pub async fn check_device_quota(
     Ok(())
 }
 #[derive(Deserialize)]
+pub struct Ipv4Pool {
+    pub start: String,
+    pub end: String,
+}
+#[derive(Deserialize)]
 pub struct NewNetwork {
     pub name: String,
     /// Sin CIDR se asignan solos (ADR-029 D2).
     pub ipv4_cidr: Option<String>,
     pub ipv6_cidr: Option<String>,
+    /// `false` crea una red solo IPv4; por defecto la red tiene también IPv6.
+    pub ipv6: Option<bool>,
+    /// Rango de reparto IPv4: los equipos solo reciben direcciones entre `start` y `end`.
+    pub ipv4_pool: Option<Ipv4Pool>,
     /// Con ancla la raíz es del usuario (modo propio, ADR-028); sin ella la red es gestionada por el servidor.
     pub root_anchor: Option<String>,
 }
@@ -119,11 +128,29 @@ pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
                 .ok_or_else(ApiError::internal)
         })
         .transpose()?;
+    let pool = r
+        .get::<Option<String>, _>("ps")
+        .zip(r.get::<Option<String>, _>("pe"))
+        .map(|(start, end)| json!({"start": start, "end": end}));
     Ok(
-        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<String,_>("v6"),"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"root_mode":r.get::<String,_>("root_mode"),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
+        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<Option<String>,_>("v6"),"ipv4_pool":pool,"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"root_mode":r.get::<String,_>("root_mode"),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
     )
 }
-pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,root_anchor,root_mode,issuer_cert,join_policy FROM networks";
+/// Bloques de la red (IPv4 y, si tiene, IPv6) de una fila con columnas `v4` y `v6`.
+pub(crate) fn prefixes(r: &PgRow) -> Result<Vec<atenea_identity::Prefix>, ApiError> {
+    ["v4", "v6"]
+        .iter()
+        .filter_map(|k| r.get::<Option<String>, _>(*k))
+        .map(|text| {
+            let n: IpNet = text.parse().map_err(|_| ApiError::internal())?;
+            Ok(atenea_identity::Prefix {
+                addr: n.network(),
+                len: n.prefix_len(),
+            })
+        })
+        .collect()
+}
+pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,host(ipv4_pool_start) ps,host(ipv4_pool_end) pe,root_anchor,root_mode,issuer_cert,join_policy FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
 /// Con `with_connectivity` y el servidor configurado (ADR-018) lleva además el STUN y el hash de la CA del relay;
 /// si con eso el texto supera 512 caracteres, `409 code_too_long` (con `?conectividad=0` sigue siendo válido).
@@ -296,25 +323,51 @@ pub async fn create(
     if full {
         return Err(ApiError::conflict("network_limit"));
     }
-    let v4 = match given_v4 {
-        Some(net) => net,
-        None => auto_v4(&mut tx).await?,
+    // Rango de reparto: inicio y fin IPv4 en orden. Sin bloque dado, la red es el bloque más pequeño que lo contiene.
+    let pool = b
+        .ipv4_pool
+        .as_ref()
+        .map(|p| {
+            let parse = |t: &str| t.parse::<std::net::Ipv4Addr>();
+            match (parse(&p.start), parse(&p.end)) {
+                (Ok(start), Ok(end)) if start <= end => Ok((start, end)),
+                _ => Err(ApiError::bad("invalid_pool")),
+            }
+        })
+        .transpose()?;
+    let v4 = match (given_v4, pool) {
+        (Some(net), _) => net,
+        (None, Some((start, end))) => {
+            enclosing(start, end).ok_or_else(|| ApiError::bad("invalid_pool"))?
+        }
+        (None, None) => auto_v4(&mut tx).await?,
     };
-    let v6 = given_v6.unwrap_or_else(|| auto_v6(id));
+    // `ipv6: false` crea una red solo IPv4; pedirlo junto con un bloque IPv6 es contradictorio.
+    let v6 = match (b.ipv6.unwrap_or(true), given_v6) {
+        (false, Some(_)) => return Err(ApiError::bad("invalid_cidr")),
+        (false, None) => None,
+        (true, given) => Some(given.unwrap_or_else(|| auto_v6(id))),
+    };
     let prefix = |n: &IpNet| atenea_identity::Prefix {
         addr: n.addr(),
         len: n.prefix_len(),
     };
     if !v4.addr().is_ipv4()
-        || !v6.addr().is_ipv6()
         || v4.addr() != v4.network()
-        || v6.addr() != v6.network()
         || !prefix(&v4).valid_route()
-        || !prefix(&v6).valid_route()
+        || v6.as_ref().is_some_and(|v6| {
+            !v6.addr().is_ipv6() || v6.addr() != v6.network() || !prefix(v6).valid_route()
+        })
     {
         return Err(ApiError::bad("invalid_cidr"));
     }
-    let overlap:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM networks WHERE org_id=$1 AND (ipv4_cidr && $2::cidr OR ipv6_cidr && $3::cidr))").bind(org).bind(v4.to_string()).bind(v6.to_string()).fetch_one(&mut *tx).await?;
+    if pool.is_some_and(|(start, end)| {
+        let (start, end) = (std::net::IpAddr::V4(start), std::net::IpAddr::V4(end));
+        !v4.contains(&start) || !v4.contains(&end) || start == v4.network() || end == v4.broadcast()
+    }) {
+        return Err(ApiError::bad("invalid_pool"));
+    }
+    let overlap:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM networks WHERE org_id=$1 AND (ipv4_cidr && $2::cidr OR ipv6_cidr && $3::cidr))").bind(org).bind(v4.to_string()).bind(v6.map(|n| n.to_string())).fetch_one(&mut *tx).await?;
     if overlap {
         return Err(ApiError::conflict("overlapping_network"));
     }
@@ -325,15 +378,17 @@ pub async fn create(
     let anchor = provided_root
         .or_else(|| new_root.as_ref().map(|r| r.anchor))
         .ok_or_else(ApiError::internal)?;
-    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor,root_mode,root_wrapped) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6,$7,$8)")
+    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor,root_mode,root_wrapped,ipv4_pool_start,ipv4_pool_end) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6,$7,$8,$9::inet,$10::inet)")
         .bind(id)
         .bind(org)
         .bind(&b.name)
         .bind(v4.to_string())
-        .bind(v6.to_string())
+        .bind(v6.map(|n| n.to_string()))
         .bind(anchor.as_slice())
         .bind(if managed { "managed" } else { "own" })
         .bind(new_root.as_ref().map(|r| r.wrapped.as_slice()))
+        .bind(pool.map(|(start, _)| start.to_string()))
+        .bind(pool.map(|(_, end)| end.to_string()))
         .execute(&mut *tx)
         .await?;
     audit::record(
@@ -585,7 +640,7 @@ pub async fn allocate(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(), 
 }
 async fn allocate_once(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(), ApiError> {
     let row = sqlx::query(
-        "SELECT ipv4_cidr::text v4,ipv6_cidr::text v6 FROM networks WHERE id=$1 FOR UPDATE",
+        "SELECT ipv4_cidr::text v4,ipv6_cidr::text v6,host(ipv4_pool_start) ps,host(ipv4_pool_end) pe FROM networks WHERE id=$1 FOR UPDATE",
     )
     .bind(net)
     .fetch_one(&mut *c)
@@ -599,11 +654,23 @@ async fn allocate_once(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(),
     if count >= 256 {
         return Err(ApiError::conflict("network_full"));
     }
+    let number = |a: std::net::IpAddr| match a {
+        std::net::IpAddr::V4(a) => u128::from(u32::from(a)),
+        std::net::IpAddr::V6(a) => u128::from(a),
+    };
+    // Rango de reparto IPv4 opcional: sin él se reparte todo el bloque salvo la dirección de red y la de difusión.
+    let pool = |key: &str| -> Result<Option<u128>, ApiError> {
+        row.get::<Option<String>, _>(key)
+            .map(|t| t.parse().map(number).map_err(|_| ApiError::internal()))
+            .transpose()
+    };
+    let (pool_start, pool_end) = (pool("ps")?, pool("pe")?);
     for (family, key) in [(4_i16, "v4"), (6, "v6")] {
-        let prefix: IpNet = row
-            .get::<String, _>(key)
-            .parse()
-            .map_err(|_| ApiError::internal())?;
+        // Una red sin IPv6 no reparte direcciones de esa familia.
+        let Some(text) = row.get::<Option<String>, _>(key) else {
+            continue;
+        };
+        let prefix: IpNet = text.parse().map_err(|_| ApiError::internal())?;
         let used: Vec<String> = sqlx::query_scalar(
             "SELECT host(addr) FROM ip_allocations WHERE network_id=$1 AND family=$2",
         )
@@ -613,15 +680,17 @@ async fn allocate_once(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(),
         .await?;
         let used: std::collections::HashSet<std::net::IpAddr> =
             used.iter().filter_map(|s| s.parse().ok()).collect();
-        let start = prefix.network();
-        let mut candidate = match start {
-            std::net::IpAddr::V4(a) => u128::from(u32::from(a)),
-            std::net::IpAddr::V6(a) => u128::from(a),
+        let (mut candidate, last) = match (family, pool_start, pool_end) {
+            (4, Some(start), Some(end)) => (start - 1, Some(end)),
+            _ => (number(prefix.network()), None),
         };
         let address = loop {
             candidate = candidate
                 .checked_add(1)
                 .ok_or_else(|| ApiError::conflict("network_full"))?;
+            if last.is_some_and(|end| candidate > end) {
+                return Err(ApiError::conflict("network_full"));
+            }
             let a = if family == 4 {
                 if candidate > u128::from(u32::MAX) {
                     return Err(ApiError::conflict("network_full"));
@@ -640,4 +709,12 @@ async fn allocate_once(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(),
         sqlx::query("INSERT INTO ip_allocations(network_id,device_id,family,addr) VALUES($1,$2,$3,$4::inet)").bind(net).bind(dev).bind(family).bind(address.to_string()).execute(&mut *c).await?;
     }
     Ok(())
+}
+/// Bloque privado más pequeño (de /8 a /30) que contiene el rango sin que `start` sea su dirección de red ni `end` la de difusión.
+fn enclosing(start: std::net::Ipv4Addr, end: std::net::Ipv4Addr) -> Option<IpNet> {
+    (8..=30u8).rev().find_map(|len| {
+        let net = ipnet::Ipv4Net::new(start, len).ok()?.trunc();
+        (net.contains(&end) && start != net.network() && end != net.broadcast())
+            .then_some(IpNet::V4(net))
+    })
 }

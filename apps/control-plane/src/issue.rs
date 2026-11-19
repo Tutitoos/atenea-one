@@ -246,19 +246,7 @@ async fn respond(
         .find(|d| d.id == dev)
         .ok_or_else(ApiError::internal)?;
     let policies = crate::policies::rules(&mut tx, net).await?;
-    let network_prefixes = ["v4", "v6"]
-        .iter()
-        .map(|k| {
-            let p: ipnet::IpNet = n
-                .get::<String, _>(*k)
-                .parse()
-                .map_err(|_| ApiError::internal())?;
-            Ok(Prefix {
-                addr: p.network(),
-                len: p.prefix_len(),
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
+    let network_prefixes = crate::networks::prefixes(&n)?;
     // Rechazo cerrado: una red heredada fuera de ADR-007 no se firma.
     if !network_prefixes.iter().all(Prefix::valid_route) {
         return Err(ApiError::conflict("invalid_network_prefix"));

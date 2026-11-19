@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
 import { Button, Card, ConfirmDialog, CopyButton, EmptyState, RunButton, Status, StatusBadge } from './ui';
+import { ranges } from './domain';
 
 type NetworkRole = Model<'NewInvitation'>['role'];
 const roleLabels: Record<NetworkRole, string> = { viewer: 'Solo ver', enroller: 'Ver, generar códigos y aprobar' };
@@ -70,7 +71,7 @@ export function SharedNetworks({ choose }: { choose: (net: string) => void }) {
       action={<p>Cuando alguien te envíe un enlace de invitación, ábrelo en este navegador.</p>}/>}
     {query.data && query.data.length > 0 && <ul className="cards">{query.data.map(network => <li className="card" key={network.id}>
       <h3><Link to={`/?org=compartidas&net=${network.id}&view=Resumen`} onClick={() => choose(network.id)}>{network.name}</Link></h3>
-      <code>{network.ipv4_cidr} · {network.ipv6_cidr}</code>
+      <code>{ranges(network)}</code>
       <ConfirmDialog trigger="Abandonar" title={`Abandonar ${network.name}`}
         description="Perderás el acceso a esta red hasta que su propietario te invite de nuevo. Los dispositivos que aprobaste siguen aprobados."
         label="Abandonar la red" confirm={async () => {

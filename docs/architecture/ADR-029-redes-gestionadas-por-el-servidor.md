@@ -29,6 +29,8 @@ El modo se fija al crear la red y **no cambia** (el modo ya es inmutable por red
 
 `POST /api/v1/orgs/{org}/networks {name}` crea una red gestionada. Los CIDR se asignan solos desde un bloque privado reservado (por defecto `10.64.0.0/10`, IPv4 /24 por red, e IPv6 ULA /64 derivado del identificador de la red), sin solapes dentro de la organización. Quien quiera rangos concretos los puede indicar, y con ancla indica el modo «propia».
 
+**Ampliación (2026-11-19, pedida por el propietario):** al crear la red se puede además elegir un bloque de una lista, dar un rango de reparto IPv4 (inicio y fin; la red es el bloque más pequeño que lo contiene y fuera del rango no se reparte) y crear la red sin IPv6. No cambia ningún formato firmado ni el agente: la configuración ya admitía de 1 a 4 direcciones y prefijos. Contrato en `docs/api/control-plane-v1.md` §28.
+
 ### D3. La raíz gestionada vive cifrada, no en claro
 
 - Se genera con el mismo Ed25519 y el mismo formato de certificado de ADR-005 (**no se inventa ninguna primitiva** ni se cambia ningún formato firmado ni el agente).
