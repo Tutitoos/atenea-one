@@ -119,11 +119,13 @@ services:
       ATENEA_CP_OIDC_REDIRECT_URL: https://${PANEL_HOST:?}/auth/callback
       ATENEA_CP_PUBLIC_URL: https://${PANEL_HOST:?}
       ATENEA_CP_ISSUER_KEY_FILE: /run/secrets/issuer.key
+      # Clave de envoltura de las raíces de las redes gestionadas (ADR-029). Perderla es perder esas redes.
+      ATENEA_CP_ROOT_WRAP_KEY_FILE: /run/secrets/wrap.key
       # Solo Caddy, en la red interna dedicada al proxy, puede afirmar X-Real-IP.
       ATENEA_CP_TRUSTED_PROXIES: '["${ATENEA_CADDY_PROXY_IP:-172.30.84.2}/32"]'
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       RUST_LOG: info
-    secrets: [app-database-url, oidc-client-secret, issuer.key]
+    secrets: [app-database-url, oidc-client-secret, issuer.key, wrap.key]
     networks:
       backend: {}
       edge: {}
@@ -172,6 +174,7 @@ secrets:
   app-database-url: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/app-database-url'}
   oidc-client-secret: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/oidc-client-secret'}
   issuer.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/issuer.key'}
+  wrap.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/wrap.key'}
   relay-signing.hex: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay-signing.hex'}
   relay.key: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/relay.key'}
   dex.yaml: {file: '${ATENEA_RUNTIME_DIR:?}/secrets/dex.yaml'}

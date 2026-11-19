@@ -34,6 +34,7 @@ La casilla «Asignar también direcciones IPv6» viene marcada. Sin ella la red 
 ### Operador: la clave de envoltura
 
 - `ATENEA_CP_ROOT_WRAP_KEY_FILE`: fichero regular 0400 o 0600 con 64 dígitos hexadecimales (32 bytes aleatorios, p. ej. `openssl rand -hex 32`). Sin él **no se crean redes gestionadas** (`409 managed_unavailable`); las redes con raíz propia siguen funcionando. Si el fichero se configura y no se puede leer, el control plane no arranca.
+- **Despliegue con Compose y Ansible:** es el secreto `wrap.key` (el rol rechaza cualquier nombre con «root»). `bootstrap.py` lo genera en una instalación nueva; en una existente hay que añadirlo al fichero de secretos cifrado **antes** de actualizar, porque Compose lo exige y sin él la actualización falla y se recupera la versión anterior. `keys-backup.sh` lo incluye en la copia de claves si existe.
 - Se guarda aparte de la base y de sus copias, con el mismo cuidado que `issuer.key`, y **se incluye en el simulacro de restauración**. Una copia de la base sin esa clave no revela ninguna raíz; **perder la clave equivale a perder todas las raíces gestionadas** (habría que reincorporar cada equipo).
 - Cada firma queda en la auditoría como `network.issuer_cert` con `actor_kind = system`. Una tarea revisa cada hora qué certificados están en su último tercio; si una renovación falla se registra en el log y se reintenta en el siguiente barrido.
 - No hay rotación de la clave de envoltura todavía: cambiarla deja las raíces ya guardadas ilegibles. Pendiente.

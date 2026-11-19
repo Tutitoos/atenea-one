@@ -37,6 +37,7 @@ if len(sys.argv) == 1:
     save('secrets/oidc-client-secret', passwords['oidc'])
     save('offline/dex-password', passwords['dex'], uid=0)
     save('secrets/issuer.key', secrets.token_hex(32))
+    save('secrets/wrap.key', secrets.token_hex(32))
     save('secrets/relay-signing.hex', secrets.token_hex(32))
     relay_id = secrets.token_hex(16)
     assert relay_id != '0' * 32

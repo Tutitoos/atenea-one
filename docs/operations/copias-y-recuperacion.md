@@ -18,7 +18,7 @@ El volumen `pgbackrest-repo` **sigue en el mismo nodo**: protege frente a pérdi
 
 ## Claves: respaldo offline a varios destinatarios
 
-Preparar un directorio privado con `issuer.key`, `relay-signing.hex`, `oidc-client-secret` y, **solo si existe en el despliegue**, `application.key`. Son el emisor online, la semilla del coordinator que autoriza tokens relay, el secreto OIDC y la clave de aplicación. El control plane actual no requiere una clave de aplicación independiente: el script permite omitirla; no crear un secreto ficticio ni reutilizar otra clave para rellenarlo. Mantener también certificado de emisor, certificados TLS y configuración no secreta que permita identificar las versiones y rutas; el certificado de emisor está en la BD.
+Preparar un directorio privado con `issuer.key`, `relay-signing.hex`, `oidc-client-secret` y, **solo si existen en el despliegue**, `application.key` y `wrap.key` (la clave de envoltura de las redes gestionadas, ADR-029: sin ella una copia de la base no recupera esas redes). Son el emisor online, la semilla del coordinator que autoriza tokens relay, el secreto OIDC y la clave de aplicación. El control plane actual no requiere una clave de aplicación independiente: el script permite omitirla; no crear un secreto ficticio ni reutilizar otra clave para rellenarlo. Mantener también certificado de emisor, certificados TLS y configuración no secreta que permita identificar las versiones y rutas; el certificado de emisor está en la BD.
 
 Ejecutar los scripts dentro de la imagen (age no se instala en el Mac):
 

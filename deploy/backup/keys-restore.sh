@@ -10,11 +10,11 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 age -d -i "$2" -o "$tmp/keys.tar" "$1"
 python3 - "$tmp/keys.tar" "$3" <<'PY'
 import os, pathlib, sys, tarfile
-expected = {'issuer.key', 'relay-signing.hex', 'application.key', 'oidc-client-secret'}
+expected = {'issuer.key', 'relay-signing.hex', 'application.key', 'wrap.key', 'oidc-client-secret'}
 with tarfile.open(sys.argv[1]) as archive:
     members = archive.getmembers()
     names = {m.name for m in members}
-    required = expected - {'application.key'}
+    required = expected - {'application.key', 'wrap.key'}
     if len(members) != len(names) or not required <= names <= expected or any(not m.isfile() for m in members):
         raise SystemExit('Archivo de claves inesperado')
     dest = pathlib.Path(sys.argv[2])
