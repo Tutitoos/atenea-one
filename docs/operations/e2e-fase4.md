@@ -28,7 +28,7 @@
 
 ## Qué no demuestra
 
-- La recuperación tras un cambio de red tarda ≈ 45 s (el tiempo de ruta muerta, `PATH_DEAD_AFTER`). No se detecta aún el cambio de interfaz para reaccionar antes (mejora pendiente: avisar al par tras un cambio de candidatos propios).
+- La recuperación tras un cambio de red tardaba ≈ 45 s (el tiempo de ruta muerta, `PATH_DEAD_AFTER`): hasta la 0.1.34 no se detectaba el cambio de interfaz. Desde [ADR-030](../architecture/ADR-030-cambio-de-red-y-despertar.md) el agente muestrea cada segundo la ruta de salida y el reloj, y al detectar un cambio de red o un despertar reinicia caminos y esperas sin esperar esos 45 s. Esta medida de 47 s es la anterior; la nueva **no está medida** en el laboratorio ni en el piloto.
 - Los NAT son emulaciones de Linux/nftables: el NAT simétrico usa rangos de puertos disjuntos y el hairpin solo preinstala dos puertos (ver `tests/network-lab/nat/README.md`). No hay full-cone, filtrado solo por dirección ni routers reales ni UPnP.
 - Con hairpin o sin él, en la misma LAN la ruta va por el candidato local; el caso "misma LAN con solo candidatos públicos" (donde el hairpin importa) no se aísla.
 - Una sola instancia del coordinator, sin alta disponibilidad (fase 9); HTTP sin TLS dentro del laboratorio.

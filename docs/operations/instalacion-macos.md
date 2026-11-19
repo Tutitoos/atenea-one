@@ -83,6 +83,8 @@ sudo atenea-agent cleanup --config '/Library/Application Support/Atenea/agent.to
 
 `cleanup` puede ejecutarse después de SIGKILL. No destruye interfaces ajenas. Para parar sin que KeepAlive lo reinicie, usar `launchctl bootout system/one.atenea.agent`; una orden `atenea down` aislada permite el reinicio de launchd mientras siga existiendo la configuración.
 
+**Prioridad del servicio.** Hasta la 0.1.34 el plist de cada red llevaba `ProcessType = Background`, con el que macOS frena el agente si el equipo va cargado. Desde [ADR-030](../architecture/ADR-030-cambio-de-red-y-despertar.md) no lo lleva, y el `.pkg` quita ese valor (y solo ese) de los plists de red ya instalados antes de recargar el servicio (`normal_priority`; prueba sin privilegios en `tests/macos/test_plist_priority.py`). **Sin comprobar** con el `.pkg` real instalado sobre un Mac con redes unidas.
+
 **Residual tras una caída sin limpieza** (SIGKILL, pánico, corte de energía): `/etc/resolver/<dominio>` es global del sistema, no se retira con la utun, y sigue apuntando a IPs del túnel hasta que launchd relanza el lanzador (`ThrottleInterval` de 10 s mientras exista `agent.toml`), que ejecuta `cleanup` antes de `run`. En ese intervalo, en una red no confiable, las consultas de esos dominios pueden salir por el adaptador físico. Si el agente no se relanza (configuración retirada, `bootout`, ruta del lanzador rechazada), ejecutar `cleanup` a mano. Un fichero ajeno o no UTF-8 en `/etc/resolver` no impide la limpieza: solo se retiran los que comienzan por la marca de Atenea y se leen únicamente esos primeros bytes.
 
 ## Aplicación de escritorio

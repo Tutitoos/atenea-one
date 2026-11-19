@@ -56,6 +56,13 @@ network_plist() {
     network_paths "$uuid" "$network_root" || return 1
     [ "$label" = "one.atenea.network.$id8" ] && [ "$plist" = "/Library/LaunchDaemons/$label.plist" ]
 }
+# Los servicios de red instalados por versiones anteriores llevan `ProcessType = Background`: macOS frena un proceso así
+# cuando el equipo va cargado, y el agente dejaba de contestar a la app y a sus propios plazos de red. Quita solo ese valor
+# (cualquier otro lo puso quien administra el equipo); el `postinstall` recarga después el servicio.
+normal_priority() {
+    [ "$(/usr/libexec/PlistBuddy -c 'Print :ProcessType' "$1" 2>/dev/null)" = Background ] || return 0
+    /usr/libexec/PlistBuddy -c 'Delete :ProcessType' "$1"
+}
 # Directorio de runtime compartido (/var/run/atenea): lo crea con 0755 SOLO si falta y nunca cambia los permisos de uno
 # que ya existe. Esos permisos los fijan los lanzadores (el heredado lo deja 0700 o 0750 según `status_gid`; el
 # de una red necesita el padre atravesable) y el kernel los hace efectivos con el agente en marcha: bajarlos aquí cortaba

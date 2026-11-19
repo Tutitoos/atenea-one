@@ -31,6 +31,7 @@
 | [027](ADR-027-concesion-delegada-de-permisos.md) | Concesión delegada de permisos: administrar permisos desde un dispositivo con `write:grants` | Aceptado el 2026-11-18 con las seis decisiones D1 a D6 (implementado; publicado en la 0.1.34 y desplegado en el piloto; falta ejercer `write:grants` allí; modifica una regla de ADR-026) |
 | [028](ADR-028-cuentas-propias-y-redes-por-cuenta.md) | Cuentas propias, redes por cuenta e invitaciones: raíz bajo custodia del usuario, registro local y GitHub, organización personal e invitación por enlace | Aceptado el 2026-11-18 con las nueve decisiones D1 a D9 (control plane, panel y `--issuer-pub` en `main`; sin publicar; [guía](../operations/cuentas-y-redes-compartidas.md)) |
 | [029](ADR-029-redes-gestionadas-por-el-servidor.md) | Redes gestionadas por el servidor: crear una red con solo un nombre, raíz cifrada en el servidor y certificado automático | Aceptado el 2026-11-18 con las seis decisiones D1 a D6 (implementado en `main`, sin publicar; modifica ADR-005 para las redes gestionadas; [guía](../operations/cuentas-y-redes-compartidas.md)) |
+| [030](ADR-030-cambio-de-red-y-despertar.md) | Cambio de red y despertar: el agente reinicia caminos y esperas al detectarlos; el servicio de macOS sin prioridad de fondo | Aceptado el 2026-11-19 (implementado en `main`, sin publicar; sin formato firmado nuevo) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 
