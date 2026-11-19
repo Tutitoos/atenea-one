@@ -1,0 +1,41 @@
+/* Copyright 2026 Tutitoos
+   SPDX-License-Identifier: Apache-2.0
+
+   Base común de panel y app (el sitio tiene la suya en `Layout.astro`). */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme=claro] {
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-accent-200);
+  outline-offset: 2px;
+}
+
+::selection {
+  background-color: var(--color-accent-900);
+  color: var(--color-gray-100);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

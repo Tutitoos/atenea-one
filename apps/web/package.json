@@ -12,11 +12,11 @@
   },
   "dependencies": {
     "@atenea/api-client": "workspace:*",
+    "@atenea/ui-tokens": "workspace:*",
     "@react-router/node": "8.5.1",
     "@tanstack/react-form": "1.33.5",
     "@tanstack/react-query": "5.107.1",
     "@tanstack/react-table": "9.3.1",
-    "geist": "1.9.2",
     "motion": "14.12.0",
     "radix-ui": "1.8.1",
     "react": "19.3.1",

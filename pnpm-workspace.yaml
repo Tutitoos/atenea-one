@@ -4,6 +4,7 @@ packages:
   - apps/web
   - packages/ai-atenea-one
   - packages/api-client
+  - packages/ui-tokens
 # astro depende de esbuild, cuyo postinstall enlaza el binario de la plataforma; sin el enlace `astro build` no lo encuentra.
 allowBuilds:
   esbuild: true

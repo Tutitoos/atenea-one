@@ -11,6 +11,7 @@
     "build": "react-router build && node scripts/csp.mjs"
   },
   "dependencies": {
+    "@atenea/ui-tokens": "workspace:*",
     "@tanstack/react-query": "5.107.1",
     "@wailsio/runtime": "3.0.0",
     "react": "19.3.1",

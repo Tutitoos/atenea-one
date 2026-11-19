@@ -1,0 +1,62 @@
+/* Copyright 2026 Tutitoos
+   SPDX-License-Identifier: Apache-2.0
+
+   Paleta y tipografía únicas de Atenea One: la consumen el sitio, el panel y la
+   app. Un token nuevo se añade aquí y se prueba en `contrast.test.ts`.
+   Oscuro es la piel base (la del sitio); `claro` redefine los mismos nombres. En
+   claro la escala `gray-*` se invierte: gray-100 es el más oscuro. */
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  /* El oro de la calota del casco; el 200 es el que lleva texto. */
+  --color-accent-200: #f0d58f;
+  --color-accent-600: #c99a3c;
+  --color-accent-900: #5a4318;
+  --color-accent-950: #2a1f0b;
+
+  --color-gray-100: #f5f5f5;
+  --color-gray-200: #e5e5e5;
+  --color-gray-300: #d4d4d4;
+  --color-gray-400: #a3a3a3;
+  --color-gray-500: #737373;
+  --color-gray-700: #404040;
+  --color-gray-800: #262626;
+  --color-gray-900: #171717;
+
+  /* Estado: tiene / correcto (verde) y no tiene / error (rojo). */
+  --color-ok: #3fb97f;
+  --color-no: #ec5b60;
+
+  /* Superficies: casi negros fríos, nunca #000. */
+  --color-shell: #0a0b0d;
+  --color-panel: #101215;
+  --color-raise: #171a1f;
+  --color-rule: #22262b;
+  --color-rule-strong: #333a42;
+}
+
+:root[data-theme=claro] {
+  --color-accent-200: #7a5712;
+  --color-accent-600: #9a7020;
+  --color-accent-900: #f0d58f;
+  --color-accent-950: #f7ecd0;
+
+  --color-gray-100: #141414;
+  --color-gray-200: #1f1f1f;
+  --color-gray-300: #2e2e2e;
+  --color-gray-400: #55555a;
+  --color-gray-500: #75757a;
+  --color-gray-700: #b8b8b2;
+  --color-gray-800: #dcdcd8;
+  --color-gray-900: #eeeeec;
+
+  --color-ok: #1f7a4d;
+  --color-no: #b3262b;
+
+  --color-shell: #f6f6f4;
+  --color-panel: #ffffff;
+  --color-raise: #eeeeec;
+  --color-rule: #dcdcd8;
+  --color-rule-strong: #b8b8b2;
+}
