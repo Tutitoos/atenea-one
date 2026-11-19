@@ -108,6 +108,27 @@ it('un bloque ya usado se explica y no navega', async () => {
   expect(choose).not.toHaveBeenCalled();
 });
 
+it('los bloques que ya usa otra red de la organización no se pueden elegir, ni solapados, ni en Avanzado', async () => {
+  vi.spyOn(api, 'GET').mockImplementation((async (path: string) => reply(path.endsWith('/networks') ? [
+    { ...created, id: '00000000-0000-4000-8000-0000000000b1', ipv4_cidr: '10.144.0.0/16' }, { ...created, id: '00000000-0000-4000-8000-0000000000b2', ipv4_cidr: '192.168.191.0/24' },
+  ] : [])) as never);
+  const post = vi.spyOn(api, 'POST').mockResolvedValue(reply(created) as never);
+  const user = userEvent.setup();
+  wrap(<Organizations org={org} choose={vi.fn()}/>);
+  await user.click((await screen.findAllByRole('button', { name: 'Crear red' }))[0]);
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('radio', { name: '10.144.*.*' })).toBeDisabled();
+  expect(within(dialog).getByRole('radio', { name: '192.168.191.*' })).toBeDisabled();
+  expect(within(dialog).getByRole('radio', { name: '192.168.192.*' })).toBeEnabled();
+  await user.type(within(dialog).getByLabelText('Nombre'), 'oficina');
+  await user.click(within(dialog).getByRole('tab', { name: 'Avanzado' }));
+  await user.type(within(dialog).getByLabelText('Inicio del rango'), '10.144.0.10');
+  await user.type(within(dialog).getByLabelText('Fin del rango'), '10.144.0.20');
+  await user.click(within(dialog).getAllByRole('button', { name: 'Crear red' })[0]);
+  expect(await within(dialog).findByText(/se solapa con otra red de la organización/)).toBeVisible();
+  expect(post).not.toHaveBeenCalled();
+});
+
 it.each([
   ['managed_unavailable', /no tiene activadas las redes gestionadas/],
   ['network_limit', /máximo de redes/],

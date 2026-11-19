@@ -22,6 +22,14 @@ const chosen = (on: boolean) => on ? 'button primary' : undefined;
 
 const ipv4 = z.ipv4();
 const order = (address: string) => address.split('.').reduce((n, part) => n * 256 + Number(part), 0);
+/** Primera y última dirección de un CIDR IPv4. */
+const span = (cidr: string): [number, number] => {
+  const [address, bits] = cidr.split('/');
+  const size = 2 ** (32 - Number(bits));
+  const first = Math.floor(order(address) / size) * size;
+  return [first, first + size - 1];
+};
+const overlaps = (a: [number, number], b: [number, number]) => a[0] <= b[1] && b[0] <= a[1];
 
 export type NewNetworkBody = { name: string; ipv4_cidr?: string; ipv4_pool?: { start: string; end: string }; ipv6?: false };
 
@@ -30,7 +38,9 @@ export type NewNetworkBody = { name: string; ipv4_cidr?: string; ipv4_pool?: { s
  * «Avanzado»: inicio y fin del rango del que reciben dirección los equipos; la red es el bloque más pequeño que lo contiene.
  * IPv6 se puede desactivar: la red queda solo IPv4.
  */
-export function NewNetworkForm({ create }: { create: (body: NewNetworkBody) => Promise<unknown> }) {
+export function NewNetworkForm({ create, taken = [] }: { create: (body: NewNetworkBody) => Promise<unknown>; taken?: readonly string[] }) {
+  const used = taken.map(span);
+  const inUse = (cidr: string) => used.some(other => overlaps(span(cidr), other));
   const [name, setName] = useState('');
   const [block, setBlock] = useState('');
   const [mode, setMode] = useState('facil');
@@ -47,6 +57,7 @@ export function NewNetworkForm({ create }: { create: (body: NewNetworkBody) => P
       else if (start || end) {
         if (!ipv4.safeParse(start).success || !ipv4.safeParse(end).success) throw new Error('Escribe el inicio y el fin como direcciones IPv4, por ejemplo 10.244.0.1 y 10.244.0.254.');
         if (order(start) > order(end)) throw new Error('El inicio del rango debe ser menor o igual que el fin.');
+        if (used.some(other => overlaps([order(start), order(end)], other))) throw new Error('Ese rango se solapa con otra red de la organización. Elige otro.');
         body.ipv4_pool = { start, end };
       }
       await create(body);
@@ -66,8 +77,11 @@ export function NewNetworkForm({ create }: { create: (body: NewNetworkBody) => P
           <p className="muted">Direcciones de los equipos</p>
           <RadioGroup.Root aria-label="Direcciones IPv4" value={block} onValueChange={setBlock}>
             <RadioGroup.Item value="" className={`block-auto ${chosen(!block) ?? ''}`}>Automático (recomendado)</RadioGroup.Item>
-            <div className="blocks">{IPV4_BLOCKS.map(cidr =>
-              <RadioGroup.Item key={cidr} value={cidr} title={cidr} className={chosen(block === cidr)}>{label(cidr)}</RadioGroup.Item>)}
+            <div className="blocks">{IPV4_BLOCKS.map(cidr => {
+              const busy = inUse(cidr);
+              return <RadioGroup.Item key={cidr} value={cidr} disabled={busy} title={busy ? `${cidr}: ya lo usa otra red de la organización` : cidr}
+                className={chosen(block === cidr)}>{label(cidr)}</RadioGroup.Item>;
+            })}
             </div>
           </RadioGroup.Root>
         </Tabs.Content>

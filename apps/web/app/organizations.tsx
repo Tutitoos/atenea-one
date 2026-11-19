@@ -64,7 +64,7 @@ export function Organizations({ org, choose }: { org?: Model<'Organization'>; ch
   };
   const createNetwork = current.role !== 'member' ? <Dialog trigger="Crear red" title="Crear red"
     description="Solo hace falta un nombre: el servidor se encarga de las claves y del certificado. Las direcciones se asignan solas, o puedes elegir un bloque.">
-    <NewNetworkForm create={async body => {
+    <NewNetworkForm taken={(networks.data ?? []).map(network => network.ipv4_cidr)} create={async body => {
       try {
         const created = await result(api.POST('/api/v1/orgs/{org}/networks', { params: { path: { org: current.id } }, body }));
         await networks.refetch(); choose(created.id);
