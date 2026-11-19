@@ -391,6 +391,14 @@ pub async fn recover(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Lo único que la pantalla de acceso necesita saber antes de iniciar sesión: si ofrece «Crear una cuenta».
+pub async fn options(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        [("cache-control", "no-store")],
+        Json(json!({"registration_open": state.config.registration_open})),
+    )
+}
+
 /// Clave pública del emisor del servidor, para que el usuario firme con su raíz el certificado de su red
 /// (ADR-028 D1). Es pública (también va en el certificado); se exige sesión para no regalarla al anonimato.
 pub async fn issuer(

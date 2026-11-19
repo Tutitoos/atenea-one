@@ -110,6 +110,20 @@ async fn registro_cerrado_por_defecto_y_validaciones() {
         .await
         .error(StatusCode::FORBIDDEN, "registration_closed");
     closed.finish().await;
+    // La pantalla de acceso lo lee sin sesión para ocultar «Crear una cuenta».
+    let closed = app(false).await.unwrap();
+    let options = closed
+        .json("GET", "/auth/local/options", None, serde_json::Value::Null)
+        .await;
+    assert_eq!(options.status, StatusCode::OK);
+    assert_eq!(options.json["registration_open"], false);
+    closed.finish().await;
+    let open = app(true).await.unwrap();
+    let options = open
+        .json("GET", "/auth/local/options", None, serde_json::Value::Null)
+        .await;
+    assert_eq!(options.json["registration_open"], true);
+    open.finish().await;
 
     let Some(app) = TestApp::configured(Config {
         registration_open: true,
