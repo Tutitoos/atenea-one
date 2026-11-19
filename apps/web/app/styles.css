@@ -1098,3 +1098,57 @@ svg.copy-icon {
 /* ADR-028: pasos numerados del asistente de red y lista de códigos de recuperación. */
 .dialog ol, .card ol { padding-left: 1.4rem; list-style: decimal; display: grid; gap: .6rem; }
 .card ol code { overflow-wrap: anywhere; }
+
+/* Lista de filas (DNS): una fila por valor, con su etiqueta y su acción a la derecha. */
+.rows {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 1px solid var(--line);
+}
+
+.rows li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rows li:last-child {
+  border-bottom: 0;
+}
+
+.rows li > :first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rows .button.link {
+  padding: 0;
+}
+
+.dns-group h3 {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.row-add {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.row-add .field {
+  flex: 1;
+}
+
+.row-add > button {
+  margin-top: 28px;
+}

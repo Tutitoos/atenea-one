@@ -36,32 +36,37 @@ function mockGet() {
     { servers: ['10.42.0.53'], domains: ['servicios.example.test'] } :
     { code: 'ATENEA1-SINTETICO', root_anchor_fingerprint: 'aaaa-bbbb', join_policy: 'cerrada' }, response: new Response() })) as never);
 }
-it('asocia los errores DNS con sus campos y guarda valores válidos', async () => {
+it('valida cada valor antes de enviarlo y guarda al añadir', async () => {
   mockGet(); const put = vi.spyOn(api, 'PUT').mockResolvedValue({ response: new Response(null, { status: 204 }) });
   const user = userEvent.setup(); wrap(<Dns net="red" canEdit/>);
-  const servers = await screen.findByLabelText('Servidores DNS (separados por espacios)');
-  const domains = screen.getByLabelText('Dominios de enrutamiento (separados por espacios)');
-  await user.clear(servers); await user.type(servers, 'no-es-ip');
-  await user.clear(domains); await user.type(domains, 'INVALIDO.');
-  await user.click(screen.getByRole('button', { name: 'Guardar DNS' }));
+  const servers = await screen.findByLabelText('Añadir servidor DNS');
+  const domains = screen.getByLabelText('Añadir dominio');
+  await user.type(servers, 'no-es-ip'); await user.click(screen.getByRole('button', { name: 'Añadir servidor' }));
   expect(servers).toHaveAttribute('aria-invalid', 'true');
-  expect(servers).toHaveAccessibleDescription(/hasta 3 direcciones IP válidas/);
+  expect(servers).toHaveAccessibleDescription(/dirección IP válida/);
+  await user.type(domains, 'INVALIDO.'); await user.click(screen.getByRole('button', { name: 'Añadir dominio' }));
   expect(domains).toHaveAttribute('aria-invalid', 'true');
-  expect(domains).toHaveAccessibleDescription(/hasta 8 dominios LDH/);
   expect(put).not.toHaveBeenCalled();
-  await user.clear(servers); await user.type(servers, '10.42.0.53');
-  await user.clear(domains); await user.type(domains, 'servicios.example.test');
-  await user.click(screen.getByRole('button', { name: 'Guardar DNS' }));
+  await user.clear(domains); await user.type(domains, 'otro.example.test');
+  await user.click(screen.getByRole('button', { name: 'Añadir dominio' }));
   expect(await screen.findByText('DNS actualizado.')).toBeVisible();
   expect(put).toHaveBeenCalledWith('/api/v1/networks/{net}/dns', {
-    params: { path: { net: 'red' } }, body: { servers: ['10.42.0.53'], domains: ['servicios.example.test'] },
+    params: { path: { net: 'red' } }, body: { servers: ['10.42.0.53'], domains: ['servicios.example.test', 'otro.example.test'] },
   });
+});
+it('quitar un servidor envía la lista sin él', async () => {
+  mockGet(); const put = vi.spyOn(api, 'PUT').mockResolvedValue({ response: new Response(null, { status: 204 }) });
+  const user = userEvent.setup(); wrap(<Dns net="red" canEdit/>);
+  await user.click(await screen.findByRole('button', { name: 'Quitar 10.42.0.53' }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/api/v1/networks/{net}/dns', {
+    params: { path: { net: 'red' } }, body: { servers: [], domains: ['servicios.example.test'] },
+  }));
 });
 it('muestra errores del servidor DNS sin anunciar éxito', async () => {
   mockGet(); vi.spyOn(api, 'PUT').mockRejectedValue(new Error('Servidor DNS fuera de alcance.'));
   const user = userEvent.setup(); wrap(<Dns net="red" canEdit/>);
-  await screen.findByLabelText('Servidores DNS (separados por espacios)');
-  await user.click(screen.getByRole('button', { name: 'Guardar DNS' }));
+  await user.type(await screen.findByLabelText('Añadir servidor DNS'), '10.42.0.54');
+  await user.click(screen.getByRole('button', { name: 'Añadir servidor' }));
   expect(await screen.findByText('Servidor DNS fuera de alcance.')).toBeVisible();
   expect(screen.queryByText('DNS actualizado.')).not.toBeInTheDocument();
 });
@@ -120,7 +125,7 @@ it('member tiene solo lectura, sin acciones administrativas, y la página es acc
   expect(screen.getByText(network.root_anchor)).toBeVisible();
   expect(screen.getByText(/Pide la huella de la raíz/)).toBeVisible();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Guardar DNS|Subir certificado|Reemplazar certificado|Eliminar red/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Añadir|Quitar|Subir certificado|Reemplazar certificado|Eliminar red/ })).not.toBeInTheDocument();
   expect(api.GET).toHaveBeenCalledTimes(1);
   expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
 });
