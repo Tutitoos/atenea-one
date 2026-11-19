@@ -774,6 +774,13 @@ mod imp {
         }
     }
 
+    /// Nadie escucha en un socket que quedó huérfano: la red está detenida. Un agente que no contesta a tiempo o corta
+    /// la conexión (cargado) sigue en marcha: darlo por detenido hacía que la app ofreciera «Conectar» sobre una red
+    /// conectada.
+    fn nobody_listens(error: &str) -> bool {
+        error.contains("Connection refused") || error.contains("No such file")
+    }
+
     fn probe(ctx: &Ctx, m: &Meta) -> State {
         let sock = ctx.run_dir(&m.network_id).join("status.sock");
         if let Some(state) = sock_unreachable(std::fs::symlink_metadata(&sock)) {
@@ -782,7 +789,8 @@ mod imp {
         match crate::ask(&sock, "status") {
             Ok(text) => state_from_status(&text),
             Err(e) if e.contains("Permission denied") => no_permission(),
-            Err(_) => State::Stopped,
+            Err(e) if nobody_listens(&e) => State::Stopped,
+            Err(_) => State::Unknown("el agente no respondió".into()),
         }
     }
 
@@ -797,20 +805,27 @@ mod imp {
         network_service::choose(ctx.backend, saved)
     }
 
+    /// Una entrada por red, sondeadas a la vez: cada sondeo espera hasta 5 s a su agente y en serie se sumaban, con
+    /// lo que una sola red lenta bastaba para pasar el plazo de la aplicación.
     pub fn list_json(ctx: &Ctx) -> Result<serde_json::Value, String> {
-        Ok(read_metas(ctx)?
-            .iter()
-            .map(|m| {
-                let state = probe(ctx, m);
-                let mut v = serde_json::to_value(m).expect("serializable");
-                v["state"] = state.code().into();
-                v["backend"] = backend(ctx, m).name().into();
-                if let State::Conflict(d) | State::Unknown(d) = &state {
-                    v["detail"] = d.clone().into();
-                }
-                v
-            })
-            .collect())
+        let metas = read_metas(ctx)?;
+        let entry = |m: &Meta| {
+            let state = probe(ctx, m);
+            let mut v = serde_json::to_value(m).expect("serializable");
+            v["state"] = state.code().into();
+            v["backend"] = backend(ctx, m).name().into();
+            if let State::Conflict(d) | State::Unknown(d) = &state {
+                v["detail"] = d.clone().into();
+            }
+            v
+        };
+        Ok(std::thread::scope(|scope| {
+            let tasks: Vec<_> = metas.iter().map(|m| scope.spawn(|| entry(m))).collect();
+            tasks
+                .into_iter()
+                .map(|task| task.join().expect("sondeo de la red"))
+                .collect()
+        }))
     }
 
     pub fn list(ctx: &Ctx, json: bool) -> Result<(), String> {
@@ -2741,6 +2756,64 @@ mod imp {
             if blocked {
                 assert_eq!(list[0]["state"], "desconocida");
             }
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn a_silent_agent_is_unknown_and_an_orphan_socket_is_stopped() {
+            use std::os::unix::net::UnixListener;
+            let d = temp("mudo");
+            let c = ctx(&d);
+            put_meta(&c, &fake_meta(A, "Casa", "atenea0", 51820, 1));
+            std::fs::create_dir_all(c.run_dir(A)).unwrap();
+            let sock = c.run_dir(A).join("status.sock");
+            // Un agente cargado cierra la conexión sin responder: sigue en marcha, no está detenido.
+            let l = UnixListener::bind(&sock).unwrap();
+            let h = std::thread::spawn(move || drop(l.accept().unwrap()));
+            let list = list_json(&c).unwrap();
+            h.join().unwrap();
+            assert_eq!(list[0]["state"], "desconocida");
+            assert_eq!(list[0]["detail"], "el agente no respondió");
+            // El fichero de un agente que murió sigue ahí, pero nadie escucha.
+            std::fs::remove_file(&sock).unwrap();
+            drop(UnixListener::bind(&sock).unwrap());
+            assert_eq!(list_json(&c).unwrap()[0]["state"], "detenida");
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        #[test]
+        fn list_json_waits_for_the_slowest_network_not_for_all_of_them() {
+            use std::os::unix::net::UnixListener;
+            let d = temp("paralelo");
+            let c = ctx(&d);
+            let mut agents = Vec::new();
+            for (id, name) in [(A, "Casa"), (B, "Trabajo")] {
+                put_meta(&c, &fake_meta(id, name, "atenea0", 51820, 1));
+                std::fs::create_dir_all(c.run_dir(id)).unwrap();
+                let l = UnixListener::bind(c.run_dir(id).join("status.sock")).unwrap();
+                agents.push(std::thread::spawn(move || {
+                    let (mut s, _) = l.accept().unwrap();
+                    let mut line = String::new();
+                    std::io::BufReader::new(&s).read_line(&mut line).unwrap();
+                    std::thread::sleep(Duration::from_millis(600));
+                    writeln!(s, r#"{{"config":{{"version":3,"last_error":null}}}}"#).unwrap();
+                }));
+            }
+            let started = std::time::Instant::now();
+            let list = list_json(&c).unwrap();
+            let elapsed = started.elapsed();
+            for agent in agents {
+                agent.join().unwrap();
+            }
+            assert_eq!(list.as_array().unwrap().len(), 2);
+            assert!(
+                list.as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|n| n["state"] == "conectada")
+            );
+            // En serie serían ≥ 1,2 s.
+            assert!(elapsed < Duration::from_millis(1100), "{elapsed:?}");
             std::fs::remove_dir_all(d).unwrap();
         }
 

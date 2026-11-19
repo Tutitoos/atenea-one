@@ -139,9 +139,11 @@ func (a *App) NetworkApply(op, network, code, name string) (string, error) {
 }
 
 // DevicePing prueba la conexión con un par. La dirección debe ser la de un par del estado de ESA red unida: se
-// comprueba antes de lanzar nada, y la red debe estar unida antes de preguntar a su agente.
+// comprueba antes de lanzar nada, y la red debe estar unida antes de preguntar a su agente. Que esté unida se lee de
+// la última lista (KnownNetwork): sondear a todos los agentes otra vez podía agotar el plazo de la ventana sin que
+// la red elegida tuviera nada que ver.
 func (a *App) DevicePing(network, address string) (string, error) {
-	if _, err := backend.JoinedNetwork(network); err != nil {
+	if _, err := backend.KnownNetwork(network); err != nil {
 		return "", err
 	}
 	_, obj, err := a.readStatus(network)

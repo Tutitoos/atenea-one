@@ -112,7 +112,7 @@ pub fn fetch(
         .get(&url)
         .header("Authorization", &authorization)
         .call()
-        .map_err(|_| "error de red")?;
+        .map_err(|e| crate::coord::transport_reason(&e))?;
     match response.status().as_u16() {
         200 => (),
         401 | 403 => return Err("acceso denegado"),
@@ -316,7 +316,7 @@ pub(crate) fn get_metadata(
         .get(&url)
         .header("Authorization", &authorization)
         .call()
-        .map_err(|_| "error de red")?;
+        .map_err(|e| crate::coord::transport_reason(&e))?;
     match response.status().as_u16() {
         200 => (),
         404 => return Ok(None),
@@ -495,7 +495,7 @@ fn post_json(
         .header("Authorization", &authorization)
         .header("Content-Type", "application/json")
         .send(body.as_slice())
-        .map_err(|_| "error de red")?;
+        .map_err(|e| crate::coord::transport_reason(&e))?;
     if response.status().as_u16() != 204 {
         return Err("error HTTP del control plane");
     }
