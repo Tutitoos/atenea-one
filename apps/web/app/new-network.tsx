@@ -1,6 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
+import { RadioGroup, Tabs } from 'radix-ui';
 import { Button, Field } from './ui';
 import { z } from 'zod';
 import { nameSchema } from './domain';
@@ -15,7 +16,9 @@ export const IPV4_BLOCKS = [
   '192.168.193.0/24', '192.168.194.0/24', '192.168.195.0/24', '192.168.196.0/24',
 ] as const;
 
-const label = (cidr: string) => cidr.replace(/\/24$/, '.*').replace(/\.0\.0\/16$/, '.*.*');
+const label = (cidr: string) => cidr.replace(/\.0\/24$/, '.*').replace(/\.0\.0\/16$/, '.*.*');
+// El elegido lleva las clases del botón primario: su color lo decide la piel del panel, no este fichero.
+const chosen = (on: boolean) => on ? 'button primary' : undefined;
 
 const ipv4 = z.ipv4();
 const order = (address: string) => address.split('.').reduce((n, part) => n * 256 + Number(part), 0);
@@ -29,8 +32,8 @@ export type NewNetworkBody = { name: string; ipv4_cidr?: string; ipv4_pool?: { s
  */
 export function NewNetworkForm({ create }: { create: (body: NewNetworkBody) => Promise<unknown> }) {
   const [name, setName] = useState('');
-  const [block, setBlock] = useState<string>();
-  const [mode, setMode] = useState<'facil' | 'avanzado'>('facil');
+  const [block, setBlock] = useState('');
+  const [mode, setMode] = useState('facil');
   const [range, setRange] = useState({ start: '', end: '' });
   const [ipv6, setIpv6] = useState(true);
   const [message, setMessage] = useState('');
@@ -54,28 +57,32 @@ export function NewNetworkForm({ create }: { create: (body: NewNetworkBody) => P
   return <form className="action-form" onSubmit={event => void submit(event)}>
     <div className="fields">
       <Field label="Nombre">{props => <input {...props} type="text" required value={name} onChange={e => setName(e.target.value)}/>}</Field>
-      <div role="tablist" aria-label="Modo de direcciones" className="mode-tabs">
-        <button type="button" role="tab" aria-selected={mode === 'facil'} onClick={() => setMode('facil')}>Fácil</button>
-        <button type="button" role="tab" aria-selected={mode === 'avanzado'} onClick={() => setMode('avanzado')}>Avanzado</button>
-      </div>
-      {mode === 'facil' ? <div role="radiogroup" aria-label="Direcciones IPv4">
-        <p className="muted">Direcciones de los equipos</p>
-        <button type="button" role="radio" aria-checked={!block} className="block-auto" onClick={() => setBlock(undefined)}>
-          Automático (recomendado)
-        </button>
-        <div className="blocks">{IPV4_BLOCKS.map(cidr =>
-          <button key={cidr} type="button" role="radio" aria-checked={block === cidr} title={cidr}
-            onClick={() => setBlock(cidr)}>{label(cidr)}</button>)}
-        </div>
-      </div> : <div className="range">
-        <Field label="Inicio del rango" help="Vacío: el servidor elige un bloque libre.">{props =>
-          <input {...props} type="text" inputMode="decimal" placeholder="10.244.0.1" value={range.start}
-            onChange={e => setRange({ ...range, start: e.target.value })}/>}</Field>
-        <Field label="Fin del rango">{props =>
-          <input {...props} type="text" inputMode="decimal" placeholder="10.244.0.254" value={range.end}
-            onChange={e => setRange({ ...range, end: e.target.value })}/>}</Field>
-      </div>}
-      <label className="check"><input type="checkbox" checked={ipv6} onChange={e => setIpv6(e.target.checked)}/> Asignar también direcciones IPv6</label>
+      <Tabs.Root value={mode} onValueChange={setMode}>
+        <Tabs.List className="mode-tabs" aria-label="Modo de direcciones">
+          <Tabs.Trigger value="facil" className={chosen(mode === 'facil')}>Fácil</Tabs.Trigger>
+          <Tabs.Trigger value="avanzado" className={chosen(mode === 'avanzado')}>Avanzado</Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content value="facil">
+          <p className="muted">Direcciones de los equipos</p>
+          <RadioGroup.Root aria-label="Direcciones IPv4" value={block} onValueChange={setBlock}>
+            <RadioGroup.Item value="" className={`block-auto ${chosen(!block) ?? ''}`}>Automático (recomendado)</RadioGroup.Item>
+            <div className="blocks">{IPV4_BLOCKS.map(cidr =>
+              <RadioGroup.Item key={cidr} value={cidr} title={cidr} className={chosen(block === cidr)}>{label(cidr)}</RadioGroup.Item>)}
+            </div>
+          </RadioGroup.Root>
+        </Tabs.Content>
+        <Tabs.Content value="avanzado">
+          <div className="range">
+            <Field label="Inicio del rango">{props => <input {...props} type="text" placeholder="10.244.0.1" value={range.start}
+              onChange={e => setRange({ ...range, start: e.target.value })}/>}</Field>
+            <Field label="Fin del rango">{props => <input {...props} type="text" placeholder="10.244.0.254" value={range.end}
+              onChange={e => setRange({ ...range, end: e.target.value })}/>}</Field>
+          </div>
+          <p className="muted field-help">Vacíos: el servidor elige un bloque libre.</p>
+        </Tabs.Content>
+      </Tabs.Root>
+      <Field label="Asignar también direcciones IPv6">{props =>
+        <input {...props} type="checkbox" checked={ipv6} onChange={e => setIpv6(e.target.checked)}/>}</Field>
     </div>
     <Button type="submit" variant="primary" loading={pending}>Crear red</Button><p role="status">{message}</p>
   </form>;

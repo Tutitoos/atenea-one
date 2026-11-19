@@ -496,7 +496,7 @@ td {
 
 .blocks {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 4px;
   margin-top: 6px;
 }
@@ -518,31 +518,16 @@ td {
   gap: 8px;
 }
 
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.check input {
-  width: auto;
-}
-
 .mode-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
+  margin-bottom: 12px;
 }
 
 .mode-tabs button {
   padding: 8px;
-}
-
-[role=radio][aria-checked=true],
-.mode-tabs [role=tab][aria-selected=true] {
-  background: #2f5fdc;
-  border-color: #2f5fdc;
-  color: #fff;
+  text-align: center;
 }
 
 .login {

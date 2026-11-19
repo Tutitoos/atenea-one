@@ -101,10 +101,10 @@ export function Tabs({ tabs, label }: { tabs: TabDef[]; label: string }) {
   };
   return (
     <>
-      <div role="tablist" aria-label={label} className="mb-4 flex flex-wrap gap-1 border-b border-line">
+      <div role="tablist" aria-label={label} className="mb-4 flex flex-wrap gap-1 border-b border-rule">
         {tabs.map((t) => (
           <button key={t.id} ref={(el) => { refs.current[t.id] = el; }} type="button" role="tab" id={`${base}-${t.id}`} aria-selected={t === active} aria-controls={`${base}-panel`} tabIndex={t === active ? 0 : -1} onClick={() => setSelected(t.id)} onKeyDown={onKey}
-            className={`-mb-px cursor-default border-b-2 px-3 py-1.5 text-sm ${t === active ? 'border-sel font-medium text-fg' : 'border-transparent text-mut'}`}>{t.label}</button>
+            className={`-mb-px cursor-default border-b-2 px-3 py-1.5 text-sm ${t === active ? 'border-accent-200 font-medium text-accent-200' : 'border-transparent text-gray-400'}`}>{t.label}</button>
         ))}
       </div>
       <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-${active.id}`}>{active.panel}</div>

@@ -29,6 +29,7 @@ it('crear una red envía solo el nombre: el bloque es «Automático» y no hay c
   await user.click((await screen.findAllByRole('button', { name: 'Crear red' }))[0]);
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).getByRole('radio', { name: /Automático/ })).toBeChecked();
+  expect(within(dialog).getByRole('radio', { name: '10.147.17.*' })).toHaveAttribute('title', '10.147.17.0/24');
   expect(within(dialog).queryByText(/raíz|CIDR/i)).toBeNull();
   await user.type(within(dialog).getByLabelText('Nombre'), 'casa');
   await user.click(within(dialog).getAllByRole('button', { name: 'Crear red' })[0]);

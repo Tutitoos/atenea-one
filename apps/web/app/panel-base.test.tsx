@@ -170,9 +170,7 @@ it('actualiza las membresías al crear una organización para poder administrar 
   await user.click(await screen.findByRole('button', { name: 'Crear organización' }));
   await user.type(screen.getByRole('textbox', { name: 'Nombre' }), org.name);
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Crear organización' }));
-  await screen.findByText('Acción completada.');
-  await user.keyboard('{Escape}');
-  await choose(user, screen.getByRole('combobox', { name: 'Organización' }), org.id);
+  // La organización recién creada es la única: el panel la abre sola y el diálogo desaparece con ella.
   await user.click(await screen.findByRole('link', { name: network.name }));
   await user.click(screen.getByRole('link', { name: 'DNS y certificado' }));
   expect(await screen.findByRole('button', { name: 'Subir certificado' })).toBeVisible();
