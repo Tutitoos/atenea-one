@@ -38,6 +38,7 @@ for plist in /Library/LaunchDaemons/one.atenea.network.*.plist; do
         echo "No se toca un plist de red no reconocido: $plist" >&2
         continue
     fi
+    normal_priority "$plist" || echo "No se pudo quitar la prioridad de fondo de $plist" >&2
     if launchctl print "system/$label" >/dev/null 2>&1; then
         reload "$label" "$plist"
     fi

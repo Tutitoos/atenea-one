@@ -407,6 +407,8 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         None
     };
     netconf.endpoints_resolved(resolved_endpoints.is_some());
+    // Cada cambio de red o despertar (ADR-030) incrementa el contador: las tareas lo escuchan para no esperar a su ciclo.
+    let (net_tx, net_rx) = tokio::sync::watch::channel(0u64);
     let (sync_tx, sync_rx) =
         tokio::sync::watch::channel(cfg.sync.as_ref().map(|s| crate::sync::Status {
             url: s.url.clone(),
@@ -418,12 +420,20 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
         let device = cfg.device_id;
         let identity = identity.clone();
         let snapshots = store.subscribe();
+        let mut network_changed = net_rx.clone();
         let (noise_pub, identity_pub) = (local.noise_pub, local.identity_pub);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(sync.interval_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    // Red nueva o despertar: la configuración (y el lease, que pudo caducar durante el sueño) se pide ya.
+                    changed = network_changed.changed() => {
+                        if changed.is_err() { break; }
+                        interval.reset();
+                    }
+                }
                 let sync = sync.clone();
                 let identity = identity.clone();
                 let path = path.clone();
@@ -603,20 +613,28 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 });
             }
         }));
-        let (c2, id2, tx2, ctx2) = (
+        let (c2, id2, tx2, ctx2, mut network_changed) = (
             c.clone(),
             identity.clone(),
             msg_tx.clone(),
             coord_tx.clone(),
+            net_rx.clone(),
         );
         coord_tasks.push(tokio::spawn(async move {
             loop {
                 let (c, k) = (c2.clone(), id2.clone());
-                let res = tokio::task::spawn_blocking(move || {
+                let poll = tokio::task::spawn_blocking(move || {
                     crate::coord::events(&c, &k, device, unix_now(), 25)
-                })
-                .await
-                .unwrap_or(Err("fallo de la tarea"));
+                });
+                // Tras un cambio de red o un despertar la petición en curso viaja por una conexión que ya no existe y
+                // esperaría hasta su plazo (35 s): se abandona (su hilo acaba solo) y se abre otra desde la red nueva.
+                let res = tokio::select! {
+                    r = poll => r.unwrap_or(Err("fallo de la tarea")),
+                    changed = network_changed.changed() => {
+                        if changed.is_err() { break; }
+                        continue;
+                    }
+                };
                 match res {
                     Ok(events) => {
                         for e in events {
@@ -636,7 +654,14 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                         }
                     }
                     // Aún sin presencia o coordinator caído: reintento con pausa.
-                    Err(_) => tokio::time::sleep(Duration::from_secs(3)).await,
+                    Err(_) => {
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+                            changed = network_changed.changed() => {
+                                if changed.is_err() { break; }
+                            }
+                        }
+                    }
                 }
             }
         }));
@@ -674,6 +699,12 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
     };
     tracing::info!(interface = %rt.tun.name(), listen = %rt.cfg.listen, "agente en marcha; sin tráfico hasta cargar una configuración vigente");
     rt.poll_config(unix_now());
+    // Despertar y cambio de red (ADR-030): se muestrea cada segundo dentro del bucle, sin tarea ni dependencias.
+    let mut netwatch = crate::netwatch::NetWatch::new(
+        Instant::now(),
+        SystemTime::now(),
+        crate::netwatch::route_now(),
+    );
 
     // Paso fino (250 ms) para el sondeo con jitter; lo caro (configuración, estado) cada segundo.
     let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -755,6 +786,26 @@ pub(crate) async fn run(path: PathBuf) -> Result<(), String> {
                 let now = Instant::now();
                 ticks += 1;
                 if ticks.is_multiple_of(4) {
+                    if let Some(event) = netwatch.sample(now, SystemTime::now(), crate::netwatch::route_now()) {
+                        let slept = match event {
+                            crate::netwatch::Event::Wake(slept) => Some(slept),
+                            crate::netwatch::Event::Network => None,
+                        };
+                        tracing::info!(?event, "cambio de red o despertar: se reinician los caminos");
+                        for peer in rt.engine.on_network_change(now, slept) {
+                            relay.close(peer);
+                            relay_requests.forget(peer);
+                        }
+                        // La dirección pública y los candidatos propios también cambiaron: STUN y presencia, ya.
+                        if let Some(s) = stun.as_ref() {
+                            let (names, tx) = (s.names(), msg_tx.clone());
+                            tokio::spawn(async move {
+                                let _ = tx.send(CoordMsg::StunResolved(net::resolve_stun(names).await)).await;
+                            });
+                        }
+                        announce_now.notify_one();
+                        net_tx.send_modify(|generation| *generation = generation.wrapping_add(1));
+                    }
                     if names_rx.has_changed().unwrap_or(false) {
                         let (own, peers) = names_rx.borrow_and_update().clone();
                         rt.engine.set_metadata(own, peers);

@@ -12,6 +12,7 @@ mod ipc;
 mod names;
 mod net;
 mod netconf;
+mod netwatch;
 mod packet;
 mod platform;
 mod relay;

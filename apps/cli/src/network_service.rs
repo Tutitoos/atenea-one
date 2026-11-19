@@ -187,7 +187,6 @@ mod unix {
 <key>Umask</key><integer>63</integer>
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><dict><key>PathState</key><dict><key>{config}</key><true/></dict></dict>
-<key>ProcessType</key><string>Background</string>
 <key>ThrottleInterval</key><integer>10</integer>
 <key>StandardOutPath</key><string>{log}</string>
 <key>StandardErrorPath</key><string>{log}</string>
@@ -349,6 +348,19 @@ mod unix {
                 .write_all(text.as_bytes())
                 .unwrap();
             assert!(child.wait().unwrap().success());
+        }
+        #[test]
+        fn generated_plist_does_not_lower_the_priority_of_the_agent() {
+            // Con `ProcessType = Background` macOS frena el agente cuando el equipo va cargado y deja de responder a
+            // la app y a sus propios plazos de red.
+            let text = plist(
+                Path::new("/Library/Application Support/Atenea/networks"),
+                ID,
+            )
+            .unwrap();
+            for key in ["ProcessType", "Background", "Nice", "LowPriority"] {
+                assert!(!text.contains(key), "{key}");
+            }
         }
         #[test]
         fn dropin_escapes_systemd_specifiers_and_does_not_change_hardening() {

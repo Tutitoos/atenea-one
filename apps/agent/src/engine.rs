@@ -65,6 +65,9 @@ const RELEASE_AFTER_DIRECT: Duration = Duration::from_secs(30);
 /// pero inactivo lleva hasta 15 s sin recibir y no por eso está caído. Mientras el relay lleve listo menos que esto, el par aún
 /// puede estar en keepalive lento, y el silencio del directo no basta para abandonarlo.
 const SLOW_KEEPALIVE_GRACE: Duration = Duration::from_secs(17);
+/// Tras un despertar de al menos esto se descartan las sesiones: coincide con `REKEY_AFTER_TIME` (120 s), a partir de
+/// la cual el par ya quiere renegociar y a los 180 s las rechaza.
+const SESSION_RESET_AFTER_SLEEP: Duration = Duration::from_secs(120);
 
 /// Retardo creciente tras un sondeo fallido: 30, 60, 120, 240 y 300 s como máximo.
 fn backoff(failures: u32) -> Duration {
@@ -1898,6 +1901,62 @@ impl Engine {
         v
     }
 
+    /// El equipo cambió de red o despertó de una suspensión (ADR-030): lo que se sabía de los caminos ya no vale y las
+    /// esperas acumuladas solo retrasarían la recuperación. Equivale a que se cumpla de golpe `PATH_DEAD_AFTER` en todos
+    /// los pares, con el retroceso de sondeo a cero. Con `slept` (despertar) y una suspensión larga también se descartan
+    /// las sesiones: el reloj monótono no avanzó durante el sueño, pero el par las dio por caducadas. Devuelve los pares
+    /// con relay listo: sus asignaciones salen de la red anterior y el llamador las cierra.
+    pub fn on_network_change(&mut self, now: Instant, slept: Option<Duration>) -> Vec<DeviceId> {
+        let drop_sessions = slept.is_some_and(|s| s >= SESSION_RESET_AFTER_SLEEP);
+        let mut relays = Vec::new();
+        for p in &mut self.peers {
+            let active = p
+                .last_data
+                .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
+            if p.endpoint.take().is_some() {
+                self.counters.inc("path_lost");
+            }
+            p.stat[PathKind::Direct.idx()].last_rx = None;
+            p.stat[PathKind::Direct.idx()].healthy_since = None;
+            if p.stat[PathKind::RelayUdp.idx()].ready || p.stat[PathKind::RelayTls.idx()].ready {
+                for k in [PathKind::RelayUdp, PathKind::RelayTls] {
+                    p.stat[k.idx()] = PathStat::default();
+                }
+                relays.push(p.device_id);
+            }
+            if !p.sendable(p.active) {
+                p.active = PATHS
+                    .into_iter()
+                    .find(|x| p.sendable(*x))
+                    .unwrap_or(PathKind::Direct);
+            }
+            p.pending = None;
+            p.pending_dg = None;
+            p.probe = None;
+            p.kprobe = None;
+            p.probe_failures = 0;
+            p.hold_until = None;
+            p.hint_lift_at = None;
+            p.next_rendezvous = None;
+            p.next_relay_request = None;
+            p.last_attempt = None;
+            // Solo los pares con tráfico reciente piden pistas y relay ya; los demás lo harán con su primer paquete.
+            p.rendezvous_wanted = active;
+            p.relay_wanted = active;
+            if drop_sessions {
+                p.current = None;
+                p.previous = None;
+                p.next = None;
+            }
+        }
+        self.counters.inc(if slept.is_some() {
+            "wake_reset"
+        } else {
+            "network_reset"
+        });
+        relays
+    }
+
     /// El cliente de relay informa de que la asignación hacia `peer` está lista o caída.
     /// Al estar lista se reenvía el mensaje 1 pendiente y un keepalive por ese camino, para que el
     /// par aprenda el camino.
@@ -3440,6 +3499,74 @@ mod tests {
             let (oa, ob) = (l.a.on_tick(l.now, l.unix), l.b.on_tick(l.now, l.unix));
             pump(l, oa, ob);
         }
+    }
+
+    #[test]
+    fn a_network_change_resets_the_paths_and_the_probe_backoff_but_keeps_the_session() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        assert_eq!(l.a.peers[0].path_name(l.now), "direct");
+        // Un sondeo fallido anterior había dejado un retroceso largo.
+        l.a.peers[0].probe_failures = 4;
+        l.a.peers[0].hold_until = Some(l.now + Duration::from_secs(240));
+        let relays = l.a.on_network_change(l.now, None);
+        let p = &l.a.peers[0];
+        assert!(relays.is_empty());
+        assert_eq!(
+            (p.endpoint, p.probe_failures, p.hold_until),
+            (None, 0, None)
+        );
+        assert!(
+            p.current.is_some(),
+            "un cambio de red no invalida la sesión"
+        );
+        assert!(
+            p.rendezvous_wanted && p.relay_wanted,
+            "con tráfico reciente se piden pistas y relay ya"
+        );
+        assert_eq!(l.a.counters.0["network_reset"], 1);
+        // La red nueva alcanza al par por las pistas de la configuración: el directo vuelve con el primer paquete, sin
+        // esperar los 45 s de ruta muerta ni los 240 s de retroceso.
+        l.unix += 1;
+        let out = l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        run(&mut l, 3);
+        assert_eq!(l.a.peers[0].path_name(l.now), "direct");
+    }
+
+    #[test]
+    fn only_a_long_suspension_drops_the_sessions() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        l.a.on_network_change(l.now, Some(Duration::from_secs(60)));
+        assert!(l.a.peers[0].current.is_some());
+        assert_eq!(l.a.counters.0["wake_reset"], 1);
+        l.a.on_network_change(l.now, Some(Duration::from_secs(600)));
+        assert!(l.a.peers[0].current.is_none() && l.a.peers[0].previous.is_none());
+        // El primer paquete tras despertar renegocia y llega al otro extremo.
+        l.unix += 5;
+        let out = l.a.on_tun(&v4(1, 2, b"2"), l.now, l.unix);
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b.len(), 1);
+    }
+
+    #[test]
+    fn a_network_change_closes_the_relay_allocations_and_only_active_peers_ask_for_a_new_one() {
+        let mut l = lab();
+        let out = l.a.on_tun(&v4(1, 2, b"1"), l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        l.a.set_relay_ready(&[2; 16], [9; 16], RelayKind::Udp, true, l.now);
+        assert!(l.a.peers[0].stat[PathKind::RelayUdp.idx()].ready);
+        assert_eq!(l.a.on_network_change(l.now, None), vec![[2u8; 16]]);
+        assert!(!l.a.peers[0].stat[PathKind::RelayUdp.idx()].ready);
+        assert_eq!(l.a.take_relay_requests(l.now), vec![[2u8; 16]]);
+        // Un par sin tráfico reciente no pide nada hasta su primer paquete.
+        l.now += Duration::from_secs(60);
+        l.a.on_network_change(l.now, None);
+        assert!(l.a.take_relay_requests(l.now).is_empty());
+        assert!(l.a.take_rendezvous(l.now).is_empty());
     }
 
     #[test]
