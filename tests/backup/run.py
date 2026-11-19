@@ -83,7 +83,7 @@ def cycle(n):
             start_pg()
             sql(f"CREATE ROLE atenea_app LOGIN PASSWORD '{password}'")
             run('run','-d','--name',dex,'--network',tag,'--network-alias','dex','-v',str(ROOT/'deploy/compose/dev/dex.yaml')+':/etc/dex/config.yaml:ro','ghcr.io/dexidp/dex:v2.41.1','dex','serve','/etc/dex/config.yaml')
-            key_exec("umask 077; mkdir /lab/keys; for n in issuer.key relay-signing.hex application.key oidc-client-secret; do od -An -N32 -tx1 /dev/urandom | tr -d ' \\n' > /lab/keys/$n; done")
+            key_exec("umask 077; mkdir /lab/keys; for n in issuer.key relay-signing.hex application.key wrap.key oidc-client-secret; do od -An -N32 -tx1 /dev/urandom | tr -d ' \\n' > /lab/keys/$n; done")
             start_lab(True)
             client('setup')
             net=run('exec',lab,'cat','/lab/network')

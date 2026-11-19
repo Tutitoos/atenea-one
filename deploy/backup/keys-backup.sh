@@ -9,10 +9,11 @@ umask 077
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 # Lista cerrada: una raíz privada nunca puede entrar en este archivo.
-for name in issuer.key relay-signing.hex application.key oidc-client-secret; do
-  if [ "$name" = application.key ] && [ ! -e "$src/$name" ] && [ ! -L "$src/$name" ]; then
-    continue
-  fi
+# `application.key` y `wrap.key` (redes gestionadas, ADR-029) solo existen en algunos despliegues.
+for name in issuer.key relay-signing.hex application.key wrap.key oidc-client-secret; do
+  case "$name" in application.key|wrap.key)
+    if [ ! -e "$src/$name" ] && [ ! -L "$src/$name" ]; then continue; fi ;;
+  esac
   [ -f "$src/$name" ] && [ ! -L "$src/$name" ] || exit 1
   printf '%s\n' "$name" >> "$tmp/files"
 done
