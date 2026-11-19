@@ -26,7 +26,8 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
       {data && <dl className="incorporar-network-data">
         <dt>Nombre</dt><dd>{data.name}</dd>
         <dt>CIDR IPv4</dt><dd><code>{data.ipv4_cidr}</code></dd>
-        <dt>CIDR IPv6</dt><dd><code>{data.ipv6_cidr}</code></dd>
+        {data.ipv4_pool && <><dt>Rango de reparto IPv4</dt><dd><code>{data.ipv4_pool.start} – {data.ipv4_pool.end}</code></dd></>}
+        <dt>CIDR IPv6</dt><dd>{data.ipv6_cidr ? <code>{data.ipv6_cidr}</code> : 'Sin IPv6'}</dd>
         <dt>Ancla de la raíz</dt><dd><code>{data.root_anchor}</code>
           <CopyButton value={data.root_anchor} label="Copiar ancla de la raíz"/></dd>
         {join.data && <><dt>Huella de la raíz</dt><dd><code>{join.data.root_anchor_fingerprint}</code>

@@ -239,3 +239,102 @@ async fn una_red_gestionada_sin_certificado_lo_recibe_en_el_siguiente_barrido() 
     c.verify(&anchor, *net.as_bytes(), common::now()).unwrap();
     t.finish().await;
 }
+
+#[tokio::test]
+async fn una_red_solo_ipv4_con_rango_reparte_dentro_del_rango_y_firma_la_configuracion() {
+    let Some(t) = TestApp::with_wrap(Config::default(), KEY).await else {
+        return;
+    };
+    let owner = t.user().await;
+    let org = t.org(&owner).await;
+    let pool = |start: &str, end: &str| json!({"start": start, "end": end});
+    // Peticiones contradictorias o fuera de sitio no crean nada.
+    for (body, code) in [
+        (
+            json!({"name": "x", "ipv4_pool": pool("10.244.0.20", "10.244.0.10")}),
+            "invalid_pool",
+        ),
+        (
+            json!({"name": "x", "ipv4_cidr": "10.244.0.0/24", "ipv4_pool": pool("10.244.1.1", "10.244.1.9")}),
+            "invalid_pool",
+        ),
+        (
+            json!({"name": "x", "ipv4_cidr": "10.244.0.0/24", "ipv4_pool": pool("10.244.0.0", "10.244.0.9")}),
+            "invalid_pool",
+        ),
+        (
+            json!({"name": "x", "ipv4_pool": pool("fd00::1", "fd00::9")}),
+            "invalid_pool",
+        ),
+        (
+            json!({"name": "x", "ipv6": false, "ipv6_cidr": "fd64::/64"}),
+            "invalid_cidr",
+        ),
+    ] {
+        create(&t, &owner, org, body)
+            .await
+            .error(StatusCode::BAD_REQUEST, code);
+    }
+    // Sin bloque dado, la red es el bloque más pequeño que contiene el rango sin tocar red ni difusión.
+    let r = create(
+        &t,
+        &owner,
+        org,
+        json!({"name": "oficina", "ipv6": false, "ipv4_pool": pool("10.244.0.10", "10.244.0.11")}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.json);
+    assert_eq!(r.json["ipv4_cidr"], "10.244.0.8/29");
+    assert_eq!(r.json["ipv6_cidr"], Value::Null);
+    assert_eq!(r.json["ipv4_pool"], pool("10.244.0.10", "10.244.0.11"));
+    let net = common::id(&r.json);
+    let listed = t
+        .json(
+            "GET",
+            &format!("/api/v1/networks/{net}"),
+            Some(&owner),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(listed.json["ipv6_cidr"], Value::Null, "{}", listed.json);
+
+    let (first, second, third) = (
+        common::Device::new(),
+        common::Device::new(),
+        common::Device::new(),
+    );
+    // Los tokens son de un solo uso: uno por equipo.
+    for device in [&first, &second] {
+        let token = t.token(&owner, net, true).await;
+        assert_eq!(t.enroll(&token, device).await.status, StatusCode::CREATED);
+    }
+    let addrs: Vec<(i16, String)> = sqlx::query_as(
+        "SELECT family, host(addr) FROM ip_allocations WHERE network_id=$1 ORDER BY addr",
+    )
+    .bind(net)
+    .fetch_all(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        addrs,
+        vec![(4, "10.244.0.10".to_owned()), (4, "10.244.0.11".to_owned())]
+    );
+    // La configuración de un equipo sin IPv6 se firma igual.
+    let r = t.config(&first, common::now(), [2; 16]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    // El rango está lleno aunque al bloque le queden direcciones.
+    let token = t.token(&owner, net, true).await;
+    t.enroll(&token, &third)
+        .await
+        .error(StatusCode::CONFLICT, "network_full");
+    // Un selector IPv6 no tiene dónde caer en una red solo IPv4.
+    t.json(
+        "POST",
+        &format!("/api/v1/networks/{net}/policies"),
+        Some(&owner),
+        json!({"src": {"kind": "prefix", "prefix": "fd64::/64"}, "dst": {"kind": "any"}, "proto": 0, "port_min": 0, "port_max": 0}),
+    )
+    .await
+    .error(StatusCode::BAD_REQUEST, "invalid_selector");
+    t.finish().await;
+}

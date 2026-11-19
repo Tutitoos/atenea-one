@@ -16,7 +16,7 @@ import { QueryAnnouncements } from './ui';
 import { choose } from './test-setup';
 const org = { id: '00000000-0000-4000-8000-000000000001', name: 'Organización sintética', role: 'owner' as const };
 const member = { user_id: '00000000-0000-4000-8000-000000000002', display_name: 'Persona sintética', email: 'persona@example.test', role: 'owner' };
-const network: Model<'Network'> = { id: '00000000-0000-4000-8000-000000000003', org_id: org.id, name: 'Red sintética', ipv4_cidr: '192.0.2.0/24', ipv6_cidr: '2001:db8::/64', root_anchor: 'ab'.repeat(32), root_mode: 'own', has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada' };
+const network: Model<'Network'> = { id: '00000000-0000-4000-8000-000000000003', org_id: org.id, name: 'Red sintética', ipv4_cidr: '192.0.2.0/24', ipv6_cidr: '2001:db8::/64', ipv4_pool: null, root_anchor: 'ab'.repeat(32), root_mode: 'own', has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada' };
 function mount(node: React.ReactNode) {
  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
  return { cache, ...render(<MemoryRouter><QueryClientProvider client={cache}>{node}</QueryClientProvider></MemoryRouter>) };

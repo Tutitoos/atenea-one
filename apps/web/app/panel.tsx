@@ -9,7 +9,7 @@ import { Organizations } from './organizations';
 import { Breadcrumbs } from './breadcrumbs';
 import { sections } from './sections';
 import { useClock, useNetworkEvents } from './live';
-import { secondsSince } from './domain';
+import { ranges, secondsSince } from './domain';
 import { useServerInfo } from './server-status';
 import { LocalAccess } from './accounts';
 import { AcceptInvitation, SharedNetworks, useInvitationToken } from './sharing';
@@ -128,7 +128,7 @@ function Network({ net, section, organization, memberships, sharedRole }: {
   const Component = section.Component;
   return <><Breadcrumbs organization={organization} network={{ id: net, name: network.data?.name ?? 'Red' }} section={section.label}/>
     <PageHeader title={`${network.data?.name ?? 'Red'} · ${section.label}`}
-      description={network.data && `${network.data.ipv4_cidr} · ${network.data.ipv6_cidr}`}
+      description={network.data && ranges(network.data)}
       actions={<UpdatedIndicator updatedAt={devices.dataUpdatedAt}/>}/>
     <Status query={network}/>
     <p className={connected ? 'muted' : 'warning'} role="status">{connected ? 'Eventos en vivo conectados.' :

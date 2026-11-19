@@ -494,6 +494,57 @@ td {
   margin: 20px 0;
 }
 
+.blocks {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.block-auto {
+  width: 100%;
+}
+
+.blocks button,
+.block-auto {
+  font-variant-numeric: tabular-nums;
+  padding: 6px 4px;
+  text-align: center;
+}
+
+.range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check input {
+  width: auto;
+}
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.mode-tabs button {
+  padding: 8px;
+}
+
+[role=radio][aria-checked=true],
+.mode-tabs [role=tab][aria-selected=true] {
+  background: #2f5fdc;
+  border-color: #2f5fdc;
+  color: #fff;
+}
+
 .login {
   min-height: 100vh;
   display: grid;
