@@ -16,7 +16,7 @@ export function Autostart() {
   return <section aria-label="Inicio">
     <Heading>Inicio</Heading>
     <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={preference.data ?? false} disabled={preference.isPending || !!preference.error || change.isPending} onChange={(event) => change.mutate(event.target.checked)} />Abrir al iniciar sesión</label>
-    <p className="mt-1 text-sm text-mut">Abre Atenea One en la bandeja al iniciar sesión, sin mostrar la ventana. No cambia la conexión de las redes: las gestiona el sistema.</p>
-    {(change.error ?? preference.error) && <p role="alert" className="text-bad">{(change.error ?? preference.error)?.message}</p>}
+    <p className="mt-1 text-sm text-gray-400">Abre Atenea One en la bandeja al iniciar sesión, sin mostrar la ventana. No cambia la conexión de las redes: las gestiona el sistema.</p>
+    {(change.error ?? preference.error) && <p role="alert" className="text-no">{(change.error ?? preference.error)?.message}</p>}
   </section>;
 }

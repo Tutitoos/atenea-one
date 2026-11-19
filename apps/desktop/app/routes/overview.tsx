@@ -36,22 +36,22 @@ export default function Overview() {
             const left = lease ? Math.round(lease - Date.now() / 1000) : null;
             return (
               <li key={n.network_id}>
-                <button type="button" onClick={() => { selectNetwork(n.network_id); void navigate('/devices'); }} className="flex w-full cursor-default flex-col gap-1 rounded-lg bg-card p-3 text-left focus-visible:outline-2 focus-visible:outline-sel">
+                <button type="button" onClick={() => { selectNetwork(n.network_id); void navigate('/devices'); }} className="flex w-full cursor-default flex-col gap-1 bg-panel border border-rule p-3 text-left focus-visible:outline-2 focus-visible:outline-accent-200">
                   <span className="flex items-center gap-2">
                     <Dot tone={stateTone[n.state]} />
                     <span className="font-semibold">{n.name}</span>
-                    <span className="text-xs text-mut">{n.server}</span>
-                    {health && <span className="ml-auto text-xs text-mut">{health.text}</span>}
+                    <span className="text-xs text-gray-400">{n.server}</span>
+                    {health && <span className="ml-auto text-xs text-gray-400">{health.text}</span>}
                   </span>
-                  <span className="text-xs text-mut">{stateText[n.state]}</span>
-                  {failed ? <span className="text-sm text-bad">{failed.message}</span> : !summary ? <span className="text-sm text-mut">Comprobando…</span> : (
+                  <span className="text-xs text-gray-400">{stateText[n.state]}</span>
+                  {failed ? <span className="text-sm text-no">{failed.message}</span> : !summary ? <span className="text-sm text-gray-400">Comprobando…</span> : (
                     <span className="text-sm">
                       {summary.peers} {summary.peers === 1 ? 'par' : 'pares'} ({summary.direct} {summary.direct === 1 ? 'directo' : 'directos'}, {summary.relay} por relay, {summary.other} {summary.other === 1 ? 'otro' : 'otros'})
                       {' · '}↓ {bytes(summary.down)}/s ↑ {bytes(summary.up)}/s
                       {left != null && <>{' · '}{left > 0 ? `Lease: quedan ${ago(left)}` : 'Lease caducado'}</>}
                     </span>
                   )}
-                  {health?.reasons[0] && <span className="text-sm text-warn">{health.reasons[0]}</span>}
+                  {health?.reasons[0] && <span className="text-sm text-accent-200">{health.reasons[0]}</span>}
                 </button>
               </li>
             );

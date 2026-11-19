@@ -481,11 +481,11 @@ it.each([undefined, null])('el servidor antiguo (%s) no inventa información', a
   expect(await screen.findByText('Este servidor aún no informa de su versión ni de la caducidad del certificado')).toBeInTheDocument();
 });
 
-it.each([[15, 'text-mut'], [14, 'text-warn'], [3, 'text-bad'], [0, 'text-bad'], [-1, 'text-bad']])('certificado a %s días: tono e información del servidor', async (days, tone) => {
+it.each([[15, 'text-gray-400'], [14, 'text-accent-200'], [3, 'text-no'], [0, 'text-no'], [-1, 'text-no']])('certificado a %s días: tono e información del servidor', async (days, tone) => {
   serve(agent(undefined, degraded, { ...server, server: serverInfo(Number(days)) }));
   const { container } = app('/servers/control.example.test');
   expect(await screen.findByText('0.1.6 · abcdef12')).toBeInTheDocument();
-  expect(screen.getByText(/45 s.*leases dependen del reloj/)).toHaveClass('text-warn');
+  expect(screen.getByText(/45 s.*leases dependen del reloj/)).toHaveClass('text-accent-200');
   expect(screen.getByText(Number(days) <= 0 ? /ha caducado/ : new RegExp(`Quedan ${days} días`))).toHaveClass(String(tone));
   expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
 });
@@ -495,7 +495,7 @@ it('los servicios opcionales se muestran solo cuando llegan y el desfase pequeñ
   app('/servers/control.example.test');
   expect(await screen.findByText('0.1.5 · 12345678')).toBeInTheDocument();
   expect(screen.getByText('0.1.4 · 98765432')).toBeInTheDocument();
-  expect(screen.getByText('-30 s')).toHaveClass('text-mut');
+  expect(screen.getByText('-30 s')).toHaveClass('text-gray-400');
 });
 
 it('el certificado próximo a caducar pone una insignia en su servidor y no en otro', async () => {
@@ -526,9 +526,9 @@ it('la caducidad pertenece a cada red del servidor, no a la primera red que resp
   app('/servers/control.example.test');
   const casa = await screen.findByRole('region', { name: 'Información de casa' });
   const trabajo = await screen.findByRole('region', { name: 'Información de trabajo' });
-  expect(within(casa).getByText(/Quedan 20 días/)).toHaveClass('text-mut');
-  expect(within(trabajo).getByText(/Quedan 3 días/)).toHaveClass('text-bad');
-  expect(within(trabajo).getByText(/-31 s.*leases dependen del reloj/)).toHaveClass('text-warn');
+  expect(within(casa).getByText(/Quedan 20 días/)).toHaveClass('text-gray-400');
+  expect(within(trabajo).getByText(/Quedan 3 días/)).toHaveClass('text-no');
+  expect(within(trabajo).getByText(/-31 s.*leases dependen del reloj/)).toHaveClass('text-accent-200');
 });
 
 it('una información sin certificado no inventa una caducidad ni una insignia', async () => {

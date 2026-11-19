@@ -10,7 +10,7 @@ import type { Status } from './lib/status';
 import { button, CopyButton, Heading } from './ui';
 
 /** Lista de filas libres: el `Card` común es una `<dl>` y aquí las filas llevan botones y texto, no pares término-definición. */
-const Card = ({ children }: { children: React.ReactNode }) => <div className="rounded-[10px] bg-card px-3.5">{children}</div>;
+const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-panel border border-rule px-3.5">{children}</div>;
 
 type Admin = NonNullable<Status['admin']>;
 type Dev = NonNullable<Admin['devices']>[number];
@@ -37,18 +37,18 @@ function JoinCode({ network, allowed, stale }: { network: string; allowed: boole
   const reply = write.data ? joinCodeReply.safeParse(JSON.parse(write.data)) : null;
   return <section aria-label="Código de unión">
     <Heading>Código de unión</Heading>
-    <p className="text-sm text-mut">Un solo uso. El equipo que lo use entra pendiente y se aprueba aquí, comparando su huella. El código se muestra una vez y no se guarda.</p>
+    <p className="text-sm text-gray-400">Un solo uso. El equipo que lo use entra pendiente y se aprueba aquí, comparando su huella. El código se muestra una vez y no se guarda.</p>
     <div className="mt-2 flex items-center gap-2">
-      <label className="text-sm">Caduca en <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} className="rounded border border-line bg-card px-1">
+      <label className="text-sm">Caduca en <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} className="border border-rule bg-panel px-1">
         <option value={600}>10 minutos</option><option value={3600}>1 hora</option></select></label>
       <button type="button" className={button} disabled={!allowed || stale || write.isPending} onClick={() => write.mutate({ op: 'join-code', params: { ttl } })}>Generar código</button>
     </div>
-    {reply?.success && <div className="mt-2 rounded-md border border-line p-2">
+    {reply?.success && <div className="mt-2 border border-rule p-2">
       <code className="break-all select-text" aria-label="Código de unión generado">{reply.data.code}</code>
       <CopyButton value={reply.data.code} label="código de unión" />
-      <p className="text-xs text-mut">Caduca el {new Date(reply.data.expires_at).toLocaleString('es')}.</p>
+      <p className="text-xs text-gray-400">Caduca el {new Date(reply.data.expires_at).toLocaleString('es')}.</p>
     </div>}
-    {write.error && <p role="alert" className="text-bad">{write.error.message}</p>}
+    {write.error && <p role="alert" className="text-no">{write.error.message}</p>}
   </section>;
 }
 
@@ -58,7 +58,7 @@ function Pending({ network, devices, allowed, stale }: { network: string; device
   const pending = devices.filter((d) => d.status === 'pending' && d.in_scope);
   return <section aria-label="Pendientes">
     <Heading>Pendientes de aprobar</Heading>
-    {pending.length === 0 ? <p className="text-sm text-mut">No hay dispositivos pendientes de este alcance.</p> : <Card>{pending.map((d) => <div key={d.id} className="border-b border-line py-2.5 last:border-b-0">
+    {pending.length === 0 ? <p className="text-sm text-gray-400">No hay dispositivos pendientes de este alcance.</p> : <Card>{pending.map((d) => <div key={d.id} className="border-b border-rule py-2.5 last:border-b-0">
       <div className="flex items-center justify-between gap-3"><span>{d.name}</span>
         <button type="button" className={button} disabled={!allowed || stale} onClick={() => setOpen(open === d.id ? null : d.id)}>{open === d.id ? 'Cancelar' : 'Aprobar…'}</button></div>
       {open === d.id && <div className="mt-2">
@@ -67,7 +67,7 @@ function Pending({ network, devices, allowed, stale }: { network: string; device
         <button type="button" className={`${button} mt-2`} disabled={write.isPending} onClick={() => write.mutate({ op: 'approve', params: { fingerprint: d.fingerprint } }, { onSuccess: () => setOpen(null) })}>Confirmar aprobación</button>
       </div>}
     </div>)}</Card>}
-    {write.error && <p role="alert" className="text-bad">{write.error.message}</p>}
+    {write.error && <p role="alert" className="text-no">{write.error.message}</p>}
   </section>;
 }
 
@@ -76,14 +76,14 @@ function Devices({ network, devices, allowed, stale }: { network: string; device
   const [confirm, setConfirm] = useState<string | null>(null);
   return <section aria-label="Dispositivos de la red">
     <Heading>Dispositivos de la red</Heading>
-    <Card>{devices.map((d) => <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2.5 last:border-b-0">
-      <span>{d.name} <span className="text-xs text-mut">· {d.status === 'approved' ? 'aprobado' : d.status === 'pending' ? 'pendiente' : 'revocado'}{d.in_scope ? '' : ' · fuera de tu alcance'}</span></span>
+    <Card>{devices.map((d) => <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-rule py-2.5 last:border-b-0">
+      <span>{d.name} <span className="text-xs text-gray-400">· {d.status === 'approved' ? 'aprobado' : d.status === 'pending' ? 'pendiente' : 'revocado'}{d.in_scope ? '' : ' · fuera de tu alcance'}</span></span>
       {allowed && d.in_scope && d.status !== 'revoked' && (confirm === d.id
         ? <span className="flex gap-2"><button type="button" className={button} disabled={stale || write.isPending} onClick={() => write.mutate({ op: 'revoke', params: { device: d.id } }, { onSuccess: () => setConfirm(null) })}>{`Confirmar revocación de ${d.name}`}</button>
           <button type="button" className={button} onClick={() => setConfirm(null)}>Cancelar</button></span>
         : <button type="button" className={button} disabled={stale} onClick={() => setConfirm(d.id)}>{`Revocar ${d.name}`}</button>)}
     </div>)}</Card>
-    {write.error && <p role="alert" className="text-bad">{write.error.message}</p>}
+    {write.error && <p role="alert" className="text-no">{write.error.message}</p>}
   </section>;
 }
 
@@ -98,21 +98,21 @@ function Policies({ network, devices, policies, canWrite, stale }: { network: st
   const mine = (p: Pol) => !!p.created_by_device && [p.src, p.dst].every((s) => s.kind === 'device' && devices.some((d) => d.id === s.device_id && d.in_scope));
   return <section aria-label="Políticas">
     <Heading>Políticas</Heading>
-    {policies.length === 0 ? <p className="text-sm text-mut">No hay políticas.</p> : <Card>{policies.map((p) => <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2.5 last:border-b-0">
+    {policies.length === 0 ? <p className="text-sm text-gray-400">No hay políticas.</p> : <Card>{policies.map((p) => <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-rule py-2.5 last:border-b-0">
       <span>{end(devices, p.src)} → {end(devices, p.dst)} · {protocols[p.proto] ?? p.proto}{p.proto === 6 || p.proto === 17 ? (p.port_min === 0 ? ' · todos los puertos' : ` · ${p.port_min === p.port_max ? p.port_min : `${p.port_min}–${p.port_max}`}`) : ''}
-        <span className="text-xs text-mut">{p.created_by_device ? ` · creada por ${nameOf(devices, p.created_by_device)}` : ' · de un administrador'}</span></span>
+        <span className="text-xs text-gray-400">{p.created_by_device ? ` · creada por ${nameOf(devices, p.created_by_device)}` : ' · de un administrador'}</span></span>
       {canWrite && mine(p) && <button type="button" className={button} disabled={stale || write.isPending} onClick={() => write.mutate({ op: 'policy-remove', params: { policy: p.id } })}>{`Borrar política ${end(devices, p.src)} → ${end(devices, p.dst)}`}</button>}
     </div>)}</Card>}
     {canWrite && <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); write.mutate({ op: 'policy-add', params: { from, to, proto, ports: withPorts ? ports.trim() : '' } }); }}>
-      <label className="text-sm">Origen <select required value={from} onChange={(e) => setFrom(e.target.value)} className="rounded border border-line bg-card px-1"><option value="">—</option>{members.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-      <label className="text-sm">Destino <select required value={to} onChange={(e) => setTo(e.target.value)} className="rounded border border-line bg-card px-1"><option value="">—</option>{members.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-      <label className="text-sm">Protocolo <select value={proto} onChange={(e) => setProto(e.target.value)} className="rounded border border-line bg-card px-1">
+      <label className="text-sm">Origen <select required value={from} onChange={(e) => setFrom(e.target.value)} className="border border-rule bg-panel px-1"><option value="">—</option>{members.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+      <label className="text-sm">Destino <select required value={to} onChange={(e) => setTo(e.target.value)} className="border border-rule bg-panel px-1"><option value="">—</option>{members.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+      <label className="text-sm">Protocolo <select value={proto} onChange={(e) => setProto(e.target.value)} className="border border-rule bg-panel px-1">
         <option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option><option value="icmpv6">ICMPv6</option><option value="any">Cualquiera</option></select></label>
-      {withPorts && <label className="text-sm">Puertos <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="22 o 8000-8100" pattern="[0-9]{1,5}(-[0-9]{1,5})?" className="w-36 rounded border border-line bg-card px-1" /></label>}
+      {withPorts && <label className="text-sm">Puertos <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="22 o 8000-8100" pattern="[0-9]{1,5}(-[0-9]{1,5})?" className="w-36 border border-rule bg-panel px-1" /></label>}
       <button type="submit" className={button} disabled={stale || !from || !to || write.isPending}>Crear política</button>
-      <p className="basis-full text-xs text-mut">Como toda política, también permite el sentido inverso: sin puertos, el tráfico de ida y vuelta; con puertos, el inverso no restringe puertos.</p>
+      <p className="basis-full text-xs text-gray-400">Como toda política, también permite el sentido inverso: sin puertos, el tráfico de ida y vuelta; con puertos, el inverso no restringe puertos.</p>
     </form>}
-    {write.error && <p role="alert" className="text-bad">{write.error.message}</p>}
+    {write.error && <p role="alert" className="text-no">{write.error.message}</p>}
   </section>;
 }
 
@@ -125,10 +125,10 @@ export function Administration({ status, network, canWrite, stale }: { status: S
   const devices = admin.devices ?? [];
   return <section aria-label="Administración">
     <Heading>Administración</Heading>
-    <p className="text-sm text-mut">Un administrador concedió a este equipo permisos sobre la red. Alcance de las escrituras: {scopeText[scope.kind]}. Cada cambio pide la autorización de administrador del sistema y puede tardar hasta 30 s en verse.</p>
+    <p className="text-sm text-gray-400">Un administrador concedió a este equipo permisos sobre la red. Alcance de las escrituras: {scopeText[scope.kind]}. Cada cambio pide la autorización de administrador del sistema y puede tardar hasta 30 s en verse.</p>
     <ul className="mt-1 text-sm" aria-label="Permisos concedidos">{scopes.map((s) => <li key={s}><code>{s}</code></li>)}</ul>
-    {!canWrite && <p className="mt-1 text-sm text-mut">En este sistema la aplicación no puede hacer cambios: usa <code>atenea network</code> en una terminal con privilegios.</p>}
-    {admin.last_error && <p className="mt-1 text-sm text-warn" role="status">La última lectura falló ({admin.last_error}); se muestra la anterior.</p>}
+    {!canWrite && <p className="mt-1 text-sm text-gray-400">En este sistema la aplicación no puede hacer cambios: usa <code>atenea network</code> en una terminal con privilegios.</p>}
+    {admin.last_error && <p className="mt-1 text-sm text-accent-200" role="status">La última lectura falló ({admin.last_error}); se muestra la anterior.</p>}
     {scopes.includes('write:join-codes') && <JoinCode network={network} allowed={may('write:join-codes')} stale={stale} />}
     {scopes.includes('read:devices') && <>
       {scopes.includes('write:approve-devices') && <Pending network={network} devices={devices} allowed={may('write:approve-devices')} stale={stale} />}

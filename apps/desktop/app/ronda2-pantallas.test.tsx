@@ -78,7 +78,7 @@ it('Diagnóstico: etiquetas explicadas, «ninguno» neutro y relays sin asignaci
   diagnostics({ sample: sample() });
   expect(screen.getByText('Control plane (servidor de control)')).toBeInTheDocument();
   expect(screen.getByText('Coordinator (coordinador)')).toBeInTheDocument();
-  expect(screen.getAllByText('ninguno')[0]).not.toHaveClass('text-bad');
+  expect(screen.getAllByText('ninguno')[0]).not.toHaveClass('text-no');
   expect(screen.getByText('Este equipo no usa ningún relay ahora')).toBeInTheDocument();
 });
 
@@ -111,7 +111,7 @@ it('Redes: «Salir de la red» es destructivo, enfoca Cancelar, devuelve el foco
   const dialog = screen.getByRole('alertdialog', { name: 'Salir de casa' });
   expect(within(dialog).getByText('No se puede deshacer.').tagName).toBe('STRONG');
   expect(dialog.firstElementChild?.firstElementChild).toHaveTextContent('No se puede deshacer.');
-  expect(within(dialog).getByRole('button', { name: 'Salir de la red' })).toHaveClass('bg-bad');
+  expect(within(dialog).getByRole('button', { name: 'Salir de la red' })).toHaveClass('border-no', 'text-no');
   expect(within(dialog).getByRole('button', { name: 'Cancelar' })).toHaveFocus();
   expect((await axe(container)).violations).toEqual([]);
 

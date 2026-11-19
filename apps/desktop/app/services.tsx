@@ -10,14 +10,14 @@ type PeerService = NonNullable<Peer['services']>[number];
 /** Dirección para copiar o leer (la que construye Go para abrir): IPv4 si la hay, si no IPv6 entre corchetes. */
 const hostOf = (addrs: string[]) => { const a = addrs.find((x) => !x.includes(':')) ?? addrs[0]; return a?.includes(':') ? `[${a}]` : a; };
 
-const Notice = () => <p className="mb-2 text-xs text-mut">Que un servicio figure aquí no significa que se pueda alcanzar: lo deciden las políticas de la red y el cortafuegos de cada equipo.</p>;
+const Notice = () => <p className="mb-2 text-xs text-gray-400">Que un servicio figure aquí no significa que se pueda alcanzar: lo deciden las políticas de la red y el cortafuegos de cada equipo.</p>;
 
 function Open({ network, deviceId, service, disabled }: { network: string; deviceId?: string | null; service: PeerService; disabled: boolean }) {
   // La interfaz solo envía el id del par y el puerto: Go construye la URL con lo que ese par publicó.
   const action = useMutation({ mutationFn: () => openService(network, deviceId ?? '', service.port) });
   return <>
     <button type="button" className={button} disabled={disabled || action.isPending || !deviceId} aria-label={`Abrir el puerto ${service.port}`} onClick={() => action.mutate()}>Abrir</button>
-    {action.error && <p role="alert" className="basis-full text-bad">{action.error.message}</p>}
+    {action.error && <p role="alert" className="basis-full text-no">{action.error.message}</p>}
   </>;
 }
 
@@ -29,12 +29,12 @@ export function PeerServices({ peer, network, stale }: { peer: Peer; network: st
     <Heading>Servicios</Heading>
     <Notice />
     {list.length === 0 || !host
-      ? <p className="text-mut">Este dispositivo no publica servicios en esta red. Solo los publica si tiene la publicación activada y hay una política hacia él.</p>
+      ? <p className="text-gray-400">Este dispositivo no publica servicios en esta red. Solo los publica si tiene la publicación activada y hay una política hacia él.</p>
       : <Card>{list.map((s) => {
         const address = `${s.scheme}://${host}:${s.port}/`;
-        return <div key={s.port} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line py-2.5 last:border-b-0">
+        return <div key={s.port} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule py-2.5 last:border-b-0">
           <dt className="min-w-0 flex-1 break-words"><span className="tabular-nums">{s.port}</span>{s.label ? <> · {s.label}</> : null}</dt>
-          <dd className="flex items-center gap-2"><span className="rounded border border-line px-1 text-xs">{s.scheme}</span>
+          <dd className="flex items-center gap-2"><span className="border border-rule px-1 text-xs">{s.scheme}</span>
             <Open network={network} deviceId={peer.device_id} service={s} disabled={stale} />
             <CopyButton value={address} label={`dirección ${address}`} />
           </dd>
@@ -57,14 +57,14 @@ export function OwnServices({ status, network, stale }: { status: Status; networ
   return <section aria-label="Servicios">
     <Heading>Servicios</Heading>
     <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={on} disabled={stale || !canJoin || change.isPending} onChange={(e) => change.mutate(e.target.checked)} />Publicar mis servicios en esta red</label>
-    <p className="mt-1 text-sm text-mut">Apagado por defecto. Al activarlo, los dispositivos con una política hacia este equipo ven los puertos TCP que escucha y los abren con un clic. Publicar no abre nada: el acceso lo deciden las políticas y el cortafuegos. Pide la autorización de administrador del sistema.</p>
-    {!canJoin && !info.isPending && <p className="mt-1 text-sm text-mut">En este sistema la aplicación no puede cambiar esta opción: se configura en el agente (<code>[services] publish</code> en <code>agent.toml</code>).</p>}
-    {change.error && <p role="alert" className="text-bad">{change.error.message}</p>}
+    <p className="mt-1 text-sm text-gray-400">Apagado por defecto. Al activarlo, los dispositivos con una política hacia este equipo ven los puertos TCP que escucha y los abren con un clic. Publicar no abre nada: el acceso lo deciden las políticas y el cortafuegos. Pide la autorización de administrador del sistema.</p>
+    {!canJoin && !info.isPending && <p className="mt-1 text-sm text-gray-400">En este sistema la aplicación no puede cambiar esta opción: se configura en el agente (<code>[services] publish</code> en <code>agent.toml</code>).</p>}
+    {change.error && <p role="alert" className="text-no">{change.error.message}</p>}
     <h3 className="mb-1 mt-4 text-sm font-semibold">Servicios detectados en este equipo</h3>
-    {own.length === 0 ? <p className="text-sm text-mut">No se detecta ningún servicio TCP.</p> : <>
+    {own.length === 0 ? <p className="text-sm text-gray-400">No se detecta ningún servicio TCP.</p> : <>
       <p className="mb-1 text-sm tabular-nums" aria-label="Puertos detectados">{own.map((s) => s.port).join(', ')}{status.services_truncated ? ' …' : ''}</p>
-      {status.services_truncated && <p className="text-sm text-mut">Lista recortada: hay más servicios de los que se muestran.</p>}
+      {status.services_truncated && <p className="text-sm text-gray-400">Lista recortada: hay más servicios de los que se muestran.</p>}
     </>}
-    <p className="text-sm text-mut">Solo lectura. {on ? 'Se publican en esta red.' : 'No se publican mientras el interruptor esté apagado.'}</p>
+    <p className="text-sm text-gray-400">Solo lectura. {on ? 'Se publican en esta red.' : 'No se publican mientras el interruptor esté apagado.'}</p>
   </section>;
 }

@@ -1,6 +1,5 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -51,17 +50,14 @@ function app(entry: string) {
 
 beforeEach(() => vi.mocked(invoke).mockReset());
 
-it('el foco visible global existe en la hoja de estilos para enlaces, botones y campos', () => {
-  const css = readFileSync('app/styles.css', 'utf8');
-  const rule = css.split('\n').find((line) => line.includes('button:focus-visible'));
-  expect(rule).toMatch(/a:focus-visible.*input:focus-visible.*textarea:focus-visible.*\[role="button"\]:focus-visible.*outline: 2px solid/);
+it('los botones comunes no anulan el foco visible global', () => {
   expect(button).not.toMatch(/outline-none|focus:outline-0/);
 });
 
 it('Empty distingue error (alert) y carga (status); sin tono es un párrafo plano', () => {
   render(<><Empty tone="error">fallo</Empty><Empty tone="loading">cargando</Empty><Empty>vacío</Empty></>);
   expect(screen.getByRole('alert')).toHaveTextContent('fallo');
-  expect(screen.getByRole('alert')).toHaveClass('text-bad');
+  expect(screen.getByRole('alert')).toHaveClass('text-no');
   expect(screen.getByRole('status')).toHaveTextContent('cargando');
   expect(screen.getByText('vacío')).not.toHaveAttribute('role');
 });

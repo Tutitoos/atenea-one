@@ -46,7 +46,7 @@ const Item = memo(function Item({ e, onMenu, stale }: { e: Entry; onMenu: OpenMe
         onClick={(ev) => { if (stale) ev.preventDefault(); }}
         onContextMenu={(ev) => { ev.preventDefault(); if (!stale) onMenu(e.id, ev.clientX, ev.clientY, ev.currentTarget); }}
         onKeyDown={(ev) => { if (!stale && (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10'))) { ev.preventDefault(); below(ev.currentTarget); } }}
-        className={({ isActive }) => `flex min-w-0 flex-1 cursor-default items-start gap-2 rounded-lg px-2 py-1.5 ${isActive ? 'bg-sel text-white' : ''}`}
+        className={({ isActive }) => `flex min-w-0 flex-1 cursor-default items-start gap-2  px-2 py-1.5 ${isActive ? 'bg-accent-200 text-shell' : ''}`}
       >
         <Dot tone={e.tone} list />
         <span className="min-w-0 flex-1">
@@ -56,12 +56,12 @@ const Item = memo(function Item({ e, onMenu, stale }: { e: Entry; onMenu: OpenMe
         </span>
         {path && (
           <span className="flex shrink-0 flex-col items-end gap-0.5">
-            <span className="rounded border border-current px-1 text-[11px] leading-4">{path.label}</span>
+            <span className="border border-current px-1 text-[11px] leading-4">{path.label}</span>
             <Sparkline points={e.points} />
           </span>
         )}
       </NavLink>
-      <button type="button" disabled={stale} aria-label={`Acciones de ${e.name}`} aria-haspopup="menu" onClick={(ev) => below(ev.currentTarget)} className="mt-1 size-6 shrink-0 cursor-default rounded text-mut hover:bg-fg/10 focus-visible:outline-2 focus-visible:outline-sel disabled:opacity-50">⋯</button>
+      <button type="button" disabled={stale} aria-label={`Acciones de ${e.name}`} aria-haspopup="menu" onClick={(ev) => below(ev.currentTarget)} className="mt-1 size-6 shrink-0 cursor-default text-gray-400 hover:bg-raise focus-visible:outline-2 focus-visible:outline-accent-200 disabled:opacity-50">⋯</button>
     </div>
   );
 }, sameItem);
@@ -70,7 +70,7 @@ const Group = memo(function Group({ title, entries, onMenu, stale }: { title: st
   if (!entries.length) return null;
   return (
     <section aria-label={title}>
-      <h2 className="mx-2 mb-1 mt-3.5 text-[13px] font-semibold text-mut">{title}</h2>
+      <h2 className="mx-2 mb-1 mt-3.5 text-[13px] font-semibold text-gray-400">{title}</h2>
       {entries.map((e) => <Item key={e.id} e={e} onMenu={onMenu} stale={stale} />)}
     </section>
   );
@@ -79,7 +79,7 @@ const Group = memo(function Group({ title, entries, onMenu, stale }: { title: st
 /** Primera carga: filas con el aspecto de `Item`. */
 const ListSkeleton = () => (
   <Loading>
-    {[0, 1, 2, 3].map((i) => <div key={i} aria-hidden="true" className="mb-1 flex items-start gap-2 px-2 py-1.5"><Skeleton className="mt-1 size-2.5 rounded-full" /><div className="flex-1 space-y-1.5"><Skeleton className="h-3.5 w-3/5" /><Skeleton className="h-3 w-2/5" /></div></div>)}
+    {[0, 1, 2, 3].map((i) => <div key={i} aria-hidden="true" className="mb-1 flex items-start gap-2 px-2 py-1.5"><Skeleton className="mt-1 size-2.5 " /><div className="flex-1 space-y-1.5"><Skeleton className="h-3.5 w-3/5" /><Skeleton className="h-3 w-2/5" /></div></div>)}
   </Loading>
 );
 
@@ -143,9 +143,9 @@ export default function Devices() {
 
   return (
     <>
-      <div className="flex w-[300px] shrink-0 flex-col border-r border-line px-3 py-4">
+      <div className="flex w-[300px] shrink-0 flex-col border-r border-rule px-3 py-4">
         <h1 className="mb-1 text-xl font-semibold">Dispositivos</h1>
-        {sample && <p aria-label="Resumen de la red" className="mb-3 text-xs text-mut"><span className="whitespace-nowrap">{`↓ ${bytes(summary.down)}/s · ↑ ${bytes(summary.up)}/s`}</span>{' · '}<span className="whitespace-nowrap">{`${summary.peers} ${summary.peers === 1 ? 'par' : 'pares'}${summary.peers ? ` (${[summary.direct && `${summary.direct} directo`, summary.relay && `${summary.relay} relay`, summary.other && `${summary.other} ${summary.other === 1 ? 'otro' : 'otros'}`].filter(Boolean).join(', ')})` : ''}`}</span></p>}
+        {sample && <p aria-label="Resumen de la red" className="mb-3 text-xs text-gray-400"><span className="whitespace-nowrap">{`↓ ${bytes(summary.down)}/s · ↑ ${bytes(summary.up)}/s`}</span>{' · '}<span className="whitespace-nowrap">{`${summary.peers} ${summary.peers === 1 ? 'par' : 'pares'}${summary.peers ? ` (${[summary.direct && `${summary.direct} directo`, summary.relay && `${summary.relay} relay`, summary.other && `${summary.other} ${summary.other === 1 ? 'otro' : 'otros'}`].filter(Boolean).join(', ')})` : ''}`}</span></p>}
         <input
           ref={search}
           type="search"
@@ -155,11 +155,11 @@ export default function Devices() {
           spellCheck={false}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full select-text rounded-lg border border-line bg-card px-2.5 py-1.5 text-fg"
+          className="w-full select-text border border-rule bg-panel px-2.5 py-1.5 text-gray-100"
         />
         <div role="group" aria-label="Filtrar por conexión" className="mt-2 flex flex-wrap gap-1">
           {FILTERS.map((f) => (
-            <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)} className={`cursor-default rounded-md px-2 py-0.5 text-xs focus-visible:outline-2 focus-visible:outline-sel ${filter === f.id ? 'bg-sel text-white' : 'border border-line bg-card'}`}>
+            <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)} className={`cursor-default px-2 py-0.5 text-xs focus-visible:outline-2 focus-visible:outline-accent-200 ${filter === f.id ? 'bg-accent-200 text-shell' : 'border border-rule bg-panel'}`}>
               {f.label} <span className="tabular-nums">{counts[f.id]}</span>
             </button>
           ))}
@@ -168,7 +168,7 @@ export default function Devices() {
           {sample ? <><Group title="Local" entries={selfEntries} onMenu={openMenu} stale={stale} /><Group title="Dispositivos" entries={peerEntries} onMenu={openMenu} stale={stale} />{!selfEntries.length && !peerEntries.length && (
             <div>
               <Empty>Sin resultados.</Empty>
-              {filtered && <div className="px-4 pb-2"><p className="mb-2 text-xs text-mut">{[query.trim() && `la búsqueda «${query.trim()}»`, filter !== 'all' && `el filtro «${filterLabel}»`].filter(Boolean).join(' y ')} no deja ningún dispositivo.</p><button type="button" className={button} onClick={() => { setQuery(''); setFilter('all'); }}>Quitar filtros</button></div>}
+              {filtered && <div className="px-4 pb-2"><p className="mb-2 text-xs text-gray-400">{[query.trim() && `la búsqueda «${query.trim()}»`, filter !== 'all' && `el filtro «${filterLabel}»`].filter(Boolean).join(' y ')} no deja ningún dispositivo.</p><button type="button" className={button} onClick={() => { setQuery(''); setFilter('all'); }}>Quitar filtros</button></div>}
             </div>
           )}</> : agent.error ? <Empty>Sin datos del agente.</Empty> : <ListSkeleton />}
         </div>

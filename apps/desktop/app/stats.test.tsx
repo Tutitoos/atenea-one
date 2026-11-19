@@ -80,8 +80,8 @@ it('los contadores se agrupan por familia, ocultan los ceros y marcan los errore
 
   view('/diagnostics', { sample: sample({ counters }) });
   const relay = within(screen.getByRole('region', { name: 'Relay' }));
-  expect(relay.getByText('1')).toHaveClass('text-warn');
-  expect(screen.getByText('12.345')).not.toHaveClass('text-warn');
+  expect(relay.getByText('1')).toHaveClass('text-accent-200');
+  expect(screen.getByText('12.345')).not.toHaveClass('text-accent-200');
   expect(screen.queryByText('path_switches')).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('checkbox', { name: /Mostrar todos/ }));
   expect(screen.getByText('path_switches')).toBeInTheDocument();
