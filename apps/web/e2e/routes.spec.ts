@@ -130,10 +130,14 @@ test('aprobar con SNAT explícito, configurar DNS dividido y revocar una ruta de
   console.log(`Panel: router forwarding correcto y cliente instalada; ping y TCP ${transfer.bytes} bytes íntegros, origen en h=${transfer.source}.`);
 
   await open(page, 'DNS y certificado');
-  await page.getByLabel('Servidores DNS (separados por espacios)').fill('192.168.50.1');
-  await page.getByLabel('Dominios de enrutamiento (separados por espacios)').fill('lab.internal');
-  await page.getByRole('button', { name: 'Guardar DNS' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'DNS actualizado.' })).toHaveText('DNS actualizado.');
+  const saved = page.getByRole('status').filter({ hasText: 'DNS actualizado.' });
+  await page.getByLabel('Añadir servidor DNS').fill('192.168.50.1');
+  await page.getByRole('button', { name: 'Añadir servidor' }).click();
+  await expect(page.getByRole('button', { name: 'Quitar 192.168.50.1' })).toBeVisible();
+  await page.getByLabel('Añadir dominio').fill('lab.internal');
+  await page.getByRole('button', { name: 'Añadir dominio' }).click();
+  await expect(page.getByRole('button', { name: 'Quitar lab.internal' })).toBeVisible();
+  await expect(saved).toHaveText('DNS actualizado.');
   await expect.poll(() => labOk('dns-log', 'c') ? lab('dns-log', 'c') : '', { timeout: 90_000 }).toContain('domain atenea0 ~lab.internal');
   const dns = lab('dns-log', 'c');
   expect(dns).toContain('dns atenea0 192.168.50.1');
