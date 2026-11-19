@@ -15,7 +15,7 @@ Astro + Starlight + Tailwind 4, sitio estático en español. Estas reglas se sum
 ## Estilo
 
 - `global.css` importa utilities de Tailwind en la capa `utilities` y **no** importa preflight. Una regla de componente sin capa gana a cualquier utility, así que los resets de margen viven solo en el `@layer base` de `Layout.astro`.
-- Una sola paleta, en el `@theme` de `global.css`; nadie escribe un literal de color en otro sitio. Texto de prosa `gray-300`, etiquetas `gray-400`; nada más tenue lleva texto (AA, 4,5:1).
+- Una sola paleta, en `packages/ui-tokens/theme.css` (la comparten sitio, panel y app); aquí solo viven los `--color-graph-*` del `@theme` de `global.css`. Nadie escribe un literal de color en otro sitio. Texto de prosa `gray-300`, etiquetas `gray-400`; nada más tenue lleva texto (AA, 4,5:1).
 - Una sola regla de tipografía: `font-mono` para titulares, etiquetas, identificadores, comandos y cifras; sans para la prosa. Los radios son `0` y no hay sombras.
 - Si cambias `PROJECT_TAGLINE`, cambia la misma frase en cualquier contenido que la copie.
 

@@ -56,7 +56,8 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   await page.getByRole('dialog').getByRole('button', { name: 'Crear organización' }).click();
   await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
   await dismiss(page);
-  await page.getByRole('combobox', { name: /^Organización/ }).selectOption({ label: 'laboratorio · owner' });
+  await page.getByRole('combobox', { name: /^Organización/ }).click();
+  await page.getByRole('option', { name: 'laboratorio · owner' }).click();
   await page.getByRole('button', { name: 'Crear red' }).click();
   await page.getByLabel('Nombre').fill('red-lab');
   await page.getByLabel('CIDR IPv4').fill('10.77.0.0/24');
@@ -157,9 +158,16 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
     await expect(page.getByText(action).first()).toBeVisible();
   }
 
-  // --- Temas y móvil
-  await page.getByLabel('Tema').selectOption('oscuro');
-  await axeClean(page, 'tema oscuro');
+  // --- Piel y móvil
+  await axeClean(page, 'piel');
+  const skin = await page.evaluate(() => ({
+    body: getComputedStyle(document.body).fontFamily,
+    heading: getComputedStyle(document.querySelector('h1')!).fontFamily,
+    radius: getComputedStyle(document.querySelector('button')!).borderRadius,
+  }));
+  expect(skin.body).toContain('Geist Variable');
+  expect(skin.heading).toContain('Geist Mono Variable');
+  expect(skin.radius).toBe('0px');
   await page.setViewportSize({ width: 390, height: 800 });
   await open(page, 'Dispositivos');
   await axeClean(page, 'móvil');

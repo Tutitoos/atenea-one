@@ -9,7 +9,7 @@ export function PanelButton({ network, deviceId }: { network: string; deviceId?:
   const action = useMutation({ mutationFn: () => openPanel(network, deviceId) });
   return <div>
     <button type="button" className={button} disabled={action.isPending} onClick={() => action.mutate()}>Abrir en el panel</button>
-    {action.error && <p role="alert" className="text-bad">{action.error.message}</p>}
+    {action.error && <p role="alert" className="text-no">{action.error.message}</p>}
   </div>;
 }
 
@@ -28,8 +28,8 @@ export function PingButton({ network, addrs, name = 'Probar conexión', auto = f
     // `ping.mutate` es estable: solo importa el cambio de `auto`.
   }, [auto]);
   return <div>
-    <button type="button" aria-label={ping.isPending ? 'Probando…' : name} disabled={ping.isPending || !address} className="rounded-md border border-line px-3 py-1 disabled:opacity-50" onClick={() => ping.mutate()}>{ping.isPending ? 'Probando…' : 'Probar conexión'}</button>
-    {ping.error && <p role="alert" className="text-bad">{ping.error.message}</p>}
+    <button type="button" aria-label={ping.isPending ? 'Probando…' : name} disabled={ping.isPending || !address} className="border border-rule px-3 py-1 disabled:opacity-50" onClick={() => ping.mutate()}>{ping.isPending ? 'Probando…' : 'Probar conexión'}</button>
+    {ping.error && <p role="alert" className="text-no">{ping.error.message}</p>}
     {ping.data && <div role="status" className="mt-2 text-sm tabular-nums">
       <p>Enviados: {ping.data.sent} · Recibidos: {ping.data.received}</p>
       <p>Pérdida: {ping.data.loss_pct} %</p>

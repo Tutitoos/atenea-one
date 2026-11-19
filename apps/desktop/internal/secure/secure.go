@@ -14,7 +14,8 @@ import (
 
 // CSP es la de ADR-011 §2 adaptada a Wails: el puente habla con el origen de la propia aplicación
 // (`connect-src 'self'`) en lugar de `ipc:` de Tauri. Sin `unsafe-inline`, sin `unsafe-eval` y sin orígenes remotos.
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'"
+// `font-src 'self'` solo sirve las fuentes Geist empaquetadas en la propia aplicación.
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'"
 
 // Middleware envuelve el manejador de recursos de Wails: CSP en toda respuesta (también en los rechazos) y filtro
 // de objetos del runtime.

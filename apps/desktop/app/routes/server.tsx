@@ -45,8 +45,8 @@ function Information({ info }: { info: Reply['status']['server'] }) {
       {info.coordinator && <Row label="Coordinator">{`${info.coordinator.version} · ${info.coordinator.commit.slice(0, 8)}`}</Row>}
       {info.relay && <Row label="Relay">{`${info.relay.version} · ${info.relay.commit.slice(0, 8)}`}</Row>}
       <Row label="Hora del servidor">{new Date(info.server_time_unix * 1000).toLocaleString('es')}</Row>
-      <Row label="Desfase de reloj"><span title={Math.abs(info.clock_skew_secs) > 30 ? 'lease: concesión temporal de la dirección del dispositivo en la red' : undefined} className={Math.abs(info.clock_skew_secs) > 30 ? 'text-warn' : 'text-mut'}>{`${info.clock_skew_secs} s${Math.abs(info.clock_skew_secs) > 30 ? ' · Los leases dependen del reloj' : ''}`}</span></Row>
-      <Row label="Caducidad del certificado de la red">{left == null ? 'no informada' : <span className={left <= 3 * 86400 ? 'text-bad' : left <= 14 * 86400 ? 'text-warn' : 'text-mut'}>{`${left <= 0 ? 'El certificado ha caducado' : `Quedan ${Math.ceil(left / 86400)} días`} · ${new Date(info.issuer_cert_not_after_unix! * 1000).toLocaleString('es')}`}</span>}</Row>
+      <Row label="Desfase de reloj"><span title={Math.abs(info.clock_skew_secs) > 30 ? 'lease: concesión temporal de la dirección del dispositivo en la red' : undefined} className={Math.abs(info.clock_skew_secs) > 30 ? 'text-accent-200' : 'text-gray-400'}>{`${info.clock_skew_secs} s${Math.abs(info.clock_skew_secs) > 30 ? ' · Los leases dependen del reloj' : ''}`}</span></Row>
+      <Row label="Caducidad del certificado de la red">{left == null ? 'no informada' : <span className={left <= 3 * 86400 ? 'text-no' : left <= 14 * 86400 ? 'text-accent-200' : 'text-gray-400'}>{`${left <= 0 ? 'El certificado ha caducado' : `Quedan ${Math.ceil(left / 86400)} días`} · ${new Date(info.issuer_cert_not_after_unix! * 1000).toLocaleString('es')}`}</span>}</Row>
       <Row label="Última lectura">{new Date(info.fetched_unix * 1000).toLocaleString('es')}</Row>
       {info.last_error && <Row label="Error de lectura">{info.last_error}</Row>}
     </Card>}
@@ -75,7 +75,7 @@ export default function Server() {
     },
   });
   return <main className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
-    <Link to="/servers" className="text-sel underline">Servidores</Link>
+    <Link to="/servers" className="text-accent-200 underline">Servidores</Link>
     <h1 className="mt-2 text-xl font-semibold">{host}</h1>
     {networks.error ? <Empty tone="error">{networks.error.message}</Empty> : !networks.data ? <Loading className="mt-4 space-y-3"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></Loading> : !server ? <Empty>Este servidor ya no tiene redes unidas.</Empty> : <>
       {connected.length > 0 && read.isPending ? <Loading className="mt-4 space-y-3"><Skeleton className="h-24 w-full" /></Loading> : read.data?.length ? <Services status={read.data[0].status} /> : <Empty>Sin redes conectadas a este servidor</Empty>}
@@ -87,23 +87,23 @@ export default function Server() {
       <ul>{read.data?.flatMap(({ id, status }) => status.peers.filter((peer) => peer.role === 'server').map((peer) => {
         const detail = `${peer.addrs.join(', ')} · ${pathLabel(peer.path).label} · ${server.networks.find((net) => net.network_id === id)?.name}`;
         return <li key={`${id}-${peer.public_key}`}>
-          <Link to={`/devices/${encodeURIComponent(peer.public_key)}`} className="flex min-w-0 items-start gap-2 rounded-lg bg-card p-3" onClick={() => selectNetwork(id)}>
+          <Link to={`/devices/${encodeURIComponent(peer.public_key)}`} className="flex min-w-0 items-start gap-2 bg-panel border border-rule p-3" onClick={() => selectNetwork(id)}>
             <Dot tone={pathLabel(peer.path).tone} list />
-            <span className="min-w-0"><span className="block">{peerName(peer, names)}</span><span title={detail} className="block truncate text-xs text-mut">{detail}</span></span>
+            <span className="min-w-0"><span className="block">{peerName(peer, names)}</span><span title={detail} className="block truncate text-xs text-gray-400">{detail}</span></span>
           </Link>
         </li>;
       }))}</ul>
       <h2 className={heading}>Redes unidas</h2>
-      {change.error && <p role="alert" className="text-bad">{change.error.message}</p>}
-      {server.networks.map((net) => <section key={net.network_id} aria-label={net.name} className="mb-3 rounded-lg bg-card p-3">
-        <div className="flex items-center gap-2"><Dot tone={stateTone[net.state]} /><h3 className="font-semibold">{net.name}</h3><span className="text-mut">{stateText[net.state]}</span></div>
-        {net.detail && <p className="text-mut">{net.detail}</p>}
+      {change.error && <p role="alert" className="text-no">{change.error.message}</p>}
+      {server.networks.map((net) => <section key={net.network_id} aria-label={net.name} className="mb-3 bg-panel border border-rule p-3">
+        <div className="flex items-center gap-2"><Dot tone={stateTone[net.state]} /><h3 className="font-semibold">{net.name}</h3><span className="text-gray-400">{stateText[net.state]}</span></div>
+        {net.detail && <p className="text-gray-400">{net.detail}</p>}
         <div className="mt-2 flex items-center gap-3">
           <button type="button" disabled={change.isPending} className={button} onClick={() => change.mutate({ op: net.state === 'detenida' ? 'up' : 'down', id: net.network_id, name: net.name })}>{net.state === 'detenida' ? 'Conectar' : 'Desconectar'}</button>
           <Link to="/devices" className={button} onClick={() => selectNetwork(net.network_id)}>Ver dispositivos</Link>
           <PanelButton network={net.network_id} />
         </div>
-        {change.isPending && change.variables?.id === net.network_id && <p role="status" className="mt-2 text-sm text-mut">Esperando la autorización del sistema…</p>}
+        {change.isPending && change.variables?.id === net.network_id && <p role="status" className="mt-2 text-sm text-gray-400">Esperando la autorización del sistema…</p>}
       </section>)}
     </>}
   </main>;

@@ -28,14 +28,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export function ErrorBoundary() {
   return (
     <div role="alert" className="p-6">
-      <p className="text-bad">Algo ha fallado al mostrar esta pantalla.</p>
-      <button type="button" className="mt-3 cursor-default rounded-md border border-line bg-card px-3 py-1 text-sm" onClick={() => window.location.reload()}>Reintentar</button>
+      <p className="text-no">Algo ha fallado al mostrar esta pantalla.</p>
+      <button type="button" className="mt-3 cursor-default border border-rule bg-panel px-3 py-1 text-sm" onClick={() => window.location.reload()}>Reintentar</button>
     </div>
   );
 }
 
 export function HydrateFallback() {
-  return <p role="status" className="p-6 text-mut">Cargando…</p>;
+  return <p role="status" className="p-6 text-gray-400">Cargando…</p>;
 }
 
 export default function App() {

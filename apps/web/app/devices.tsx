@@ -3,7 +3,7 @@
 import { Fragment, useState } from 'react';
 import { api, ApiError, type Model } from '@atenea/api-client';
 import {
-  Button, Card, ConfirmDialog, CopyButton, Dialog, EmptyState, Field, RunButton, StatusBadge,
+  Button, Card, ConfirmDialog, CopyButton, Dialog, EmptyState, Field, RunButton, Select, StatusBadge,
 } from './ui';
 import { connection } from './domain';
 import { DeviceDetail } from './device-detail';
@@ -103,13 +103,12 @@ export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [
       <div className="devices-filters">
         <Field label="Buscar dispositivos" help="Por nombre, IP o huella completa.">{props =>
           <input {...props} type="search" value={search} onChange={event => setSearch(event.target.value)}/>}</Field>
-        <Field label="Estado">{props => <select {...props} value={stateFilter} onChange={event => setStateFilter(event.target.value)}>
-          <option value="all">Todos los estados</option>
-          {Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>}</Field>
-        <Field label="Tipo">{props => <select {...props} value={typeFilter} onChange={event => setTypeFilter(event.target.value)}>
-          <option value="all">Todos los tipos</option><option value="device">Dispositivo</option><option value="server">Servidor</option>
-        </select>}</Field>
+        <Field label="Estado">{props => <Select {...props} value={stateFilter} onChange={setStateFilter}
+          options={[{ value: 'all', label: 'Todos los estados' },
+            ...Object.entries(states).map(([value, label]) => ({ value, label }))]}/>}</Field>
+        <Field label="Tipo">{props => <Select {...props} value={typeFilter} onChange={setTypeFilter}
+          options={[{ value: 'all', label: 'Todos los tipos' }, { value: 'device', label: 'Dispositivo' },
+            { value: 'server', label: 'Servidor' }]}/>}</Field>
       </div>
       {!devices.length ? <EmptyState message="No hay dispositivos."
         action={canEdit ? 'Crea un token en Incorporar para añadir el primero.' : 'Pide a un administrador que incorpore un dispositivo.'}/>

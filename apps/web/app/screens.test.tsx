@@ -15,6 +15,7 @@ import Panel, { Login } from './panel';
 import { Relays, Topology } from './observability';
 import { Policies } from './policies';
 import { Audit, Metrics } from './observability';
+import { choose } from './test-setup';
 const wrap=(children:React.ReactNode)=>render(<MemoryRouter><QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{children}</QueryClientProvider></MemoryRouter>);
 it('no ofrece acciones de escritura a member y compara huella al confirmar',async()=>{
  const refresh=vi.fn(async()=>{});const {unmount}=wrap(<Devices devices={[device]} accessRole="member" net="red" elapsed={0} refresh={refresh} />);expect(screen.queryByRole('button',{name:'Aprobar'})).not.toBeInTheDocument();unmount();
@@ -40,8 +41,8 @@ it('solo muestra join en memoria tras crear y lo elimina al ocultar o desmontar'
 it.each(['Dispositivo','Servidor'])('envía el tipo de token elegido: %s',async type=>{
  const post=vi.spyOn(api,'POST').mockResolvedValue({data:{token:'token-sintetico',expires_at:'2026-01-01T01:00:00Z',join:{url:'https://example.invalid',token:'token-sintetico',network_id:device.id,root_anchor:'aa'.repeat(32)}},response:new Response()});
  const user=userEvent.setup();wrap(<Enrollment net="red"/>);
- expect(screen.getByRole('combobox',{name:'Tipo'})).toHaveValue('Dispositivo');
- await user.selectOptions(screen.getByRole('combobox',{name:'Tipo'}),type);
+ expect(screen.getByRole('combobox',{name:'Tipo'})).toHaveTextContent('Dispositivo');
+ await choose(user, screen.getByRole('combobox',{name:'Tipo'}),type);
  await user.click(screen.getByRole('button',{name:'Crear token'}));
  await screen.findByRole('button',{name:'Copiar join'});
  expect(post).toHaveBeenCalledWith('/api/v1/networks/{net}/enrollment-tokens',{params:{path:{net:'red'}},body:{ttl_secs:3600,auto_approve:false,role:type==='Servidor'?'server':'device'}});
@@ -113,7 +114,7 @@ it('un enlace con solo la red (desde la aplicación de escritorio) selecciona su
     return {data:[]};
   }) as never);
   render(<MemoryRouter initialEntries={[`/?net=${net}&view=Dispositivos`]}><QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Panel/></QueryClientProvider></MemoryRouter>);
-  await waitFor(()=>expect(screen.getByRole('combobox',{name:/Organización/})).toHaveValue(org));
+  await waitFor(()=>expect(screen.getByRole('combobox',{name:/Organización/})).toHaveTextContent('org-de-prueba · admin'));
   expect(screen.getByRole('navigation',{name:'Secciones de red'})).toBeInTheDocument();
 });
 
@@ -123,12 +124,12 @@ it('crea políticas por nombre y prefijo con protocolo legible y validación', a
   const user = userEvent.setup();
   wrap(<Policies net="red" canEdit devices={[device]}/>);
   await user.click(screen.getByRole('button', { name: 'Crear política' }));
-  await user.selectOptions(screen.getByLabelText('Selector origen'), 'device');
-  await user.selectOptions(screen.getByLabelText('Dispositivo de origen'), device.id);
-  expect(screen.getByRole('option', { name: device.name })).toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText('Selector destino'), 'prefix');
+  await choose(user, screen.getByLabelText('Selector origen'), 'device');
+  await choose(user, screen.getByLabelText('Dispositivo de origen'), device.id);
+  expect(screen.getByLabelText('Dispositivo de origen')).toHaveTextContent(device.name);
+  await choose(user, screen.getByLabelText('Selector destino'), 'prefix');
   await user.type(screen.getByLabelText('Prefijo de destino'), 'incorrecto');
-  await user.selectOptions(screen.getByLabelText('Protocolo'), '6');
+  await choose(user, screen.getByLabelText('Protocolo'), '6');
   await user.click(screen.getByRole('button', { name: 'Revisar política' }));
   expect(post).not.toHaveBeenCalled();
   expect(screen.getByLabelText('Prefijo de destino')).toHaveAttribute('aria-invalid', 'true');
@@ -209,11 +210,11 @@ it('valida el prefijo de origen y los puertos antes de confirmar', async () => {
   const user = userEvent.setup();
   wrap(<Policies net="red" canEdit devices={[device]}/>);
   await user.click(screen.getByRole('button', { name: 'Crear política' }));
-  await user.selectOptions(screen.getByLabelText('Selector origen'), 'prefix');
+  await choose(user, screen.getByLabelText('Selector origen'), 'prefix');
   await user.type(screen.getByLabelText('Prefijo de origen'), '10.0.0.1/24');
-  await user.selectOptions(screen.getByLabelText('Selector destino'), 'device');
-  await user.selectOptions(screen.getByLabelText('Dispositivo de destino'), device.id);
-  await user.selectOptions(screen.getByLabelText('Protocolo'), '17');
+  await choose(user, screen.getByLabelText('Selector destino'), 'device');
+  await choose(user, screen.getByLabelText('Dispositivo de destino'), device.id);
+  await choose(user, screen.getByLabelText('Protocolo'), '17');
   await user.click(screen.getByRole('button', { name: 'Revisar política' }));
   expect(screen.getByLabelText('Prefijo de origen')).toHaveAttribute('aria-invalid', 'true');
   await user.clear(screen.getByLabelText('Prefijo de origen'));

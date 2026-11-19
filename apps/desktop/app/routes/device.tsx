@@ -38,7 +38,7 @@ function Title({ id, name, editable, rename = false }: { id: string; name: strin
             if (e.key === 'Enter') save(e.currentTarget.value);
             if (e.key === 'Escape') { cancelled.current = true; setEditing(false); }
           }}
-          className="w-full select-text rounded-md border border-sel bg-card px-1.5 text-fg"
+          className="w-full select-text border border-accent-200 bg-panel px-1.5 text-gray-100"
         />
       ) : (
         <button type="button" title="Cambiar nombre local" onClick={() => { cancelled.current = false; setEditing(true); }} className="cursor-text border-b border-dotted border-mut text-left">{name}</button>
@@ -52,10 +52,10 @@ const State = ({ tone, children }: { tone: Tone; children: string }) => <div cla
 const Addresses = ({ addrs }: { addrs: string[] }) => (
   <>
     <Heading>Direcciones del túnel</Heading>
-    <p className="-mt-1 mb-2 text-xs text-mut">Los botones <code>ssh</code> y <code>ping</code> copian el comando para pegarlo en una terminal.</p>
+    <p className="-mt-1 mb-2 text-xs text-gray-400">Los botones <code>ssh</code> y <code>ping</code> copian el comando para pegarlo en una terminal.</p>
     <Card>{addrs.length ? addrs.map((a) => (
-      <div key={a} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-line py-2.5 last:border-b-0">
-        <dt className="col-start-1 row-start-2 text-xs text-mut">{ipKind(a)}</dt>
+      <div key={a} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-rule py-2.5 last:border-b-0">
+        <dt className="col-start-1 row-start-2 text-xs text-gray-400">{ipKind(a)}</dt>
         <dd className="col-start-1 row-start-1 select-text break-all text-sm">{a}<CopyButton value={a} label={`${ipKind(a)} ${a}`} /></dd>
         <dd className="col-start-2 row-span-2 row-start-1 flex gap-1.5">
           <CopyButton value={`ssh ${a}`} label="comando SSH" icon="terminal" text="ssh" />
@@ -139,7 +139,7 @@ function PeerDetail({ peer, status, rate, network, history, rename, ping, stale 
     <>
       <Title id={peer.public_key} name={peerName(peer, names)} editable={!stale} rename={rename} />
       <State tone={tone}>{label}</State>
-      {peer.path === 'none' && <p className="mb-4 text-mut">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
+      {peer.path === 'none' && <p className="mb-4 text-gray-400">Sin camino activo: el agente lo establece al enviar tráfico. Si sigue sin conexión al usarlo, comprueba que el dispositivo esté encendido.</p>}
       {/* Con datos de otra red, `fieldset disabled` apaga los botones de acción sin tocarlos uno a uno. */}
       <fieldset disabled={stale} className="mb-4 flex flex-wrap gap-3 border-0 p-0"><PingButton network={network} addrs={peer.addrs} auto={ping} /><PanelButton network={network} deviceId={peer.device_id} /></fieldset>
       <Tabs label="Secciones del dispositivo" tabs={[

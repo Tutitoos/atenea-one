@@ -53,3 +53,7 @@ test-results/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code: solo se versionan las skills del proyecto; el resto es estado y ajustes locales
+/.claude/*
+!/.claude/skills/

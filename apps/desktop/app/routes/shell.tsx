@@ -15,7 +15,7 @@ import type { Agent } from '../lib/live';
 import { Dot, Pill } from '../ui';
 
 const NETWORK_KEY = 'atenea.network';
-const link = ({ isActive }: { isActive: boolean }) => `cursor-default rounded-md px-2.5 py-1.5 text-sm ${isActive ? 'bg-fg/10' : ''}`;
+const link = ({ isActive }: { isActive: boolean }) => `cursor-default px-2.5 py-1.5 font-mono text-sm ${isActive ? 'bg-raise text-accent-200' : ''}`;
 
 export default function Shell() {
   const { pathname } = useLocation();
@@ -76,11 +76,11 @@ export default function Shell() {
   });
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-line px-4 py-2.5">
+      <header className="flex items-center gap-3 border-b border-rule px-4 py-2.5">
         <img src="/icon.svg" alt="" width={34} height={34} />
         <div>
-          <div className="text-sm font-semibold">Atenea One</div>
-          <div className="text-xs text-mut">{subtitle}</div>
+          <div className="font-mono text-sm font-semibold text-gray-100">Atenea One</div>
+          <div className="font-mono text-xs text-gray-400">{subtitle}</div>
         </div>
         <div className="ml-auto flex items-center gap-2">
         <Pill tone={empty ? 'off' : health ? levelTone(health.level) : 'off'}>{empty ? 'Sin redes' : health ? health.text : 'Sin datos'}</Pill>
@@ -88,20 +88,20 @@ export default function Shell() {
       </header>
       {health && health.reasons.length > 0 && (
         // Rojo solo si no hay conexión; un aviso (degradado) no es un error.
-        <ul aria-label="Avisos" className={`border-b border-line px-4 py-2 ${health.level === 'down' ? 'bg-bad/10 text-bad' : 'bg-warn/15 text-fg'}`}>
+        <ul aria-label="Avisos" className={`border-b border-rule px-4 py-2 ${health.level === 'down' ? 'bg-no/10 text-no' : 'bg-accent-200/10 text-gray-100'}`}>
           {health.reasons.map((r, i) => <li key={`${i}-${r}`}>{r}</li>)}
         </ul>
       )}
       <div className="flex min-h-0 flex-1">
-        <nav aria-label="Secciones" className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-line bg-side p-2">
+        <nav aria-label="Secciones" className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-rule bg-panel p-2">
           <NavLink to="/overview" className={link}>Resumen</NavLink>
           <NavLink to="/devices" className={link}>Dispositivos</NavLink>
           {inDevices && networks.data && networks.data.length > 0 && (
-            <div role="group" aria-label="Elegir red" className="mb-1 ml-4 flex flex-col border-l border-fg/25 pl-1.5">
+            <div role="group" aria-label="Elegir red" className="mb-1 ml-4 flex flex-col border-l border-rule-strong pl-1.5">
               {groupServers(networks.data).map((server) => (
                 <div key={server.host} role="group" aria-label={server.host} className="flex flex-col gap-0.5 pb-1">
-                  <div aria-hidden="true" title={server.host} className="truncate px-2 pb-0.5 pt-1.5 text-[11px] font-medium text-mut">{server.host}</div>
-                  {server.networks.map((n) => <button key={n.network_id} type="button" title={`${n.name} · ${stateText[n.state]}`} aria-pressed={n.network_id === network} onClick={() => selectNetwork(n.network_id)} className={`flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-sel ${n.network_id === network ? 'bg-sel font-medium text-white' : 'text-fg/80 hover:bg-fg/10'}`}><Dot tone={stateTone[n.state]} /><span className="truncate">{n.name}</span></button>)}
+                  <div aria-hidden="true" title={server.host} className="truncate px-2 pb-0.5 pt-1.5 text-[11px] font-medium text-gray-400">{server.host}</div>
+                  {server.networks.map((n) => <button key={n.network_id} type="button" title={`${n.name} · ${stateText[n.state]}`} aria-pressed={n.network_id === network} onClick={() => selectNetwork(n.network_id)} className={`flex cursor-default items-center gap-2 px-2 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent-200 ${n.network_id === network ? 'bg-accent-200 font-medium text-shell' : 'text-gray-300 hover:bg-raise'}`}><Dot tone={stateTone[n.state]} /><span className="truncate">{n.name}</span></button>)}
                 </div>
               ))}
             </div>

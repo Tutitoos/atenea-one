@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { api, ApiError, result, type Model } from '@atenea/api-client';
-import { Button, Card, ConfirmDialog, CopyButton, EmptyState, RunButton, Status, StatusBadge } from './ui';
+import { Button, Card, ConfirmDialog, CopyButton, EmptyState, RunButton, Select, Status, StatusBadge } from './ui';
 import { ranges } from './domain';
 
 type NetworkRole = Model<'NewInvitation'>['role'];
@@ -146,10 +146,10 @@ export function Sharing({ net, canManage }: { net: string; canManage: boolean })
       {members.data && members.data.length > 0 && <table><thead><tr><th>Cuenta</th><th>Rol</th><th>Acciones</th></tr></thead>
         <tbody>{members.data.map(member => <tr key={member.user_id}>
           <td>{member.display_name ?? 'Sin nombre'}</td>
-          <td><select aria-label={`Rol de ${member.display_name ?? member.user_id}`} value={member.role} onChange={event => {
-            void api.PUT('/api/v1/networks/{net}/members/{user}', { params: { path: { net, user: member.user_id } }, body: { role: event.target.value as NetworkRole } })
+          <td><Select aria-label={`Rol de ${member.display_name ?? member.user_id}`} value={member.role} onChange={role => {
+            void api.PUT('/api/v1/networks/{net}/members/{user}', { params: { path: { net, user: member.user_id } }, body: { role: role as NetworkRole } })
               .then(refresh, error => setMessage(explain(error)));
-          }}>{(Object.keys(roleLabels) as NetworkRole[]).map(value => <option key={value} value={value}>{roleLabels[value]}</option>)}</select></td>
+          }} options={(Object.keys(roleLabels) as NetworkRole[]).map(value => ({ value, label: roleLabels[value] }))}/></td>
           <td><ConfirmDialog trigger="Quitar" title={`Quitar a ${member.display_name ?? 'esta cuenta'}`}
             description="Perderá el acceso a la red. Los dispositivos que aprobó siguen aprobados: la auditoría dice quién aprobó cada uno."
             label="Quitar acceso" confirm={async () => {

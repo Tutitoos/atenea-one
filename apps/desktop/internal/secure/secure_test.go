@@ -37,6 +37,9 @@ func TestEveryResponseCarriesTheStrictCSP(t *testing.T) {
 			t.Errorf("la CSP no puede contener %q", forbidden)
 		}
 	}
+	if !strings.Contains(CSP, "font-src 'self'") {
+		t.Error("la CSP debe permitir las fuentes empaquetadas (font-src 'self')")
+	}
 }
 
 func TestOnlyCallReachesTheWailsTransport(t *testing.T) {

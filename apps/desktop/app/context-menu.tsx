@@ -37,9 +37,9 @@ export function ContextMenu({ label, x, y, items, onClose }: { label: string; x:
   };
 
   return (
-    <div ref={ref} role="menu" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} style={{ left: x, top: y }} className="fixed z-40 min-w-48 rounded-lg border border-line bg-card p-1 shadow-lg focus:outline-none">
+    <div ref={ref} role="menu" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} style={{ left: x, top: y }} className="fixed z-40 min-w-48 border border-rule bg-panel p-1 focus:outline-none">
       {items.map((item) => (
-        <button key={item.label} type="button" role="menuitem" tabIndex={-1} onClick={() => { item.onSelect(); onClose(true); }} className="block w-full cursor-default rounded px-2.5 py-1 text-left text-sm focus:bg-sel focus:text-white focus:outline-none">{item.label}</button>
+        <button key={item.label} type="button" role="menuitem" tabIndex={-1} onClick={() => { item.onSelect(); onClose(true); }} className="block w-full cursor-default px-2.5 py-1 text-left text-sm focus:bg-accent-200 focus:text-shell focus:outline-none">{item.label}</button>
       ))}
     </div>
   );

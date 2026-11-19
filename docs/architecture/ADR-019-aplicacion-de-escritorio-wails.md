@@ -61,6 +61,7 @@ Ejecutados en la rama `spike/wails` (programa mínimo en `spikes/wails/` y workf
 - **S6.** v3.0.0 trae 8 módulos (MIT, ISC, BSD-2-Clause y BSD-3-Clause) y v3.1.0 trae 7 (añade Apache-2.0): todos dentro de la lista de `deny.toml`, sin MPL-2.0. La clasificación es heurística (palabras clave del fichero de licencia) y solo cubre lo que importa un programa mínimo.
 - **Linux.** (a) La ruta GTK3/WebKit2GTK 4.1 compila y funciona en Ubuntu 22.04 con las dos versiones; la documentación decía que se retiraba en la 3.1, **todavía no**. (b) En **Ubuntu 24.04 la aplicación se cerró al arrancar** (`bwrap: setting up uid map: Permission denied`: AppArmor restringe los espacios de nombres de usuario del sandbox de WebKit) hasta poner `kernel.apparmor_restrict_unprivileged_userns=0` en el runner. En un escritorio real no se ha comprobado y afecta a la guía de instalación y al AppImage.
 - **Avisos del enlazador en macOS:** versión mínima 11 frente al SDK 26; informativos, se arregla fijando `MACOSX_DEPLOYMENT_TARGET`.
+- **Fuentes (2026-11-19).** La CSP de S1 pasa a llevar además `font-src 'self'` para servir Geist y Geist Mono empaquetadas con la interfaz (misma identidad visual que el sitio y el panel). No abre ningún origen remoto; la prueba de `internal/secure` sigue prohibiendo `http:`, `https:`, `*`, `unsafe-inline` y `unsafe-eval`.
 
 ## Consecuencias y riesgos
 

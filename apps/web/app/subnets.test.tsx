@@ -59,7 +59,7 @@ it('member lee rutas sin acciones y DNS sin formulario', async () => {
   unmount(); vi.spyOn(api, 'GET').mockResolvedValue({ data: { servers: ['10.77.0.1'], domains: ['lab.internal'] }, response: new Response() });
   mount(<Dns net="red" canEdit={false}/>);
   expect(await screen.findByText('lab.internal')).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Guardar DNS' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Añadir|Quitar/ })).not.toBeInTheDocument();
 });
 it.each(['pending', 'approved'] as const)('confirma antes de rechazar/revocar %s', async status => {
   vi.spyOn(api, 'GET').mockResolvedValue({ data: [{ ...route, status, snat: status === 'approved' ? false : null }], response: new Response() });
@@ -75,9 +75,8 @@ it('muestra el error autoritativo de alcance DNS', async () => {
   vi.spyOn(api, 'GET').mockResolvedValue({ data: { servers: [], domains: [] }, response: new Response() });
   vi.spyOn(api, 'PUT').mockRejectedValue(new ApiError(400, { error: { code: 'invalid_dns', message: 'Servidor fuera de una ruta aprobada.' } }));
   const user = userEvent.setup(); mount(<Dns net="red" canEdit/>);
-  await user.type(await screen.findByLabelText('Servidores DNS (separados por espacios)'), '10.77.0.1');
-  await user.type(screen.getByLabelText('Dominios de enrutamiento (separados por espacios)'), 'lab.internal');
-  await user.click(screen.getByRole('button', { name: 'Guardar DNS' }));
+  await user.type(await screen.findByLabelText('Añadir servidor DNS'), '10.77.0.1');
+  await user.click(screen.getByRole('button', { name: 'Añadir servidor' }));
   expect(await screen.findByText('Servidor fuera de una ruta aprobada.')).toBeVisible();
 });
 it('distingue informe ausente, fallo de forwarding y conflicto declarado con antigüedad', async () => {
@@ -111,7 +110,7 @@ it('subredes, aprobación y DNS sin infracciones axe básicas', async () => {
   await user.click(screen.getByRole('button', { name: 'Aprobar' }));
   expect((await axe(screen.getByRole('dialog'), options)).violations).toEqual([]); unmount();
   vi.spyOn(api, 'GET').mockResolvedValue({ data: { servers: [], domains: [] }, response: new Response() });
-  const dns = mount(<Dns net="red" canEdit/>); await screen.findByRole('button', { name: 'Guardar DNS' });
+  const dns = mount(<Dns net="red" canEdit/>); await screen.findByRole('button', { name: 'Añadir servidor' });
   expect((await axe(dns.container, options)).violations).toEqual([]);
 });
 

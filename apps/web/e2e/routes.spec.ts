@@ -39,7 +39,8 @@ test('aprobar con SNAT explícito, configurar DNS dividido y revocar una ruta de
   await page.getByRole('dialog').getByRole('button', { name: 'Crear organización' }).click();
   await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Acción completada.');
   await dismiss(page);
-  await page.getByRole('combobox', { name: /^Organización/ }).selectOption({ label: 'laboratorio-subredes · owner' });
+  await page.getByRole('combobox', { name: /^Organización/ }).click();
+  await page.getByRole('option', { name: 'laboratorio-subredes · owner' }).click();
   await page.getByRole('button', { name: 'Crear red' }).click();
   await page.getByLabel('Nombre').fill('red-subredes');
   await page.getByLabel('CIDR IPv4').fill('10.78.0.0/24');
@@ -100,9 +101,11 @@ test('aprobar con SNAT explícito, configurar DNS dividido y revocar una ruta de
   for (const proto of ['1', '6']) {
     for (const direction of ['destino', 'origen']) {
       await page.getByRole('button', { name: 'Crear política' }).click();
-      await page.getByLabel(`Selector ${direction}`).selectOption('prefix');
+      await page.getByLabel(`Selector ${direction}`).click();
+      await page.locator('[role=option][data-value=prefix]').click();
       await page.getByRole('textbox', { name: `Prefijo de ${direction}`, exact: true }).fill('192.168.50.0/24');
-      await page.getByRole('combobox', { name: 'Protocolo', exact: true }).selectOption(proto);
+      await page.getByRole('combobox', { name: 'Protocolo', exact: true }).click();
+      await page.locator(`[role=option][data-value="${proto}"]`).click();
       if (proto === '6' && direction === 'destino') {
         await page.getByLabel('Puerto mínimo').fill('9000');
         await page.getByLabel('Puerto máximo').fill('9100');
@@ -127,10 +130,14 @@ test('aprobar con SNAT explícito, configurar DNS dividido y revocar una ruta de
   console.log(`Panel: router forwarding correcto y cliente instalada; ping y TCP ${transfer.bytes} bytes íntegros, origen en h=${transfer.source}.`);
 
   await open(page, 'DNS y certificado');
-  await page.getByLabel('Servidores DNS (separados por espacios)').fill('192.168.50.1');
-  await page.getByLabel('Dominios de enrutamiento (separados por espacios)').fill('lab.internal');
-  await page.getByRole('button', { name: 'Guardar DNS' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'DNS actualizado.' })).toHaveText('DNS actualizado.');
+  const saved = page.getByRole('status').filter({ hasText: 'DNS actualizado.' });
+  await page.getByLabel('Añadir servidor DNS').fill('192.168.50.1');
+  await page.getByRole('button', { name: 'Añadir servidor' }).click();
+  await expect(page.getByRole('button', { name: 'Quitar 192.168.50.1' })).toBeVisible();
+  await page.getByLabel('Añadir dominio').fill('lab.internal');
+  await page.getByRole('button', { name: 'Añadir dominio' }).click();
+  await expect(page.getByRole('button', { name: 'Quitar lab.internal' })).toBeVisible();
+  await expect(saved).toHaveText('DNS actualizado.');
   await expect.poll(() => labOk('dns-log', 'c') ? lab('dns-log', 'c') : '', { timeout: 90_000 }).toContain('domain atenea0 ~lab.internal');
   const dns = lab('dns-log', 'c');
   expect(dns).toContain('dns atenea0 192.168.50.1');

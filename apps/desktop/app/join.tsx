@@ -12,7 +12,7 @@ export function Legacy({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('');
   const migrate = useMutation({ mutationFn: migrateLegacy, onSuccess: () => { setAsking(false); onDone(); } });
   return (
-    <section aria-label="Instalación heredada" className="mb-4 rounded-[10px] bg-warn/15 px-3.5 py-3 text-sm">
+    <section aria-label="Instalación heredada" className="mb-4 bg-accent-200/10 px-3.5 py-3 text-sm">
       <p>Hay una instalación heredada pendiente de importar: se detectó la configuración de una versión anterior de Atenea One (un único agente). Impórtala para gestionarla desde aquí.</p>
       {!asking && <button type="button" className={`${primary} mt-2`} onClick={() => setAsking(true)}>Importar red existente</button>}
       {asking && (
@@ -27,17 +27,17 @@ export function Legacy({ onDone }: { onDone: () => void }) {
             spellCheck={false}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-64 select-text rounded-lg border border-line bg-bg px-2.5 py-1 text-fg"
+            className="mt-1 w-64 select-text border border-rule bg-shell px-2.5 py-1 text-gray-100"
           />
-          <span id="legacy-name-rule" className="ml-2 text-xs text-mut">Letras, números, espacio, punto, guion y guion bajo.</span>
+          <span id="legacy-name-rule" className="ml-2 text-xs text-gray-400">Letras, números, espacio, punto, guion y guion bajo.</span>
           <div className="mt-2 flex items-center gap-2">
             <button type="button" className={primary} disabled={migrate.isPending} onClick={() => migrate.mutate(name)}>Importar</button>
             <button type="button" className={button} disabled={migrate.isPending} onClick={() => { setAsking(false); migrate.reset(); }}>Cancelar</button>
-            {migrate.isPending && <span role="status" className="text-mut">Esperando la autorización del sistema…</span>}
+            {migrate.isPending && <span role="status" className="text-gray-400">Esperando la autorización del sistema…</span>}
           </div>
         </div>
       )}
-      {migrate.error && <p role="alert" className="mt-2 text-bad">{migrate.error.message}</p>}
+      {migrate.error && <p role="alert" className="mt-2 text-no">{migrate.error.message}</p>}
     </section>
   );
 }
@@ -75,7 +75,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
   if (join.isSuccess && info) {
     const fp = deviceFingerprint(join.data);
     return (
-      <div role="status" className="rounded-[10px] bg-card p-3.5 text-sm">
+      <div role="status" className="bg-panel border border-rule p-3.5 text-sm">
         <p>{info.has_token ? `Equipo unido a «${info.name}».` : `Solicitud enviada a «${info.name}»: un administrador debe aprobar este equipo.`}</p>
         {fp && <p className="mt-1">Huella del dispositivo (la compara el administrador): <span className="select-text font-mono">{fp}</span><CopyButton value={fp} label="huella del dispositivo" /></p>}
         <button type="button" className={`${button} mt-2`} onClick={() => { reset(); setCode(''); }}>Unirme a otra red</button>
@@ -85,7 +85,7 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
 
   if (info) {
     return (
-      <div ref={confirmBox} tabIndex={-1} role="group" aria-label="Confirmar unión" className="rounded-[10px] bg-card px-3.5 py-3">
+      <div ref={confirmBox} tabIndex={-1} role="group" aria-label="Confirmar unión" className="bg-panel border border-rule px-3.5 py-3">
         <Card>
           <Row label="Red">{info.name}</Row>
           <Row label="Servidor">{info.server}</Row>
@@ -98,15 +98,15 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
         <div className="mt-3 flex items-center gap-2">
           <button type="button" className={primary} disabled={join.isPending} onClick={() => join.mutate(inspected!.code)}>Unirme a esta red</button>
           <button type="button" className={button} disabled={join.isPending} onClick={cancel}>Cancelar</button>
-          {join.isPending && <span role="status" className="text-sm text-mut">Esperando la autorización del sistema…</span>}
+          {join.isPending && <span role="status" className="text-sm text-gray-400">Esperando la autorización del sistema…</span>}
         </div>
-        {join.error && <p role="alert" className="mt-2 text-sm text-bad">{join.error.message}</p>}
+        {join.error && <p role="alert" className="mt-2 text-sm text-no">{join.error.message}</p>}
       </div>
     );
   }
 
   return (
-    <form className="rounded-[10px] bg-card px-3.5 py-3" onSubmit={(e) => { e.preventDefault(); if (code.trim()) inspect(code); }}>
+    <form className="bg-panel border border-rule px-3.5 py-3" onSubmit={(e) => { e.preventDefault(); if (code.trim()) inspect(code); }}>
       <label htmlFor="join-code" className="block text-sm">Código de red</label>
       <textarea
         id="join-code"
@@ -117,13 +117,13 @@ export function Join({ onDone, onJoined }: { onDone: () => void; onJoined?: (joi
         placeholder="ATENEA1-…"
         value={code}
         onChange={(e) => { setCode(e.target.value); latest.current++; check.reset(); }}
-        className="mt-1 w-full select-text rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-fg"
+        className="mt-1 w-full select-text border border-rule bg-shell px-2.5 py-1.5 font-mono text-xs text-gray-100"
       />
       <div className="mt-2 flex items-center gap-2">
         <button type="submit" className={primary} disabled={!code.trim() || check.isPending}>Revisar código</button>
-        <span className="text-xs text-mut">Todavía no se cambia nada: primero verás a qué red te unes.</span>
+        <span className="text-xs text-gray-400">Todavía no se cambia nada: primero verás a qué red te unes.</span>
       </div>
-      {check.error && <p role="alert" className="mt-2 text-sm text-bad">{check.error.message}</p>}
+      {check.error && <p role="alert" className="mt-2 text-sm text-no">{check.error.message}</p>}
     </form>
   );
 }

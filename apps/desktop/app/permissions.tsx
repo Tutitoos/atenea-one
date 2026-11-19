@@ -21,7 +21,7 @@ const kindLabels = { devices: 'Una lista de dispositivos', enrolled: 'Los que el
 type Kind = keyof typeof kindLabels;
 type Entry = NonNullable<Admin['grants']>[number];
 
-const Perms = ({ scopes }: { scopes: string[] }) => <ul className="mt-1 text-sm">{scopes.map((s) => <li key={s}>{labels[s] ?? s} <code className="text-xs text-mut">{s}</code></li>)}</ul>;
+const Perms = ({ scopes }: { scopes: string[] }) => <ul className="mt-1 text-sm">{scopes.map((s) => <li key={s}>{labels[s] ?? s} <code className="text-xs text-gray-400">{s}</code></li>)}</ul>;
 
 /** Propio equipo: su concesión y, con `write:grants`, lo que ha concedido a otros. */
 export function OwnPermissions({ status, canWrite }: { status: Status; canWrite: boolean }) {
@@ -29,7 +29,7 @@ export function OwnPermissions({ status, canWrite }: { status: Status; canWrite:
   if (!admin?.grant) {
     return <section aria-label="Permisos">
       <Heading>Permisos de este equipo</Heading>
-      <p className="text-sm text-mut">Este equipo no tiene permisos de administración en esta red. Los concede un administrador de la red desde el panel.</p>
+      <p className="text-sm text-gray-400">Este equipo no tiene permisos de administración en esta red. Los concede un administrador de la red desde el panel.</p>
     </section>;
   }
   const devices = admin.devices ?? [];
@@ -38,8 +38,8 @@ export function OwnPermissions({ status, canWrite }: { status: Status; canWrite:
     <AdminSummary status={status} canWrite={canWrite} />
     {admin.grant.scopes.includes('write:grants') && <section aria-label="Permisos concedidos a otros">
       <Heading>Concedidos por este equipo</Heading>
-      {given.length === 0 ? <p className="text-sm text-mut">Este equipo no ha concedido permisos a ningún otro. Se conceden desde la pestaña «Permisos» del dispositivo.</p> : <Card>{given.map((g) => <div key={g.device_id} className="border-b border-line py-2.5 last:border-b-0">
-        <span>{nameOf(devices, g.device_id)}</span> <span className="text-xs text-mut">· alcance: {scopeText[g.scope.kind]}</span>
+      {given.length === 0 ? <p className="text-sm text-gray-400">Este equipo no ha concedido permisos a ningún otro. Se conceden desde la pestaña «Permisos» del dispositivo.</p> : <Card>{given.map((g) => <div key={g.device_id} className="border-b border-rule py-2.5 last:border-b-0">
+        <span>{nameOf(devices, g.device_id)}</span> <span className="text-xs text-gray-400">· alcance: {scopeText[g.scope.kind]}</span>
         <Perms scopes={g.scopes} />
       </div>)}</Card>}
     </section>}
@@ -53,7 +53,7 @@ export function PeerPermissions({ deviceId, status, network, canWrite, stale }: 
   if (!own?.scopes.includes('write:grants') || !deviceId) {
     return <section aria-label="Permisos">
       <Heading>Permisos</Heading>
-      <p className="text-sm text-mut">Solo un administrador de la red, o un equipo con permiso para administrar permisos, puede ver y cambiar los de este dispositivo.</p>
+      <p className="text-sm text-gray-400">Solo un administrador de la red, o un equipo con permiso para administrar permisos, puede ver y cambiar los de este dispositivo.</p>
     </section>;
   }
   const devices = admin?.devices ?? [];
@@ -66,10 +66,10 @@ export function PeerPermissions({ deviceId, status, network, canWrite, stale }: 
     {entry ? <>
       <p className="text-sm">Alcance de las escrituras: {scopeText[entry.scope.kind]}. {entry.granted_by_device ? `Concedidos por ${nameOf(devices, entry.granted_by_device)}.` : 'Concedidos por un administrador.'}</p>
       <Perms scopes={entry.scopes} />
-    </> : <p className="text-sm text-mut">Este dispositivo no tiene permisos de administración en esta red.</p>}
-    {known?.in_scope === false && <p className="mt-2 text-sm text-mut">Este dispositivo está fuera de tu alcance: no puedes cambiar sus permisos.</p>}
-    {entry && !mine && <p className="mt-2 text-sm text-mut">Solo puedes cambiar o retirar los permisos que diste tú, no los de un administrador ni los de otro equipo.</p>}
-    {!canWrite && <p className="mt-2 text-sm text-mut">En este sistema la aplicación no puede hacer cambios: usa <code>atenea network grant</code> en una terminal con privilegios.</p>}
+    </> : <p className="text-sm text-gray-400">Este dispositivo no tiene permisos de administración en esta red.</p>}
+    {known?.in_scope === false && <p className="mt-2 text-sm text-gray-400">Este dispositivo está fuera de tu alcance: no puedes cambiar sus permisos.</p>}
+    {entry && !mine && <p className="mt-2 text-sm text-gray-400">Solo puedes cambiar o retirar los permisos que diste tú, no los de un administrador ni los de otro equipo.</p>}
+    {!canWrite && <p className="mt-2 text-sm text-gray-400">En este sistema la aplicación no puede hacer cambios: usa <code>atenea network grant</code> en una terminal con privilegios.</p>}
     {editable && <GrantForm key={entry?.granted_at ?? 'nuevo'} network={network} target={deviceId} own={own} members={devices.filter((d) => d.in_scope && d.status === 'approved')} current={mine ? entry : undefined} />}
   </section>;
 }
@@ -91,14 +91,14 @@ function GrantForm({ network, target, own, members, current }: { network: string
     }}>
       <fieldset className="border-0 p-0">
         <legend className="text-sm font-semibold">{current ? 'Cambiar permisos' : 'Conceder permisos'}</legend>
-        <p className="text-xs text-mut">Solo los que este equipo tiene. «Administrar permisos» no se puede dar.</p>
+        <p className="text-xs text-gray-400">Solo los que este equipo tiene. «Administrar permisos» no se puede dar.</p>
         {offered.map((p) => <label key={p} className="block text-sm"><input type="checkbox" checked={perms.includes(p)} onChange={() => toggle(perms, setPerms, p)} /> {labels[p] ?? p}</label>)}
       </fieldset>
-      <label className="mt-2 block text-sm">Alcance de las escrituras <select value={kind} onChange={(e) => setKind(e.target.value as Kind)} className="rounded border border-line bg-card px-1">
+      <label className="mt-2 block text-sm">Alcance de las escrituras <select value={kind} onChange={(e) => setKind(e.target.value as Kind)} className="border border-rule bg-panel px-1">
         {kinds.map((k) => <option key={k} value={k}>{kindLabels[k]}</option>)}</select></label>
       {kind === 'devices' && <fieldset className="mt-1 border-0 p-0">
         <legend className="text-sm">Dispositivos del alcance</legend>
-        {members.length === 0 ? <p className="text-xs text-mut">Sin lista de dispositivos de tu alcance: hace falta el permiso <code>read:devices</code>.</p>
+        {members.length === 0 ? <p className="text-xs text-gray-400">Sin lista de dispositivos de tu alcance: hace falta el permiso <code>read:devices</code>.</p>
           : members.map((d) => <label key={d.id} className="block text-sm"><input type="checkbox" checked={picked.includes(d.id)} onChange={() => toggle(picked, setPicked, d.id)} /> {d.name}</label>)}
       </fieldset>}
       <button type="submit" className={`${button} mt-2`} disabled={!ready || write.isPending}>Guardar permisos</button>
@@ -107,6 +107,6 @@ function GrantForm({ network, target, own, members, current }: { network: string
       ? <span className="mt-2 flex gap-2"><button type="button" className={button} disabled={write.isPending} onClick={() => write.mutate({ op: 'ungrant', params: { device: target } }, { onSuccess: () => setConfirm(false) })}>Confirmar retirada de permisos</button>
         <button type="button" className={button} onClick={() => setConfirm(false)}>Cancelar</button></span>
       : <button type="button" className={`${button} mt-2`} onClick={() => setConfirm(true)}>Retirar permisos</button>)}
-    {write.error && <p role="alert" className="text-bad">{write.error.message}</p>}
+    {write.error && <p role="alert" className="text-no">{write.error.message}</p>}
   </div>;
 }
