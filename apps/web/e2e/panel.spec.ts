@@ -158,8 +158,18 @@ test('administrar dos agentes desde el panel: P2P, relay UDP, relay TLS y revoca
   }
 
   // --- Temas y móvil
+  await page.getByLabel('Tema').selectOption('claro');
+  await axeClean(page, 'tema claro');
   await page.getByLabel('Tema').selectOption('oscuro');
   await axeClean(page, 'tema oscuro');
+  const skin = await page.evaluate(() => ({
+    body: getComputedStyle(document.body).fontFamily,
+    heading: getComputedStyle(document.querySelector('h1')!).fontFamily,
+    radius: getComputedStyle(document.querySelector('button')!).borderRadius,
+  }));
+  expect(skin.body).toContain('Geist Variable');
+  expect(skin.heading).toContain('Geist Mono Variable');
+  expect(skin.radius).toBe('0px');
   await page.setViewportSize({ width: 390, height: 800 });
   await open(page, 'Dispositivos');
   await axeClean(page, 'móvil');

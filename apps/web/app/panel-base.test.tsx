@@ -11,7 +11,6 @@ import { Field } from './ui';
 import { Organizations } from './organizations';
 import Panel from './panel';
 import { device } from './device.fixture';
-import { readFileSync } from 'node:fs';
 
 const org = { id: '00000000-0000-4000-8000-000000000001', name: 'Organización sintética', role: 'owner' as const };
 const network = { id: '00000000-0000-4000-8000-000000000002', org_id: org.id, name: 'Red sintética', ipv4_cidr: '10.0.0.0/24', ipv6_cidr: 'fd00::/64', has_issuer_cert: true, join_policy: 'cerrada' };
@@ -176,21 +175,4 @@ it('actualiza las membresías al crear una organización para poder administrar 
   await user.click(await screen.findByRole('link', { name: network.name }));
   await user.click(screen.getByRole('link', { name: 'DNS y certificado' }));
   expect(await screen.findByRole('button', { name: 'Subir certificado' })).toBeVisible();
-});
-
-it('mantiene el contraste AA del texto secundario en los fondos claros del panel', () => {
-  const styles = readFileSync('app/styles.css', 'utf8');
-  const tokens = [...styles.matchAll(/:root \{([^}]+)\}/g)].at(-1)![1];
-  const luminance = (token: string) => {
-    const hex = new RegExp(`--${token}: #([0-9a-f]{6});`).exec(tokens)![1];
-    const channels = hex.match(/../g)!.map(channel => {
-      const value = parseInt(channel, 16) / 255;
-      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-    });
-    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  };
-  for (const background of ['bg', 'side', 'card']) {
-    const ratio = (luminance(background) + 0.05) / (luminance('muted') + 0.05);
-    expect(ratio, `Contraste de --muted sobre --${background}`).toBeGreaterThanOrEqual(4.5);
-  }
 });
