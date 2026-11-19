@@ -317,6 +317,10 @@ small,.muted,.status {
 }
 
 .shell > .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
   padding: 28px 18px;
   display: flex;
@@ -636,6 +640,9 @@ summary {
   }
 
   .shell > .sidebar {
+    position: static;
+    height: auto;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding: 16px;
