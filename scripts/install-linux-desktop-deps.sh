@@ -6,9 +6,12 @@
 #
 # - Cada orden de apt tiene plazo y las descargas se reintentan; el conjunto se repite hasta 3 veces (3 x 250 s como
 #   máximo, dentro del tope de 15 min del paso). A partir del segundo intento se usa archive.ubuntu.com en vez del
-#   espejo de Azure: el paso se atascó descargando de azure.archive.ubuntu.com (22 paquetes en 4 min, en tres
-#   intentos seguidos) mientras el equipo estaba sano, y reintentar en el mismo espejo lento no sirve. Mismo índice
-#   y mismas firmas: apt verifica los paquetes igual.
+#   espejo que la imagen del runner haya elegido (la lista /etc/apt/apt-mirrors.txt varía de un runner a otro:
+#   azure.archive.ubuntu.com o us-east-2.ec2.archive.ubuntu.com). Dos pasos fallaron seguidos (2026-11-19) con el espejo
+#   de EC2: `apt-get update` pasó de 60 s y las descargas de los paquetes amd64v3 quedaron en `Ign`, mientras otros
+#   runners con el espejo de Azure terminaban en segundos; el cambio anterior solo reconocía Azure y no hacía nada con
+#   EC2, así que los tres intentos usaban el mismo espejo roto. Mismo índice y mismas firmas: apt verifica los paquetes
+#   igual.
 # - Con un directorio de caché, apt guarda y reutiliza allí los .deb (la CI lo conserva con actions/cache). apt
 #   comprueba cada .deb contra los hashes del índice firmado antes de usarlo, así que un fichero alterado no se instala.
 # - Mientras corre, una muestra cada 10 s (memoria, disco, carga y procesos en estado D) va al log; permite distinguir
@@ -43,14 +46,15 @@ sample &
 sampler=$!
 trap 'kill "$sampler" 2>/dev/null || true' EXIT HUP INT TERM
 
-# Respaldo del espejo de Azure; idempotente y sin efecto si el equipo no lo usa. En las imágenes de los runners el espejo
-# no está en ubuntu.sources (que apunta a `mirror+file:/etc/apt/apt-mirrors.txt`) sino en ese fichero.
+# Respaldo del espejo regional; idempotente y sin efecto si el equipo ya usa archive.ubuntu.com. En las imágenes de los
+# runners el espejo no está en ubuntu.sources (que apunta a `mirror+file:/etc/apt/apt-mirrors.txt`) sino en ese fichero.
+# Reconoce cualquier `<región>.archive.ubuntu.com`; `security.ubuntu.com` no se toca.
 use_canonical_mirror() {
     for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
         [ -f "$f" ] || continue
-        if grep -q '//azure\.archive\.ubuntu\.com/' "$f"; then
-            echo "[diag] cambio de espejo: azure.archive.ubuntu.com -> archive.ubuntu.com ($f)"
-            sudo sed -i 's|//azure\.archive\.ubuntu\.com/|//archive.ubuntu.com/|g' "$f"
+        if grep -Eq '//([a-z0-9-]+\.)+archive\.ubuntu\.com/' "$f"; then
+            echo "[diag] cambio de espejo en $f: $(grep -Eo '//([a-z0-9-]+\.)+archive\.ubuntu\.com/' "$f" | sort -u | tr '\n' ' ')-> //archive.ubuntu.com/"
+            sudo sed -E -i 's|//([a-z0-9-]+\.)+archive\.ubuntu\.com/|//archive.ubuntu.com/|g' "$f"
         fi
     done
 }
