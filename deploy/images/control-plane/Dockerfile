@@ -26,6 +26,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN sh scripts/install-pnpm.sh
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/api-client ./packages/api-client
+COPY packages/ui-tokens ./packages/ui-tokens
 COPY docs/api/openapi.json ./docs/api/openapi.json
 RUN --mount=type=cache,id=atenea-pnpm-store,target=/pnpm/store,sharing=locked \
     pnpm install --frozen-lockfile --store-dir /pnpm/store

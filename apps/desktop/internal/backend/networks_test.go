@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeCLI escribe un «CLI» de shell en un directorio temporal y lo fija como ATENEA_CLI. Devuelve el fichero donde
@@ -329,6 +330,39 @@ func TestJoinedNetworkLookupAndFiltering(t *testing.T) {
 	fakeCLI(t, `echo hola`)
 	if got := JoinedNetworks(); len(got) != 0 {
 		t.Errorf("ante un fallo, vacío: %v", got)
+	}
+}
+
+func TestKnownNetworkTrustsTheLastListUntilAChangeInvalidatesIt(t *testing.T) {
+	broken := filepath.Join(t.TempDir(), "roto")
+	fakeCLI(t, `[ -e '`+broken+`' ] && exit 1; echo '[{"network_id":"`+testID+`","name":"casa"}]'`)
+	InvalidateList()
+	if _, err := List(); err != nil {
+		t.Fatal(err)
+	}
+	// La lista caducó y el CLI ya no responde (en la práctica: tarda más que el plazo de la ventana).
+	listCache.mu.Lock()
+	listCache.at = time.Now().Add(-time.Hour)
+	listCache.mu.Unlock()
+	if err := os.WriteFile(broken, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := KnownNetwork(testID); err != nil || n["name"] != "casa" {
+		t.Fatalf("KnownNetwork con la lista vieja = %v, %v", n, err)
+	}
+	if _, err := JoinedNetwork(testID); err == nil {
+		t.Error("JoinedNetwork sí debe volver a preguntar al CLI")
+	}
+	// Una red que no figura en lo guardado sí se pregunta al CLI, igual que una lista invalidada.
+	if _, err := KnownNetwork("ffffffff-ffff-7fff-8fff-ffffffffffff"); err == nil {
+		t.Error("una red ausente de la lista debe comprobarse con el CLI")
+	}
+	InvalidateList()
+	if _, err := KnownNetwork(testID); err == nil {
+		t.Error("tras invalidar no se puede fiar de la lista anterior")
+	}
+	if _, err := KnownNetwork("nope"); err == nil || err.Error() != "identificador de red no válido" {
+		t.Errorf("id inválido: %v", err)
 	}
 }
 

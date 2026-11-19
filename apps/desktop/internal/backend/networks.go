@@ -129,6 +129,7 @@ var listCache struct {
 func InvalidateList() {
 	listCache.mu.Lock()
 	listCache.at = time.Time{}
+	listCache.text = "" // KnownNetwork no debe fiarse de una lista que un cambio acaba de dejar vieja
 	listCache.gen++
 	listCache.mu.Unlock()
 }
@@ -347,7 +348,7 @@ func JoinedNetworks() []map[string]any {
 	return out
 }
 
-// JoinedNetwork busca una red unida por su id.
+// JoinedNetwork busca una red unida por su id en la lista del CLI (renovada cada listTTL).
 func JoinedNetwork(network string) (map[string]any, error) {
 	if !ValidUUID(network) {
 		return nil, errors.New("identificador de red no válido")
@@ -356,6 +357,29 @@ func JoinedNetwork(network string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return findNetwork(text, network)
+}
+
+// KnownNetwork busca la red en la última lista obtenida aunque haya pasado listTTL. Saber que una red está unida no
+// exige sondear otra vez a todos los agentes (lo lento de `atenea network list`): unirse o salir desde la aplicación
+// invalida la lista, y si el CLI la cambió por fuera el socket del agente falla al leerlo. Sin lista guardada, o sin
+// la red en ella, pregunta al CLI como JoinedNetwork.
+func KnownNetwork(network string) (map[string]any, error) {
+	if !ValidUUID(network) {
+		return nil, errors.New("identificador de red no válido")
+	}
+	listCache.mu.Lock()
+	text, cli := listCache.text, listCache.cli
+	listCache.mu.Unlock()
+	if text != "" && cli == CLIPath() {
+		if n, err := findNetwork(text, network); err == nil {
+			return n, nil
+		}
+	}
+	return JoinedNetwork(network)
+}
+
+func findNetwork(text, network string) (map[string]any, error) {
 	var list []any
 	if err := json.Unmarshal([]byte(text), &list); err != nil {
 		return nil, err

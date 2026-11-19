@@ -213,6 +213,18 @@ fn response_error(response: &ureq::http::Response<ureq::Body>) -> RequestError {
     }
 }
 
+/// Clase de un fallo de transporte. El detalle de `ureq` no se expone (puede llevar la URL), pero la clase separa un
+/// DNS roto de un servidor lento o de un fallo TLS: antes todo era «error de red» y no se podía diagnosticar.
+pub(crate) fn transport_reason(error: &ureq::Error) -> &'static str {
+    match error {
+        ureq::Error::Timeout(_) => "tiempo de espera agotado",
+        ureq::Error::HostNotFound => "no resuelve el servidor",
+        ureq::Error::ConnectionFailed => "no se pudo conectar",
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) => "fallo TLS",
+        _ => "error de red",
+    }
+}
+
 /// Presencia: la configuración firmada vigente (el coordinator la verifica) y los candidatos propios.
 pub fn announce(
     cfg: &CoordinatorConfig,
@@ -235,7 +247,7 @@ pub fn announce(
         .header("Authorization", &auth)
         .header("Content-Type", "application/json")
         .send(&body[..])
-        .map_err(|_| "error de red")?;
+        .map_err(|e| transport_reason(&e))?;
     match response.status().as_u16() {
         200 => Ok(()),
         _ => Err(response_error(&response)),
@@ -260,7 +272,7 @@ pub fn rendezvous(
         .header("Authorization", &auth)
         .header("Content-Type", "application/json")
         .send(&body[..])
-        .map_err(|_| "error de red")?;
+        .map_err(|e| transport_reason(&e))?;
     match response.status().as_u16() {
         200 => {
             let bytes = read_limited(&mut response)?;
@@ -291,7 +303,7 @@ pub fn relay(
         .header("Authorization", &auth)
         .header("Content-Type", "application/json")
         .send(&body[..])
-        .map_err(|_| "error de red")?;
+        .map_err(|e| transport_reason(&e))?;
     match response.status().as_u16() {
         200 => {
             let bytes = read_limited(&mut response)?;
@@ -317,7 +329,7 @@ pub fn events(
         .get(&url)
         .header("Authorization", &auth)
         .call()
-        .map_err(|_| "error de red")?;
+        .map_err(|e| transport_reason(&e))?;
     match response.status().as_u16() {
         200 => {
             let bytes = read_limited(&mut response)?;
@@ -606,5 +618,22 @@ mod tests {
                 .map_err(|e| e.reason),
             Err("error de red")
         );
+    }
+
+    #[test]
+    fn transport_failures_keep_their_class_without_leaking_detail() {
+        let io = ureq::Error::Io(std::io::Error::other("https://secreto.example.test/ruta"));
+        for (error, reason) in [
+            (
+                ureq::Error::Timeout(ureq::Timeout::Global),
+                "tiempo de espera agotado",
+            ),
+            (ureq::Error::HostNotFound, "no resuelve el servidor"),
+            (ureq::Error::ConnectionFailed, "no se pudo conectar"),
+            (ureq::Error::Tls("fallo"), "fallo TLS"),
+            (io, "error de red"),
+        ] {
+            assert_eq!(transport_reason(&error), reason);
+        }
     }
 }
