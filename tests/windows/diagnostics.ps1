@@ -64,6 +64,13 @@ try {
 $agentLog = Join-Path $env:ProgramData 'Atenea/agent.log'
 Write-Output "Registro del agente: $agentLog"
 Show-Diagnostic 'agent.log' { if (Test-Path -LiteralPath $agentLog) { Get-Content -LiteralPath $agentLog -Encoding UTF8 -Tail 200 } else { 'No existe todavía.' } } -Local
+# Las redes por instancia (ADR-017) escriben cada una en su directorio y tienen su propio servicio: el registro heredado de
+# arriba no dice nada de ellas. Sin esto, «la tubería atenea-<id>-status no responde» fallaba en la CI sin dejar la causa.
+Show-Diagnostic 'agent.log de cada red' {
+    Get-ChildItem -Path (Join-Path $env:ProgramData 'Atenea/networks/*/device/agent.log') -ErrorAction SilentlyContinue |
+        ForEach-Object { "--- $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Tail 80 }
+} -Local
+Show-Diagnostic 'servicios de red' { Get-CimInstance Win32_Service -Filter "Name LIKE 'AteneaNetwork-%'" | Select-Object Name,State,Status,ProcessId,ExitCode,ServiceSpecificExitCode | Format-Table -AutoSize }
 Show-Diagnostic 'peer.log' {
     if ($PeerLog) { Get-Content -LiteralPath $PeerLog -Encoding UTF8 -Tail 200 -ErrorAction Stop }
     else { Get-ChildItem -Path "$env:TEMP/atenea-windows-*/peer.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Tail 200 } }
