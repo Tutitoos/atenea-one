@@ -158,6 +158,7 @@ fn schemas() -> ComponentsBuilder {
         ("LocalLogin", complete(&[("login", text()), ("password", text())])),
         ("LocalRecover", complete(&[("login", text()), ("recovery_code", text()), ("new_password", ObjectBuilder::new().schema_type(Type::String).min_length(Some(8)).max_length(Some(128)).description(Some("Mismo mínimo que la contraseña de registro.")).into())])),
         ("Issuer", complete(&[("issuer_pubkey", hex(32))])),
+        ("LocalOptions", complete(&[("registration_open", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("false si el operador no ha puesto ATENEA_CP_REGISTRATION_OPEN=true: el registro responde 403 registration_closed.")).into())])),
         ("NewInvitation", complete(&[("role", choices(&["viewer", "enroller"]))])),
         ("InvitationCreated", complete(&[("id", uuid()), ("token", text()), ("role", choices(&["viewer", "enroller"])), ("expires_at", timestamp())])),
         ("Invitation", complete(&[("id", uuid()), ("role", choices(&["viewer", "enroller"])), ("created_at", timestamp()), ("expires_at", timestamp()), ("used_at", nullable_timestamp()), ("revoked_at", nullable_timestamp())])),
@@ -317,6 +318,16 @@ pub fn document() -> OpenApi {
             "204",
             "LocalRecover",
             "",
+        ),
+        (
+            Get,
+            "/auth/local/options",
+            "getLocalOptions",
+            "Indica si el servidor admite crear cuentas con correo y contraseña",
+            "public",
+            "200",
+            "",
+            "LocalOptions",
         ),
         (
             Get,
@@ -1454,7 +1465,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 63);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 64);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());

@@ -7599,6 +7599,47 @@
         }
       }
     },
+    "/auth/local/options": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Indica si el servidor admite crear cuentas con correo y contraseña",
+        "operationId": "getLocalOptions",
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalOptions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/local/recover": {
       "post": {
         "tags": [
@@ -9315,6 +9356,18 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "LocalOptions": {
+        "type": "object",
+        "required": [
+          "registration_open"
+        ],
+        "properties": {
+          "registration_open": {
+            "type": "boolean",
+            "description": "false si el operador no ha puesto ATENEA_CP_REGISTRATION_OPEN=true: el registro responde 403 registration_closed."
           }
         }
       },

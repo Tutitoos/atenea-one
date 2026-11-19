@@ -26,6 +26,18 @@ it('entrar envía el correo y la contraseña sin pasar por el cliente con sesió
   expect(done).toHaveBeenCalled();
 });
 
+it('si el servidor tiene el registro cerrado no ofrece «Crear una cuenta»; si falla la consulta, sí', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ registration_open: false }));
+  const view = render(<LocalAccess/>);
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/auth/local/options'));
+  expect(await screen.findByRole('button', { name: 'He olvidado la contraseña' })).toBeVisible();
+  await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Crear una cuenta' })).toBeNull());
+  view.unmount();
+  fetchMock.mockRejectedValue(new Error('red'));
+  render(<LocalAccess/>);
+  expect(await screen.findByRole('button', { name: 'Crear una cuenta' })).toBeVisible();
+});
+
 it.each([
   ['invalid_credentials', 401, 'Correo o contraseña incorrectos.'],
   ['rate_limited', 429, 'Demasiados intentos. Espera unos minutos y vuelve a probar.'],
@@ -43,7 +55,8 @@ it.each([
 
 it('al crear la cuenta muestra los diez códigos y solo deja continuar cuando se confirman', async () => {
   const codes = Array.from({ length: 10 }, (_, index) => `codigo-sintetico-${index}`);
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ user_id: 'u', recovery_codes: codes }, 201));
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async input =>
+    String(input) === '/auth/local/options' ? json({ registration_open: true }) : json({ user_id: 'u', recovery_codes: codes }, 201));
   const done = vi.fn();
   const user = userEvent.setup();
   render(<LocalAccess onDone={done}/>);

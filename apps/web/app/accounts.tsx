@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, CopyButton, Field } from './ui';
 
 // Mensajes de los códigos del control plane (ADR-028). No se muestra nunca el texto crudo del servidor.
@@ -47,6 +47,16 @@ export function LocalAccess({ onDone = () => window.location.assign('/') }: { on
   const [message, setMessage] = useState('');
   const [codes, setCodes] = useState<string[]>();
   const [pending, setPending] = useState(false);
+  // Solo se oculta si el servidor dice que está cerrado; ante cualquier fallo se ofrece y decide el servidor (403).
+  const [registration, setRegistration] = useState(true);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch('/auth/local/options');
+        if (response.ok && (await response.json() as { registration_open?: boolean }).registration_open === false) setRegistration(false);
+      } catch { /* se mantiene el botón */ }
+    })();
+  }, []);
   const set = (key: keyof typeof values) => (event: React.ChangeEvent<HTMLInputElement>) =>
     setValues({ ...values, [key]: event.target.value });
   const switchTo = (next: Mode) => { setMode(next); setMessage(''); };
@@ -82,7 +92,7 @@ export function LocalAccess({ onDone = () => window.location.assign('/') }: { on
     <Button type="submit" variant="primary" loading={pending}>{{ entrar: 'Entrar', registrar: 'Crear cuenta', recuperar: 'Cambiar contraseña' }[mode]}</Button>
     <p role="status">{message}</p>
     <p className="muted">{mode !== 'entrar' && <Button type="button" variant="link" onClick={() => switchTo('entrar')}>Ya tengo cuenta</Button>}
-      {mode !== 'registrar' && <Button type="button" variant="link" onClick={() => switchTo('registrar')}>Crear una cuenta</Button>}
+      {registration && mode !== 'registrar' && <Button type="button" variant="link" onClick={() => switchTo('registrar')}>Crear una cuenta</Button>}
       {mode !== 'recuperar' && <Button type="button" variant="link" onClick={() => switchTo('recuperar')}>He olvidado la contraseña</Button>}</p>
   </form>;
 }
