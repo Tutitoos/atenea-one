@@ -68,16 +68,17 @@ trust_anchor = "$anchor"
     $index = @{ network_id = $netId; name = 'prueba-up'; server = 'control.example.test'; url = 'https://control.example.test'; root_anchor_fingerprint = 'f'; device_id = $deviceId; device_fingerprint = 'p'; interface = $adapter; listen_port = 51899; created = 1; join_status = 'aprobada' } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $public "$netId.json"), $index, [Text.UTF8Encoding]::new($false))
 
-    # up: crea el servicio por red (LocalSystem, automático retrasado, recuperación 5/15/60 s) y lo inicia.
+    # up: crea el servicio por red (LocalSystem, inicio manual con disparador de primera IP, recuperación 5/15/60 s) y lo inicia.
     Invoke-Cli network up $short | Out-Null
     $s = Service-Info
     Assert-True ($null -ne $s) 'up no creó el servicio'
-    Assert-True ($s.StartName -eq 'LocalSystem' -and $s.State -eq 'Running' -and $s.StartMode -eq 'Auto') "servicio: $($s.StartName)/$($s.State)/$($s.StartMode)"
+    Assert-True ($s.StartName -eq 'LocalSystem' -and $s.State -eq 'Running' -and $s.StartMode -eq 'Manual') "servicio: $($s.StartName)/$($s.State)/$($s.StartMode)"
     Assert-True ($s.DisplayName -eq "Atenea One ($short)") "nombre visible: $($s.DisplayName)"
     $expected = "`"$bin\atenea-agent.exe`" run --service --config $config"
     Assert-True ($s.PathName -ieq $expected) "línea de órdenes: $($s.PathName) (esperada: $expected)"
-    $reg = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$svc"
-    Assert-True ($reg.DelayedAutostart -eq 1) 'falta el arranque automático retrasado'
+    Assert-True ((Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").GetValue('DelayedAutostart') -ne 1) 'quedó la marca de arranque automático retrasado'
+    $trigger = & "$env:SystemRoot/System32/sc.exe" qtriggerinfo $svc | Out-String
+    Assert-True ($trigger -match '4f27f2de-14e2-430b-a549-7cd48cbc8245') "falta el disparador de primera IP (ADR-033): $trigger"
     $failure = & "$env:SystemRoot/System32/sc.exe" qfailure $svc | Out-String
     Assert-True ($failure -match '5000' -and $failure -match '15000' -and $failure -match '60000') "recuperación SCM: $failure"
     # El agente contesta por su tubería de estado y el adaptador lleva como GUID el UUID de la red.
@@ -87,6 +88,15 @@ trust_anchor = "$anchor"
     $listed = @(Invoke-Cli network list --json | ConvertFrom-Json)
     Assert-True (@($listed)[0].state -eq 'iniciada_sin_configuracion') "list tras up: $(Invoke-Cli network list)"
     Invoke-Cli network up $short | Out-Null  # idempotente
+    # Un servicio de una versión anterior (automático retrasado) se migra en el siguiente up (ADR-033).
+    & "$env:SystemRoot/System32/sc.exe" config $svc start= delayed-auto | Out-Null
+    & "$env:SystemRoot/System32/sc.exe" triggerinfo $svc delete | Out-Null
+    Invoke-Cli network up $short | Out-Null
+    $s = Service-Info
+    $delayed = (Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").GetValue('DelayedAutostart')
+    Assert-True ($s.StartMode -eq 'Manual' -and $delayed -ne 1) "migración: $($s.StartMode)/$delayed"
+    $trigger = & "$env:SystemRoot/System32/sc.exe" qtriggerinfo $svc | Out-String
+    Assert-True ($trigger -match '4f27f2de-14e2-430b-a549-7cd48cbc8245') "migración sin disparador: $trigger"
 
     # down: para, espera la limpieza y deshabilita; up lo vuelve a habilitar.
     Invoke-Cli network down $short | Out-Null
@@ -97,7 +107,7 @@ trust_anchor = "$anchor"
     Invoke-Cli network down $short | Out-Null  # idempotente
     Invoke-Cli network up $short | Out-Null
     $s = Service-Info
-    Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Auto') "tras up: $($s.State)/$($s.StartMode)"
+    Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Manual') "tras up: $($s.State)/$($s.StartMode)"
     Invoke-Cli network down $short | Out-Null
 
     # Un servicio con ese nombre y otra línea de órdenes no se toca.
@@ -162,7 +172,7 @@ trust_anchor = "$anchor"
     foreach ($n in $nets) { Invoke-Cli network up $n.Short | Out-Null }
     foreach ($n in $nets) {
         $s = Service-Info-Of $n.Service
-        Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Auto') "servicio $($n.Service): $($s.State)/$($s.StartMode)"
+        Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Manual') "servicio $($n.Service): $($s.State)/$($s.StartMode)"
         $pipe = $n.Pipe
         Assert-True (Wait-Until { try { Invoke-Cli status --socket $pipe | Out-Null; $true } catch { $false } }) "la tubería $pipe no responde"
         $nic = Get-NetAdapter -Name $n.Alias -IncludeHidden -ErrorAction SilentlyContinue

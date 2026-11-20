@@ -4,6 +4,7 @@
 
 - **Estado:** **Aceptado** por el responsable el 2026-10-29 con las seis recomendaciones de § «Decisiones del responsable». Sin código todavía; la fase 3 queda condicionada a que el responsable aporte una máquina Windows real (decisión 6).
 - **Relacionados:** ADR-008 (cliente Windows), ADR-011 (aplicación de escritorio), ADR-013 (redes múltiples; aplazó Windows a una fase propia), ADR-014.
+- **Modificada por [ADR-033](ADR-033-arranque-de-los-servicios-de-red-por-llegada-de-ip.md):** el servicio de cada red ya no está en arranque automático retrasado (§1 y decisión 2): es de inicio manual con un disparador de primera IP. El texto de abajo conserva la decisión original.
 
 ## Contexto
 

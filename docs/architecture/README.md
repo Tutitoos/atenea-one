@@ -34,6 +34,7 @@
 | [030](ADR-030-cambio-de-red-y-despertar.md) | Cambio de red y despertar: el agente reinicia caminos y esperas al detectarlos; el servicio de macOS sin prioridad de fondo | Aceptado el 2026-11-19 (implementado en `main`, sin publicar; sin formato firmado nuevo) |
 | [031](ADR-031-conexiones-automaticas-por-aprobacion.md) | Conexiones automáticas según la aprobación, sin una política por pareja | Aceptado el 2026-11-20; 500 dispositivos y rechazo atómico de altas incompatibles |
 | [032](ADR-032-conexion-con-los-pares-al-arrancar.md) | Conexión con los pares al arrancar: el agente inicia el handshake con hasta 16 pares sin esperar un primer paquete; un sondeo de arranque fallido no activa el retroceso | Aceptado el 2026-11-20 (implementado en una rama, sin publicar; sin formato firmado nuevo; medido en un Windows real: ~36 s frente a 61–152 s con la app arrancando sola, atribuido al calentamiento) |
+| [033](ADR-033-arranque-de-los-servicios-de-red-por-llegada-de-ip.md) | Arranque de los servicios de red de Windows por llegada de la primera IP: inicio manual con disparador del SCM en lugar de automático retrasado; modifica ADR-017 §1 | Aceptado el 2026-11-20 (implementado en una rama, sin publicar; sin formato firmado nuevo; migración y dos reinicios medidos en un Windows real: ping a los 29 s) |
 
 Contratos: [Configuración firmada v1](../protocol/signed-config-v1.md) (aceptado). Seguridad: [Modelo de amenazas](../security/threat-model.md) (aceptado). [Inventario de dependencias](dependencies.md).
 

@@ -166,8 +166,8 @@ fn wait_for(service: &Service, wanted: ServiceState, what: &str) -> io::Result<(
     }
 }
 
-/// `up`: registra el servicio si no existe, lo deja en arranque automático retrasado con reinicio tras fallo
-/// (5, 15 y 60 s, también ante salidas con error) y lo inicia.
+/// `up`: registra el servicio si no existe, lo deja en inicio manual con el disparador «llega la primera dirección IP»
+/// (ADR-033) y reinicio tras fallo (5, 15 y 60 s, también ante salidas con error) y lo inicia.
 pub fn start_network_service(spec: &NetworkService) -> io::Result<()> {
     spec.validate()?;
     let manager = ServiceManager::local_computer(
@@ -181,15 +181,20 @@ pub fn start_network_service(spec: &NetworkService) -> io::Result<()> {
             service
         }
         Err(e) if does_not_exist(&e) => manager
-            .create_service(&spec.info(ServiceStartType::AutoStart), ACCESS)
+            .create_service(&spec.info(ServiceStartType::OnDemand), ACCESS)
             .map_err(io_error)?,
         Err(e) => return Err(io_error(e)),
     };
+    // Un servicio de una versión anterior está en arranque automático retrasado: se quita la marca mientras aún es
+    // automático (en otro modo el SCM la ignora) y después pasa a manual con el disparador.
+    if service.query_config().map_err(io_error)?.start_type == ServiceStartType::AutoStart {
+        service.set_delayed_auto_start(false).map_err(io_error)?;
+    }
     // Reactiva un servicio que `down` dejó deshabilitado; en uno nuevo no cambia nada.
     service
-        .change_config(&spec.info(ServiceStartType::AutoStart))
+        .change_config(&spec.info(ServiceStartType::OnDemand))
         .map_err(io_error)?;
-    service.set_delayed_auto_start(true).map_err(io_error)?;
+    crate::trigger::start_on_first_ip(service.raw_handle())?;
     service
         .set_description("Cliente Atenea: túnel cifrado, rutas firmadas y DNS dividido de una red.")
         .map_err(io_error)?;
