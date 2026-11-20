@@ -10,6 +10,9 @@ pub use security::*;
 #[allow(unsafe_code)]
 mod service;
 pub use service::{dispatch_service, service_stop_receiver};
+// SAFETY: una sola llamada FFI con estructuras locales vivas durante la llamada (ADR-033).
+#[allow(unsafe_code)]
+mod trigger;
 // La API del SCM de `windows-service` es segura: sin `unsafe` en este módulo.
 mod scm;
 pub use scm::{
