@@ -76,7 +76,7 @@ trust_anchor = "$anchor"
     Assert-True ($s.DisplayName -eq "Atenea One ($short)") "nombre visible: $($s.DisplayName)"
     $expected = "`"$bin\atenea-agent.exe`" run --service --config $config"
     Assert-True ($s.PathName -ieq $expected) "línea de órdenes: $($s.PathName) (esperada: $expected)"
-    Assert-True ((Get-ItemPropertyValue "HKLM:\SYSTEM\CurrentControlSet\Services\$svc" -Name DelayedAutostart -ErrorAction SilentlyContinue) -ne 1) 'quedó la marca de arranque automático retrasado'
+    Assert-True ((Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").GetValue('DelayedAutostart') -ne 1) 'quedó la marca de arranque automático retrasado'
     $trigger = & "$env:SystemRoot/System32/sc.exe" qtriggerinfo $svc | Out-String
     Assert-True ($trigger -match '4f27f2de-14e2-430b-a549-7cd48cbc8245') "falta el disparador de primera IP (ADR-033): $trigger"
     $failure = & "$env:SystemRoot/System32/sc.exe" qfailure $svc | Out-String
@@ -93,7 +93,7 @@ trust_anchor = "$anchor"
     & "$env:SystemRoot/System32/sc.exe" triggerinfo $svc delete | Out-Null
     Invoke-Cli network up $short | Out-Null
     $s = Service-Info
-    $delayed = Get-ItemPropertyValue "HKLM:\SYSTEM\CurrentControlSet\Services\$svc" -Name DelayedAutostart -ErrorAction SilentlyContinue
+    $delayed = (Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").GetValue('DelayedAutostart')
     Assert-True ($s.StartMode -eq 'Manual' -and $delayed -ne 1) "migración: $($s.StartMode)/$delayed"
     $trigger = & "$env:SystemRoot/System32/sc.exe" qtriggerinfo $svc | Out-String
     Assert-True ($trigger -match '4f27f2de-14e2-430b-a549-7cd48cbc8245') "migración sin disparador: $trigger"
