@@ -4901,7 +4901,7 @@ mod tests {
     }
 
     #[test]
-    fn malla_de_499_se_emite_firma_verifica_y_aplica_sin_tuneles_en_reposo() {
+    fn malla_de_499_se_emite_firma_verifica_y_aplica_y_el_arranque_solo_calienta_dieciseis() {
         let (mut l, bytes, aplicar) = malla_499();
         assert_eq!(l.cfg_a.peers.len(), VECINOS);
         assert!(l.cfg_a.peers.len() <= MAX_V3_PEERS);
@@ -4915,13 +4915,23 @@ mod tests {
             "ADR-031 malla 499: configuración {bytes} B, aplicar {aplicar:?}, estado IPC {} B",
             json.len()
         );
-        // Un minuto de temporizadores sin tráfico: ningún par abre túnel ni envía datagramas.
-        let mut emitidos = 0;
-        for _ in 0..240 {
+        // Un minuto de temporizadores sin tráfico. El arranque (ADR-032) sondea como mucho `WARMUP_MAX_PEERS`
+        // pares; sin respuesta vuelven a reposo y los otros 483 no llegan a iniciar nada.
+        let mut tardios = 0;
+        for tick in 0..240 {
             l.now += Duration::from_millis(250);
-            emitidos += l.a.on_tick(l.now, l.unix).len() + l.b.on_tick(l.now, l.unix).len();
+            let emitidos = l.a.on_tick(l.now, l.unix).len() + l.b.on_tick(l.now, l.unix).len();
+            if tick >= 120 {
+                tardios += emitidos;
+            }
         }
-        assert_eq!(emitidos, 0);
+        assert_eq!(l.a.counters.0["warm_up"] as usize, WARMUP_MAX_PEERS);
+        assert!(
+            l.a.peers[WARMUP_MAX_PEERS..]
+                .iter()
+                .all(|p| p.last_data.is_none() && p.pending.is_none() && p.current.is_none())
+        );
+        assert_eq!(tardios, 0, "pasado el sondeo de arranque no sale nada");
         let estado = l.a.status(l.now, l.unix);
         assert_eq!(estado.peers.len(), VECINOS);
         assert!(
