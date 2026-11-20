@@ -1986,7 +1986,17 @@ impl Engine {
         for pi in 0..self.peers.len().min(WARMUP_MAX_PEERS) {
             let peer = &mut self.peers[pi];
             // Un par con tráfico, handshake en curso o sesión ya tiene su propio intento: el arranque no lo toca.
-            if peer.last_data.is_some() || peer.pending.is_some() || peer.current.is_some() {
+            let skip = if peer.last_data.is_some() {
+                Some("warm_skip_traffic")
+            } else if peer.pending.is_some() {
+                Some("warm_skip_pending")
+            } else if peer.current.is_some() {
+                Some("warm_skip_session")
+            } else {
+                None
+            };
+            if let Some(reason) = skip {
+                self.counters.inc(reason);
                 continue;
             }
             peer.last_data = Some(now);
@@ -2526,6 +2536,15 @@ mod tests {
         l.a.on_tick(l.now, l.unix);
         assert_eq!(l.a.counters.0["warm_up"] as usize, WARMUP_MAX_PEERS);
         assert_eq!(l.a.counters.0["tx_init"] as usize, WARMUP_MAX_PEERS);
+    }
+
+    #[test]
+    fn startup_warm_up_reports_why_it_skips_a_peer() {
+        let mut l = lab();
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.counters.0["warm_skip_traffic"], 1);
+        assert!(!l.a.counters.0.contains_key("warm_up"));
     }
 
     #[test]
