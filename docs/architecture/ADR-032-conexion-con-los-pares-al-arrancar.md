@@ -7,7 +7,7 @@
 
 ## Contexto
 
-Hechos medidos el 2026-11-20 con un Windows (agente 0.1.35, red por cable) y un Mac, en la red `4mans-net`, reiniciando el Windows. Tiempos desde el arranque del kernel hasta que el ping Mac → Windows responde:
+Hechos medidos el 2026-11-20 con un Windows (agente 0.1.35, red por cable) y un Mac, en la red `red-piloto` (nombre sintético de una red real del piloto), reiniciando el Windows. Tiempos desde el arranque del kernel hasta que el ping Mac → Windows responde:
 
 | Prueba | Tiempo |
 | --- | ---: |
@@ -53,7 +53,7 @@ Ningún formato firmado, protocolo ni mensaje. Un agente 0.1.35 es compatible co
 
 Pruebas del motor con relojes y red simulados: el arranque conecta sin tráfico y entrega sesión a ambos lados, ocurre una sola vez y solo con lease vigente, respeta el tope de 16, y un sondeo de arranque fallido no retiene el primer paquete real.
 
-**Medido en un Windows real (2026-11-20, `4mans-net`, sin tráfico iniciado a mano, mismo equipo y mismo Mac).** Segundos desde el arranque del kernel hasta que responde el ping Mac → Windows, reiniciando el Windows. «App» es el arranque automático de la aplicación de escritorio (~35 s tras el arranque):
+**Medido en un Windows real (2026-11-20, `red-piloto`, sin tráfico iniciado a mano, mismo equipo y mismo Mac).** Segundos desde el arranque del kernel hasta que responde el ping Mac → Windows, reiniciando el Windows. «App» es el arranque automático de la aplicación de escritorio (~35 s tras el arranque):
 
 | Agente | App | Medidas (s) |
 | --- | --- | --- |
