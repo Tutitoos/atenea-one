@@ -6,7 +6,7 @@
 //! primer fragmento y de TCP/UDP; en cualquier otro caso no hay puerto y una regla con puertos no coincide.
 
 use atenea_identity::{DeviceConfig, DeviceId, Prefix, Rule, Selector};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,36 +113,58 @@ pub fn peer_for_destination(cfg: &DeviceConfig, ip: IpAddr) -> Option<&atenea_id
         })
 }
 pub struct Policy {
-    devices: HashMap<DeviceId, Vec<IpAddr>>,
+    devices: HashMap<IpAddr, DeviceId>,
+    exact: HashSet<(DeviceId, DeviceId)>,
     rules: Vec<Rule>,
 }
 
 impl Policy {
     pub fn new(cfg: &DeviceConfig) -> Policy {
-        let mut devices = HashMap::new();
-        devices.insert(cfg.device_id, cfg.tunnel_addrs.clone());
-        for p in &cfg.peers {
-            devices.insert(p.device_id, p.addrs.clone());
+        let devices = cfg
+            .peers
+            .iter()
+            .map(|p| (p.device_id, &p.addrs))
+            .chain(std::iter::once((cfg.device_id, &cfg.tunnel_addrs)))
+            .flat_map(|(id, addrs)| addrs.iter().map(move |ip| (*ip, id)))
+            .collect();
+        let mut exact = HashSet::new();
+        let mut rules = Vec::new();
+        for r in &cfg.rules {
+            if let (Selector::Device(src), Selector::Device(dst), 0, 0, 0) =
+                (&r.src, &r.dst, r.proto, r.port_min, r.port_max)
+            {
+                exact.insert((*src, *dst));
+            } else {
+                rules.push(r.clone());
+            }
         }
         Policy {
             devices,
-            rules: cfg.rules.clone(),
+            exact,
+            rules,
         }
     }
 
-    fn selects(&self, s: &Selector, ip: &IpAddr) -> bool {
+    fn selects(s: &Selector, ip: &IpAddr, device: Option<&DeviceId>) -> bool {
         match s {
             Selector::Any => true,
-            Selector::Device(id) => self.devices.get(id).is_some_and(|a| a.contains(ip)),
+            Selector::Device(id) => device == Some(id),
             Selector::Prefix(p) => prefix_contains(p, ip),
         }
     }
 
     /// `true` solo si alguna regla permite el flujo.
     pub fn allows(&self, f: &Flow) -> bool {
+        let src = self.devices.get(&f.src);
+        let dst = self.devices.get(&f.dst);
+        if let (Some(src), Some(dst)) = (src, dst)
+            && self.exact.contains(&(*src, *dst))
+        {
+            return true;
+        }
         self.rules.iter().any(|r| {
-            self.selects(&r.src, &f.src)
-                && self.selects(&r.dst, &f.dst)
+            Self::selects(&r.src, &f.src, src)
+                && Self::selects(&r.dst, &f.dst, dst)
                 && (r.proto == 0 || r.proto == f.proto)
                 && ((r.port_min, r.port_max) == (0, 0)
                     || (!f.non_first_fragment
@@ -298,6 +320,24 @@ mod tests {
         assert!(!p.allows(&flow("10.0.0.9", "10.0.0.1", 1, None))); // origen ajeno
         let p = Policy::new(&cfg(vec![rule(Selector::Any, Selector::Any, 0, 0, 0)]));
         assert!(p.allows(&flow("1.2.3.4", "5.6.7.8", 99, None)));
+    }
+
+    #[test]
+    fn permiso_automatico_no_autoriza_la_subred_anunciada_del_vecino() {
+        let mut c = cfg(vec![rule(
+            Selector::Device(OWN),
+            Selector::Device(PEER),
+            0,
+            0,
+            0,
+        )]);
+        c.peers[0].routes.push(Prefix {
+            addr: ip("172.16.0.0"),
+            len: 24,
+        });
+        let acl = Policy::new(&c);
+        assert!(acl.allows(&flow("10.0.0.1", "10.0.0.2", TCP, Some(443))));
+        assert!(!acl.allows(&flow("10.0.0.1", "172.16.0.3", TCP, Some(443))));
     }
 
     #[test]

@@ -110,7 +110,7 @@ async fn migracion_indice_asignaciones_cubre_emision_y_listado_e_idempotencia() 
     assert_eq!(
         versions,
         vec![
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
         ]
     );
     // Reconstruye el estado 0006: redes y dispositivos previos quedan `cerrada` y `token`.
@@ -212,5 +212,58 @@ async fn migracion_indice_not_after_acota_el_recuento_de_leases_expirados() {
         definition,
         "CREATE INDEX configuration_versions_not_after ON public.configuration_versions USING btree (not_after)"
     );
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn migrar_red_existente_no_concede_acceso_automatico() {
+    let Some(t) = TestApp::new().await else {
+        return;
+    };
+    let mut tx = t.pool.begin().await.unwrap();
+    tx.execute("CREATE SCHEMA anterior; SET LOCAL search_path TO anterior")
+        .await
+        .unwrap();
+    let migrations = sqlx::migrate!("./migrations");
+    for migration in migrations.iter().take_while(|m| m.version <= 18) {
+        tx.execute(migration.sql.as_ref()).await.unwrap();
+    }
+    tx.execute("INSERT INTO organizations(id,name) VALUES (md5('org')::uuid,'Org');
+        INSERT INTO networks(id,org_id,name,ipv4_cidr,root_anchor)
+        VALUES (md5('red')::uuid,md5('org')::uuid,'Red','10.93.0.0/24',decode(repeat('11',32),'hex'));
+        INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle)
+        SELECT md5(i::text)::uuid,md5('red')::uuid,'Equipo','approved',decode(md5('n'||i)||md5('n'||i),'hex'),
+          decode(md5('i'||i)||md5('i'||i),'hex'),decode(repeat('11',146),'hex') FROM generate_series(1,2) i;")
+        .await.unwrap();
+    tx.execute(
+        migrations
+            .iter()
+            .find(|m| m.version == 19)
+            .expect("migración de conexiones automáticas")
+            .sql
+            .as_ref(),
+    )
+    .await
+    .unwrap();
+    let active: bool =
+        sqlx::query_scalar("SELECT auto_connect FROM networks WHERE id=md5('red')::uuid")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    assert!(
+        !active,
+        "actualizar una red manual no debe cambiar la próxima aprobación"
+    );
+    let inherited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE auto_connect_on_approval OR config_v3",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        inherited, 0,
+        "ni acceso retroactivo ni capacidades supuestas"
+    );
+    tx.rollback().await.unwrap();
     t.finish().await;
 }

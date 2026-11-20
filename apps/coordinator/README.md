@@ -22,10 +22,10 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 | `ANCHORS` / `anchors` | `[]` (requiere configuración) | Raíces públicas hex de 32 bytes |
 | `anchors_source` (solo TOML) | ausente (apagado) | Opt-in, ADR-018 § 3.4: `{ url = "http://host:puerto/internal/v1/root-anchors", secret_file = "/ruta", interval_secs = 60 }`. El coordinator consulta ese punto interno del control plane con `Authorization: Bearer <secreto>` cada `interval_secs` (5–3600). La respuesta es `{"anchors":[{"network_id":"hex","root_anchor":"hex"},…]}` (≤ 4096, ≤ 1 MiB); **una sola entrada inválida descarta la respuesta entera**. **Una raíz remota solo vale para su red**; las de `anchors` (estáticas) valen para cualquiera. Ante cualquier fallo (red, estado ≠ 200, JSON, secreto) conserva la última lista buena; nunca baja de las estáticas (≥ 1). `url` debe ser `http://` (red interna, nunca publicada); `secret_file`: fichero 0400/0600 de ≥ 16 caracteres, releído en cada consulta. Activarlo equivale a confiar en el control plane para decidir qué redes usan rendezvous y relay: solo con creación de redes restringida |
 | `PRESENCE_TTL_SECS` | `60` | TTL máximo; también limita `not_after + 30` |
-| `MAX_BODY_BYTES` | `163840` | Cuerpo HTTP máximo |
+| `MAX_BODY_BYTES` | `327680` | Cuerpo HTTP máximo de `/v1/announce`; admite una configuración v3 en base64 con sus candidatos. El resto de rutas leen como mucho 16 KiB |
 | `MAX_PRESENCES` | `4096` | Tabla de presencias |
-| `MAX_LONG_POLLS` | `256` | Peticiones events simultáneas; máximo 2 por dispositivo y ⌈total/4⌉ por red |
-| `MAX_NONCES` | `65536` | Nonces retenidos 120 s; cuota por dispositivo mín(256, ⌈total/4⌉) y por red mín(4096, ⌈total/2⌉); exceso devuelve 429 |
+| `MAX_LONG_POLLS` | `2048` | Peticiones events simultáneas; máximo 2 por dispositivo y ⌈total/4⌉ por red (512 por defecto) |
+| `MAX_NONCES` | `65536` | Nonces retenidos 120 s; cuota por dispositivo mín(256, ⌈total/4⌉) y por red mín(8192, ⌈total/2⌉); exceso devuelve 429 |
 | `MAX_RATE_ENTRIES` | `65536` | Entradas por tabla de cubos; llena deniega claves nuevas hasta reponer cubos |
 | `ANNOUNCE_INTERVAL_SECS` | `2` | Cubo por dispositivo, ráfaga 1 |
 | `RENDEZVOUS_PAIR_INTERVAL_SECS` | `1` | Cubo por par dirigido, ráfaga 1 |
@@ -38,7 +38,7 @@ Preparar el ancla con la **clave pública** de la raíz que firmó el certificad
 
 Para las filas sin clave TOML explícita se usa el sufijo en minúsculas. Todos los límites son positivos. Los cubos cuentan intentos autenticados, incluidos intentos no disponibles; no hay estado duradero. Barrido cada 5 s y antes de acceder a presencia; eventos caducan a 30 s, máximo 16 (se elimina el más antiguo). Máximo 8 candidatos saneados por anuncio. `RUST_LOG=info` activa el registro operativo sin configuraciones, firmas ni nonces.
 
-Todas las peticiones firmadas comparten además cubos por dispositivo (1/s, ráfaga 16) y red (8/s, ráfaga 64), comprobados tras la firma y antes de reservar el nonce. Se purgan nonces caducados como máximo una vez por segundo; nunca se expulsan nonces vigentes para admitir otros. La cuota agotada devuelve 429, no un fallo de firma. Las cuotas son por proceso y no sustituyen la capacidad global: muchas redes independientes pueden consumirla. Los long-polls liberan los cupos global, de red y de dispositivo al responder o cancelarse, incluso si se sustituye la presencia.
+Todas las peticiones firmadas comparten además cubos por dispositivo (1/s, ráfaga 16) y red (64/s, ráfaga 512), comprobados tras la firma y antes de reservar el nonce. Se purgan nonces caducados como máximo una vez por segundo; nunca se expulsan nonces vigentes para admitir otros. La cuota agotada devuelve 429, no un fallo de firma. Las cuotas son por proceso y no sustituyen la capacidad global: muchas redes independientes pueden consumirla. Los long-polls liberan los cupos global, de red y de dispositivo al responder o cancelarse, incluso si se sustituye la presencia.
 
 ## API pública
 

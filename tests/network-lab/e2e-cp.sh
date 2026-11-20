@@ -72,7 +72,7 @@ expect_eq "inicio de sesión OIDC (Code + PKCE) completado" "$(cat $LAB/login.tx
 ORG=$(api POST /api/v1/orgs --json '{"name":"lab"}' --field id)
 atenea root-init --out $LAB/root.key > $LAB/root.pub
 ROOT_PUB=$(cat $LAB/root.pub)
-NETID=$(api POST /api/v1/orgs/$ORG/networks --json "{\"name\":\"lab-net\",\"ipv4_cidr\":\"10.77.0.0/24\",\"ipv6_cidr\":\"fd77::/64\",\"root_anchor\":\"$ROOT_PUB\"}" --field id)
+NETID=$(api POST /api/v1/orgs/$ORG/networks --json "{\"name\":\"lab-net\",\"auto_connect\":false,\"ipv4_cidr\":\"10.77.0.0/24\",\"ipv6_cidr\":\"fd77::/64\",\"root_anchor\":\"$ROOT_PUB\"}" --field id)
 [ -n "$NETID" ] && ok "organización y red creadas ($NETID)" || bad "no se creó la red"
 NETHEX=${NETID//-/}
 atenea issuer-cert --root $LAB/root.key --issuer-key $LAB/issuer.key --network-id $NETHEX --serial 1 --valid-days 30 --out $LAB/issuer.cert

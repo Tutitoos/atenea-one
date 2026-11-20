@@ -7,7 +7,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use common::{Device, Reply, Session, TestApp, now};
+use common::{Device, Session, TestApp, now, report};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -31,29 +31,6 @@ async fn device(t: &TestApp, user: &Session, net: Uuid, approved: bool) -> Devic
     let token = t.token(user, net, approved).await;
     assert_eq!(t.enroll(&token, &device).await.status, StatusCode::CREATED);
     device
-}
-
-async fn report(t: &TestApp, device: &Device, value: Value) -> Reply {
-    let body = serde_json::to_vec(&value).unwrap();
-    let auth = atenea_identity::api_auth::sign_request(
-        &device.key,
-        *device.id.as_bytes(),
-        "POST",
-        "/api/v1/device/status",
-        &body,
-        now(),
-        *Uuid::new_v4().as_bytes(),
-    );
-    t.send(
-        Request::builder()
-            .method("POST")
-            .uri("/api/v1/device/status")
-            .header("content-type", "application/json")
-            .header("authorization", auth)
-            .body(Body::from(body))
-            .unwrap(),
-    )
-    .await
 }
 
 async fn inventory(t: &TestApp, user: &Session, net: Uuid) -> Value {
@@ -116,7 +93,7 @@ async fn inventory_reports_validation_and_device_authentication() {
     for body in [
         json!({"paths": [{"peer":foreign.id,"path":"direct"}]}),
         json!({"paths": [{"peer":peer.id,"path":"invalid"}]}),
-        json!({"paths": vec![path.clone();257]}),
+        json!({"paths": vec![path.clone();500]}),
         json!({"paths": [{"peer":"not-a-uuid","path":"none"}]}),
         json!({"nat_mapping":"invalid","paths":[]}),
         json!({"paths":[{"peer":peer.id,"path":"direct","last_rx_secs":-1}]}),
@@ -203,6 +180,13 @@ async fn inventory_reports_validation_and_device_authentication() {
         let items = inventory(&t, &user, net).await;
         assert_eq!(entry(&items, approved.id)["connection"], connection);
     }
+    // ADR-031: un informe v3 admite hasta 499 pares; los 500 de arriba deben rechazarse.
+    assert_eq!(
+        report(&t, &approved, json!({"paths": vec![path.clone(); 499]}))
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
     t.finish().await;
 }
 

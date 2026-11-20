@@ -18,7 +18,7 @@ const wrap = (node: React.ReactNode) => render(
 const reply = <T,>(data: T) => ({ data, response: new Response() });
 const org: Model<'Organization'> = { id: '00000000-0000-4000-8000-000000000001', name: 'Personal', role: 'owner' };
 const created = { id: '00000000-0000-4000-8000-0000000000aa', org_id: org.id, name: 'casa', ipv4_cidr: '10.64.0.0/24',
-  ipv6_cidr: 'fd00::/64', root_anchor: 'ab'.repeat(32), root_mode: 'managed', has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada' };
+  ipv6_cidr: 'fd00::/64', root_anchor: 'ab'.repeat(32), root_mode: 'managed', has_issuer_cert: true, issuer_cert_not_after: null, join_policy: 'cerrada', auto_connect: true };
 
 it('crear una red envía solo el nombre: el bloque es «Automático» y no hay campos de CIDR ni de raíz', async () => {
   vi.spyOn(api, 'GET').mockImplementation((async () => reply([])) as never);
@@ -29,12 +29,28 @@ it('crear una red envía solo el nombre: el bloque es «Automático» y no hay c
   await user.click((await screen.findAllByRole('button', { name: 'Crear red' }))[0]);
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).getByRole('radio', { name: /Automático/ })).toBeChecked();
+  expect(within(dialog).getByRole('checkbox', { name: 'Conectar automáticamente los dispositivos aprobados' })).toBeChecked();
   expect(within(dialog).getByRole('radio', { name: '10.147.17.*' })).toHaveAttribute('title', '10.147.17.0/24');
   expect(within(dialog).queryByText(/raíz|CIDR/i)).toBeNull();
   await user.type(within(dialog).getByLabelText('Nombre'), 'casa');
   await user.click(within(dialog).getAllByRole('button', { name: 'Crear red' })[0]);
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/orgs/{org}/networks', { params: { path: { org: org.id } }, body: { name: 'casa' } }));
   await waitFor(() => expect(choose).toHaveBeenCalledWith(created.id));
+});
+
+it('permite crear una red con las conexiones automáticas desactivadas', async () => {
+  vi.spyOn(api, 'GET').mockImplementation((async () => reply([])) as never);
+  const post = vi.spyOn(api, 'POST').mockResolvedValue(reply({ ...created, auto_connect: false }) as never);
+  const user = userEvent.setup();
+  wrap(<Organizations org={org} choose={() => {}}/>);
+  await user.click((await screen.findAllByRole('button', { name: 'Crear red' }))[0]);
+  const dialog = await screen.findByRole('dialog');
+  await user.type(within(dialog).getByLabelText('Nombre'), 'manual');
+  await user.click(within(dialog).getByRole('checkbox', { name: 'Conectar automáticamente los dispositivos aprobados' }));
+  await user.click(within(dialog).getAllByRole('button', { name: 'Crear red' })[0]);
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/orgs/{org}/networks', {
+    params: { path: { org: org.id } }, body: { name: 'manual', auto_connect: false },
+  }));
 });
 
 it('elegir un bloque lo envía y volver a «Automático» lo quita', async () => {

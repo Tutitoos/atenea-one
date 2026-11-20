@@ -12,14 +12,14 @@ import { Dns } from './dns';
 const network: Model<'Network'> = {
   id: '00000000-0000-4000-8000-000000000002', org_id: '00000000-0000-4000-8000-000000000001',
   name: 'Red sintética', ipv4_cidr: '10.42.0.0/24', ipv6_cidr: 'fd42::/64',
-  ipv4_pool: null, root_anchor: 'ab'.repeat(32), root_mode: 'own', has_issuer_cert: false, join_policy: 'cerrada',
+  ipv4_pool: null, root_anchor: 'ab'.repeat(32), root_mode: 'own', has_issuer_cert: false, join_policy: 'cerrada', auto_connect: false,
   issuer_cert_not_after: null,
 };
-function Settings({ canEdit = true, installed = false, refresh = async () => {} }: {
-  canEdit?: boolean; installed?: boolean; refresh?: () => Promise<unknown>;
+function Settings({ canEdit = true, installed = false, autoConnect = false, refresh = async () => {} }: {
+  canEdit?: boolean; installed?: boolean; autoConnect?: boolean; refresh?: () => Promise<unknown>;
 }) {
-  const detail = useQuery({ queryKey: ['detail'], queryFn: async () => ({ ...network, has_issuer_cert: installed }),
-    initialData: { ...network, has_issuer_cert: installed } });
+  const detail = useQuery({ queryKey: ['detail'], queryFn: async () => ({ ...network, has_issuer_cert: installed, auto_connect: autoConnect }),
+    initialData: { ...network, has_issuer_cert: installed, auto_connect: autoConnect } });
   const devices = useQuery({ queryKey: ['devices'], queryFn: async (): Promise<Model<'Device'>[]> => [], initialData: [] });
   const routes = useQuery({ queryKey: ['routes'], queryFn: async (): Promise<Model<'Route'>[]> => [], initialData: [] });
   return <NetworkSettings net={network.id} network={detail} devices={devices} routes={routes}
@@ -36,6 +36,33 @@ function mockGet() {
     { servers: ['10.42.0.53'], domains: ['servicios.example.test'] } :
     { code: 'ATENEA1-SINTETICO', root_anchor_fingerprint: 'aaaa-bbbb', join_policy: 'cerrada' }, response: new Response() })) as never);
 }
+const autoConnectLabel = 'Conectar automáticamente los dispositivos aprobados';
+it.each([false, true])('guarda el ajuste de conexiones automáticas solo al pulsar guardar (inicial: %s)', async initial => {
+  mockGet();
+  const patch = vi.spyOn(api, 'PATCH').mockResolvedValue({ data: { ...network, auto_connect: !initial }, response: new Response() });
+  const user = userEvent.setup();
+  wrap(<Settings autoConnect={initial}/>);
+  const toggle = screen.getByRole('checkbox', { name: autoConnectLabel });
+  expect((toggle as HTMLInputElement).checked).toBe(initial);
+  expect(toggle).toHaveAccessibleDescription(/no cambia las conexiones existentes/);
+  await user.click(toggle);
+  expect(patch).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Guardar conexiones automáticas' }));
+  await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/v1/networks/{net}', {
+    params: { path: { net: network.id } }, body: { auto_connect: !initial },
+  }));
+  expect(await screen.findByText('Acción completada.')).toBeVisible();
+});
+it('mantiene el cambio sin guardar y muestra el error si el servidor rechaza la actualización', async () => {
+  mockGet();
+  vi.spyOn(api, 'PATCH').mockRejectedValue(new Error('Servidor no disponible.'));
+  const user = userEvent.setup();
+  wrap(<Settings/>);
+  await user.click(screen.getByRole('checkbox', { name: autoConnectLabel }));
+  await user.click(screen.getByRole('button', { name: 'Guardar conexiones automáticas' }));
+  expect(await screen.findByText('Servidor no disponible.')).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: autoConnectLabel })).toBeChecked();
+});
 it('valida cada valor antes de enviarlo y guarda al añadir', async () => {
   mockGet(); const put = vi.spyOn(api, 'PUT').mockResolvedValue({ response: new Response(null, { status: 204 }) });
   const user = userEvent.setup(); wrap(<Dns net="red" canEdit/>);
@@ -124,6 +151,8 @@ it('member tiene solo lectura, sin acciones administrativas, y la página es acc
   expect(await screen.findByText('servicios.example.test')).toBeVisible();
   expect(screen.getByText(network.root_anchor)).toBeVisible();
   expect(screen.getByText(/Pide la huella de la raíz/)).toBeVisible();
+  expect(screen.getByText('Desactivadas')).toBeVisible();
+  expect(screen.queryByRole('checkbox', { name: 'Conectar automáticamente los dispositivos aprobados' })).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Añadir|Quitar|Subir certificado|Reemplazar certificado|Eliminar red/ })).not.toBeInTheDocument();
   expect(api.GET).toHaveBeenCalledTimes(1);

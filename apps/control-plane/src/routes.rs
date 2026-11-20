@@ -44,7 +44,7 @@ pub async fn authenticate_as(
     body: &[u8],
     method: &str,
 ) -> Result<(Uuid, Uuid), ApiError> {
-    let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let invalid = || ApiError::new(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = atenea_identity::api_auth::parse_authorization(
         h.get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -120,7 +120,7 @@ pub async fn declare(
         return Err(ApiError::forbidden("device_not_approved"));
     }
     if row.get::<Option<bool>, _>("recent").unwrap_or(false) {
-        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+        return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
     }
     let values: Vec<String> = routes.iter().map(ToString::to_string).collect();
     sqlx::query("DELETE FROM device_routes WHERE device_id=$1 AND NOT (prefix::text=ANY($2))")
@@ -206,6 +206,10 @@ async fn decide(
         "rejected"
     };
     sqlx::query("UPDATE device_routes SET status=$3,snat=$4,decided_at=now(),decided_by=$5 WHERE network_id=$1 AND id=$2").bind(net).bind(id).bind(status).bind(snat).bind(user).execute(&mut *tx).await?;
+    // Aprobar una ruta puede activar políticas por subred: ningún vecino puede quedar sin configuración (ADR-031).
+    if snat.is_some() {
+        crate::issue::validate_network(&mut tx, net).await?;
+    }
     crate::audit::record(
         &mut tx,
         "user",

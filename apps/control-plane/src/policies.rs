@@ -106,7 +106,8 @@ pub async fn create(
     tx.commit().await?;
     Ok((StatusCode::CREATED, Json(json!({"id":id}))))
 }
-/// Valida e inserta una política bajo el bloqueo de la red y comprueba que la configuración de todos sigue compilando.
+/// Valida e inserta una política bajo el bloqueo de la red. Después valida la red entera: si un agente deja de caber,
+/// el error nombra su dispositivo y `tx` se deshace al descartarse (ADR-031).
 /// El autor es un usuario o un dispositivo delegado (ADR-026); la auditoría es de quien llama.
 pub async fn insert(
     tx: &mut PgConnection,
@@ -130,7 +131,7 @@ pub async fn insert(
     for selector in [b.src.selector()?, b.dst.selector()?] {
         match selector {
             Selector::Device(id) => {
-                let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1 AND network_id=$2 AND status!='revoked')").bind(Uuid::from_bytes(id)).bind(net).fetch_one(&mut *tx).await?;
+                let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1 AND network_id=$2 AND status!='revoked')").bind(Uuid::from_bytes(id)).bind(net).fetch_one(&mut *tx).await?;
                 if !exists {
                     return Err(ApiError::bad("invalid_selector"));
                 }
@@ -158,14 +159,11 @@ pub async fn insert(
     }
     let id = Uuid::now_v7();
     sqlx::query("INSERT INTO access_policies(id,network_id,src,dst,proto,port_min,port_max,created_by,created_by_device) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(id).bind(net).bind(json!(b.src)).bind(json!(b.dst)).bind(i16::from(b.proto)).bind(i32::from(b.port_min)).bind(i32::from(b.port_max)).bind(user).bind(device).execute(&mut *tx).await?;
-    let devices = crate::issue::load_devices(&mut *tx, net).await?;
-    let rules = rules(&mut *tx, net).await?;
-    let network_prefixes = crate::networks::prefixes(&row)?;
-    for d in &devices {
-        crate::issue::compile(d, &devices, &rules, &network_prefixes)?;
-    }
+    crate::issue::validate_network(tx, net).await?;
     Ok(id)
 }
+/// Quitar una política nunca añade pares ni reglas: la configuración resultante es subconjunto de la anterior, así
+/// que no necesita validación de capacidad (ADR-031).
 pub async fn remove(
     State(s): State<AppState>,
     Path((net, id)): Path<(Uuid, Uuid)>,

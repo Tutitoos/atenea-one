@@ -131,6 +131,7 @@ impl TestApp {
         id(&r.json)
     }
 
+    /// Red con la conexión automática desactivada: el acceso lo conceden solo las políticas, como antes de ADR-031.
     pub async fn network(
         &self,
         session: &Session,
@@ -139,7 +140,20 @@ impl TestApp {
         v4: &str,
         v6: &str,
     ) -> Uuid {
-        let r = self.json("POST", &format!("/api/v1/orgs/{org}/networks"), Some(session), json!({"name":Uuid::new_v4().to_string(),"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":hex::encode(root.verifying_key().to_bytes())})).await;
+        self.network_with(session, org, root, v4, v6, false).await
+    }
+
+    /// Red con el ajuste de conexiones automáticas indicado (ADR-031).
+    pub async fn network_with(
+        &self,
+        session: &Session,
+        org: Uuid,
+        root: &SigningKey,
+        v4: &str,
+        v6: &str,
+        auto_connect: bool,
+    ) -> Uuid {
+        let r = self.json("POST", &format!("/api/v1/orgs/{org}/networks"), Some(session), json!({"name":Uuid::new_v4().to_string(),"ipv4_cidr":v4,"ipv6_cidr":v6,"root_anchor":hex::encode(root.verifying_key().to_bytes()),"auto_connect":auto_connect})).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.json);
         id(&r.json)
     }
@@ -312,4 +326,31 @@ pub async fn connection(pool: &PgPool) -> PgConnection {
     PgConnection::connect_with(pool.connect_options().as_ref())
         .await
         .unwrap()
+}
+/// Informe firmado para `path`; la consulta forma parte de la firma, como en el agente.
+pub async fn report_at(t: &TestApp, device: &Device, path: &str, value: Value) -> Reply {
+    let body = serde_json::to_vec(&value).unwrap();
+    let auth = atenea_identity::api_auth::sign_request(
+        &device.key,
+        *device.id.as_bytes(),
+        "POST",
+        path,
+        &body,
+        now(),
+        *Uuid::new_v4().as_bytes(),
+    );
+    t.send(
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .header("authorization", auth)
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await
+}
+/// Informe firmado de `/device/status`.
+pub async fn report(t: &TestApp, device: &Device, value: Value) -> Reply {
+    report_at(t, device, "/api/v1/device/status", value).await
 }

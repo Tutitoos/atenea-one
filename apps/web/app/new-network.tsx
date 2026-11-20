@@ -31,7 +31,7 @@ const span = (cidr: string): [number, number] => {
 };
 const overlaps = (a: [number, number], b: [number, number]) => a[0] <= b[1] && b[0] <= a[1];
 
-export type NewNetworkBody = { name: string; ipv4_cidr?: string; ipv4_pool?: { start: string; end: string }; ipv6?: false };
+export type NewNetworkBody = { name: string; ipv4_cidr?: string; ipv4_pool?: { start: string; end: string }; ipv6?: false; auto_connect?: false };
 
 /**
  * Nombre y direcciones, como el selector de ZeroTier. «Fácil»: «Automático» (el servidor elige un bloque libre) o uno de la lista.
@@ -46,12 +46,13 @@ export function NewNetworkForm({ create, taken = [] }: { create: (body: NewNetwo
   const [mode, setMode] = useState('facil');
   const [range, setRange] = useState({ start: '', end: '' });
   const [ipv6, setIpv6] = useState(true);
+  const [autoConnect, setAutoConnect] = useState(true);
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState(false);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setMessage(''); setPending(true);
     try {
-      const body: NewNetworkBody = { name: nameSchema.parse(name), ...(ipv6 ? {} : { ipv6: false }) };
+      const body: NewNetworkBody = { name: nameSchema.parse(name), ...(ipv6 ? {} : { ipv6: false }), ...(autoConnect ? {} : { auto_connect: false }) };
       const [start, end] = [range.start.trim(), range.end.trim()];
       if (mode === 'facil') { if (block) body.ipv4_cidr = block; }
       else if (start || end) {
@@ -97,6 +98,10 @@ export function NewNetworkForm({ create, taken = [] }: { create: (body: NewNetwo
       </Tabs.Root>
       <Field label="Asignar también direcciones IPv6">{props =>
         <input {...props} type="checkbox" checked={ipv6} onChange={e => setIpv6(e.target.checked)}/>}</Field>
+      <Field label="Conectar automáticamente los dispositivos aprobados"
+        help="Los equipos que se aprueben con este ajuste activo se conectan con los demás, salvo exclusiones.">
+        {props => <input {...props} type="checkbox" checked={autoConnect} onChange={e => setAutoConnect(e.target.checked)}/>}
+      </Field>
     </div>
     <Button type="submit" variant="primary" loading={pending}>Crear red</Button><p role="status">{message}</p>
   </form>;

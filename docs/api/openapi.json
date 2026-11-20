@@ -1625,6 +1625,17 @@
         "summary": "Reemplaza el informe declarado del dispositivo",
         "description": "hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo. services opcional (ver DeviceReportInput): máximo 64, sin puertos duplicados; mismos límites de tamaño, nonce y tasa que el resto del informe. versions opcional (ADR-025, ver DeviceReportInput): como máximo 3 entradas, una por componente; inválido: 400 invalid_report.",
         "operationId": "reportDeviceStatus",
+        "parameters": [
+          {
+            "name": "config_v3",
+            "in": "query",
+            "description": "true o false: fija la capacidad v3 guardada del dispositivo (ADR-031); cada cambio se audita (device.config_v3). Ausente: no cambia lo guardado. Va en la consulta, dentro de la firma AtDevice, para que un control plane anterior con JSON estricto no rechace el cuerpo.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2030,7 +2041,7 @@
           "networks"
         ],
         "summary": "Obtiene una red; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028). auto_connect: true o false; solo afecta a las aprobaciones futuras (ADR-031).",
         "operationId": "getNetwork",
         "parameters": [
           {
@@ -2217,9 +2228,9 @@
         "tags": [
           "networks"
         ],
-        "summary": "Renombra una red; requiere admin u owner",
-        "description": "Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan.",
-        "operationId": "renameNetwork",
+        "summary": "Actualiza el nombre o el ajuste de conexiones automáticas de una red; requiere admin u owner",
+        "description": "Solo owner/admin y CSRF. name y auto_connect son opcionales, pero hace falta uno de los dos (400 invalid_request). name reutiliza el validador de creación (400 invalid_name); además debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. auto_connect solo afecta a las aprobaciones futuras y no altera las conexiones existentes (ADR-031); se audita como network.auto_connect solo si difiere del valor guardado. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name} al renombrar. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan.",
+        "operationId": "updateNetwork",
         "parameters": [
           {
             "name": "net",
@@ -2235,7 +2246,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Name"
+                "$ref": "#/components/schemas/NetworkUpdate"
               }
             }
           },
@@ -2712,6 +2723,226 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/devices/{dev}/auto-peers": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Lista los dispositivos con conexión automática con este; requiere pertenencia",
+        "description": "ADR-031. UUID de los dispositivos con conexión automática con este. No incluye las conexiones que existen solo por políticas manuales.",
+        "operationId": "listAutoPeers",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación completada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoPeerIds"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Petición inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sesión, flujo OIDC, token de enrolamiento o firma inválidos/caducados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permisos insuficientes, CSRF inválido o dispositivo no aprobado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso inexistente o ajeno a la organización del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicto: último owner, duplicado, solapamiento, red llena o exceso de políticas/reglas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno sin detalles sensibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "serviceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}": {
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Excluye la conexión automática entre dos dispositivos; requiere admin u owner",
+        "description": "ADR-031. Añade una exclusión entre dos dispositivos de la red: su conexión automática deja de existir. 204 si la pareja tenía conexión automática; 404 not_found si no es automática o no existe. No borra ni modifica políticas manuales. La exclusión permanece tras reconectar uno de los dos dispositivos. Auditoría auto_peer.block con {peer}.",
+        "operationId": "removeAutoPeer",
+        "parameters": [
+          {
+            "name": "net",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dev",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "peer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operación completada"
           },
           "400": {
             "description": "Petición inválida",
@@ -6392,7 +6623,7 @@
           "networks"
         ],
         "summary": "Lista redes; requiere pertenencia",
-        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028).",
+        "description": "Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028). auto_connect: true o false; solo afecta a las aprobaciones futuras (ADR-031).",
         "operationId": "listNetworks",
         "parameters": [
           {
@@ -8107,6 +8338,14 @@
           }
         }
       },
+      "AutoPeerIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "UUID de los dispositivos con conexión automática con este (ADR-031)."
+      },
       "Connection": {
         "type": "string",
         "enum": [
@@ -9029,6 +9268,11 @@
             "minLength": 292,
             "pattern": "^[0-9a-fA-F]+$"
           },
+          "config_v3": {
+            "type": "boolean",
+            "description": "true: el agente sabe leer la configuración firmada v3 (ADR-031). Ausente o false: solo v1/v2.",
+            "default": false
+          },
           "name": {
             "$ref": "#/components/schemas/DeviceName"
           },
@@ -9349,6 +9593,11 @@
             "minLength": 292,
             "pattern": "^[0-9a-fA-F]+$"
           },
+          "config_v3": {
+            "type": "boolean",
+            "description": "true: el agente sabe leer la configuración firmada v3 (ADR-031). Ausente o false: solo v1/v2.",
+            "default": false
+          },
           "name": {
             "$ref": "#/components/schemas/DeviceName"
           },
@@ -9539,9 +9788,13 @@
           "root_mode",
           "has_issuer_cert",
           "issuer_cert_not_after",
-          "join_policy"
+          "join_policy",
+          "auto_connect"
         ],
         "properties": {
+          "auto_connect": {
+            "type": "boolean"
+          },
           "has_issuer_cert": {
             "type": "boolean"
           },
@@ -9735,6 +9988,21 @@
           }
         }
       },
+      "NetworkUpdate": {
+        "type": "object",
+        "properties": {
+          "auto_connect": {
+            "type": "boolean",
+            "description": "Solo afecta a las aprobaciones futuras; no altera las conexiones existentes (ADR-031)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Nombre no vacío ni compuesto solo por espacios; máximo 255 bytes UTF-8.",
+            "maxLength": 255,
+            "minLength": 1
+          }
+        }
+      },
       "NewDelegatedJoinCode": {
         "type": "object",
         "required": [
@@ -9789,6 +10057,10 @@
           "name"
         ],
         "properties": {
+          "auto_connect": {
+            "type": "boolean",
+            "description": "Por defecto true: los equipos aprobados con el ajuste activo se conectan con los demás (ADR-031)."
+          },
           "ipv4_cidr": {
             "type": "string"
           },
@@ -10304,9 +10576,13 @@
           "has_issuer_cert",
           "issuer_cert_not_after",
           "join_policy",
+          "auto_connect",
           "role"
         ],
         "properties": {
+          "auto_connect": {
+            "type": "boolean"
+          },
           "has_issuer_cert": {
             "type": "boolean"
           },

@@ -136,6 +136,8 @@ pub struct Enrollment {
     name: String,
     #[serde(default)]
     name_auto: bool,
+    #[serde(default)]
+    config_v3: bool,
 }
 pub async fn enroll(
     State(s): State<AppState>,
@@ -148,7 +150,7 @@ pub async fn enroll(
     let (name, bytes, bundle) = validated(&b.name, &b.bundle)?;
     let dev = Uuid::from_bytes(bundle.device_id);
     let mut tx = s.pool.begin().await?;
-    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve,role,created_by_device").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError(StatusCode::UNAUTHORIZED,"invalid_token"))?;
+    let row=sqlx::query("UPDATE enrollment_tokens SET consumed_at=now(),consumed_by_device=$2 WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() RETURNING network_id,auto_approve,role,created_by_device").bind(Sha256::digest(b.token.as_bytes()).as_slice()).bind(dev).fetch_optional(&mut *tx).await?.ok_or(ApiError::new(StatusCode::UNAUTHORIZED,"invalid_token"))?;
     let net: Uuid = row.get("network_id");
     let auto: bool = row.get("auto_approve");
     sqlx::query("SELECT id FROM networks WHERE id=$1 FOR UPDATE")
@@ -166,6 +168,7 @@ pub async fn enroll(
         &bundle,
         "token",
         &row.get::<String, _>("role"),
+        b.config_v3,
     )
     .await?;
     // Quién lo dio de alta (ADR-026): nulo si el código lo creó un usuario.
@@ -175,11 +178,7 @@ pub async fn enroll(
         .execute(&mut *tx)
         .await?;
     if auto {
-        networks::allocate(&mut tx, net, dev).await?;
-        sqlx::query("UPDATE devices SET status='approved',approved_at=now() WHERE id=$1")
-            .bind(dev)
-            .execute(&mut *tx)
-            .await?;
+        approve_pending(&mut tx, net, dev).await?;
     }
     let org: Uuid = sqlx::query_scalar("SELECT org_id FROM networks WHERE id=$1")
         .bind(net)
@@ -229,8 +228,9 @@ async fn insert(
     bundle: &atenea_identity::DeviceBundle,
     origin: &str,
     role: &str,
+    config_v3: bool,
 ) -> Result<(), ApiError> {
-    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname,join_origin,role) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9,$10)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if name_auto { "device" } else { "admin" }).bind(name_auto.then_some(name)).bind(origin).bind(role).execute(tx).await?;
+    sqlx::query("INSERT INTO devices(id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,name_source,hostname,join_origin,role,config_v3) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9,$10,$11)").bind(dev).bind(net).bind(name).bind(bundle.noise_pubkey.as_slice()).bind(bundle.identity_pubkey.as_slice()).bind(bytes).bind(if name_auto { "device" } else { "admin" }).bind(name_auto.then_some(name)).bind(origin).bind(role).bind(config_v3).execute(tx).await?;
     Ok(())
 }
 #[derive(Deserialize)]
@@ -239,6 +239,8 @@ pub struct JoinRequest {
     name: String,
     #[serde(default)]
     name_auto: bool,
+    #[serde(default)]
+    config_v3: bool,
 }
 /// Solicitud de unión sin token (red `con_solicitud`): crea un dispositivo `pending` que un
 /// administrador aprueba comparando huellas. Red inexistente y red cerrada responden igual.
@@ -272,7 +274,10 @@ pub async fn request_join(
         .fetch_one(&mut *tx)
         .await?;
     if pending >= i64::from(s.config.max_pending_join_requests) {
-        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too_many_pending"));
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_many_pending",
+        ));
     }
     networks::check_device_quota(&mut tx, net, s.config.personal_max_devices).await?;
     insert(
@@ -285,6 +290,7 @@ pub async fn request_join(
         &bundle,
         "request",
         "device",
+        b.config_v3,
     )
     .await?;
     audit::record(
@@ -390,6 +396,7 @@ pub async fn approve(
     Ok(Json(json!({"device_id":dev,"status":"approved"})))
 }
 /// Aprueba un dispositivo pendiente bajo el bloqueo de la red y devuelve sus direcciones; la auditoría es de quien llama.
+/// ADR-031: la transición pasa por `issue::record_approval`, que fija el orden y el ajuste vigente y valida la red antes del commit.
 pub async fn approve_pending(
     tx: &mut sqlx::PgConnection,
     net: Uuid,
@@ -414,12 +421,50 @@ pub async fn approve_pending(
         .bind(dev)
         .execute(&mut *tx)
         .await?;
+    crate::issue::record_approval(&mut *tx, net, dev).await?;
     Ok(sqlx::query_scalar(
         "SELECT host(addr) FROM ip_allocations WHERE device_id=$1 ORDER BY family",
     )
     .bind(dev)
     .fetch_all(&mut *tx)
     .await?)
+}
+
+/// Pares con conexión automática de un dispositivo de la red (ADR-031). La regla vive en `issue::auto_peers`.
+pub async fn auto_peers(
+    State(s): State<AppState>,
+    Path((net, dev)): Path<(Uuid, Uuid)>,
+    h: HeaderMap,
+) -> Result<Json<Vec<Uuid>>, ApiError> {
+    networks::access(&s, &h, net, false).await?;
+    let mut conn = s.pool.acquire().await?;
+    Ok(Json(crate::issue::auto_peers(&mut conn, net, dev).await?))
+}
+
+/// Quita la conexión automática de una pareja que hoy lo es (ADR-031). La regla vive en `issue::block_auto_peer`.
+pub async fn except_auto_peer(
+    State(s): State<AppState>,
+    Path((net, dev, peer)): Path<(Uuid, Uuid, Uuid)>,
+    h: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let (u, org) = networks::access(&s, &h, net, true).await?;
+    let mut tx = s.pool.begin().await?;
+    crate::issue::block_auto_peer(&mut tx, net, dev, peer).await?;
+    audit::record(
+        &mut tx,
+        "user",
+        u,
+        Some(org),
+        Some(net),
+        "auto_peer.block",
+        dev,
+        json!({"peer":peer}),
+    )
+    .await?;
+    tx.commit().await?;
+    s.panel.changed(net, "devices");
+    s.panel.changed(net, "audit");
+    Ok(StatusCode::NO_CONTENT)
 }
 pub async fn revoke(
     State(s): State<AppState>,
@@ -558,7 +603,7 @@ pub async fn leave(
     uri: axum::http::Uri,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let invalid = || ApiError::new(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = atenea_identity::api_auth::parse_authorization(
         h.get("authorization")
             .and_then(|v| v.to_str().ok())

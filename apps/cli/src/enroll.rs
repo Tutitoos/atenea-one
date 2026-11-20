@@ -195,7 +195,7 @@ pub fn register(
             true,
         ),
     };
-    let mut body = serde_json::json!({"bundle": hex::encode(&bundle.encode()), "name": name});
+    let mut body = serde_json::json!({"bundle": hex::encode(&bundle.encode()), "name": name, "config_v3": true});
     if let Some(token) = token {
         body["token"] = token.into();
     }

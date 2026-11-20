@@ -114,7 +114,7 @@ pub fn take<K: Hash + Eq>(
     per_minute: u32,
 ) -> Result<(), api::ApiError> {
     let limit = f64::from(per_minute);
-    let limited = || api::ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    let limited = || api::ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
     let now = Instant::now();
     let mut m = map.lock().map_err(|_| api::ApiError::internal())?;
     if m.len() >= MAX_ENTRIES && !m.contains_key(&key) {
@@ -143,7 +143,7 @@ pub fn claim_nonce(
     now: u64,
 ) -> Result<(), api::ApiError> {
     let live = |ts: &u64| now.saturating_sub(*ts) <= 120;
-    let limited = || api::ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    let limited = || api::ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
     let mut guard = cache.lock().map_err(|_| api::ApiError::internal())?;
     let Nonces { by_network, total } = &mut *guard;
     if by_network
@@ -151,7 +151,10 @@ pub fn claim_nonce(
         .and_then(|own| own.get(&(dev, nonce)))
         .is_some_and(live)
     {
-        return Err(api::ApiError(StatusCode::UNAUTHORIZED, "invalid_signature"));
+        return Err(api::ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "invalid_signature",
+        ));
     }
     if *total >= MAX_ENTRIES {
         by_network.retain(|_, own| {
@@ -270,7 +273,7 @@ mod tests {
     fn nonces_acotados_por_red_y_repeticion_rechazada() {
         let c = NonceCache::default();
         let (a, b, d) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::new_v4());
-        let code = |r: Result<(), api::ApiError>| r.unwrap_err().1;
+        let code = |r: Result<(), api::ApiError>| r.unwrap_err().code;
         assert!(claim_nonce(&c, a, d, [1; 16], 1000).is_ok());
         assert_eq!(
             code(claim_nonce(&c, a, d, [1; 16], 1000)),
@@ -319,7 +322,7 @@ mod lleno {
             own.insert((d, [9; 16]), 1000);
         }
         assert_eq!(
-            claim_nonce(&c, net, d, [9; 16], 1060).unwrap_err().1,
+            claim_nonce(&c, net, d, [9; 16], 1060).unwrap_err().code,
             "invalid_signature"
         );
         assert_eq!(c.lock().unwrap().by_network[&net][&(d, [9; 16])], 1000);

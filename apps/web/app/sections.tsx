@@ -39,7 +39,7 @@ function DeviceSection(props: SectionProps) {
     {props.devices.data && <Devices key={pendingOnly ? 'pending' : 'all'}
       devices={props.devices.data} status={pendingOnly ? 'pending' : 'all'}
       accessRole={props.role} net={props.net} elapsed={props.elapsed} enroll={props.enroll}
-      refresh={props.refresh} routes={props.routes.data} grants={grants.data}/>}</>;
+      refresh={props.refresh} routes={props.routes.data} grants={grants.data} autoConnections/>}</>;
 }
 function EnrollmentSection({ network, net, canEdit, enroll }: SectionProps) {
   return <>{network.data && <JoinNetwork net={net} canEdit={canEdit} policy={network.data.join_policy}/>}

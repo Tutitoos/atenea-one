@@ -144,6 +144,83 @@ fn peer(id: u8) -> Value {
 }
 
 #[tokio::test]
+async fn admite_anuncio_grande_firmado_y_solo_autoriza_pares_mutuos() {
+    let lab = Lab::new(Config::default());
+    let issuer = signing_key([2; 32]);
+    let cert = IssuerCert::issue(
+        &signing_key([1; 32]),
+        [4; 16],
+        1,
+        500,
+        5000,
+        issuer.verifying_key().to_bytes(),
+        None,
+    )
+    .unwrap();
+    let mut cfg = DeviceConfig {
+        network_id: [4; 16],
+        device_id: [3; 16],
+        issuer_serial: 1,
+        config_version: 1,
+        not_before: 900,
+        not_after: 1200,
+        noise_pubkey: [33; 32],
+        identity_pubkey: signing_key([3; 32]).verifying_key().to_bytes(),
+        mtu: 1400,
+        tunnel_addrs: vec!["fd00::1".parse().unwrap()],
+        network_prefixes: vec![Prefix {
+            addr: "fd00::".parse().unwrap(),
+            len: 64,
+        }],
+        peers: vec![],
+        rules: vec![],
+        advertised: vec![],
+        dns: Default::default(),
+    };
+    for i in 2..=500_u16 {
+        let mut id = [0; 16];
+        id[14..].copy_from_slice(&i.to_be_bytes());
+        let mut key = [1; 32];
+        key[30..].copy_from_slice(&i.to_be_bytes());
+        if i == 2 {
+            id = [4; 16];
+            key = [34; 32];
+        }
+        cfg.peers.push(Peer {
+            device_id: id,
+            noise_pubkey: key,
+            addrs: vec![format!("fd00::{i:x}").parse().unwrap()],
+            endpoints: (1..=4)
+                .map(|j| format!("[2001:db8:{j}::{i:x}]:51820").parse().unwrap())
+                .collect(),
+            routes: (1..=8)
+                .map(|j| Prefix {
+                    addr: format!("fd01:{i:x}:{j}::").parse().unwrap(),
+                    len: 64,
+                })
+                .collect(),
+        });
+    }
+    cfg.canonicalize();
+    let announcement = json!({"config":STANDARD.encode(issue_config(&issuer,&cert,&cfg).unwrap()),"candidates":[]});
+    assert!(serde_json::to_vec(&announcement).unwrap().len() > 160 * 1024);
+    assert_eq!(
+        lab.request("POST", "/v1/announce", announcement, 3).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(lab.announce(4, &[3]).await.0, StatusCode::OK);
+    assert_eq!(lab.announce(5, &[3]).await.0, StatusCode::OK);
+    assert_eq!(
+        lab.request("POST", "/v1/rendezvous", peer(4), 3).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        lab.request("POST", "/v1/rendezvous", peer(5), 3).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn valid_config_replacement_expiry_and_sweeper() {
     let l = Lab::new(Config::default());
     let (status, result) = l.announce(3, &[4]).await;

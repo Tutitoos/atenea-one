@@ -25,8 +25,8 @@ impl DeviceConfig {
             && self.not_after - self.not_before <= MAX_CONFIG_VALIDITY_SECS
             && (1..=4).contains(&self.tunnel_addrs.len())
             && (1..=4).contains(&self.network_prefixes.len())
-            && self.peers.len() <= 256
-            && self.rules.len() <= 256
+            && self.peers.len() <= MAX_V3_PEERS
+            && self.rules.len() <= MAX_V3_RULES
             && self.advertised.len() <= 8
             && self.advertised.iter().all(|a| a.prefix.valid())
             && self
@@ -106,8 +106,10 @@ impl DeviceConfig {
         }
         self.rules.iter().all(|r| {
             [&r.src, &r.dst].iter().all(|s| match s {
+                // `wire_valid` precede siempre a esta comprobación: los pares llegan ordenados por id.
                 Selector::Device(id) => {
-                    *id == self.device_id || self.peers.iter().any(|p| p.device_id == *id)
+                    *id == self.device_id
+                        || self.peers.binary_search_by_key(id, |p| p.device_id).is_ok()
                 }
                 Selector::Prefix(p) => self
                     .network_prefixes
@@ -128,10 +130,21 @@ impl DeviceConfig {
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         self.validate_structure()?;
         let b = self.encode_wire();
-        if b.len() > MAX_BODY_LEN {
+        if b.len() > body_limit(b.first()) {
             Err(Error::TooLarge)
         } else {
             Ok(b)
+        }
+    }
+    /// Versión mínima que representa la configuración: v3 solo cuando v1/v2 no pueden (ADR-031), de modo que los
+    /// bytes de una red representable en v1/v2 no cambian.
+    pub fn wire_version(&self) -> u8 {
+        if self.peers.len() > MAX_PEERS || self.rules.len() > MAX_RULES {
+            3
+        } else if self.has_v2_fields() {
+            2
+        } else {
+            1
         }
     }
     fn has_v2_fields(&self) -> bool {
@@ -141,8 +154,9 @@ impl DeviceConfig {
             || self.peers.iter().any(|p| !p.routes.is_empty())
     }
     pub(crate) fn encode_wire(&self) -> Vec<u8> {
-        let v2 = self.has_v2_fields();
-        let mut b = vec![if v2 { 2 } else { 1 }, 2, 0];
+        let version = self.wire_version();
+        let v2 = version >= 2;
+        let mut b = vec![version, 2, 0];
         b.extend_from_slice(&self.network_id);
         b.extend_from_slice(&self.device_id);
         for n in [
@@ -214,12 +228,12 @@ impl DeviceConfig {
         Ok(c)
     }
     pub(crate) fn parse_wire(body: &[u8]) -> Result<Self, Error> {
-        if body.len() > MAX_BODY_LEN {
+        if body.len() > body_limit(body.first()) {
             return Err(Error::TooLarge);
         }
         let mut r = Reader::new(body);
         let version = r.u8()?;
-        if !matches!(version, 1 | 2) || r.u8()? != 2 {
+        if !matches!(version, 1..=3) || r.u8()? != 2 {
             return Err(Error::UnsupportedVersion);
         }
         r.zero()?;
@@ -244,7 +258,12 @@ impl DeviceConfig {
         for _ in 0..n {
             c.network_prefixes.push(r.prefix()?);
         }
-        let n = r.count16(256)?;
+        let (max_peers, max_rules) = if version == 3 {
+            (MAX_V3_PEERS, MAX_V3_RULES)
+        } else {
+            (MAX_PEERS, MAX_RULES)
+        };
+        let n = r.count16(max_peers)?;
         for _ in 0..n {
             let device_id = r.array()?;
             let noise_pubkey = r.array()?;
@@ -252,7 +271,7 @@ impl DeviceConfig {
             let addrs = r.addrs()?;
             let n = r.count8(0, 4)?;
             let endpoints = (0..n).map(|_| r.endpoint()).collect::<Result<_, _>>()?;
-            let routes = if version == 2 {
+            let routes = if version >= 2 {
                 r.prefixes()?
             } else {
                 Vec::new()
@@ -265,7 +284,7 @@ impl DeviceConfig {
                 routes,
             });
         }
-        let n = r.count16(256)?;
+        let n = r.count16(max_rules)?;
         for _ in 0..n {
             c.rules.push(Rule {
                 src: r.selector()?,
@@ -275,7 +294,7 @@ impl DeviceConfig {
                 port_max: r.u16()?,
             });
         }
-        if version == 2 {
+        if version >= 2 {
             let n = r.count8(0, 8)?;
             for _ in 0..n {
                 let prefix = r.prefix()?;
@@ -292,11 +311,12 @@ impl DeviceConfig {
             c.dns.servers = (0..n).map(|_| r.addr()).collect::<Result<_, _>>()?;
             let n = r.count8(0, 8)?;
             c.dns.domains = (0..n).map(|_| r.domain()).collect::<Result<_, _>>()?;
-            if !c.has_v2_fields() {
-                return Err(Error::Malformed);
-            }
         }
         r.end()?;
+        // Una sola versión por contenido: v2 sin campos v2 o v3 que cabía en v1/v2 no son canónicas.
+        if c.wire_version() != version {
+            return Err(Error::Malformed);
+        }
         if !c.wire_valid() {
             return Err(Error::Malformed);
         }

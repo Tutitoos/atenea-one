@@ -9,7 +9,7 @@ use crate::net::{self, Stun, from_wire, to_wire};
 use crate::platform::{HostNetwork, Lifecycle, Platform, TunDevice};
 use crate::relay::{RelayClient, RelayClientConfig, RelayEvent};
 use crate::state;
-use atenea_identity::{AgentState, LocalKeys, MAX_BODY_LEN, verify_config};
+use atenea_identity::{AgentState, LocalKeys, verify_config};
 use atenea_nat_traversal::looks_like_stun;
 use atenea_policies::prefix_contains;
 use clap::{Parser, Subcommand};
@@ -195,7 +195,7 @@ impl Runtime {
             return;
         }
         self.seen = Some(key);
-        if meta.len() as usize > MAX_BODY_LEN + 512 {
+        if meta.len() as usize > crate::sync::RESPONSE_LIMIT {
             self.reject("too_large");
             return;
         }

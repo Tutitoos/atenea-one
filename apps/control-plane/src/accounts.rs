@@ -32,11 +32,11 @@ const LOCK_AFTER: i32 = 5;
 const MAX_LOCK_SECS: f64 = 900.;
 
 fn invalid_credentials() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "invalid_credentials")
+    ApiError::new(StatusCode::UNAUTHORIZED, "invalid_credentials")
 }
 
 fn limited() -> ApiError {
-    ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited")
+    ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited")
 }
 
 /// Correo en minúsculas, sin espacios ni controles, con un único `@` y un dominio con punto.

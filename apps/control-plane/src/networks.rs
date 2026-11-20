@@ -78,6 +78,9 @@ pub async fn access_enroll(
         },
     }
 }
+/// Dispositivos aprobados por red (ADR-031): el tope de 256 pasa a 500.
+pub const MAX_APPROVED: i64 = 500;
+
 /// Tope de dispositivos vivos de una red de organización personal (ADR-028 D4). Se llama con la fila de la red
 /// bloqueada. Las organizaciones normales no tienen tope.
 pub async fn check_device_quota(
@@ -115,6 +118,8 @@ pub struct NewNetwork {
     pub ipv4_pool: Option<Ipv4Pool>,
     /// Con ancla la raíz es del usuario (modo propio, ADR-028); sin ella la red es gestionada por el servidor.
     pub root_anchor: Option<String>,
+    /// Conexión automática de los dispositivos aprobados (ADR-031); sin valor, activa.
+    pub auto_connect: Option<bool>,
 }
 pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
     let certificate = r.get::<Option<&[u8]>, _>("issuer_cert");
@@ -133,7 +138,7 @@ pub(crate) fn value(r: &PgRow) -> Result<Value, ApiError> {
         .zip(r.get::<Option<String>, _>("pe"))
         .map(|(start, end)| json!({"start": start, "end": end}));
     Ok(
-        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<Option<String>,_>("v6"),"ipv4_pool":pool,"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"root_mode":r.get::<String,_>("root_mode"),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy")}),
+        json!({"id":r.get::<Uuid,_>("id"),"org_id":r.get::<Uuid,_>("org_id"),"name":r.get::<String,_>("name"),"ipv4_cidr":r.get::<String,_>("v4"),"ipv6_cidr":r.get::<Option<String>,_>("v6"),"ipv4_pool":pool,"root_anchor":hex::encode(r.get::<&[u8],_>("root_anchor")),"root_mode":r.get::<String,_>("root_mode"),"has_issuer_cert":certificate.is_some(),"issuer_cert_not_after":expires,"join_policy":r.get::<String,_>("join_policy"),"auto_connect":r.get::<bool,_>("auto_connect")}),
     )
 }
 /// Bloques de la red (IPv4 y, si tiene, IPv6) de una fila con columnas `v4` y `v6`.
@@ -150,7 +155,7 @@ pub(crate) fn prefixes(r: &PgRow) -> Result<Vec<atenea_identity::Prefix>, ApiErr
         })
         .collect()
 }
-pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,host(ipv4_pool_start) ps,host(ipv4_pool_end) pe,root_anchor,root_mode,issuer_cert,join_policy FROM networks";
+pub(crate) const SELECT: &str = "SELECT id,org_id,name,ipv4_cidr::text v4,ipv6_cidr::text v6,host(ipv4_pool_start) ps,host(ipv4_pool_end) pe,root_anchor,root_mode,issuer_cert,join_policy,auto_connect FROM networks";
 /// Código de red (`ATENEA1-…`) con la URL pública del servidor; 409 si ésta o el nombre no caben en el formato.
 /// Con `with_connectivity` y el servidor configurado (ADR-018) lleva además el STUN y el hash de la CA del relay;
 /// si con eso el texto supera 512 caracteres, `409 code_too_long` (con `?conectividad=0` sigue siendo válido).
@@ -282,6 +287,7 @@ pub async fn create(
     orgs::name(&b.name)?;
     // ADR-029: sin ancla la red es gestionada (el servidor genera y cifra la raíz); con ancla, la raíz es del usuario.
     let managed = b.root_anchor.is_none();
+    let auto_connect = b.auto_connect.unwrap_or(true);
     if managed && s.wrap.is_none() {
         return Err(ApiError::conflict("managed_unavailable"));
     }
@@ -378,7 +384,7 @@ pub async fn create(
     let anchor = provided_root
         .or_else(|| new_root.as_ref().map(|r| r.anchor))
         .ok_or_else(ApiError::internal)?;
-    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor,root_mode,root_wrapped,ipv4_pool_start,ipv4_pool_end) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6,$7,$8,$9::inet,$10::inet)")
+    sqlx::query("INSERT INTO networks(id,org_id,name,ipv4_cidr,ipv6_cidr,root_anchor,root_mode,root_wrapped,ipv4_pool_start,ipv4_pool_end,auto_connect) VALUES($1,$2,$3,$4::cidr,$5::cidr,$6,$7,$8,$9::inet,$10::inet,$11)")
         .bind(id)
         .bind(org)
         .bind(&b.name)
@@ -389,6 +395,7 @@ pub async fn create(
         .bind(new_root.as_ref().map(|r| r.wrapped.as_slice()))
         .bind(pool.map(|(start, _)| start.to_string()))
         .bind(pool.map(|(_, end)| end.to_string()))
+        .bind(auto_connect)
         .execute(&mut *tx)
         .await?;
     audit::record(
@@ -477,45 +484,81 @@ pub async fn get(
     Ok(Json(value(&r)?))
 }
 
-pub async fn rename(
+/// Cambios de la red (ADR-031): nombre y/o conexión automática. Sin ninguno de los dos, 400 invalid_request.
+#[derive(Deserialize)]
+pub struct NetworkUpdate {
+    name: Option<String>,
+    auto_connect: Option<bool>,
+}
+pub async fn update(
     State(s): State<AppState>,
     Path(net): Path<Uuid>,
     h: HeaderMap,
-    Json(body): Json<orgs::Name>,
+    Json(body): Json<NetworkUpdate>,
 ) -> Result<Json<Value>, ApiError> {
     let (u, org) = access(&s, &h, net, true).await?;
-    orgs::name(&body.name)?;
+    if body.name.is_none() && body.auto_connect.is_none() {
+        return Err(ApiError::bad("invalid_request"));
+    }
+    if let Some(name) = &body.name {
+        orgs::name(name)?;
+    }
     let mut tx = s.pool.begin().await?;
-    let old = sqlx::query("SELECT name,root_anchor FROM networks WHERE id=$1 FOR UPDATE")
-        .bind(net)
-        .fetch_one(&mut *tx)
+    // La fila de la red serializa estos cambios con las aprobaciones: todas ven el mismo ajuste (ADR-031).
+    let old =
+        sqlx::query("SELECT name,root_anchor,auto_connect FROM networks WHERE id=$1 FOR UPDATE")
+            .bind(net)
+            .fetch_one(&mut *tx)
+            .await?;
+    if let Some(name) = &body.name {
+        join_code(
+            &s,
+            net,
+            name,
+            &old.get::<Vec<u8>, _>("root_anchor"),
+            None,
+            // El nombre solo debe caber en el formato; si con la conectividad no cupiera, el código sigue
+            // disponible con `?conectividad=0` y el `409 code_too_long` lo avisa al pedirlo.
+            false,
+        )?;
+        sqlx::query("UPDATE networks SET name=$2 WHERE id=$1")
+            .bind(net)
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut tx,
+            "user",
+            u,
+            Some(org),
+            Some(net),
+            "network.rename",
+            net,
+            json!({"previous_name":old.get::<String,_>("name"),"name":name}),
+        )
         .await?;
-    join_code(
-        &s,
-        net,
-        &body.name,
-        &old.get::<Vec<u8>, _>("root_anchor"),
-        None,
-        // El nombre solo debe caber en el formato; si con la conectividad no cupiera, el código sigue
-        // disponible con `?conectividad=0` y el `409 code_too_long` lo avisa al pedirlo.
-        false,
-    )?;
-    sqlx::query("UPDATE networks SET name=$2 WHERE id=$1")
-        .bind(net)
-        .bind(&body.name)
-        .execute(&mut *tx)
-        .await?;
-    audit::record(
-        &mut tx,
-        "user",
-        u,
-        Some(org),
-        Some(net),
-        "network.rename",
-        net,
-        json!({"previous_name":old.get::<String,_>("name"),"name":body.name}),
-    )
-    .await?;
+    }
+    if let Some(auto_connect) = body.auto_connect {
+        let previous: bool = old.get("auto_connect");
+        if auto_connect != previous {
+            sqlx::query("UPDATE networks SET auto_connect=$2 WHERE id=$1")
+                .bind(net)
+                .bind(auto_connect)
+                .execute(&mut *tx)
+                .await?;
+            audit::record(
+                &mut tx,
+                "user",
+                u,
+                Some(org),
+                Some(net),
+                "network.auto_connect",
+                net,
+                json!({"previous":previous,"auto_connect":auto_connect}),
+            )
+            .await?;
+        }
+    }
     let row = sqlx::query(&format!("{SELECT} WHERE id=$1"))
         .bind(net)
         .fetch_one(&mut *tx)
@@ -630,7 +673,7 @@ pub async fn allocate(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(), 
                 sqlx::query("RELEASE SAVEPOINT ipam_attempt")
                     .execute(&mut *c)
                     .await?;
-                if attempt == 1 || error.1 != "conflict" {
+                if attempt == 1 || error.code != "conflict" {
                     return Err(error);
                 }
             }
@@ -651,7 +694,7 @@ async fn allocate_once(c: &mut PgConnection, net: Uuid, dev: Uuid) -> Result<(),
     .bind(net)
     .fetch_one(&mut *c)
     .await?;
-    if count >= 256 {
+    if count >= MAX_APPROVED {
         return Err(ApiError::conflict("network_full"));
     }
     let number = |a: std::net::IpAddr| match a {

@@ -1,7 +1,7 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
 //! Informes declarados, muestras reales y notificaciones efímeras del panel.
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, audit};
 use axum::{
     Json,
     body::Bytes,
@@ -107,6 +107,9 @@ pub struct RouteReport {
     state: RouteState,
     reason: Option<String>,
 }
+/// Tope del cuerpo de `/device/status` (ADR-031): holgado para 499 rutas con relay de 255 bytes; un cuerpo mayor responde `invalid_report`.
+pub const MAX_REPORT_BYTES: usize = 262_144;
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
@@ -209,16 +212,24 @@ fn validate_versions(list: Vec<ComponentVersion>) -> Result<Vec<ComponentVersion
     }
     Ok(list)
 }
+/// Consulta firmada de `/device/status`: `config_v3` anuncia la capacidad de configuración v3 (ADR-031). Ausente
+/// no cambia lo guardado: un agente anterior no la envía y conserva la que ya tenía.
+#[derive(Deserialize)]
+pub struct StatusQuery {
+    config_v3: Option<bool>,
+}
+
 pub async fn status(
     State(s): State<AppState>,
     h: HeaderMap,
     uri: Uri,
+    Query(q): Query<StatusQuery>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    if body.len() > 65536 {
+    if body.len() > MAX_REPORT_BYTES {
         return Err(ApiError::bad("invalid_report"));
     }
-    let invalid = || ApiError(StatusCode::UNAUTHORIZED, "invalid_signature");
+    let invalid = || ApiError::new(StatusCode::UNAUTHORIZED, "invalid_signature");
     let signed = atenea_identity::api_auth::parse_authorization(
         h.get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -274,7 +285,7 @@ pub async fn status(
     }) {
         return Err(ApiError::bad("invalid_report"));
     }
-    if report.paths.len() > 256
+    if report.paths.len() > atenea_identity::MAX_V3_PEERS
         || report.paths.iter().any(|p| {
             p.relay
                 .as_ref()
@@ -307,7 +318,7 @@ pub async fn status(
     }
     let recent:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_reports WHERE device_id=$1 AND reported_at>now()-interval '5 seconds')").bind(dev).fetch_one(&mut *tx).await?;
     if recent {
-        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+        return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
     }
     let mapping = report.nat_mapping.map(|m| match m {
         NatMapping::Independent => "independent",
@@ -342,8 +353,41 @@ pub async fn status(
             .execute(&mut *tx)
             .await?;
     }
+    // Capacidad v3 anunciada en la consulta firmada (ADR-031): ausente no toca lo guardado. Solo cambia la marca del
+    // propio dispositivo, y cada cambio se audita en ambos sentidos.
+    let mut audited = false;
+    if let Some(config_v3) = q.config_v3 {
+        let (previous, org): (bool, Uuid) = sqlx::query_as(
+            "SELECT d.config_v3,n.org_id FROM devices d JOIN networks n ON n.id=d.network_id WHERE d.id=$1",
+        )
+        .bind(dev)
+        .fetch_one(&mut *tx)
+        .await?;
+        if previous != config_v3 {
+            sqlx::query("UPDATE devices SET config_v3=$2 WHERE id=$1")
+                .bind(dev)
+                .bind(config_v3)
+                .execute(&mut *tx)
+                .await?;
+            audit::record(
+                &mut tx,
+                "device",
+                dev,
+                Some(org),
+                Some(net),
+                "device.config_v3",
+                dev,
+                json!({"previous":previous,"config_v3":config_v3}),
+            )
+            .await?;
+            audited = true;
+        }
+    }
     tx.commit().await?;
     s.panel.changed(net, "devices");
+    if audited {
+        s.panel.changed(net, "audit");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 #[derive(Deserialize)]
@@ -457,7 +501,10 @@ pub async fn events(
             .lock()
             .map_err(|_| ApiError::internal())?;
         if c.values().sum::<usize>() >= 64 || c.get(&user).copied().unwrap_or(0) >= 8 {
-            return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "connection_limit"));
+            return Err(ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "connection_limit",
+            ));
         }
         *c.entry(user).or_default() += 1;
     }

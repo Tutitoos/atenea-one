@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-//! Configuración firmada v1/v2: codificación única y verificación sin E/S ni reloj propio.
+//! Configuración firmada v1/v2/v3: codificación única y verificación sin E/S ni reloj propio.
 pub mod api_auth;
 mod codec;
 mod config;
@@ -41,7 +41,23 @@ mod inspect_tests;
 pub type NetworkId = [u8; 16];
 pub type DeviceId = [u8; 16];
 pub type PublicKey = [u8; 32];
+/// Límite del cuerpo v1/v2; no cambia con v3.
 pub const MAX_BODY_LEN: usize = 131072;
+pub const MAX_PEERS: usize = 256;
+pub const MAX_RULES: usize = 256;
+/// Cuerpo v3 (ADR-031): mismo layout que v2, solo cuando v1/v2 no bastan. 499 vecinos = red de 500 dispositivos.
+pub const MAX_V3_PEERS: usize = 499;
+pub const MAX_V3_RULES: usize = 1536;
+/// Tamaño exacto de un cuerpo v3 con todos los contadores y campos al máximo.
+pub const MAX_V3_BODY_LEN: usize = 238_225;
+/// Límite de bytes del cuerpo según su primer octeto (la versión).
+fn body_limit(version: Option<&u8>) -> usize {
+    if version == Some(&3) {
+        MAX_V3_BODY_LEN
+    } else {
+        MAX_BODY_LEN
+    }
+}
 pub const MAX_CONFIG_VALIDITY_SECS: u64 = 3600;
 pub const MAX_CERT_VALIDITY_SECS: u64 = 90 * 86400;
 pub const CLOCK_TOLERANCE_SECS: u64 = 30;
@@ -82,7 +98,7 @@ fn valid_anchor(k: &PublicKey) -> bool {
     *k != [0; 32] && VerifyingKey::from_bytes(k).is_ok_and(|v| !v.is_weak())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Prefix {
     pub addr: IpAddr,
     pub len: u8,
@@ -95,13 +111,13 @@ pub struct Peer {
     pub endpoints: Vec<SocketAddr>,
     pub routes: Vec<Prefix>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Selector {
     Any,
     Device(DeviceId),
     Prefix(Prefix),
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rule {
     pub src: Selector,
     pub dst: Selector,

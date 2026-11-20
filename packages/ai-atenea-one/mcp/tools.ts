@@ -6,7 +6,8 @@ import { ApiError, type Getter } from "./client.ts";
 import { KINDS, clean, loadInventory, shown, type Kind } from "./inventory.ts";
 import { runProbe, type ProbeArgs, type ProbeDeps } from "./probe.ts";
 
-const MAX_RESPONSE = 64 * 1024;
+// Listado de una red de 500 equipos (ADR-031) con holgura; por encima se corta y se indica.
+const MAX_RESPONSE = 1024 * 1024;
 const MAX_LIMIT = 50;
 
 export type SearchArgs = { query: string; kinds?: Kind[]; network?: string; limit?: number };
@@ -45,7 +46,7 @@ export async function getResource(client: Getter, { kind, id }: { kind: Kind; id
   return { kind: r.kind, network: r.network ?? null, declared: r.declared, resource };
 }
 
-/** GET libre sobre la lista permitida (la valida el cliente); textos saneados y respuesta acotada a 64 KiB. */
+/** GET libre sobre la lista permitida (la valida el cliente); textos saneados y respuesta acotada a 1 MiB. */
 export async function apiGet(client: Getter, { path, query }: { path: string; query?: Record<string, string | number> }) {
   const qs = query ? new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)])).toString() : "";
   const data = await client.get(qs ? `${path}?${qs}` : path);
@@ -94,7 +95,7 @@ export function registerTools(server: McpServer, client: Getter, probeDeps?: Pro
     "atenea_api_get",
     {
       description:
-        "GET de solo lectura a una ruta permitida de /api/v1 (p. ej. /api/v1/networks/{net}/audit, /metrics). Respuesta truncada a 64 KiB.",
+        "GET de solo lectura a una ruta permitida de /api/v1 (p. ej. /api/v1/networks/{net}/audit, /metrics). Respuesta truncada a 1 MiB.",
       inputSchema: { path: z.string().min(1).max(300), query: z.record(z.string(), z.union([z.string(), z.number()])).optional() },
       annotations: read,
     },

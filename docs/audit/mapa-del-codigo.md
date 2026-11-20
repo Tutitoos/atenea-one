@@ -232,7 +232,7 @@ Sin comentario SAFETY por bloque. Patrón común: `Local` y `Handle` son contene
 | [L430](../../crates/windows/src/security.rs#L430) | `connect_pipe` | `CreateFileW` con `SECURITY_IDENTIFICATION` | El servidor puede identificar pero no suplantar al cliente; handle comprobado. |
 | [L444](../../crates/windows/src/security.rs#L444) | `connect_pipe` | `File::from_raw_handle` | Como L177. |
 | [L449](../../crates/windows/src/security.rs#L449) | `connect_pipe` | `GetSecurityInfo(OWNER)` | Handle vivo (propiedad de `file`); `sd` envuelto en `Local`; se exige propietario Administrators. |
-| [L489](../../crates/windows/src/security.rs#L489) | `pipe_reply` | `PeekNamedPipe` | Handle poseído por `file`; punteros no usados nulos; lectura acotada a 4096 B por iteración y 65536 B totales. |
+| [L489](../../crates/windows/src/security.rs#L489) | `pipe_reply` | `PeekNamedPipe` | Handle poseído por `file`; punteros no usados nulos; lectura acotada a 4096 B por iteración y 4 MiB totales (`PIPE_REPLY_LIMIT`). |
 
 ### 5.6 `crates/windows` — pruebas (`#[cfg(test)]`, [`security.rs`](../../crates/windows/src/security.rs) L530–L928)
 

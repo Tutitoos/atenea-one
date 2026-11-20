@@ -123,7 +123,7 @@ fn strict_wire_and_domains() {
     body.extend_from_slice(&[0, 0, 0]);
     malformed("empty", &body);
     let mut body = c.encode().unwrap();
-    body[0] = 3;
+    body[0] = 4;
     assert_eq!(DeviceConfig::parse(&body), Err(Error::UnsupportedVersion));
     let mut body = c.encode().unwrap();
     body.push(0);
