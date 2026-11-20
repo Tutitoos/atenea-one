@@ -11,8 +11,8 @@ fn main() {
         Ok("true"),
         "solo en el runner de CI"
     );
-    let a: [u8; 16] = *b"\x6c\xfa\xcd\x61\x00\x00\x40\x00\x80\x00\x00\x00\x00\x00\x00\x0a";
-    let b: [u8; 16] = *b"\x45\xfe\x40\xd6\x00\x00\x40\x00\x80\x00\x00\x00\x00\x00\x00\x0b";
+    let a: [u8; 16] = *b"\xaa\xaa\xaa\xa1\x00\x00\x40\x00\x80\x00\x00\x00\x00\x00\x00\x0a";
+    let b: [u8; 16] = *b"\xbb\xbb\xbb\xb2\x00\x00\x40\x00\x80\x00\x00\x00\x00\x00\x00\x0b";
     let first = Tun::create_with_guid("atn_aaaaaaa1", a).expect("primer adaptador");
     let second = Tun::create_with_guid("atn_aaaaaaa2", b).expect("segundo adaptador");
     let out = Command::new("powershell")
@@ -23,11 +23,11 @@ fn main() {
     let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
     println!("{text}");
     assert!(
-        text.contains("atn_aaaaaaa1 {6cfacd61-0000-4000-8000-00000000000a}"),
+        text.contains("atn_aaaaaaa1 {aaaaaaa1-0000-4000-8000-00000000000a}"),
         "{text}"
     );
     assert!(
-        text.contains("atn_aaaaaaa2 {45fe40d6-0000-4000-8000-00000000000b}"),
+        text.contains("atn_aaaaaaa2 {bbbbbbb2-0000-4000-8000-00000000000b}"),
         "{text}"
     );
     drop(first);
