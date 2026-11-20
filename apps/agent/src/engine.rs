@@ -68,6 +68,8 @@ const SLOW_KEEPALIVE_GRACE: Duration = Duration::from_secs(17);
 /// Tras un despertar de al menos esto se descartan las sesiones: coincide con `REKEY_AFTER_TIME` (120 s), a partir de
 /// la cual el par ya quiere renegociar y a los 180 s las rechaza.
 const SESSION_RESET_AFTER_SLEEP: Duration = Duration::from_secs(120);
+/// Pares que inician la conexión al arrancar sin esperar a un primer paquete (ADR-032); el resto, con su primer paquete.
+const WARMUP_MAX_PEERS: usize = 16;
 
 /// Retardo creciente tras un sondeo fallido: 30, 60, 120, 240 y 300 s como máximo.
 fn backoff(failures: u32) -> Duration {
@@ -273,6 +275,8 @@ struct Peer {
     relay_wanted: bool,
     next_relay_request: Option<Instant>,
     last_attempt: Option<Instant>,
+    /// Sondeo iniciado por el arranque, no por tráfico (ADR-032): si falla no cuenta como fallo ni activa el retroceso.
+    speculative: bool,
     queued: Option<(Vec<u8>, Instant)>,
     last_init_ts: Option<u64>,
     /// Respuestas de cookie reservadas: desconocidos no consumen este cupo.
@@ -322,6 +326,7 @@ impl Peer {
             relay_wanted: false,
             next_relay_request: None,
             last_attempt: None,
+            speculative: false,
             queued: None,
             last_init_ts: None,
             init_limiter: Limiter::new(PEER_INIT_RATE, PEER_INIT_BURST),
@@ -695,6 +700,8 @@ pub struct Engine {
     own_versions: Option<Vec<crate::versions::ComponentVersion>>,
     hostname: Option<String>,
     probe_random: fn() -> u32,
+    /// El calentamiento de arranque (ADR-032) ya se hizo en este proceso.
+    warmed: bool,
 }
 
 impl Engine {
@@ -740,6 +747,7 @@ impl Engine {
             own_versions: None,
             hostname: None,
             probe_random: crypto::random_u32,
+            warmed: false,
         }
     }
 
@@ -1018,6 +1026,7 @@ impl Engine {
         }
         let peer = &mut self.peers[pi];
         peer.last_data = Some(now);
+        peer.speculative = false;
         if peer.usable_current(now)
             && let Some(k) = peer.send_path()
             && let Some(s) = peer.current.as_mut()
@@ -1650,6 +1659,10 @@ impl Engine {
             }
             return out;
         }
+        if !self.warmed && !self.peers.is_empty() {
+            self.warmed = true;
+            self.warm_up(now, unix, &mut out);
+        }
         for pi in 0..self.peers.len() {
             let targets = Self::targets(&self.peers[pi]);
             let peer = &mut self.peers[pi];
@@ -1658,7 +1671,7 @@ impl Engine {
                     *slot = None;
                 }
             }
-            let active = peer
+            let mut active = peer
                 .last_data
                 .is_some_and(|t| now.duration_since(t) < ACTIVE_WINDOW);
             // Sondeo: el MISMO mensaje 1 por directo y relay; el primer envío UDP puede perderse.
@@ -1671,9 +1684,16 @@ impl Engine {
                     peer.pending = None;
                     peer.pending_dg = None;
                     peer.probe = None;
-                    peer.probe_failures += 1;
-                    peer.hold_until = Some(now + backoff(peer.probe_failures));
-                    self.counters.inc("probe_failed");
+                    if std::mem::take(&mut peer.speculative) {
+                        // Sondeo de arranque (ADR-032): ni fallo ni retroceso; el par vuelve a reposo.
+                        peer.last_data = None;
+                        active = false;
+                        self.counters.inc("warm_probe_failed");
+                    } else {
+                        peer.probe_failures += 1;
+                        peer.hold_until = Some(now + backoff(peer.probe_failures));
+                        self.counters.inc("probe_failed");
+                    }
                 } else if peer.probe.is_some() {
                     let p = peer.probe.as_mut().expect("sondeo");
                     let due = now >= p.next_at;
@@ -1715,6 +1735,9 @@ impl Engine {
                 .current
                 .as_ref()
                 .is_some_and(|s| s.is_confirmed() && !s.is_expired(now));
+            if session_ok {
+                peer.speculative = false;
+            }
             if session_ok && peer.endpoint.is_none() && peer.pending.is_none() {
                 if peer.kprobe.is_none()
                     && !targets.is_empty()
@@ -1955,6 +1978,33 @@ impl Engine {
             "network_reset"
         });
         relays
+    }
+
+    /// Calentamiento de arranque (ADR-032): hasta `WARMUP_MAX_PEERS` pares inician la conexión como si
+    /// hubieran recibido tráfico ahora, sin esperar a un primer paquete.
+    fn warm_up(&mut self, now: Instant, unix: u64, out: &mut Vec<Out>) {
+        for pi in 0..self.peers.len().min(WARMUP_MAX_PEERS) {
+            let peer = &mut self.peers[pi];
+            // Un par con tráfico, handshake en curso o sesión ya tiene su propio intento: el arranque no lo toca.
+            let skip = if peer.last_data.is_some() {
+                Some("warm_skip_traffic")
+            } else if peer.pending.is_some() {
+                Some("warm_skip_pending")
+            } else if peer.current.is_some() {
+                Some("warm_skip_session")
+            } else {
+                None
+            };
+            if let Some(reason) = skip {
+                self.counters.inc(reason);
+                continue;
+            }
+            peer.last_data = Some(now);
+            peer.speculative = true;
+            peer.rendezvous_wanted = peer.endpoint.is_none();
+            self.counters.inc("warm_up");
+            self.maybe_initiate(pi, now, unix, out);
+        }
     }
 
     /// El cliente de relay informa de que la asignación hacia `peer` está lista o caída.
@@ -2436,6 +2486,91 @@ mod tests {
             from_b = nb;
         }
         (tun_a, tun_b)
+    }
+
+    #[test]
+    fn startup_warm_up_connects_without_any_traffic() {
+        let mut l = lab();
+        let out = l.a.on_tick(l.now, l.unix);
+        assert!(!out.is_empty());
+        let (tun_a, tun_b) = pump(&mut l, out, vec![]);
+        assert!(tun_a.is_empty() && tun_b.is_empty());
+        assert!(l.a.peers[0].current.is_some() && l.b.peers[0].current.is_some());
+        assert_eq!(l.a.counters.0["warm_up"], 1);
+        // Una sola vez: los ticks siguientes no inician otro handshake.
+        for _ in 0..8 {
+            l.now += Duration::from_millis(250);
+            l.a.on_tick(l.now, l.unix);
+        }
+        assert_eq!(l.a.counters.0["tx_init"], 1);
+    }
+
+    #[test]
+    fn startup_warm_up_waits_for_a_valid_lease_and_runs_once() {
+        let mut l = lab();
+        let valid = l.unix;
+        l.unix = NOT_BEFORE - 1_000;
+        assert!(l.a.on_tick(l.now, l.unix).is_empty());
+        assert!(!l.a.warmed);
+        l.unix = valid;
+        assert!(!l.a.on_tick(l.now, l.unix).is_empty());
+        assert!(l.a.warmed);
+        l.a.on_tick(l.now + Duration::from_secs(1), l.unix);
+        assert_eq!(l.a.counters.0["warm_up"], 1);
+    }
+
+    #[test]
+    fn startup_warm_up_is_bounded() {
+        let mut l = lab();
+        let mut cfg = l.cfg_a.clone();
+        for i in 0..20u8 {
+            cfg.peers.push(CfgPeer {
+                device_id: [100 + i; 16],
+                noise_pubkey: StaticKeypair::generate().public,
+                addrs: vec![ip(&format!("10.77.0.{}", 100 + i))],
+                endpoints: vec![ep(&format!("192.0.2.{}:51820", 100 + i))],
+                routes: vec![],
+            });
+        }
+        l.a.apply_config(&cfg);
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.counters.0["warm_up"] as usize, WARMUP_MAX_PEERS);
+        assert_eq!(l.a.counters.0["tx_init"] as usize, WARMUP_MAX_PEERS);
+    }
+
+    #[test]
+    fn startup_warm_up_reports_why_it_skips_a_peer() {
+        let mut l = lab();
+        l.a.on_tun(&v4(1, 2, b"x"), l.now, l.unix);
+        l.a.on_tick(l.now, l.unix);
+        assert_eq!(l.a.counters.0["warm_skip_traffic"], 1);
+        assert!(!l.a.counters.0.contains_key("warm_up"));
+    }
+
+    #[test]
+    fn a_failed_startup_probe_does_not_hold_the_first_real_packet() {
+        let mut l = lab();
+        l.direct_ok = false;
+        l.relay_ok = false;
+        let out = l.a.on_tick(l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        for _ in 0..80 {
+            l.now += Duration::from_millis(250);
+            let out = l.a.on_tick(l.now, l.unix);
+            pump(&mut l, out, vec![]);
+        }
+        assert_eq!(l.a.counters.0["warm_probe_failed"], 1);
+        assert!(!l.a.counters.0.contains_key("probe_failed"));
+        assert_eq!(l.a.peers[0].probe_failures, 0);
+        assert!(l.a.peers[0].hold_until.is_none());
+        // El par vuelve y el primer paquete real conecta sin esperar ningún retroceso.
+        l.direct_ok = true;
+        l.relay_ok = true;
+        let pkt = v4(1, 2, b"hola");
+        let out = l.a.on_tun(&pkt, l.now, l.unix);
+        assert!(!out.is_empty());
+        let (_, tun_b) = pump(&mut l, out, vec![]);
+        assert_eq!(tun_b, vec![pkt]);
     }
 
     #[test]
