@@ -29,3 +29,15 @@ Se mantiene el contrato actual para las redes y agentes que pueda representar si
 - Migración sin cambios de acceso; pruebas del ejemplo anterior, alta automática con token, concurrencia, reconexión, excepción, revocación y aislamiento entre redes y subredes.
 - Con clientes mixtos, una operación no representable falla sin cambios parciales; en redes compatibles los clientes anteriores siguen renovando.
 - Red sintética de 500 con 499 pares por equipo: emitir, firmar, verificar y aplicar configuraciones reales; comprobar acceso permitido y denegado y medir bytes, tiempo de emisión y aplicación, memoria y tráfico en reposo. La prueba no requiere 500 equipos físicos. Medir también renovaciones concurrentes; almacenar menos políticas no elimina el coste de distribuir los pares.
+
+## Adenda: aprobaciones hechas por un binario anterior (migración 0020)
+
+El orden de aprobación y el ajuste vigente los fija el código del control plane (`issue::record_approval`), no la base de datos. Un binario anterior (0.1.35) que sirva sobre el esquema `0019` aprueba con un simple `UPDATE devices SET status='approved'`: el dispositivo queda con orden 0 y sin ajuste, igual que los anteriores a la migración. Al volver a subir, esa aprobación cuenta como «anterior a todo» y se conecta con los aprobados después con el ajuste activo, **aunque el ajuste estuviera apagado cuando se aprobó** (medido en `tests/stack/rollback-0019.sh`). Es un acceso que ningún administrador concedió.
+
+Decisión: la migración `0020` añade un disparador `BEFORE UPDATE OF status` en `devices` que, solo cuando un dispositivo pasa a `approved` con orden 0, le asigna `max(approval_order)+1` de su red y el valor que tenga `networks.auto_connect` en ese momento, bajo el bloqueo de la fila de la red. Es la misma regla que `record_approval`, ahora garantizada por la base de datos para cualquier binario. El código actual no cambia de comportamiento: su `UPDATE` posterior (`WHERE approval_order=0`) ya no encuentra nada que hacer.
+
+Límites que se asumen:
+
+- No corrige lo aprobado **antes** de desplegar la `0020` por un binario sin orden (por ejemplo, durante un retroceso con solo la `0019`): sigue valiendo orden 0. No hay dato para distinguirlo de un aprobado anterior a la migración.
+- Un binario anterior sigue sin **emitir** las conexiones automáticas (esos pares no aparecen en sus configuraciones); el disparador solo evita que la aprobación quede mal registrada.
+- Un dispositivo aprobado directamente con `INSERT ... 'approved'` (ninguna ruta del producto lo hace) no pasa por el disparador.

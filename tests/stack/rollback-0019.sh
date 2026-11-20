@@ -53,7 +53,12 @@ git worktree add --detach "$TMP/next" "$NEXT"
 set -- "$TMP/previous"/apps/control-plane/migrations/*.sql
 [ "$#" -eq 18 ]
 set -- "$TMP/next"/apps/control-plane/migrations/*.sql
-[ "$#" -eq 19 ]
+NEXT_COUNT=$#
+[ "$NEXT_COUNT" -ge 19 ]
+ALL=1
+for ((v = 2; v <= NEXT_COUNT; v++)); do ALL="$ALL,$v"; done
+HAS_0020=0
+if [ -f "$TMP/next/apps/control-plane/migrations/0020_approval_order_trigger.sql" ]; then HAS_0020=1; fi
 test -f "$TMP/next/apps/control-plane/migrations/0019_auto_connect.sql"
 printf 'N %s commit=%s; N+1 %s commit=%s\n' "$PREVIOUS_TAG" "$PREVIOUS" "$NEXT_REF" "$NEXT"
 
@@ -214,7 +219,6 @@ if stage=='nuevo':
     req(N('auto'),{'auto_connect':False},'PATCH')
     enroll('d',N('auto'))
     ck(peers_in(config('d'))==0 and s['d'] not in req(N('auto')+'/devices/'+s['a']+'/auto-peers'),'N+1: con el ajuste apagado d no se conecta con nadie')
-    req(N('auto'),{'auto_connect':True},'PATCH')
 elif stage=='retroceso':
     ck(len(req(N('vieja')+'/devices'))==2,'N lee los dispositivos de la red anterior')
     ck(peers_in(config('uno'))==1,'N emite en la red anterior lo mismo que antes')
@@ -229,19 +233,23 @@ elif stage=='retroceso':
     ck(peers_in(config('uno'))==1,'el proceso de N sigue vivo y sirve la red anterior')
 elif stage=='reupgrade':
     ck(len(req(N('auto')+'/devices'))==5,'persistencia: cinco dispositivos en la red con conexiones automáticas')
-    ck(req(N('auto'))['auto_connect'] is True,'N+1: el ajuste de la red sigue activo')
+    ck(req(N('auto'))['auto_connect'] is False,'N+1: el ajuste de la red sigue apagado (así estaba al aprobar e)')
     got=sorted(req(N('auto')+'/devices/'+s['a']+'/auto-peers'))
     print('MEDIDO a auto-peers:', len(got), 'e incluido:', s['e'] in got, 'pares de a:', peers_in(config('a')), 'pares de e:', peers_in(config('e')), flush=True)
     ck(set(got)>={s['b'],s['c']},'N+1: las conexiones automáticas de a con b y c vuelven solas')
-    # LÍMITE CONOCIDO: el binario anterior no registra el orden de aprobación (queda en 0, como los dispositivos
-    # anteriores a la migración), así que lo que aprobó mientras duró el retroceso cuenta como «aprobado antes» de todo y
-    # se conecta con los aprobados después con el ajuste activo, aunque el ajuste estuviera apagado al aprobarlo.
-    ck(s['e'] in got and peers_in(config('e'))==3,'N+1: e, aprobado por N, queda conectado con a, b y c (orden 0 = anterior a todo)')
+    if os.environ['HAS_0020']=='1':
+        # Migración 0020: el disparador da orden y ajuste a lo que aprobó el binario anterior.
+        ck(s['e'] not in got and sorted(got)==sorted([s['b'],s['c']]) and peers_in(config('e'))==0,'N+1 con 0020: e, aprobado por N con el ajuste apagado, NO se conecta con nadie')
+    else:
+        # LÍMITE de la 0.1.36 sin la 0020: el binario anterior no registra el orden (queda en 0, como lo anterior a la
+        # migración), así que lo que aprobó durante el retroceso se conecta con los aprobados después con el ajuste
+        # activo, aunque estuviera apagado al aprobarlo.
+        ck(s['e'] in got and peers_in(config('e'))==3,'N+1 sin 0020: e, aprobado por N, queda conectado con a, b y c (orden 0 = anterior a todo)')
     ck(peers_in(config('uno'))==1,'N+1: la red anterior emite lo mismo')
 state_path.write_text(json.dumps(s))
 PY
 probe() {
-  PROBE_DIR=$TMP PROBE_BASE="http://127.0.0.1:$CP_PORT" PROBE_CLI=$TMP/bin/atenea PROBE_ISSUER=$TMP/issuer.key \
+  PROBE_DIR=$TMP PROBE_BASE="http://127.0.0.1:$CP_PORT" PROBE_CLI=$TMP/bin/atenea PROBE_ISSUER=$TMP/issuer.key HAS_0020=$HAS_0020 \
     UPGRADE_SESSION=$SESSION_TOKEN UPGRADE_CSRF=$CSRF_TOKEN python3 "$TMP/probe.py" "$1"
 }
 start "$TMP/bin/n"
@@ -262,8 +270,8 @@ SQL
 BASELINE=$(sql < "$TMP/fingerprint.sql")
 printf '\nFASE 2: upgrade N+1, 0019, red con conexiones automáticas y excepciones\n'
 migrate "$TMP/bin/n1"
-check_versions 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
-ok 'historial 1–19 exitoso'
+check_versions "$ALL"
+ok "historial 1–$NEXT_COUNT exitoso"
 [ "$HISTORY" = "$(checksums 18)" ]
 ok 'checksums 1–18 intactos'
 [ "$BASELINE" = "$(sql < "$TMP/fingerprint.sql")" ]; ok 'valores de toda la siembra intactos al migrar'
@@ -272,16 +280,17 @@ expect_sql "SELECT count(*) FROM devices WHERE approval_order<>0 OR auto_connect
 start "$TMP/bin/n1"
 probe nuevo
 stop
-expect_sql "SELECT count(*) FROM networks WHERE auto_connect" 1 'una red con conexiones automáticas'
+expect_sql "SELECT count(*) FROM networks WHERE auto_connect" 0 'la red con conexiones automáticas quedó con el ajuste apagado al final de la siembra'
 expect_sql "SELECT count(*) FROM access_policies WHERE network_id=(SELECT id FROM networks WHERE name='auto')" 0 'ninguna política guardada para esa red'
 printf '\nFASE 3: retroceso por binario, arranque normal N sin --migrate\n'
 start "$TMP/bin/n"
 probe retroceso
 stop
-check_versions 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
-ok 'historial 1–19 intacto tras arrancar N'
-expect_sql "SELECT count(*) FROM networks WHERE auto_connect" 1 'N no tocó el ajuste de la red'
-expect_sql "SELECT approval_order||':'||auto_connect_on_approval FROM devices WHERE name='lab-e'" '0:false' 'el dispositivo aprobado por N quedó con orden 0 y sin ajuste'
+check_versions "$ALL"
+ok "historial 1–$NEXT_COUNT intacto tras arrancar N"
+expect_sql "SELECT count(*) FROM networks WHERE auto_connect" 0 'N no tocó el ajuste de la red'
+if [ "$HAS_0020" = 1 ]; then EXPECT_E='5:false'; else EXPECT_E='0:false'; fi
+expect_sql "SELECT approval_order||':'||auto_connect_on_approval FROM devices WHERE name='lab-e'" "$EXPECT_E" "el dispositivo aprobado por N quedó con orden y ajuste $EXPECT_E"
 printf '\nFASE 4: negativo N --migrate sobre 0019\n'
 dump_hash() {
   docker exec "$PG" pg_dump -U postgres -d atenea --no-owner --no-privileges |
@@ -300,8 +309,8 @@ printf '\nFASE 5: re-upgrade N+1 idempotente y persistencia\n'
 BEFORE=$(dump_hash)
 migrate "$TMP/bin/n1"
 [ "$BEFORE" = "$(dump_hash)" ]; ok 'migración N+1 idempotente, sin cambios en la base'
-check_versions 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
-ok 'historial final 1–19 exitoso'
+check_versions "$ALL"
+ok "historial final 1–$NEXT_COUNT exitoso"
 start "$TMP/bin/n1"
 probe reupgrade
 stop
