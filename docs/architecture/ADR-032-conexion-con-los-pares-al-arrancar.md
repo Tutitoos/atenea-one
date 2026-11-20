@@ -51,4 +51,8 @@ Ningún formato firmado, protocolo ni mensaje. Un agente 0.1.35 es compatible co
 
 ## Verificación
 
-Pruebas del motor con relojes y red simulados: el arranque conecta sin tráfico y entrega sesión a ambos lados, ocurre una sola vez y solo con lease vigente, respeta el tope de 16, y un sondeo de arranque fallido no retiene el primer paquete real. **No comprobado:** la mejora de extremo a extremo. Pendiente medir un reinicio real del Windows con el agente nuevo y compararlo con los 90–152 s de arriba; hasta entonces la ADR documenta el comportamiento del código, no la ganancia.
+Pruebas del motor con relojes y red simulados: el arranque conecta sin tráfico y entrega sesión a ambos lados, ocurre una sola vez y solo con lease vigente, respeta el tope de 16, y un sondeo de arranque fallido no retiene el primer paquete real.
+
+**Medido en un Windows real (2026-11-20, `4mans-net`, instalador del PR, sin tráfico iniciado a mano):** tres reinicios con el agente nuevo, con el ping Mac → Windows respondiendo a los 36, 37 y 35 s del arranque del kernel (74 a 80 s desde la orden de reinicio), frente a 90 y ~152 s con el agente 0.1.35 sin ayuda. El Windows inició el handshake en las tres (`handshakes_initiator = 1`, `handshakes_responder` a cero).
+
+**Discrepancia sin resolver:** tras esos reinicios el contador `warm_up` **no aparece**, mientras que tras reiniciar solo el servicio (sin reiniciar el equipo) sí (`warm_up = 1`). Por tanto no se puede atribuir la mejora medida al calentamiento: el arranque de la aplicación de escritorio (~33 s tras el arranque, antes de que responda el Mac) también puede iniciar tráfico hacia el par, y no se comprobó si la aplicación intervino en las mediciones con el agente 0.1.35. Los dos puntos de partida son dos mediciones; el de después, tres. Para atribuirlo hace falta repetir con el agente anterior y con la aplicación sin arranque automático, y registrar por qué un par se omite en el calentamiento.
