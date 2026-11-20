@@ -131,6 +131,7 @@ Vitest cubre la frontera React, el índice `/` y la validación sin `eval`.
   que declara `forwarding_ok=false` muestra una advertencia; no equivale a una
   prueba independiente de conectividad. Los eventos `changed/routes` y
   `changed/dns` invalidan el mismo conjunto REST que los demás cambios de red.
+- Las conexiones automáticas (ADR-031) se configuran en «DNS y certificado» (solo owner/admin; afectan a las aprobaciones futuras). En el detalle de un dispositivo aprobado, «Conexiones automáticas» lista solo las automáticas; quitar una crea una exclusión y dice que no modifica las políticas manuales.
 
 La regresión `e2e/routes.spec.ts` usa el laboratorio Linux real para declarar,
 aprobar con SNAT explícito, comprobar tráfico y DNS dividido, y revocar una ruta.

@@ -8,23 +8,40 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use std::time::Duration;
+use uuid::Uuid;
 #[derive(Debug)]
-pub struct ApiError(pub StatusCode, pub &'static str);
+pub struct ApiError {
+    pub status: StatusCode,
+    pub code: &'static str,
+    /// Dispositivo que impide la operación; se devuelve como `error.device_id`.
+    pub device: Option<Uuid>,
+}
 impl ApiError {
+    pub fn new(status: StatusCode, code: &'static str) -> Self {
+        Self {
+            status,
+            code,
+            device: None,
+        }
+    }
+    pub fn with_device(mut self, device: Uuid) -> Self {
+        self.device = Some(device);
+        self
+    }
     pub fn bad(c: &'static str) -> Self {
-        Self(StatusCode::BAD_REQUEST, c)
+        Self::new(StatusCode::BAD_REQUEST, c)
     }
     pub fn forbidden(c: &'static str) -> Self {
-        Self(StatusCode::FORBIDDEN, c)
+        Self::new(StatusCode::FORBIDDEN, c)
     }
     pub fn not_found() -> Self {
-        Self(StatusCode::NOT_FOUND, "not_found")
+        Self::new(StatusCode::NOT_FOUND, "not_found")
     }
     pub fn internal() -> Self {
-        Self(StatusCode::INTERNAL_SERVER_ERROR, "internal")
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal")
     }
     pub fn conflict(c: &'static str) -> Self {
-        Self(StatusCode::CONFLICT, c)
+        Self::new(StatusCode::CONFLICT, c)
     }
 }
 impl From<sqlx::Error> for ApiError {
@@ -42,11 +59,13 @@ impl From<sqlx::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.0,
-            Json(serde_json::json!({"error":{"code":self.1,"message":self.1}})),
-        )
-            .into_response()
+        let body = match self.device {
+            Some(device) => {
+                serde_json::json!({"error":{"code":self.code,"message":self.code,"device_id":device}})
+            }
+            None => serde_json::json!({"error":{"code":self.code,"message":self.code}}),
+        };
+        (self.status, Json(body)).into_response()
     }
 }
 pub fn now() -> i64 {
@@ -118,7 +137,7 @@ pub fn router(s: AppState) -> Router {
             "/api/v1/networks/{net}",
             get(networks::get)
                 .delete(networks::remove)
-                .patch(networks::rename),
+                .patch(networks::update),
         )
         .route(
             "/api/v1/networks/{net}/issuer-cert",
@@ -148,6 +167,14 @@ pub fn router(s: AppState) -> Router {
         .route(
             "/api/v1/networks/{net}/devices/{dev}",
             patch(devices::update),
+        )
+        .route(
+            "/api/v1/networks/{net}/devices/{dev}/auto-peers",
+            get(devices::auto_peers),
+        )
+        .route(
+            "/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}",
+            delete(devices::except_auto_peer),
         )
         .route(
             "/api/v1/networks/{net}/devices/{dev}/grant",
@@ -226,7 +253,9 @@ pub fn router(s: AppState) -> Router {
         )
         .route(
             "/api/v1/device/status",
-            post(crate::panel::status).layer(axum::extract::DefaultBodyLimit::max(65536)),
+            post(crate::panel::status).layer(axum::extract::DefaultBodyLimit::max(
+                crate::panel::MAX_REPORT_BYTES,
+            )),
         )
         .route("/api/v1/networks/{net}/events", get(crate::panel::events))
         .route("/api/v1/networks/{net}/metrics", get(crate::panel::metrics))
@@ -307,7 +336,7 @@ async fn uniform_errors(req: axum::extract::Request, next: axum::middleware::Nex
             .get("content-type")
             .is_none_or(|v| v != "application/json")
     {
-        return ApiError(response.status(), "invalid_request").into_response();
+        return ApiError::new(response.status(), "invalid_request").into_response();
     }
     response
 }
@@ -322,7 +351,7 @@ async fn request_timeout(
 ) -> Response {
     match tokio::time::timeout(limit, next.run(req)).await {
         Ok(response) => response,
-        Err(_) => ApiError(StatusCode::REQUEST_TIMEOUT, "request_timeout").into_response(),
+        Err(_) => ApiError::new(StatusCode::REQUEST_TIMEOUT, "request_timeout").into_response(),
     }
 }
 

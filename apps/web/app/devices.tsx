@@ -43,10 +43,10 @@ function ApproveByFingerprint({ device, net, refresh }: { device: Model<'Device'
   </Dialog>;
 }
 
-export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all', grants, enroll = false }: {
+export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [], status = 'all', grants, enroll = false, autoConnections = false }: {
   devices: Model<'Device'>[]; accessRole: Model<'Role'>; net: string; elapsed: number;
   refresh: () => Promise<unknown>; routes?: Model<'Route'>[]; status?: string;
-  grants?: Model<'DeviceGrant'>[]; enroll?: boolean;
+  grants?: Model<'DeviceGrant'>[]; enroll?: boolean; autoConnections?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState(status);
@@ -142,7 +142,7 @@ export function Devices({ devices, accessRole, net, elapsed, refresh, routes = [
               </tr>
               {isExpanded && <tr id={`device-${device.id}`}><td colSpan={5}>
                 <DeviceDetail device={device} devices={devices} net={net} elapsed={elapsed} routes={routes}
-                  canEdit={canEdit} refresh={refresh} grants={grants}/>
+                  canEdit={canEdit} refresh={refresh} grants={grants} autoConnections={autoConnections}/>
               </td></tr>}
               </Fragment>;
             })}</tbody>

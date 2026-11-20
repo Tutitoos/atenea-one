@@ -44,6 +44,14 @@ fn boolean() -> RefOr<Schema> {
     ObjectBuilder::new().schema_type(Type::Boolean).into()
 }
 
+fn config_v3_flag() -> RefOr<Schema> {
+    ObjectBuilder::new()
+        .schema_type(Type::Boolean)
+        .default(Some(serde_json::json!(false)))
+        .description(Some("true: el agente sabe leer la configuración firmada v3 (ADR-031). Ausente o false: solo v1/v2."))
+        .into()
+}
+
 fn nullable_text() -> RefOr<Schema> {
     ObjectBuilder::new()
         .schema_type(SchemaType::from_iter([Type::String, Type::Null]))
@@ -166,15 +174,18 @@ fn schemas() -> ComponentsBuilder {
         ("NetworkAccess", complete(&[("network_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
         ("NetworkMember", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"])), ("display_name", nullable_text()), ("created_at", timestamp())])),
         ("NetworkMemberRole", complete(&[("user_id", uuid()), ("role", choices(&["viewer", "enroller"]))])),
-        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", nullable_text()), ("ipv4_pool", utoipa::openapi::schema::OneOfBuilder::new().item(named("Ipv4Pool")).item(ObjectBuilder::new().schema_type(Type::Null)).into()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("role", choices(&["viewer", "enroller"]))])),
+        ("SharedNetwork", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", nullable_text()), ("ipv4_pool", utoipa::openapi::schema::OneOfBuilder::new().item(named("Ipv4Pool")).item(ObjectBuilder::new().schema_type(Type::Null)).into()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("auto_connect", boolean()), ("role", choices(&["viewer", "enroller"]))])),
         ("RootMode", choices(&["own", "managed"])),
         ("Ipv4Pool", complete(&[("start", text()), ("end", text())])),
-        ("NewNetwork", object(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("ipv6", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("Por defecto true; false crea una red solo IPv4.")).into()), ("ipv4_pool", named("Ipv4Pool")), ("root_anchor", hex(32))], &["name"])),
+        // Sin `default` en el esquema, como `ipv6`: openapi-typescript volvería obligatorio el campo en el cliente.
+        ("NewNetwork", object(&[("name", name.clone()), ("ipv4_cidr", text()), ("ipv6_cidr", text()), ("ipv6", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("Por defecto true; false crea una red solo IPv4.")).into()), ("ipv4_pool", named("Ipv4Pool")), ("root_anchor", hex(32)), ("auto_connect", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("Por defecto true: los equipos aprobados con el ajuste activo se conectan con los demás (ADR-031).")).into())], &["name"])),
+        ("NetworkUpdate", object(&[("name", name.clone()), ("auto_connect", ObjectBuilder::new().schema_type(Type::Boolean).description(Some("Solo afecta a las aprobaciones futuras; no altera las conexiones existentes (ADR-031).")).into())], &[])),
+        ("AutoPeerIds", ArrayBuilder::new().items(uuid()).description(Some("UUID de los dispositivos con conexión automática con este (ADR-031).")).into()),
         ("JoinPolicy", choices(&["cerrada", "con_solicitud"])),
         ("JoinPolicyBody", complete(&[("policy", named("JoinPolicy"))])),
         ("JoinConnectivity", complete(&[("stun_host", text()), ("relay_ca_sha256", utoipa::openapi::schema::OneOfBuilder::new().item(hex(32)).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("JoinCode", complete(&[("code", text()), ("root_anchor_fingerprint", text()), ("join_policy", named("JoinPolicy")), ("name", text()), ("url", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
-        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", nullable_text()), ("ipv4_pool", utoipa::openapi::schema::OneOfBuilder::new().item(named("Ipv4Pool")).item(ObjectBuilder::new().schema_type(Type::Null)).into()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy"))])),
+        ("Network", complete(&[("id", uuid()), ("org_id", uuid()), ("name", text()), ("ipv4_cidr", text()), ("ipv6_cidr", nullable_text()), ("ipv4_pool", utoipa::openapi::schema::OneOfBuilder::new().item(named("Ipv4Pool")).item(ObjectBuilder::new().schema_type(Type::Null)).into()), ("root_anchor", hex(32)), ("root_mode", named("RootMode")), ("has_issuer_cert", boolean()), ("issuer_cert_not_after", nullable_timestamp()), ("join_policy", named("JoinPolicy")), ("auto_connect", boolean())])),
         ("NewEnrollmentToken", object(&[
             ("ttl_secs", ObjectBuilder::new().schema_type(Type::Integer).minimum(Some(60)).maximum(Some(86400)).into()),
             ("auto_approve", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).into()),
@@ -182,9 +193,9 @@ fn schemas() -> ComponentsBuilder {
         ], &["ttl_secs"])),
         ("Join", complete(&[("url", text()), ("token", text()), ("network_id", uuid()), ("root_anchor", hex(32))])),
         ("EnrollmentToken", complete(&[("token", text()), ("expires_at", timestamp()), ("join", named("Join")), ("code", nullable_text()), ("root_anchor_fingerprint", text()), ("connectivity", utoipa::openapi::schema::OneOfBuilder::new().item(named("JoinConnectivity")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
-        ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["token", "bundle", "name"])),
+        ("Enrollment", object(&[("token", text()), ("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into()), ("config_v3", config_v3_flag())], &["token", "bundle", "name"])),
         ("EnrolledDevice", complete(&[("device_id", uuid()), ("network_id", uuid()), ("status", choices(&["pending", "approved"]))])),
-        ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into())], &["bundle", "name"])),
+        ("JoinRequest", object(&[("bundle", hex(146)), ("name", named("DeviceName")), ("name_auto", ObjectBuilder::new().schema_type(Type::Boolean).default(Some(serde_json::json!(false))).description(Some("true: name es el nombre del sistema; inicializa name_source=device y hostname=name. false u omitido: nombre administrativo.")).into()), ("config_v3", config_v3_flag())], &["bundle", "name"])),
         ("Device", complete(&[("id", uuid()), ("device_id", uuid()), ("role", named("DeviceRole")), ("name", text()), ("name_source", named("DeviceNameSource")), ("hostname", nullable_text()), ("services", ArrayBuilder::new().items(named("DeviceService")).max_items(Some(64)).description(Some("Último informe de servicios guardado, sin filtro de antigüedad; [] si nunca se ha publicado. Consulte services_at.")).into()), ("services_at", nullable_timestamp()), ("versions", ArrayBuilder::new().items(named("DeviceVersion")).max_items(Some(3)).description(Some("Última lista de versiones instaladas informada, sin filtro de antigüedad; [] si nunca informó o si no hay componentes que informar. Consulte versions_at para distinguirlo.")).into()), ("versions_at", nullable_timestamp()), ("status", named("DeviceStatus")), ("join_origin", choices(&["token", "request"])), ("enrolled_by_device", nullable_uuid("Delegado cuyo código de unión usó; null si lo dio de alta un administrador o entró por solicitud (ADR-026).")), ("endpoints", endpoints.clone()), ("fingerprint", text()),("ipv4",nullable_text()),("ipv6",nullable_text()),("enrolled_at",timestamp()),("approved_at",nullable_timestamp()),("revoked_at",nullable_timestamp()),("last_config_at",nullable_timestamp()),("connection",named("Connection")),("report",utoipa::openapi::schema::OneOfBuilder::new().item(named("DeviceReport")).item(ObjectBuilder::new().schema_type(Type::Null)).into())])),
         ("DeviceState", complete(&[("device_id", uuid()), ("status", named("DeviceStatus"))])),
         ("DeviceGrantPermission", choices(&crate::grants::SCOPES)),
@@ -573,11 +584,11 @@ pub fn document() -> OpenApi {
         (
             Patch,
             "/api/v1/networks/{net}",
-            "renameNetwork",
-            "Renombra una red; requiere admin u owner",
+            "updateNetwork",
+            "Actualiza el nombre o el ajuste de conexiones automáticas de una red; requiere admin u owner",
             "write",
             "200",
-            "Name",
+            "NetworkUpdate",
             "Network",
         ),
         (
@@ -695,6 +706,26 @@ pub fn document() -> OpenApi {
             "/api/v1/networks/{net}/devices/{dev}/grant",
             "removeDeviceGrant",
             "Retira la concesión de un dispositivo; requiere admin u owner",
+            "write",
+            "204",
+            "",
+            "",
+        ),
+        (
+            Get,
+            "/api/v1/networks/{net}/devices/{dev}/auto-peers",
+            "listAutoPeers",
+            "Lista los dispositivos con conexión automática con este; requiere pertenencia",
+            "read",
+            "200",
+            "",
+            "AutoPeerIds",
+        ),
+        (
+            Delete,
+            "/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}",
+            "removeAutoPeer",
+            "Excluye la conexión automática entre dos dispositivos; requiere admin u owner",
             "write",
             "204",
             "",
@@ -1390,6 +1421,20 @@ pub fn document() -> OpenApi {
         }
         if id == "reportDeviceStatus" {
             operation = operation.description(Some("hostname opcional; se recortan espacios, se aceptan 1..64 caracteres Unicode y se rechazan controles C0/C1 y formato bidireccional U+202A–U+202E/U+2066–U+2069 (400 invalid_report). Ausente o null no borra el último hostname. Un hostname válido actualiza name solo cuando name_source=device; nunca sobrescribe un nombre administrativo. services opcional (ver DeviceReportInput): máximo 64, sin puertos duplicados; mismos límites de tamaño, nonce y tasa que el resto del informe. versions opcional (ADR-025, ver DeviceReportInput): como máximo 3 entradas, una por componente; inválido: 400 invalid_report."));
+            operation = operation.parameter(
+                ParameterBuilder::new()
+                    .name("config_v3")
+                    .parameter_in(ParameterIn::Query)
+                    .required(Required::False)
+                    .schema(Some(boolean()))
+                    .description(Some("true o false: fija la capacidad v3 guardada del dispositivo (ADR-031); cada cambio se audita (device.config_v3). Ausente: no cambia lo guardado. Va en la consulta, dentro de la firma AtDevice, para que un control plane anterior con JSON estricto no rechace el cuerpo.")),
+            );
+        }
+        if id == "listAutoPeers" {
+            operation = operation.description(Some("ADR-031. UUID de los dispositivos con conexión automática con este. No incluye las conexiones que existen solo por políticas manuales."));
+        }
+        if id == "removeAutoPeer" {
+            operation = operation.description(Some("ADR-031. Añade una exclusión entre dos dispositivos de la red: su conexión automática deja de existir. 204 si la pareja tenía conexión automática; 404 not_found si no es automática o no existe. No borra ni modifica políticas manuales. La exclusión permanece tras reconectar uno de los dos dispositivos. Auditoría auto_peer.block con {peer}."));
         }
         if id == "leaveDeviceNetwork" {
             operation = operation.description(Some("Cuerpo vacío (límite 1024 bytes; exceso o contenido no vacío: 400 invalid_request). Reutiliza la firma AtDevice, ventana de 60 s, anti-replay y device_per_minute. Admite pending y approved; revoked responde 200 sin cambios. Actor device, acción device.leave; libera direcciones y rechaza rutas solo del firmante."));
@@ -1415,11 +1460,11 @@ pub fn document() -> OpenApi {
         if id == "renameOrganization" {
             operation = operation.description(Some("Solo owner y CSRF. name no vacío ni solo espacios; máximo 255 bytes UTF-8 (mismo validador que crear). 400 invalid_name; 403 forbidden o csrf; 404 not_found para organización ajena. No hay unicidad de nombres de organización. Auditoría org.rename con {previous_name, name}."));
         }
-        if id == "renameNetwork" {
-            operation = operation.description(Some("Solo owner/admin y CSRF. Reutiliza el validador de creación (400 invalid_name); además el nombre debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name}. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan."));
+        if id == "updateNetwork" {
+            operation = operation.description(Some("Solo owner/admin y CSRF. name y auto_connect son opcionales, pero hace falta uno de los dos (400 invalid_request). name reutiliza el validador de creación (400 invalid_name); además debe caber en código de unión (1..48 bytes, sin recortes ni controles: 409 invalid_network_name_for_code) y la URL pública debe ser compatible (409 invalid_public_url_for_code). Unicidad dentro de la organización: 409 conflict. auto_connect solo afecta a las aprobaciones futuras y no altera las conexiones existentes (ADR-031); se audita como network.auto_connect solo si difiere del valor guardado. 403 forbidden o csrf; 404 not_found para red ajena. Auditoría network.rename con {previous_name, name} al renombrar. Los códigos emitidos conservan el nombre anterior informativo y no se invalidan."));
         }
         if matches!(id, "getNetwork" | "listNetworks" | "createNetwork") {
-            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028)."));
+            operation = operation.description(Some("Network incluye issuer_cert_not_after: string(date-time)|null, calculado del certificado de emisor almacenado; null si no existe. No devuelve el certificado. root_mode: managed (ADR-029: el servidor genera y cifra la raíz y firma y renueva solo el certificado) o own (la raíz es del usuario, ADR-028). auto_connect: true o false; solo afecta a las aprobaciones futuras (ADR-031)."));
         }
         if id == "createNetwork" {
             operation = operation.description(Some("Solo name es obligatorio. Sin root_anchor la red es gestionada: el servidor genera la raíz, la guarda cifrada con su clave de envoltura y firma el primer certificado de emisor (30 días, renovado solo); 409 managed_unavailable si el servidor no tiene clave de envoltura. Con root_anchor (64 hex) la raíz es del usuario. Con ipv6=false la red es solo IPv4 (ipv6_cidr queda null; 400 invalid_cidr si además se da ipv6_cidr). ipv4_pool {start,end} limita el reparto de direcciones a ese rango (409 network_full al agotarlo): debe caber en ipv4_cidr sin usar su dirección de red ni la de difusión, y sin ipv4_cidr la red es el bloque privado más pequeño que lo contiene; 400 invalid_pool si no. Sin ipv4_cidr/ipv6_cidr se asignan solos: el primer /24 libre de 10.64.0.0/10 (409 address_pool_exhausted si no queda) y un /64 ULA. 409 network_limit en una organización personal con el máximo de redes; 409 overlapping_network si los CIDR indicados se solapan."));
@@ -1466,7 +1511,7 @@ mod tests {
     #[test]
     fn contract_covers_routes_and_security() {
         let document = serde_json::to_value(super::document()).unwrap();
-        assert_eq!(document["paths"].as_object().unwrap().len(), 64);
+        assert_eq!(document["paths"].as_object().unwrap().len(), 66);
         let relay_ca = &document["paths"]["/api/v1/relay-ca"]["get"];
         assert!(relay_ca.get("security").is_none());
         assert!(relay_ca["responses"]["200"]["content"]["application/x-pem-file"].is_object());
@@ -1614,6 +1659,68 @@ mod tests {
             assert!(operation["security"][0].get("session").is_some());
             assert_eq!(operation["security"][0].get("csrf").is_some(), csrf);
             assert!(operation["responses"]["200"].is_object());
+        }
+    }
+
+    #[test]
+    fn auto_connections_contract() {
+        let document = serde_json::to_value(super::document()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        assert!(
+            schemas["Network"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("auto_connect"))
+        );
+        assert_eq!(
+            schemas["NewNetwork"]["properties"]["auto_connect"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            schemas["NewNetwork"]["required"],
+            serde_json::json!(["name"])
+        );
+        assert_eq!(
+            schemas["NetworkUpdate"]["properties"]["auto_connect"]["type"],
+            "boolean"
+        );
+        assert!(
+            schemas["NetworkUpdate"]["required"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        );
+        assert_eq!(
+            document["paths"]["/api/v1/networks/{net}"]["patch"]["requestBody"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/NetworkUpdate"
+        );
+        let peers = &document["paths"]["/api/v1/networks/{net}/devices/{dev}/auto-peers"]["get"];
+        assert_eq!(
+            peers["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/AutoPeerIds"
+        );
+        assert_eq!(schemas["AutoPeerIds"]["type"], "array");
+        let remove =
+            &document["paths"]["/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}"]["delete"];
+        assert!(remove["security"][0].get("csrf").is_some());
+        assert!(remove["responses"].get("204").is_some());
+        assert!(remove["responses"].get("404").is_some());
+        let status = &document["paths"]["/api/v1/device/status"]["post"];
+        assert!(
+            status["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "config_v3" && p["in"] == "query")
+        );
+        for schema in ["Enrollment", "JoinRequest"] {
+            assert_eq!(schemas[schema]["properties"]["config_v3"]["default"], false);
+            assert!(
+                !schemas[schema]["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("config_v3"))
+            );
         }
     }
 }

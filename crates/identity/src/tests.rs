@@ -6,6 +6,8 @@ use std::{fs, path::PathBuf};
 const NOW: u64 = 1000;
 #[path = "v2_tests.rs"]
 mod v2;
+#[path = "v3_tests.rs"]
+mod v3;
 #[test]
 fn certificate_verification_for_control_plane() {
     let (root, _, cert, _, _, _) = setup();

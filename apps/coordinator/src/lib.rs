@@ -261,6 +261,9 @@ async fn request_timeout(
         Err(_) => ApiError(StatusCode::REQUEST_TIMEOUT, "request_timeout").into_response(),
     }
 }
+/// Solo el anuncio lleva una configuración firmada; el resto de peticiones son un JSON breve o no tienen cuerpo, y
+/// no deben leerse hasta `max_body_bytes` antes de verificar la firma.
+const SMALL_BODY_BYTES: usize = 16 * 1024;
 async fn body(request: Request, max: usize) -> Result<(Method, Uri, HeaderMap, Bytes), ApiError> {
     let (parts, body) = request.into_parts();
     let bytes = to_bytes(body, max)
@@ -313,7 +316,7 @@ async fn announce(
     // La presencia va por `device_id`: otra red no puede quedarse con la de un dispositivo conectado.
     if m.presences
         .get(&req.device_id)
-        .is_some_and(|p| p.config.network_id != config.network_id)
+        .is_some_and(|p| p.network_id != config.network_id)
     {
         return Err(ApiError::invalid());
     }
@@ -348,7 +351,9 @@ async fn announce(
     m.presences.insert(
         req.device_id,
         Presence {
-            config,
+            network_id: config.network_id,
+            identity_pubkey: config.identity_pubkey,
+            peers: config.peers.iter().map(|p| p.device_id).collect(),
             candidates,
             expires,
             events: VecDeque::new(),
@@ -369,15 +374,18 @@ fn authenticate(
 ) -> Result<DeviceId, ApiError> {
     let req = auth::parse(headers, now)?;
     presence::sweep(&mut m.presences, now);
-    let config = &m
+    let presence = m
         .presences
         .get(&req.device_id)
-        .ok_or(ApiError(StatusCode::CONFLICT, "not_announced"))?
-        .config;
-    let key = config.identity_pubkey;
-    let network = config.network_id;
-    m.nonces
-        .verify(&req, network, &key, (method, uri), bytes, now)?;
+        .ok_or(ApiError(StatusCode::CONFLICT, "not_announced"))?;
+    m.nonces.verify(
+        &req,
+        presence.network_id,
+        &presence.identity_pubkey,
+        (method, uri),
+        bytes,
+        now,
+    )?;
     Ok(req.device_id)
 }
 #[derive(Deserialize)]
@@ -389,7 +397,8 @@ async fn rendezvous(
     State(s): State<Arc<Coordinator>>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
-    let (method, uri, headers, bytes) = body(request, s.config.max_body_bytes).await?;
+    let (method, uri, headers, bytes) =
+        body(request, s.config.max_body_bytes.min(SMALL_BODY_BYTES)).await?;
     let now = (s.clock)();
     let data: Rendezvous = decode(&bytes)?;
     let peer: DeviceId = hex::decode(data.peer)
@@ -438,9 +447,9 @@ fn authorized_pair(
         .presences
         .get(&peer)
         .filter(|target| {
-            target.config.network_id == own.config.network_id
-                && own.config.peers.iter().any(|p| p.device_id == peer)
-                && target.config.peers.iter().any(|p| p.device_id == id)
+            target.network_id == own.network_id
+                && own.peers.binary_search(&peer).is_ok()
+                && target.peers.binary_search(&id).is_ok()
         })
         .ok_or_else(ApiError::unavailable)?;
     Ok((own, target))
@@ -450,7 +459,8 @@ async fn relay(
     State(s): State<Arc<Coordinator>>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
-    let (method, uri, headers, bytes) = body(request, s.config.max_body_bytes).await?;
+    let (method, uri, headers, bytes) =
+        body(request, s.config.max_body_bytes.min(SMALL_BODY_BYTES)).await?;
     let now = (s.clock)();
     let data: Rendezvous = decode(&bytes)?;
     let peer: DeviceId = hex::decode(data.peer)
@@ -472,9 +482,9 @@ async fn relay(
         return Err(ApiError::rate());
     }
     let (own, target) = authorized_pair(&m, id, peer)?;
-    let network = own.config.network_id;
-    let own_key = own.config.identity_pubkey;
-    let target_key = target.config.identity_pubkey;
+    let network = own.network_id;
+    let own_key = own.identity_pubkey;
+    let target_key = target.identity_pubkey;
     if !m.relay_pair.allow(pair, now) || !m.relay_grants.allow(pair, now) {
         return Err(ApiError::rate());
     }
@@ -533,7 +543,8 @@ async fn events(
     State(s): State<Arc<Coordinator>>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
-    let (method, uri, headers, bytes) = body(request, s.config.max_body_bytes).await?;
+    let (method, uri, headers, bytes) =
+        body(request, s.config.max_body_bytes.min(SMALL_BODY_BYTES)).await?;
     let wait = match uri.query() {
         None => 25,
         Some(q) => q
@@ -546,7 +557,7 @@ async fn events(
     let (id, _permit, _quota) = {
         let mut m = s.memory.lock().expect("memoria");
         let id = authenticate(&mut m, &headers, &method, &uri, &bytes, (s.clock)())?;
-        let network = m.presences.get(&id).expect("autenticado").config.network_id;
+        let network = m.presences.get(&id).expect("autenticado").network_id;
         if m.polls_device.get(&id).copied().unwrap_or(0) >= 2
             || m.polls_network.get(&network).copied().unwrap_or(0)
                 >= s.config.max_long_polls.div_ceil(4).max(1)

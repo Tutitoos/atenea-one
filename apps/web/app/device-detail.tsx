@@ -1,7 +1,8 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-import { api, type Model } from '@atenea/api-client';
-import { ActionForm, ConfirmDialog, CopyButton, Dialog, RunButton, ShortId } from './ui';
+import { useQuery } from '@tanstack/react-query';
+import { api, ApiError, result, type Model } from '@atenea/api-client';
+import { ActionForm, ConfirmDialog, CopyButton, Dialog, RunButton, ShortId, Status } from './ui';
 import { endpointsSchema, nameSchema } from './domain';
 import { Author, Delegation } from './device-grants';
 
@@ -34,10 +35,43 @@ function Services({ device }: { device: Model<'Device'> }) {
   </>;
 }
 
-export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh, grants }: {
+/** ADR-031: conexiones automáticas del dispositivo. Solo las automáticas: las políticas manuales siguen en «Políticas». */
+function AutoConnections({ device, devices, net, canEdit, refresh }: {
+  device: Model<'Device'>; devices: Model<'Device'>[]; net: string; canEdit: boolean; refresh: () => Promise<unknown>;
+}) {
+  const query = useQuery({ queryKey: ['network', net, 'devices', device.id, 'auto-peers'],
+    queryFn: () => result(api.GET('/api/v1/networks/{net}/devices/{dev}/auto-peers', { params: { path: { net, dev: device.id } } })) });
+  const remove = async (peer: string) => {
+    try {
+      await api.DELETE('/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}', { params: { path: { net, dev: device.id, peer } } });
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) throw error;
+      await query.refetch();
+      throw new Error('Esa conexión ya no es automática. La lista se ha actualizado.', { cause: error });
+    }
+    await refresh();
+  };
+  return <>
+    <h4>Conexiones automáticas</h4>
+    <Status query={query}/>
+    {query.data && (query.data.length ? <>
+      {canEdit && <p>No modifica las políticas manuales; otra política puede seguir permitiendo el acceso.</p>}
+      <ul aria-label={`Conexiones automáticas de ${device.name}`}>{query.data.map(peer => {
+        const other = devices.find(item => item.id === peer);
+        return <li key={peer}>{other?.name ?? <ShortId value={peer}/>}{' '}
+          {canEdit && <ConfirmDialog trigger={`Quitar conexión con ${other?.name ?? peer}`} title="Quitar conexión automática"
+            description={`Excluye la conexión automática entre ${device.name} y ${other?.name ?? peer}. No modifica las políticas manuales; otra política puede seguir permitiendo el acceso. La exclusión permanece tras reconectar uno de los dos dispositivos.`}
+            label="Quitar conexión" confirm={() => remove(peer)}/>}
+        </li>;
+      })}</ul>
+    </> : <p>Ningún otro dispositivo se conecta automáticamente con este.</p>)}
+  </>;
+}
+
+export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, refresh, grants, autoConnections }: {
   device: Model<'Device'>; devices: Model<'Device'>[]; net: string; elapsed: number;
   routes: Model<'Route'>[]; canEdit: boolean; refresh: () => Promise<unknown>;
-  grants?: Model<'DeviceGrant'>[];
+  grants?: Model<'DeviceGrant'>[]; autoConnections?: boolean;
 }) {
   const report = device.report;
   const params = { path: { net, dev: device.id } };
@@ -55,6 +89,7 @@ export function DeviceDetail({ device, devices, net, elapsed, routes, canEdit, r
     <h4>Servicios publicados</h4>
     <Services device={device}/>
     <Delegation device={device} devices={devices} net={net} grants={grants} canEdit={canEdit} refresh={refresh}/>
+    {autoConnections && device.status === 'approved' && <AutoConnections device={device} devices={devices} net={net} canEdit={canEdit} refresh={refresh}/>}
     <p className="devices-fingerprint"><strong>Huella completa: </strong><code>{device.fingerprint}</code>
       <CopyButton value={device.fingerprint} label={`Copiar huella del detalle de ${device.name}`}/></p>
     {report ? <>

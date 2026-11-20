@@ -17,7 +17,7 @@ organización → red (CIDR IPv4 e IPv6, `join_policy`) → dispositivo (`status
 
 1. `atenea_search` con 1–3 términos concretos (nombre, IP, rol, estado). Todos deben coincidir. Si hay ruido, añade `kinds` (por ejemplo `["device"]`) o `network`. Ejemplos: `{"query": "servidores", "kinds": ["device"]}` (todos los servidores); `{"query": "server approved", "kinds": ["device"], "network": "red-ejemplo"}`; o por IP: `{"query": "10.77.0.2"}`.
 2. `atenea_get` del candidato (`kind` + `id` devueltos por la búsqueda) para ver el recurso completo.
-3. `atenea_api_get` solo para lo que `search`/`get` no cubren (auditoría, métricas): `{"path": "/api/v1/networks/<id-de-red>/audit", "query": {"limit": 20}}`. Solo admite rutas GET permitidas; la respuesta se trunca a 64 KiB.
+3. `atenea_api_get` solo para lo que `search`/`get` no cubren (auditoría, métricas): `{"path": "/api/v1/networks/<id-de-red>/audit", "query": {"limit": 20}}`. Solo admite rutas GET permitidas; la respuesta se trunca a 1 MiB.
 4. `atenea_probe` solo para **verificar** un dispositivo ya identificado, nunca para descubrir. Un destino por llamada: `{"device": "equipo-ejemplo", "check": "ping"}`. Comprobaciones: `ping`, `tcp` (con `port`), `ssh-banner`, `dns` (con `name`; consulta solo los servidores DNS de la red del dispositivo).
 5. Nunca inventes datos. Si no hay resultados, di qué buscaste (términos, `kinds`, `network`) y qué podría faltar (otro nombre, otra red).
 

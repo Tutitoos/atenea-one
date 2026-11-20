@@ -668,6 +668,10 @@ pub fn connect_pipe(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Tope de una respuesta IPC: 4 MiB, como en ADR-011 §2 y en la aplicación de escritorio. Con cientos de pares
+/// (ADR-031) el estado supera los 64 KiB que había antes.
+const PIPE_REPLY_LIMIT: usize = 4 << 20;
+
 /// Espera acotada sin hilo bloqueado: PeekNamedPipe limita cada lectura disponible.
 pub fn pipe_reply(mut file: File, timeout: std::time::Duration) -> io::Result<String> {
     let deadline = std::time::Instant::now() + timeout;
@@ -701,15 +705,18 @@ pub fn pipe_reply(mut file: File, timeout: std::time::Duration) -> io::Result<St
             if count == 0 {
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "pipe cerrada"));
             }
+            let read = reply.len();
             reply.extend_from_slice(&buffer[..count]);
-            if reply.len() > 65536 {
+            if reply.len() > PIPE_REPLY_LIMIT {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "respuesta IPC demasiado grande",
                 ));
             }
-            if let Some(end) = reply.iter().position(|b| *b == b'\n') {
-                return String::from_utf8(reply[..end].to_vec()).map_err(io::Error::other);
+            // El fin de línea solo puede estar en lo recién leído: no se vuelve a recorrer lo acumulado.
+            if let Some(end) = buffer[..count].iter().position(|b| *b == b'\n') {
+                reply.truncate(read + end);
+                return String::from_utf8(reply).map_err(io::Error::other);
             }
         } else if std::time::Instant::now() >= deadline {
             return Err(io::Error::new(
@@ -1118,6 +1125,44 @@ mod tests {
             io::ErrorKind::PermissionDenied
         );
         std::fs::remove_file(path).unwrap();
+    }
+    /// Una respuesta del tamaño del estado de una red grande llega entera; un byte más que el tope se rechaza.
+    #[test]
+    fn pipe_reply_reads_up_to_the_limit_and_rejects_one_byte_more() {
+        use tokio::io::AsyncWriteExt;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        // La respuesta es la línea más su fin de línea: `PIPE_REPLY_LIMIT - 1` bytes de línea llenan el tope.
+        for (len, fits) in [(PIPE_REPLY_LIMIT - 1, true), (PIPE_REPLY_LIMIT, false)] {
+            let path = format!(r"\\.\pipe\atenea-reply-{}-{len}", std::process::id());
+            let mut server = tokio::net::windows::named_pipe::ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&path)
+                .unwrap();
+            let client = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+            let reader =
+                std::thread::spawn(move || pipe_reply(client, std::time::Duration::from_secs(30)));
+            let mut line = vec![b'x'; len];
+            line.push(b'\n');
+            runtime.block_on(async {
+                server.connect().await.unwrap();
+                // Con la respuesta rechazada el cliente cierra su extremo antes de leerla entera.
+                let _ = server.write_all(&line).await;
+            });
+            let reply = reader.join().unwrap();
+            if fits {
+                assert_eq!(reply.unwrap().len(), len);
+            } else {
+                assert_eq!(reply.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            }
+        }
     }
 }
 

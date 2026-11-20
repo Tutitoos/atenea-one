@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::{AppState, accounts, api::ApiError};
 
 fn unauthorized(code: &'static str) -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, code)
+    ApiError::new(StatusCode::UNAUTHORIZED, code)
 }
 
 fn hash(value: &str) -> [u8; 32] {
@@ -115,7 +115,7 @@ async fn discover(state: &AppState) -> Result<(CoreProviderMetadata, reqwest::Cl
         IssuerUrl::new(state.config.oidc_issuer.clone()).map_err(|_| ApiError::internal())?;
     let metadata = CoreProviderMetadata::discover_async(issuer, &http)
         .await
-        .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "oidc_unavailable"))?;
+        .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "oidc_unavailable"))?;
     Ok((metadata, http))
 }
 

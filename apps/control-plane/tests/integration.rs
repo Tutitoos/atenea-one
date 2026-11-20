@@ -721,7 +721,7 @@ fn openapi_publicado_coincide_con_codigo() {
 }
 
 #[tokio::test]
-async fn limite_256_dispositivos_aunque_queden_direcciones() {
+async fn limite_500_dispositivos_aunque_queden_direcciones() {
     let Some(t) = TestApp::new().await else {
         return;
     };
@@ -736,8 +736,8 @@ async fn limite_256_dispositivos_aunque_queden_direcciones() {
             "fd27::/64",
         )
         .await;
-    // La preparación SQL evita 256 llamadas sin sustituir la base ni el camino de aprobación comprobado.
-    for n in 1..=256_u32 {
+    // La preparación SQL evita 500 llamadas sin sustituir la base ni el camino de aprobación comprobado.
+    for n in 1..=500_u32 {
         let d = Device::new();
         sqlx::query("INSERT INTO devices (id,network_id,name,status,noise_pubkey,identity_pubkey,bundle,approved_at) VALUES ($1,$2,'capacidad','approved',$3,$4,$5,now())")
             .bind(d.id).bind(net).bind(d.bundle.noise_pubkey.to_vec()).bind(d.bundle.identity_pubkey.to_vec()).bind(d.bundle.encode().to_vec()).execute(&t.pool).await.unwrap();
@@ -749,6 +749,14 @@ async fn limite_256_dispositivos_aunque_queden_direcciones() {
                 .bind(net).bind(d.id).bind(family).bind(addr).execute(&t.pool).await.unwrap();
         }
     }
+    // Quedan direcciones de sobra: un /16 tiene 65534 hosts y solo 500 están en uso; el rechazo es por cuota.
+    let used: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ip_allocations WHERE network_id=$1 AND family=4")
+            .bind(net)
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(used, 500);
     let extra = Device::new();
     let token = t.token(&s, net, false).await;
     assert_eq!(t.enroll(&token, &extra).await.status, StatusCode::CREATED);
@@ -761,6 +769,14 @@ async fn limite_256_dispositivos_aunque_queden_direcciones() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+    let approved: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM devices WHERE network_id=$1 AND status='approved'",
+    )
+    .bind(net)
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(approved, 500);
     t.finish().await;
 }
 
@@ -801,7 +817,9 @@ async fn limites_politicas_validan_selectores_puertos_y_reglas_compiladas() {
         let r=t.json("POST",&path,Some(&s),json!({"src":{"kind":"any"},"dst":{"kind":"prefix","prefix":format!("10.28.0.{n}/32")},"proto":6,"port_min":443,"port_max":443})).await;
         assert_eq!(r.status, StatusCode::CREATED, "prefijo {n}: {}", r.json);
     }
-    t.json("POST",&path,Some(&s),json!({"src":{"kind":"any"},"dst":{"kind":"prefix","prefix":"10.28.0.130/32"},"proto":6,"port_min":443,"port_max":443})).await.error(StatusCode::CONFLICT,"policy_overflow");
+    let overflow = t.json("POST",&path,Some(&s),json!({"src":{"kind":"any"},"dst":{"kind":"prefix","prefix":"10.28.0.130/32"},"proto":6,"port_min":443,"port_max":443})).await;
+    overflow.error(StatusCode::CONFLICT, "config_v3_required");
+    assert_eq!(overflow.json["error"]["device_id"], d.id.to_string());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM access_policies WHERE network_id=$1")
         .bind(net)
         .fetch_one(&t.pool)

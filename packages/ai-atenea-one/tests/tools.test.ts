@@ -114,12 +114,19 @@ describe("Client", () => {
 });
 
 describe("atenea_api_get", () => {
-  it("api_get_truncates_at_64KiB", async () => {
-    const out = await apiGet({ get: async () => ({ x: "y".repeat(100_000) }) } as never, { path: "/api/v1/orgs" });
+  it("api_get_truncates_at_1MiB", async () => {
+    const out = await apiGet({ get: async () => ({ x: "y".repeat(1_100_000) }) } as never, { path: "/api/v1/orgs" });
     expect(out.truncated).toBe(true);
-    expect(Buffer.byteLength((out as { text: string }).text)).toBeLessThanOrEqual(65536);
+    if (!out.truncated) throw new Error("un listado de 1,1 MB debe cortarse");
+    expect(Buffer.byteLength(out.text)).toBeLessThanOrEqual(1024 * 1024);
     const small = await apiGet({ get: async () => [1] } as never, { path: "/api/v1/orgs", query: { limit: 5 } });
     expect(small).toEqual({ truncated: false, data: [1] });
+  });
+
+  it("api_get_keeps_a_500_device_listing_whole", async () => {
+    const equipos = Array.from({ length: 500 }, (_, i) => ({ id: `dispositivo-${i}`, name: `equipo-${i}`, ipv4: "10.77.0.1", nota: "x".repeat(1000) }));
+    const out = await apiGet({ get: async () => equipos } as never, { path: "/api/v1/networks/red/devices" });
+    expect(out).toEqual({ truncated: false, data: equipos });
   });
 
   it("api_get_cleans_every_string_like_atenea_get_before_truncating", async () => {

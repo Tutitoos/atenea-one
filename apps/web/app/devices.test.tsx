@@ -4,7 +4,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'vitest-axe';
 import { afterEach, expect, it, vi } from 'vitest';
-import { api } from '@atenea/api-client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { api, ApiError } from '@atenea/api-client';
 import { Devices } from './devices';
 import { device } from './device.fixture';
 import { choose } from './test-setup';
@@ -160,4 +161,83 @@ it.each([
   const row = screen.getAllByRole('row')[1];
   expect(within(row).getAllByRole('cell')[3]).toHaveTextContent(new RegExp(`^${label}$`));
   expect(within(row).getAllByRole('cell')[2]).toHaveTextContent(/^Desconocida$/);
+});
+
+const peer = { ...approved, id: '33333333-3333-4333-8333-333333333333', name: 'Equipo par' };
+const note = 'No modifica las políticas manuales; otra política puede seguir permitiendo el acceso.';
+/** ADR-031: el detalle consulta las conexiones automáticas cuando el panel las activa (`autoConnections`). */
+function renderConnections(props: Partial<React.ComponentProps<typeof Devices>> = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const refresh = vi.fn(() => client.invalidateQueries({ queryKey: ['network', 'red'] }));
+  const view = render(<QueryClientProvider client={client}>
+    <Devices {...base} autoConnections devices={[approved, peer]} refresh={refresh} {...props}/>
+  </QueryClientProvider>);
+  return { refresh, container: view.container };
+}
+
+it('lista solo las conexiones automáticas del dispositivo, con su nombre, y no tiene infracciones axe', async () => {
+  const get = vi.spyOn(api, 'GET').mockResolvedValue({ data: [peer.id], response: new Response() });
+  const user = userEvent.setup();
+  const { container } = renderConnections();
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${approved.name}` }));
+  expect(await screen.findByRole('list', { name: `Conexiones automáticas de ${approved.name}` })).toHaveTextContent(peer.name);
+  expect(get).toHaveBeenCalledWith('/api/v1/networks/{net}/devices/{dev}/auto-peers', { params: { path: { net: 'red', dev: approved.id } } });
+  expect((await axe(container, { rules: { region: { enabled: false }, 'color-contrast': { enabled: false } } })).violations).toEqual([]);
+});
+
+it('quitar una conexión automática pide confirmar, avisa de que no toca las políticas manuales y recarga', async () => {
+  vi.spyOn(api, 'GET').mockResolvedValue({ data: [peer.id], response: new Response() });
+  const remove = vi.spyOn(api, 'DELETE').mockResolvedValue({ response: new Response(null, { status: 204 }) } as never);
+  const user = userEvent.setup();
+  const { refresh } = renderConnections();
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${approved.name}` }));
+  expect(await screen.findByText(note)).toBeVisible();
+  await user.click(screen.getByRole('button', { name: `Quitar conexión con ${peer.name}` }));
+  expect(screen.getByRole('dialog')).toHaveTextContent(note);
+  expect(remove).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Quitar conexión' }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith('/api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}', {
+    params: { path: { net: 'red', dev: approved.id, peer: peer.id } },
+  }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+});
+
+it('si la conexión ya no es automática (404), lo dice y recarga la lista sin anunciar éxito', async () => {
+  const get = vi.spyOn(api, 'GET').mockResolvedValue({ data: [peer.id], response: new Response() });
+  vi.spyOn(api, 'DELETE').mockRejectedValue(new ApiError(404, { error: { code: 'not_found', message: 'not_found' } }));
+  const user = userEvent.setup();
+  const { refresh } = renderConnections();
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${approved.name}` }));
+  await user.click(await screen.findByRole('button', { name: `Quitar conexión con ${peer.name}` }));
+  await user.click(screen.getByRole('button', { name: 'Quitar conexión' }));
+  expect(await screen.findByText('Esa conexión ya no es automática. La lista se ha actualizado.')).toBeVisible();
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  expect(refresh).not.toHaveBeenCalled();
+  expect(screen.queryByText('Acción completada.')).not.toBeInTheDocument();
+});
+
+it('un miembro ve las conexiones automáticas sin poder quitarlas', async () => {
+  vi.spyOn(api, 'GET').mockResolvedValue({ data: [peer.id], response: new Response() });
+  const user = userEvent.setup();
+  renderConnections({ accessRole: 'member' });
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${approved.name}` }));
+  expect(await screen.findByRole('list', { name: `Conexiones automáticas de ${approved.name}` })).toHaveTextContent(peer.name);
+  expect(screen.queryByText(note)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: `Quitar conexión con ${peer.name}` })).not.toBeInTheDocument();
+});
+
+it('sin conexiones automáticas lo dice', async () => {
+  vi.spyOn(api, 'GET').mockResolvedValue({ data: [], response: new Response() });
+  const user = userEvent.setup();
+  renderConnections();
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${approved.name}` }));
+  expect(await screen.findByText('Ningún otro dispositivo se conecta automáticamente con este.')).toBeVisible();
+});
+
+it('un dispositivo pendiente no consulta conexiones automáticas', async () => {
+  const get = vi.spyOn(api, 'GET').mockResolvedValue({ data: [], response: new Response() });
+  const user = userEvent.setup();
+  renderConnections({ devices: [device, peer] });
+  await user.click(screen.getByRole('button', { name: `Ver detalle de ${device.name}` }));
+  expect(get).not.toHaveBeenCalled();
 });

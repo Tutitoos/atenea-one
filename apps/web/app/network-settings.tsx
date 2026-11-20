@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, result } from '@atenea/api-client';
 import type { SectionProps } from './sections';
 import { Dns } from './dns';
-import { Button, Card, ConfirmDialog, CopyButton, Dialog, Field, Status } from './ui';
+import { Button, Card, ConfirmDialog, CopyButton, Dialog, Field, RunButton, Status } from './ui';
 import { CertificateStatus } from './server-status';
 import { RenameDialog } from './rename';
 
@@ -15,6 +15,7 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
   const [certificateError, setCertificateError] = useState('');
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState(false);
+  const [autoConnectDraft, setAutoConnectDraft] = useState<boolean>();
   const issuer = useQuery({ queryKey: ['issuer'], enabled: canEdit, retry: false,
     queryFn: () => result(api.GET('/api/v1/issuer')) });
   const join = useQuery({ queryKey: ['network', net, 'join-code'], enabled: canEdit, retry: false,
@@ -28,6 +29,7 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
         <dt>CIDR IPv4</dt><dd><code>{data.ipv4_cidr}</code></dd>
         {data.ipv4_pool && <><dt>Rango de reparto IPv4</dt><dd><code>{data.ipv4_pool.start} – {data.ipv4_pool.end}</code></dd></>}
         <dt>CIDR IPv6</dt><dd>{data.ipv6_cidr ? <code>{data.ipv6_cidr}</code> : 'Sin IPv6'}</dd>
+        <dt>Conexiones automáticas</dt><dd>{data.auto_connect ? 'Activadas' : 'Desactivadas'}</dd>
         <dt>Ancla de la raíz</dt><dd><code>{data.root_anchor}</code>
           <CopyButton value={data.root_anchor} label="Copiar ancla de la raíz"/></dd>
         {join.data && <><dt>Huella de la raíz</dt><dd><code>{join.data.root_anchor_fingerprint}</code>
@@ -41,6 +43,20 @@ export function NetworkSettings({ net, network, canEdit, refresh }: SectionProps
       {!canEdit && <p>Pide la huella de la raíz a un administrador y compárala por otro canal de confianza.</p>}
       {canEdit && join.isError && <p role="alert">No se pudo consultar la huella: {join.error.message}</p>}
     </Card>
+    {data && canEdit && <Card title="Conexiones automáticas">
+      <p>Dos equipos aprobados se conectan si el que se aprobó después tenía este ajuste activo, salvo exclusiones. Las políticas manuales no cambian.</p>
+      <Field label="Conectar automáticamente los dispositivos aprobados"
+        help="Solo afecta a las aprobaciones futuras: no cambia las conexiones existentes.">
+        {props => <input {...props} type="checkbox" checked={autoConnectDraft ?? data.auto_connect}
+          onChange={event => setAutoConnectDraft(event.target.checked)}/>}
+      </Field>
+      <RunButton variant="primary" run={async () => {
+        await api.PATCH('/api/v1/networks/{net}', { params: { path: { net } },
+          body: { auto_connect: autoConnectDraft ?? data.auto_connect } });
+        setAutoConnectDraft(undefined);
+        await refresh();
+      }}>Guardar conexiones automáticas</RunButton>
+    </Card>}
     <Dns net={net} canEdit={canEdit}/>
     <Card title="Certificado de emisor">
       {data && <CertificateStatus installed={data.has_issuer_cert} expires={data.issuer_cert_not_after}/>}

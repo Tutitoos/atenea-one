@@ -3,14 +3,15 @@
 //! Descarga acotada: solo `poll_config` decide si la configuración es de confianza.
 use crate::config::SyncConfig;
 use crate::platform::private_files::PrivateFiles;
-use atenea_identity::{DeviceId, MAX_BODY_LEN, SigningKey, api_auth::sign_request};
+use atenea_identity::{DeviceId, MAX_V3_BODY_LEN, SigningKey, api_auth::sign_request};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-pub const RESPONSE_LIMIT: usize = MAX_BODY_LEN + 512;
+/// Fichero firmado más grande posible (cuerpo v3 más cabecera, certificado y firma) con margen.
+pub const RESPONSE_LIMIT: usize = MAX_V3_BODY_LEN + 512;
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
@@ -260,7 +261,7 @@ pub fn send_report(
         cfg,
         key,
         device,
-        "/api/v1/device/status",
+        "/api/v1/device/status?config_v3=true",
         serde_json::to_vec(report).map_err(|_| "informe inválido")?,
         ts,
     )
@@ -276,7 +277,9 @@ pub struct PeerMetadata {
     pub versions: HashMap<DeviceId, crate::versions::PeerVersions>,
 }
 
-pub(crate) const METADATA_LIMIT: usize = 256 * 1024;
+/// 499 pares con nombre, rol, versiones y hasta 64 servicios cada uno caben con margen (ADR-031); es el mismo tope
+/// que el de las respuestas IPC (ADR-011).
+pub(crate) const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 
 pub fn fetch_peer_metadata(
     cfg: &SyncConfig,

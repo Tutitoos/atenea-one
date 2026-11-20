@@ -64,7 +64,8 @@ impl Nonces {
         )
         .map_err(|_| ApiError::auth())?;
         if !self.device_rates.allow(req.device_id, now, 1.0, 16)
-            || !self.network_rates.allow(network, now, 8.0, 64)
+            // 500 presencias renuevan el anuncio y el long-poll, incluso sin tráfico de túnel.
+            || !self.network_rates.allow(network, now, 64.0, 512)
         {
             return Err(ApiError::rate());
         }
@@ -96,7 +97,7 @@ impl Nonces {
             || self.device_counts.get(&req.device_id).copied().unwrap_or(0)
                 >= self.max.div_ceil(4).min(256)
             || self.network_counts.get(&network).copied().unwrap_or(0)
-                >= self.max.div_ceil(2).min(4096)
+                >= self.max.div_ceil(2).min(8192)
         {
             return Err(ApiError::rate());
         }

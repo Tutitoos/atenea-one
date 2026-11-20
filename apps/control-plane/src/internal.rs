@@ -82,7 +82,7 @@ async fn root_anchors(
         .unwrap_or("");
     let given: [u8; 32] = Sha256::digest(given.as_bytes()).into();
     if given != g.secret_hash {
-        return Err(ApiError(StatusCode::UNAUTHORIZED, "unauthorized"));
+        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     // Cada raíz va con su red: el coordinator solo la acepta para esa red (ADR-018 § 4).
     let rows = sqlx::query("SELECT id, root_anchor FROM networks ORDER BY id")

@@ -174,11 +174,13 @@ Sin URL, el script exige Docker y arranca/reutiliza `atenea-control-plane-tests-
 
 Cada prueba asíncrona crea una **base PostgreSQL independiente**, aplica migraciones y usa el router Axum con `tower::ServiceExt::oneshot`. Los helpers insertan usuario y sesión con hashes reales. Se elimina la base al terminar correctamente; un pánico puede dejar bases `atenea_test_*` y un rol `atenea_test_role_*` que el administrador puede retirar cuando no haya pruebas en marcha. `cargo test` directo sin URL omite la integración con diagnóstico explícito; esto **no demuestra** cobertura PostgreSQL. CI debe usar `tests/run.sh` para impedir esa omisión.
 
+La prueba optativa de [conexiones automáticas](../../docs/architecture/ADR-031-conexiones-automaticas-por-aprobacion.md) genera 500 identidades sintéticas en **una sola red** y pide 500 renovaciones HTTP con concurrencia dos. Con `ATENEA_TEST_DATABASE_URL` de laboratorio: `cargo test -p atenea-control-plane --test auto_mesh_scale -- --ignored --nocapture`. Mide emisión por el router y verificación del fichero; no simula 500 máquinas ni mide ancho de banda del túnel.
+
 Cobertura implementada de §8:
 
 - Aislamiento entre organizaciones, ocultación `404`, permisos member/admin y último owner.
 - Tokens inexistentes, caducados y usados; doce consumos concurrentes con exactamente un ganador.
-- Aprobaciones concurrentes, unicidad SQL de direcciones, agotamiento de CIDR, reutilización tras revocar y límite de 256 dispositivos aun con direcciones libres.
+- Aprobaciones concurrentes, unicidad SQL de direcciones, agotamiento de CIDR, reutilización tras revocar y límite de 500 dispositivos aun con direcciones libres. La cuota personal y el rango de reparto pueden ser menores.
 - Prueba de posesión inválida, colisiones de identidad/Noise/UUID y rollback del consumo del token.
 - Fichero de configuración aceptado por `atenea_identity::verify_config` con claves y estado locales; versiones crecientes, políticas inversas, eliminación de pares revocados/pendientes y al borrar políticas; errores de emisor, firma, reloj y replay.
 - Fronteras adicionales: CIDR solapados, selectores y puertos inválidos, prefijos fuera de red, desbordamiento de reglas compiladas con rollback, certificados fuera de red/raíz/vigencia o con firma inválida y límite de tasa independiente por IP.

@@ -1664,7 +1664,6 @@ impl Engine {
             self.warm_up(now, unix, &mut out);
         }
         for pi in 0..self.peers.len() {
-            let targets = Self::targets(&self.peers[pi]);
             let peer = &mut self.peers[pi];
             for slot in [&mut peer.current, &mut peer.previous, &mut peer.next] {
                 if slot.as_ref().is_some_and(|s| s.is_expired(now)) {
@@ -1701,6 +1700,7 @@ impl Engine {
                     if due {
                         p.rounds += 1;
                         p.next_at = next_probe(now, (self.probe_random)());
+                        let targets = Self::targets(peer);
                         for t in &targets {
                             if let Some(o) =
                                 peer.send_init(Via::Direct(*t), &self.net, &self.device, now, false)
@@ -1739,6 +1739,7 @@ impl Engine {
                 peer.speculative = false;
             }
             if session_ok && peer.endpoint.is_none() && peer.pending.is_none() {
+                let targets = Self::targets(peer);
                 if peer.kprobe.is_none()
                     && !targets.is_empty()
                     && peer.hold_until.is_none_or(|h| now >= h)
@@ -4716,5 +4717,311 @@ mod tests {
         }
         let secs = switched_after.expect("no pasó al relay");
         assert!(secs <= 10.0, "pasó al relay a los {secs} s");
+    }
+
+    use atenea_identity::{
+        AgentState, IssuerCert, LocalKeys, MAX_V3_BODY_LEN, MAX_V3_PEERS, MAX_V3_RULES, SigningKey,
+        issue_config, signing_key, verify_config,
+    };
+
+    /// Malla de escala de ADR-031: el equipo 1 tiene 499 pares aprobados y su par 0 es un agente real (B).
+    const VECINOS: usize = 499;
+    /// Par sin regla: la excepción que la conexión automática no puede anular.
+    const EXCEPCION: usize = VECINOS - 1;
+    const LOCAL: Ipv4Addr = Ipv4Addr::new(10, 77, 255, 254);
+    /// Lease de la malla: dentro del máximo de una hora de una configuración (`MAX_CONFIG_VALIDITY_SECS`).
+    const AHORA: u64 = 1_000_000;
+    const INICIO: u64 = 999_940;
+    const FIN: u64 = 1_002_000;
+    const CERT_DESDE: u64 = 900_000;
+    const CERT_HASTA: u64 = 2_000_000;
+
+    fn id_local() -> DeviceId {
+        u128::from(1u8).to_be_bytes()
+    }
+
+    fn id_par(i: usize) -> DeviceId {
+        u128::from(2 + i as u64).to_be_bytes()
+    }
+
+    /// Dirección del túnel del par `i`; nunca coincide con la del equipo local.
+    fn dir_par(i: usize) -> Ipv4Addr {
+        Ipv4Addr::new(10, 77, (i / 250) as u8, (i % 250 + 1) as u8)
+    }
+
+    fn red_malla() -> Prefix {
+        Prefix {
+            addr: IpAddr::V4(Ipv4Addr::new(10, 77, 0, 0)),
+            len: 16,
+        }
+    }
+
+    fn regla(src: DeviceId, dst: DeviceId) -> Rule {
+        Rule {
+            src: Selector::Device(src),
+            dst: Selector::Device(dst),
+            proto: 0,
+            port_min: 0,
+            port_max: 0,
+        }
+    }
+
+    /// Firma la configuración con el emisor y la verifica con las claves del equipo, como antes de aplicarla.
+    fn firmar_y_verificar(
+        mut cfg: DeviceConfig,
+        local: LocalKeys,
+        emisor: &SigningKey,
+        cert: &IssuerCert,
+        raiz: &SigningKey,
+    ) -> (DeviceConfig, usize) {
+        cfg.canonicalize();
+        let bytes = issue_config(emisor, cert, &cfg).unwrap();
+        let estado = AgentState::new(NET, cfg.device_id, raiz.verifying_key().to_bytes());
+        let verificada = verify_config(&bytes, &local, &estado, AHORA).unwrap();
+        (verificada.config, bytes.len())
+    }
+
+    /// Equipo 1 con 499 pares aprobados (una regla por sentido y pareja, salvo la excepción) y su par 0 real.
+    /// Todo se emite, firma, verifica y aplica con las funciones de producción. Devuelve el laboratorio, los bytes
+    /// firmados y el tiempo de aplicar la configuración del equipo 1.
+    fn malla_499() -> (Lab, usize, Duration) {
+        let raiz = signing_key([30; 32]);
+        let emisor = signing_key([33; 32]);
+        let cert = IssuerCert::issue(
+            &raiz,
+            NET,
+            1,
+            CERT_DESDE,
+            CERT_HASTA,
+            emisor.verifying_key().to_bytes(),
+            None,
+        )
+        .unwrap();
+        let (ka, kb) = (StaticKeypair::generate(), StaticKeypair::generate());
+        let (ia, ib) = (signing_key([31; 32]), signing_key([32; 32]));
+        let claves: Vec<[u8; 32]> = (0..VECINOS)
+            .map(|i| {
+                if i == 0 {
+                    kb.public
+                } else {
+                    StaticKeypair::generate().public
+                }
+            })
+            .collect();
+        let pares_a: Vec<CfgPeer> = (0..VECINOS)
+            .map(|i| CfgPeer {
+                device_id: id_par(i),
+                noise_pubkey: claves[i],
+                addrs: vec![IpAddr::V4(dir_par(i))],
+                endpoints: if i == 0 { vec![ep(B_EP)] } else { vec![] },
+                routes: vec![],
+            })
+            .collect();
+        let reglas_a: Vec<Rule> = (0..VECINOS)
+            .filter(|i| *i != EXCEPCION)
+            .flat_map(|i| [regla(id_local(), id_par(i)), regla(id_par(i), id_local())])
+            .collect();
+        let cfg_a = DeviceConfig {
+            network_id: NET,
+            device_id: id_local(),
+            issuer_serial: 1,
+            config_version: 1,
+            not_before: INICIO,
+            not_after: FIN,
+            noise_pubkey: ka.public,
+            identity_pubkey: ia.verifying_key().to_bytes(),
+            mtu: 1400,
+            tunnel_addrs: vec![IpAddr::V4(LOCAL)],
+            network_prefixes: vec![red_malla()],
+            peers: pares_a,
+            rules: reglas_a,
+            advertised: vec![],
+            dns: DnsConfig::default(),
+        };
+        let cfg_b = DeviceConfig {
+            network_id: NET,
+            device_id: id_par(0),
+            issuer_serial: 1,
+            config_version: 1,
+            not_before: INICIO,
+            not_after: FIN,
+            noise_pubkey: kb.public,
+            identity_pubkey: ib.verifying_key().to_bytes(),
+            mtu: 1400,
+            tunnel_addrs: vec![IpAddr::V4(dir_par(0))],
+            network_prefixes: vec![red_malla()],
+            peers: vec![CfgPeer {
+                device_id: id_local(),
+                noise_pubkey: ka.public,
+                addrs: vec![IpAddr::V4(LOCAL)],
+                endpoints: vec![ep(A_EP)],
+                routes: vec![],
+            }],
+            rules: vec![regla(id_par(0), id_local()), regla(id_local(), id_par(0))],
+            advertised: vec![],
+            dns: DnsConfig::default(),
+        };
+        let (cfg_a, bytes) = firmar_y_verificar(
+            cfg_a,
+            LocalKeys {
+                noise_pub: ka.public,
+                identity_pub: ia.verifying_key().to_bytes(),
+            },
+            &emisor,
+            &cert,
+            &raiz,
+        );
+        let (cfg_b, _) = firmar_y_verificar(
+            cfg_b,
+            LocalKeys {
+                noise_pub: kb.public,
+                identity_pub: ib.verifying_key().to_bytes(),
+            },
+            &emisor,
+            &cert,
+            &raiz,
+        );
+        let mut a = Engine::new(NET, ka, 0);
+        let inicio = Instant::now();
+        a.apply_config(&cfg_a);
+        let aplicar = inicio.elapsed();
+        let mut b = Engine::new(NET, kb, 0);
+        b.apply_config(&cfg_b);
+        let lab = Lab {
+            a,
+            b,
+            cfg_a,
+            cfg_b,
+            now: Instant::now(),
+            unix: AHORA,
+            direct_ok: true,
+            relay_ok: true,
+        };
+        (lab, bytes, aplicar)
+    }
+
+    #[test]
+    fn malla_de_499_se_emite_firma_verifica_y_aplica_sin_tuneles_en_reposo() {
+        let (mut l, bytes, aplicar) = malla_499();
+        assert_eq!(l.cfg_a.peers.len(), VECINOS);
+        assert!(l.cfg_a.peers.len() <= MAX_V3_PEERS);
+        assert_eq!(l.cfg_a.rules.len(), 2 * (VECINOS - 1));
+        assert!(l.cfg_a.rules.len() <= MAX_V3_RULES);
+        assert_eq!(l.cfg_a.wire_version(), 3);
+        assert!(bytes <= 251 + MAX_V3_BODY_LEN);
+        let json = serde_json::to_string(&l.a.status(l.now, l.unix)).unwrap();
+        assert!(json.len() < (4 << 20), "estado IPC de {} bytes", json.len());
+        eprintln!(
+            "ADR-031 malla 499: configuración {bytes} B, aplicar {aplicar:?}, estado IPC {} B",
+            json.len()
+        );
+        // Un minuto de temporizadores sin tráfico: ningún par abre túnel ni envía datagramas.
+        let mut emitidos = 0;
+        for _ in 0..240 {
+            l.now += Duration::from_millis(250);
+            emitidos += l.a.on_tick(l.now, l.unix).len() + l.b.on_tick(l.now, l.unix).len();
+        }
+        assert_eq!(emitidos, 0);
+        let estado = l.a.status(l.now, l.unix);
+        assert_eq!(estado.peers.len(), VECINOS);
+        assert!(
+            estado
+                .peers
+                .iter()
+                .all(|p| p.session.is_none() && p.path == "none")
+        );
+    }
+
+    #[test]
+    fn solo_las_parejas_con_regla_reciben_trafico() {
+        let (mut l, _, _) = malla_499();
+        // Pareja con regla en ambos sentidos: el primer paquete levanta el túnel y llega al TUN del par.
+        let hacia_b = build_ipv4(LOCAL, dir_par(0), b"permitido");
+        let out = l.a.on_tun(&hacia_b, l.now, l.unix);
+        let (_, recibido_b) = pump(&mut l, out, vec![]);
+        assert_eq!(recibido_b, vec![hacia_b]);
+        let desde_b = build_ipv4(dir_par(0), LOCAL, b"respuesta");
+        let out = l.b.on_tun(&desde_b, l.now, l.unix);
+        let (recibido_a, _) = pump(&mut l, vec![], out);
+        assert_eq!(recibido_a, vec![desde_b]);
+        // Excepción: sin regla no sale nada y no se intenta ningún handshake con ese par.
+        let hacia_excepcion = build_ipv4(LOCAL, dir_par(EXCEPCION), b"excepcion");
+        assert!(l.a.on_tun(&hacia_excepcion, l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["tx_acl_denied"], 1);
+        // Destino fuera de la malla: sin ruta.
+        let fuera = build_ipv4(LOCAL, Ipv4Addr::new(10, 77, 200, 200), b"fuera");
+        assert!(l.a.on_tun(&fuera, l.now, l.unix).is_empty());
+        assert_eq!(l.a.counters.0["tx_no_route"], 1);
+        // De los 499 pares solo el que tiene tráfico tiene sesión.
+        let con_sesion: Vec<DeviceId> =
+            l.a.status(l.now, l.unix)
+                .peers
+                .into_iter()
+                .filter(|p| p.session.is_some())
+                .map(|p| p.device_id)
+                .collect();
+        assert_eq!(con_sesion, vec![id_par(0)]);
+        assert_eq!(l.a.counters.0["handshakes_initiator"], 1);
+    }
+
+    #[test]
+    fn el_unico_tunel_que_sobrevive_es_el_del_par_con_trafico() {
+        let (mut l, _, _) = malla_499();
+        let hacia_b = build_ipv4(LOCAL, dir_par(0), b"x");
+        let out = l.a.on_tun(&hacia_b, l.now, l.unix);
+        pump(&mut l, out, vec![]);
+        // Veinte segundos sin tráfico: el keepalive de cada 15 s va solo a B y ningún otro par emite nada.
+        let mut destinos = Vec::new();
+        for _ in 0..80 {
+            l.now += Duration::from_millis(250);
+            for salida in l.a.on_tick(l.now, l.unix) {
+                match salida {
+                    Out::Udp(to, _) => destinos.push(to),
+                    _ => panic!("salida no UDP sin tráfico"),
+                }
+            }
+        }
+        assert!(!destinos.is_empty(), "el túnel con B mantiene su keepalive");
+        assert!(destinos.iter().all(|to| *to == ep(B_EP)));
+    }
+
+    /// Más de 499 pares o más de 1536 reglas: el emisor no firma nada; justo en el límite sí.
+    #[test]
+    fn quinientos_pares_o_mas_de_1536_reglas_no_se_emiten() {
+        let (l, _, _) = malla_499();
+        let mut quinientos = l.cfg_a.clone();
+        quinientos.peers.push(CfgPeer {
+            device_id: id_par(VECINOS),
+            noise_pubkey: StaticKeypair::generate().public,
+            addrs: vec![IpAddr::V4(dir_par(VECINOS))],
+            endpoints: vec![],
+            routes: vec![],
+        });
+        quinientos.canonicalize();
+        assert_eq!(
+            quinientos.encode(),
+            Err(atenea_identity::Error::InvalidStructure)
+        );
+        quinientos.peers.pop();
+        assert!(quinientos.encode().is_ok(), "499 pares sí se emiten");
+        // 996 reglas de la malla más 541 TCP distintas entre dos pares existentes: 1537.
+        let mut demasiadas = l.cfg_a.clone();
+        demasiadas.rules.extend((1..=541u16).map(|puerto| Rule {
+            src: Selector::Device(id_par(0)),
+            dst: Selector::Device(id_par(1)),
+            proto: 6,
+            port_min: puerto,
+            port_max: puerto,
+        }));
+        demasiadas.canonicalize();
+        assert_eq!(demasiadas.rules.len(), MAX_V3_RULES + 1);
+        assert_eq!(
+            demasiadas.encode(),
+            Err(atenea_identity::Error::InvalidStructure)
+        );
+        demasiadas.rules.pop();
+        assert!(demasiadas.encode().is_ok(), "1536 reglas sí se emiten");
+        // Lo rechazado nunca se aplica: el motor de la malla sigue con sus 499 pares.
+        assert_eq!(l.a.status(l.now, l.unix).peers.len(), VECINOS);
     }
 }

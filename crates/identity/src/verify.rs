@@ -21,21 +21,22 @@ fn inspect_chain(
     min_serial: Option<u64>,
 ) -> Result<(usize, IssuerCert, DeviceConfig), ConfigError> {
     use ConfigError::*;
-    // 1: el tamaño declarado se comprueba incluso antes de despachar la versión.
-    if file.len() > 251 + MAX_BODY_LEN {
+    // 1: el tamaño declarado se comprueba incluso antes de despachar la versión; solo v3 admite el límite mayor.
+    let limit = body_limit(file.get(187));
+    if file.len() > 251 + limit {
         return Err(TooLarge);
     }
     let declared = file
         .get(183..187)
         .map(|b| u32::from_be_bytes(b.try_into().expect("longitud fija")) as usize);
-    if declared.is_some_and(|n| n > MAX_BODY_LEN) {
+    if declared.is_some_and(|n| n > limit) {
         return Err(TooLarge);
     }
     // 2: todas las cabeceras conocidas preceden al parseo estricto.
     if file.get(..4).is_some_and(|b| b != b"AOCF")
         || file.get(4).is_some_and(|v| *v != 1)
         || file.get(5..7).is_some_and(|b| b != [1, 1])
-        || file.get(187..189).is_some_and(|b| !matches!(b, [1 | 2, 2]))
+        || file.get(187..189).is_some_and(|b| !matches!(b, [1..=3, 2]))
     {
         return Err(UnsupportedVersion);
     }

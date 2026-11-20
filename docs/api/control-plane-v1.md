@@ -33,7 +33,7 @@ Migraciones versionadas en `apps/control-plane/migrations/`. Restricciones oblig
 | `configuration_versions` | `id bigserial`, `device_id`, `version bigint`, `config_hash bytea`, `not_before`, `not_after`, `issued_at`, `issuer_serial`; `unique(device_id, version)`; índice `configuration_versions_not_after(not_after)` (migración 0011); retención de 7 días en §21 |
 | `audit_events` | `id bigserial`, `at`, `actor_kind in ('user','device','system')`, `actor_id text`, `org_id null`, `network_id null`, `action text`, `target text`, `detail jsonb`; solo inserciones (el rol de aplicación no tiene `UPDATE` ni `DELETE` sobre esta tabla) |
 
-**IPAM.** Cada red tiene un CIDR IPv4 y uno IPv6. La asignación ocurre al **aprobar** un dispositivo, dentro de una transacción que bloquea la fila de la red (`SELECT … FOR UPDATE`): se toma la dirección libre más baja de cada familia (IPv4 sin dirección de red ni de difusión; IPv6 sin la dirección de red) y se insertan ambas asignaciones. Las restricciones únicas son la red de seguridad: ante una violación se reintenta una vez y después se devuelve `409`. Un dispositivo revocado libera sus direcciones. Tamaño máximo de red: 256 dispositivos aprobados (límite de pares del contrato); superarlo devuelve `409 network_full`.
+**IPAM.** Cada red tiene un CIDR IPv4 y uno IPv6. La asignación ocurre al **aprobar** un dispositivo, dentro de una transacción que bloquea la fila de la red (`SELECT … FOR UPDATE`): se toma la dirección libre más baja de cada familia (IPv4 sin dirección de red ni de difusión; IPv6 sin la dirección de red) y se insertan ambas asignaciones. Las restricciones únicas son la red de seguridad: ante una violación se reintenta una vez y después se devuelve `409`. Un dispositivo revocado libera sus direcciones. Tamaño máximo de red: 500 dispositivos aprobados (499 pares, límite del cuerpo v3; §29); superarlo devuelve `409 network_full`. Un agente que no declara `config_v3` sigue limitado a 256 pares y 256 reglas.
 
 ## 3. Autenticación y autorización
 
@@ -80,8 +80,8 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `GET /api/v1/orgs/{org}/members`; `PUT …/members/{user}` `{role}`; `DELETE …/members/{user}` | member / owner / owner | Ver `PUT` también añade un usuario ya registrado (por `user` id) |
 | `POST /api/v1/orgs/{org}/members` `{email, role}` | owner | Añade o cambia el rol por correo exacto sin distinguir mayúsculas; usuario ya registrado (§16) |
 | `PATCH /api/v1/orgs/{org}` `{name}` | owner | Renombra organización; `200 {id, name}` (§16) |
-| `PATCH /api/v1/networks/{net}` `{name}` | admin | Renombra red; `200 Network` (§16) |
-| `POST /api/v1/orgs/{org}/networks` `{name, ipv4_cidr, ipv6_cidr, root_anchor}` | admin | `root_anchor` en hex (32 bytes). Genera `network_id` |
+| `PATCH /api/v1/networks/{net}` `{name?, auto_connect?}` | admin | Renombra la red y/o cambia `auto_connect` (§29); `200 Network` (§16) |
+| `POST /api/v1/orgs/{org}/networks` `{name, ipv4_cidr, ipv6_cidr, root_anchor, auto_connect?}` | admin | `root_anchor` en hex (32 bytes). Genera `network_id`. `auto_connect` vale `true` por defecto (§29) |
 | `GET /api/v1/orgs/{org}/networks`; `GET /api/v1/networks/{net}` | member | Lista y detalle (incluye si hay certificado de emisor) |
 | `PUT /api/v1/networks/{net}/issuer-cert` (cuerpo binario 178 bytes) | admin | Valida que el certificado parsea, que su `network_id` coincide, que está firmado por `root_anchor`, que sigue vigente y que es de la clave de emisor del servidor (`400 wrong_issuer` si no). **Rechaza con `409 serial_rollback` un serial menor que el del certificado instalado** (los agentes lo rechazarían como `issuer_rollback` y perderían el lease); el mismo serial se acepta. Un certificado instalado ilegible no lo impide. *Desde la versión posterior a la 0.1.6; la 0.1.6 y anteriores no lo comprueban.* |
 | `DELETE /api/v1/networks/{net}` | admin | Elimina la red y sus dispositivos (cascada) |
@@ -90,12 +90,14 @@ Prefijo `/api/v1`. Cuerpos JSON salvo indicación. Las rutas con `{org}`, `{net}
 | `POST /api/v1/networks/{net}/devices/{dev}/approve` | admin | Asigna IPv4+IPv6 en transacción; `409` si ya está aprobado o si la red está llena |
 | `POST /api/v1/networks/{net}/devices/{dev}/revoke` | admin | Marca `revoked`, libera direcciones; el dispositivo deja de recibir configuración y desaparece de la de sus peers en la siguiente emisión |
 | `PATCH /api/v1/networks/{net}/devices/{dev}` `{name?, use_system_name?, endpoints?, role?}` | admin | Nombre administrativo o vuelta al nombre del sistema (§12); `endpoints`: lista de `ip:puerto`; cambio de rol con auditoría (§15) |
+| `GET /api/v1/networks/{net}/devices/{dev}/auto-peers` | member | UUID de los dispositivos con conexión automática con este (§29) |
+| `DELETE /api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}` | admin | Excluye una conexión automática: `204`; `404` si no es automática (§29) |
 | `GET/POST /api/v1/networks/{net}/policies`; `DELETE …/policies/{id}` | member / admin / admin | Cada política se valida: selectores existentes en la red, prefijos dentro de los CIDR de la red, puertos coherentes (solo TCP/UDP, `port_min ≤ port_max`), como máximo 256 políticas |
 | `GET /api/v1/networks/{net}/audit?limit=&before=` | member | Eventos de auditoría de la red, paginados |
-| `POST /api/v1/enroll` `{token, bundle (hex, 146 bytes), name, name_auto?}` | token | Ver §5 y §12; `name_auto` por defecto `false` |
+| `POST /api/v1/enroll` `{token, bundle (hex, 146 bytes), name, name_auto?, config_v3?}` | token | Ver §5 y §12; `name_auto` por defecto `false`; `config_v3` por defecto `false` (§29) |
 | `PUT /api/v1/networks/{net}/join-policy` `{policy}` | admin | `cerrada` \| `con_solicitud` (§13) |
 | `GET /api/v1/networks/{net}/join-code` | admin | Código de red sin token y huella de la raíz (§13) |
-| `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?}` | público | Solicitud de unión sin token (§13) |
+| `POST /api/v1/networks/{net}/join-requests` `{bundle, name, name_auto?, config_v3?}` | público | Solicitud de unión sin token (§13); `config_v3` por defecto `false` (§29) |
 | `GET /api/v1/device/config` | dispositivo (§3.3) | Ver §6 |
 | `GET /api/v1/device/peers` | dispositivo (§3.3) | Nombres, roles y servicios publicados (§20) no firmados de los mismos pares autorizados que config; `Cache-Control: no-store` (§12, §15, §20) |
 | `POST /api/v1/device/leave` (cuerpo vacío) | dispositivo (§3.3) | Revoca únicamente la identidad firmante, también pendiente; idempotente (§14) |
@@ -133,7 +135,7 @@ Los límites por IP usan la IP cliente: `X-Real-IP` solo si el peer TCP está en
 - `issuer_serial` y la firma: de la clave del emisor del control plane y del certificado guardado en la red. Si la red no tiene certificado o este caduca antes del final de la validez pedida: `503 issuer_unavailable`; el `not_after` nunca supera el del certificado.
 - `not_before = now`; `not_after = now + config_validity_secs` (por defecto **300**, ADR-002 piloto). `config_version`: milisegundos Unix, estrictamente mayor que la última emitida para ese dispositivo (`max(now_ms, última + 1)` dentro de la misma transacción que registra `configuration_versions`).
 - **Pares:** dispositivos `approved` de la red que cumplen alguna política contra este dispositivo: para cada política en la que este dispositivo coincide como origen o destino, los dispositivos que coinciden con el otro selector (`any` = todos; prefijo = los que tienen una dirección dentro; dispositivo = ese). Sin política no hay pares. Máximo 256. Cada par lleva `endpoints` desde la columna del dispositivo.
-- **Reglas:** por cada política relevante, la regla del contrato con selectores traducidos (`device` → `Device(id)`, `prefix` → `Prefix`, `any` → `Any`), más su **regla inversa** (misma `proto`, origen y destino intercambiados, sin puertos), porque las ACL del agente no tienen estado (contrato §8). Se eliminan duplicados; máximo 256 reglas (si se supera: `409 policy_overflow` al crear la política que lo provoca, comprobado con una emisión de prueba).
+- **Reglas:** por cada política relevante, la regla del contrato con selectores traducidos (`device` → `Device(id)`, `prefix` → `Prefix`, `any` → `Any`), más su **regla inversa** (misma `proto`, origen y destino intercambiados, sin puertos), porque las ACL del agente no tienen estado (contrato §8). Se eliminan duplicados; máximo 256 reglas, o 1536 para un agente que declara `config_v3` (§29). Si se supera: `409 policy_overflow`, o `409 config_v3_required` con `error.device_id` cuando el afectado es un agente sin esa capacidad, al intentar el cambio que lo provoca; se comprueba contando los pares y reglas de todos los dispositivos de la red.
 - Respuesta `200 application/octet-stream` con el fichero `SignedConfig` completo y cabeceras `X-Config-Version` y `Cache-Control: no-store`. Actualiza `last_config_at`.
 
 **Bidireccionalidad efectiva (ACL sin estado).** Una política A→B `tcp/22` permite también a B iniciar tráfico TCP a A en **cualquier puerto**. La regla inversa no distingue respuestas de conexiones nuevas ni conserva el límite de puertos de la regla original; sí conserva el protocolo y los selectores intercambiados. No use una política de este tipo para expresar acceso estrictamente unidireccional o retorno limitado a conexiones iniciadas por A. Revise ambos sentidos antes de crearla, también cuando los selectores incluyen subredes. **Medido (2026-10-29, `tests/network-lab/e2e-cp.sh`):** con puertos en la regla original, una conexión TCP iniciada por B no llega a completarse (A no puede responder fuera de esos puertos), pero su SYN sí llega a A; en UDP e ICMP el tráfico inverso pasa a cualquier puerto. Ver ADR-016.
@@ -192,7 +194,8 @@ Contrato compartido por backend (`apps/control-plane`, agente) y panel (`apps/we
 
 ### 10.2 Informe de estado del dispositivo
 
-`POST /api/v1/device/status` (autenticación de dispositivo §3.3; solo `approved`). Cuerpo ≤ 64 KiB: `{"nat_mapping"?: …, "paths": [{"peer","path","last_rx_secs"?,"rtt_ms"?,"relay"?}]}`, como máximo 256 caminos, `peer` UUID de un dispositivo de la misma red, `path` en el conjunto de §10.1; se rechaza con `400` cualquier otra cosa. Reemplaza el último informe del dispositivo (tabla `device_reports`, uno por dispositivo) y responde `204`. Máximo un informe cada 5 s por dispositivo (`429`). No genera evento de auditoría (alta frecuencia, sin cambio de autorización). Notifica `changed/devices` por WebSocket.
+`POST /api/v1/device/status` (autenticación de dispositivo §3.3; solo `approved`). Cuerpo ≤ 256 KiB: `{"nat_mapping"?: …, "paths": [{"peer","path","last_rx_secs"?,"rtt_ms"?,"relay"?}]}`, como máximo 499 caminos, `peer` UUID de un dispositivo de la misma red, `path` en el conjunto de §10.1; se rechaza con `400` cualquier otra cosa. Reemplaza el último informe del dispositivo (tabla `device_reports`, uno por dispositivo) y responde `204`. Máximo un informe cada 5 s por dispositivo (`429`). No genera evento de auditoría (alta frecuencia, sin cambio de autorización). Notifica `changed/devices` por WebSocket.
+Consulta opcional `?config_v3=true` (§29): declara que el agente sabe leer la configuración firmada v3. Va en la consulta, dentro de la firma AtDevice.
 
 El agente informa cada 15 s mientras tenga `[sync]` configurado y configuración vigente; no incluye IPs externas ni claves.
 
@@ -218,7 +221,7 @@ Editor Monaco, creación de claves o certificados desde el panel (la raíz y el 
 ### Resoluciones
 
 - `connection` es un campo explícito del inventario, calculado en el servidor; `age_secs` es el número entero de segundos transcurridos, truncado y nunca negativo. Las fechas opcionales y las asignaciones ausentes son `null`.
-- Los informes rechazan campos desconocidos, tipos inválidos, números negativos y cuerpos mayores de 64 KiB con `400 invalid_report`; la limitación de 5 s usa el reloj PostgreSQL y bloqueo del dispositivo para que dos peticiones simultáneas no la eludan. `relay` admite hasta 255 bytes sin caracteres de control.
+- Los informes rechazan campos desconocidos, tipos inválidos, números negativos y cuerpos mayores de 256 KiB con `400 invalid_report`; la limitación de 5 s usa el reloj PostgreSQL y bloqueo del dispositivo para que dos peticiones simultáneas no la eludan. `relay` admite hasta 255 bytes sin caracteres de control.
 - El camino predominante de una muestra es la categoría más frecuente entre los caminos del informe (`relay-udp` y `relay-tls` se agrupan en `relay`; `none` en `unknown`). Los empates se resuelven por orden alfabético de categoría. Sin informe es `unknown`; desde 600 s es `offline`; los informes `stale` conservan su categoría hasta ese umbral. Solo cuentan dispositivos aprobados. Se muestrea también al arrancar y se eliminan muestras anteriores a siete días en la misma transacción. `limit` exige 1..1000, y se devuelven las últimas muestras solicitadas en orden temporal ascendente.
 - No hay catálogo ni endpoint nuevo de relays: el panel obtiene los relays observados de `report.paths[].relay`. El agente incluye el nombre declarado por su cliente relay cuando conoce la asignación y coincide con el transporte activo; si no lo conoce, devuelve `null`. No envía direcciones de transporte ni claves.
 - Los eventos se publican tras confirmar las escrituras. La secuencia es global por proceso; cada conexión solo recibe eventos de su red. Se revalida sesión y pertenencia antes de enviar eventos y cada ping. Un consumidor que pierde mensajes por saturación se desconecta para forzar resincronización REST. Los límites de conexiones se liberan también al fallar el upgrade o desconectarse.
@@ -357,7 +360,7 @@ POST limita antes de consultar usuarios: cubo de tokens por sesión, ráfaga 10 
 ### Renombrado
 
 - `PATCH /api/v1/orgs/{org}`: solo owner, cuerpo `{"name": string}`, respuesta `200 {"id": string(uuid), "name": string}` (`OrganizationCreated`). Nombre no vacío ni solo espacios; máximo 255 bytes UTF-8, sin normalización ni recorte, como al crear. No existe unicidad entre nombres de organizaciones. Auditoría `org.rename`, detalle `{"previous_name": string, "name": string}`.
-- `PATCH /api/v1/networks/{net}`: owner/admin, mismo cuerpo, respuesta `200 Network`. Mismo validador base que crear; además nombre y URL pública deben caber en el código de unión: nombre de 1 a 48 bytes UTF-8, sin recortes, controles ni marcas bidireccionales, y URL HTTPS compatible de hasta 100 bytes y sin barra final. Unicidad exacta dentro de la organización (no entre organizaciones). Auditoría `network.rename`, mismo detalle anterior/nuevo.
+- `PATCH /api/v1/networks/{net}`: owner/admin, cuerpo `{name?, auto_connect?}` (§29), respuesta `200 Network`. Mismo validador base que crear; además nombre y URL pública deben caber en el código de unión: nombre de 1 a 48 bytes UTF-8, sin recortes, controles ni marcas bidireccionales, y URL HTTPS compatible de hasta 100 bytes y sin barra final. Unicidad exacta dentro de la organización (no entre organizaciones). Auditoría `network.rename`, mismo detalle anterior/nuevo.
 
 Ambos requieren cookie + CSRF. Errores comunes: `400 invalid_name`, `401 invalid_session`, `403 csrf` o `forbidden`, `404 not_found` para recurso ajeno. Red duplicada: `409 conflict`; incompatibilidad con el código: `409 invalid_network_name_for_code` o `409 invalid_public_url_for_code`, los mismos códigos que `GET …/join-code`. Una escritura fallida revierte tanto nombre como auditoría.
 
@@ -366,6 +369,8 @@ El nombre viaja en el código: uno ya emitido conserva el nombre anterior **solo
 ### Caducidad e información del control plane
 
 `Network` (creación, GET, listados y PATCH) contiene `issuer_cert_not_after: string(date-time)|null`, calculado del `not_after` del certificado de emisor almacenado. Null si no existe; no se devuelve el certificado ni se oculta la fecha si ya caducó. Conserva los campos `id: string(uuid)`, `org_id: string(uuid)`, `name: string`, `ipv4_cidr: string`, `ipv6_cidr: string|null` (§28), `root_anchor: string(hex de 32 bytes)`, `has_issuer_cert: boolean` y `join_policy: "cerrada"|"con_solicitud"`.
+
+`auto_connect: boolean` (§29) también forma parte de `Network` y de `SharedNetwork`.
 
 `GET /api/v1/server` exige sesión y al menos una membresía (cualquier rol), sin CSRF por ser lectura. Respuesta `200 Server`, `Cache-Control: no-store`:
 
@@ -426,7 +431,7 @@ Uso: `Authorization: Bearer atsvc_…` en cualquier `GET` de lectura de administ
 
 La migración `0010_device_services.sql` añade `devices.services jsonb NOT NULL DEFAULT '[]'` y `devices.services_at timestamptz` (nulo hasta el primer informe con servicios). Es un metadato **de presentación, sin firmar**, como el nombre y el rol: no viaja en la configuración firmada ni autoriza, enruta o abre nada.
 
-**Informe (`POST /api/v1/device/status`).** Campo opcional `services`: lista de `{"port": 1..=65535, "proto": "tcp", "scheme"?: "http"|"https", "label"?: string}`. Se aplican la autenticación, el límite de 64 KiB, el nonce y la tasa (5 s) ya descritos; no hay límites nuevos salvo estos:
+**Informe (`POST /api/v1/device/status`).** Campo opcional `services`: lista de `{"port": 1..=65535, "proto": "tcp", "scheme"?: "http"|"https", "label"?: string}`. Se aplican la autenticación, el límite de 256 KiB, el nonce y la tasa (5 s) ya descritos; no hay límites nuevos salvo estos:
 
 - Como máximo **64** servicios; **puertos duplicados se rechazan** (no se deduplican); puerto `0` rechazado.
 - `proto` solo `tcp`; `scheme` por defecto `http` (se guarda ya normalizado); `label` de 1 a 32 caracteres Unicode tras recortar espacios, con las mismas reglas de caracteres que los nombres de dispositivo (§12: sin controles C0/C1 ni marcas bidireccionales).
@@ -576,3 +581,16 @@ La migración `0017_managed_networks.sql` añade `networks.root_mode` (`own` por
 - `PUT /api/v1/networks/{net}/issuer-cert` responde `409 managed_network` en una red gestionada: el servidor firma y renueva su certificado.
 - **Renovación:** una tarea del control plane revisa cada hora las redes gestionadas y firma un certificado con serial mayor cuando el instalado ha consumido dos tercios de su vida (o falta). La raíz se descifra solo en memoria durante la firma. Si no se puede descifrar (clave de envoltura distinta) no se toca el certificado vigente.
 - El agente y los formatos firmados **no cambian**: el certificado es el de ADR-005.
+
+## 29. Conexiones automáticas y capacidad config_v3 (ADR-031)
+
+- **Ajuste de red.** `auto_connect` (booleano). `POST /api/v1/orgs/{org}/networks` lo acepta y vale `true` por defecto. `PATCH /api/v1/networks/{net}` lo cambia junto con `name` o por separado (admin u owner); sin ninguno de los dos responde `400 invalid_request`. Las redes existentes reciben `false` al migrar, sin cambiar su acceso. El cambio solo afecta a las aprobaciones futuras: no altera conexiones existentes. Se audita como `network.auto_connect` solo si difiere del valor guardado.
+- **Pares automáticos.** Dos dispositivos aprobados de la misma red tienen conexión automática si el aprobado más tarde tenía el ajuste activo en su aprobación y no existe una exclusión para esa pareja. Las exclusiones se guardan sin dirección. Los dispositivos aprobados antes de la migración no se conectan automáticamente entre sí. Un dispositivo revocado queda excluido de ambas vías.
+- **Consulta.** `GET /api/v1/networks/{net}/devices/{dev}/auto-peers` (member) devuelve un array de UUID: solo los pares con conexión automática de ese dispositivo. No incluye las conexiones que existen solo por políticas manuales.
+- **Exclusión.** `DELETE /api/v1/networks/{net}/devices/{dev}/auto-peers/{peer}` (admin u owner) registra una exclusión: `204` si la pareja tenía conexión automática y `404` si no es automática o no existe. No borra ni modifica políticas manuales: una política manual puede seguir permitiendo el acceso. La exclusión permanece tras reconectar uno de los dos dispositivos. Se audita como `auto_peer.block` con `{peer}`.
+- **Alcance.** La conexión automática cubre dispositivos. No concede acceso a subredes anunciadas, funciones de administración ni a otras redes.
+- **Capacidad `config_v3`.** Declara que el agente sabe leer la configuración firmada v3. Vale `false` por defecto:
+  - `POST /api/v1/enroll` y `POST /api/v1/networks/{net}/join-requests`: campo booleano opcional en el cuerpo JSON. Un control plane anterior sin ese campo lo ignora.
+  - `POST /api/v1/device/status`: parámetro de consulta opcional `?config_v3=true` o `?config_v3=false`. Fija la capacidad guardada del dispositivo; sin el parámetro no cambia lo guardado. Cada cambio se audita (`device.config_v3`). Va en la consulta, y por tanto dentro de la firma AtDevice (§3.3), porque ese cuerpo es estricto en servidores anteriores.
+  - El servidor emite v3 solo a un agente que lo declara y solo cuando la configuración supera la capacidad de v1/v2 (más de 256 pares o reglas). Una configuración v3 admite hasta 499 pares y 1536 reglas. Nunca trunca pares ni abre una regla global para ahorrar espacio. Si una aprobación produce una configuración no representable para un agente afectado, se rechaza la aprobación completa, sin cambios parciales.
+- **Auditoría.** Además de las acciones de §4, este bloque añade `network.auto_connect`, `auto_peer.block` y `device.config_v3`.

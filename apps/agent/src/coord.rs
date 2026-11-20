@@ -7,7 +7,7 @@
 use crate::config::CoordinatorConfig;
 use crate::relay::RelayEndpoint;
 use atenea_identity::{DeviceId, Prefix, SigningKey, api_auth::sign_request};
-use atenea_nat_traversal::candidate_ok;
+use atenea_nat_traversal::{MAX_CANDIDATES, candidate_ok, sanitize_candidates};
 use atenea_policies::prefix_contains;
 use base64::Engine as _;
 use serde::Deserialize;
@@ -235,6 +235,9 @@ pub fn announce(
     ts: u64,
 ) -> Result<(), RequestError> {
     let (url, pq) = target(cfg, "/v1/announce")?;
+    // Mismo saneado y tope que el coordinator: enviar solo estos no cambia su tabla y acota el cuerpo
+    // (peor caso v3 con 8 candidatos IPv6: 318 396 B; tope del coordinator 327 680 B).
+    let candidates = sanitize_candidates(candidates.to_vec(), MAX_CANDIDATES);
     let body = serde_json::json!({
         "config": base64::engine::general_purpose::STANDARD.encode(signed_config),
         "candidates": candidates.iter().map(|c| c.to_string()).collect::<Vec<_>>(),

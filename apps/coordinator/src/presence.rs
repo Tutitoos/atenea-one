@@ -1,6 +1,6 @@
 // Copyright 2026 Tutitoos
 // SPDX-License-Identifier: Apache-2.0
-use atenea_identity::{DeviceConfig, DeviceId};
+use atenea_identity::{DeviceId, NetworkId, PublicKey};
 use serde::Serialize;
 use std::{
     collections::{HashMap, VecDeque},
@@ -32,7 +32,10 @@ pub enum Event {
     },
 }
 pub(crate) struct Presence {
-    pub config: DeviceConfig,
+    pub network_id: NetworkId,
+    pub identity_pubkey: PublicKey,
+    /// Identificadores ordenados de la configuración ya verificada, sin conservar reglas ni endpoints.
+    pub peers: Box<[DeviceId]>,
     pub candidates: Vec<SocketAddr>,
     pub expires: u64,
     pub events: VecDeque<(u64, Event)>,
