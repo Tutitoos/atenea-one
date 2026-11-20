@@ -172,7 +172,7 @@ trust_anchor = "$anchor"
     foreach ($n in $nets) { Invoke-Cli network up $n.Short | Out-Null }
     foreach ($n in $nets) {
         $s = Service-Info-Of $n.Service
-        Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Auto') "servicio $($n.Service): $($s.State)/$($s.StartMode)"
+        Assert-True ($s.State -eq 'Running' -and $s.StartMode -eq 'Manual') "servicio $($n.Service): $($s.State)/$($s.StartMode)"
         $pipe = $n.Pipe
         Assert-True (Wait-Until { try { Invoke-Cli status --socket $pipe | Out-Null; $true } catch { $false } }) "la tubería $pipe no responde"
         $nic = Get-NetAdapter -Name $n.Alias -IncludeHidden -ErrorAction SilentlyContinue
