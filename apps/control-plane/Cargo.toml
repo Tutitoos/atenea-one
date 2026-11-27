@@ -43,4 +43,4 @@ http-body-util = "0.1"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 rsa = { version = "0.9", features = ["pem"] }
 tower = { version = "0.5", features = ["util"] }
-url = "=2.5.8"
+url = "=2.5.9"
