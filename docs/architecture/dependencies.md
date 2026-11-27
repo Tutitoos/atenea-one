@@ -167,7 +167,7 @@ Los estáticos usan Tokio y Axum existentes, sin otro servidor de ficheros.
 | `tungstenite` | 0.29.0 | MIT OR Apache-2.0 | Protocolo WebSocket transitivo |
 | `rand`, `rand_core`, `rand_chacha` | 0.9.5, 0.9.5, 0.9.0 | MIT OR Apache-2.0 | Aleatoriedad del protocolo WebSocket transitivo |
 | `futures-util`, `futures-macro` | 0.3.34, 0.3.34 | MIT OR Apache-2.0 | Lectura asíncrona del cliente de pruebas; macro transitiva |
-| `url` | 2.5.8 | MIT OR Apache-2.0 | Dependencia de pruebas ya existente, ahora fijada; producción reutiliza `reqwest::Url` para validar Origin |
+| `url` | 2.5.9 | MIT OR Apache-2.0 | Dependencia de pruebas ya existente, ahora fijada; producción reutiliza `reqwest::Url` para validar Origin. 2.5.9 corrige RUSTSEC-2026-0592 (desbordamiento de pila en `Url::origin()` con URLs `blob:` anidadas) |
 
 ### Fase 6 — Panel web
 
