@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/quiet"
 )
 
 // MaxStatusBytes es el tope de la respuesta del agente (ADR-011 §2).
@@ -68,6 +70,8 @@ func RunElevated(program string, args ...string) (string, error) {
 func runCtx(ctx context.Context, program string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.WaitDelay = time.Second // un nieto que conserve las tuberías no puede retener la espera
+	// Sin consola propia, cada ejecutable de consola abriría una ventana (en Windows, a cada sondeo).
+	quiet.Hide(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

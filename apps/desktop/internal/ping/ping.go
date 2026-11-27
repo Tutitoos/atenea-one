@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Tutitoos/atenea-one/apps/desktop/internal/quiet"
 )
 
 var errBad = errors.New("respuesta de ping no válida")
@@ -268,6 +270,7 @@ var Exec = execute
 func execute(program string, args []string, timeout time.Duration) (string, error) {
 	cmd := exec.Command(program, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	quiet.Hide(cmd) // ping.exe es de consola: sin esto abre una ventana en cada medición
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Start(); err != nil {
