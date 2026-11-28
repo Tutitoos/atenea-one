@@ -15,7 +15,7 @@ import (
 	"unicode"
 )
 
-// En Windows la salida de una operación elevada con `Start-Process -Verb RunAs` no se puede capturar, y el proceso
+// En Windows la salida de una operación elevada con `Verb = runas` (PowerShell) no se puede capturar, y el proceso
 // elevado nunca escribe en una ruta que controle el usuario (ADR-017 §8). El CLI elevado deja el resultado en
 // `%ProgramData%\Atenea\ui-results\<nonce>\result.json`, una carpeta que solo SYSTEM y Administradores pueden escribir y
 // que `Users` pueden leer. El nonce lo elige la aplicación. El resultado solo aporta el mensaje de error: el estado

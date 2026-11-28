@@ -216,9 +216,15 @@ func ElevationCommand(goos, script, prompt string) (string, []string, error) {
 	return "", nil, errors.New("elevación no soportada en este sistema")
 }
 
-// windowsElevation convierte una orden de WindowsScript (`"<exe>" <argumentos>`) en `powershell.exe` con
-// `Start-Process -Verb RunAs` (sin FFI, ADR-017 §8). El proceso elevado corre oculto y se espera; PowerShell sale con su
-// código de salida, y con 126 si el usuario cierra el diálogo de UAC (error 1223), que es lo que runCtx llama «Cancelado».
+// windowsElevation convierte una orden de WindowsScript (`"<exe>" <argumentos>`) en `powershell.exe` que lanza el CLI con
+// `[Diagnostics.Process]::Start` y `Verb = runas` (sin FFI, ADR-017 §8). El proceso elevado corre oculto y se espera;
+// PowerShell sale con su código de salida, y con 126 si el usuario cierra el diálogo de UAC (error 1223), que es lo que
+// runCtx llama «Cancelado».
+//
+// No se usa `Start-Process -Verb RunAs`: en Windows PowerShell 5.1 su excepción es una `InvalidOperationException` sin
+// excepción interna, así que el error 1223 no se puede reconocer (medido en un Windows real el 2026-11-28; la cancelación
+// salía como un error genérico con el texto de PowerShell). `Process.Start` lanza `Win32Exception` con su
+// `NativeErrorCode`, y además conserva el código de salida (con `Start-Process -PassThru` puede llegar como `$null`).
 func windowsElevation(script string) (string, []string, error) {
 	exe, args, ok := splitWindowsScript(script)
 	if !ok {
@@ -228,7 +234,7 @@ func windowsElevation(script string) (string, []string, error) {
 	if root == "" {
 		root = `C:\Windows`
 	}
-	ps := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; try { $p = Start-Process -FilePath '%s' -ArgumentList '%s' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { $e = $_.Exception; while ($e.InnerException) { $e = $e.InnerException }; if ($e -is [ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { exit 126 }; [Console]::Error.WriteLine($e.Message); exit 1 }`, exe, args)
+	ps := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; try { $i = New-Object Diagnostics.ProcessStartInfo; $i.FileName = '%s'; $i.Arguments = '%s'; $i.UseShellExecute = $true; $i.Verb = 'runas'; $i.WindowStyle = 'Hidden'; $p = [Diagnostics.Process]::Start($i); if (-not $p) { [Console]::Error.WriteLine('no se pudo iniciar el proceso'); exit 1 }; $p.WaitForExit(); exit $p.ExitCode } catch { $e = $_.Exception; while ($e.InnerException) { $e = $e.InnerException }; if ($e -is [ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { exit 126 }; [Console]::Error.WriteLine($e.Message); exit 1 }`, exe, args)
 	return root + `\System32\WindowsPowerShell\v1.0\powershell.exe`,
 		[]string{"-NoProfile", "-NonInteractive", "-Command", ps}, nil
 }

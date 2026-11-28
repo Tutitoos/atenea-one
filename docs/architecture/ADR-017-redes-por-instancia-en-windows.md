@@ -73,7 +73,7 @@ Es el equivalente Windows de la comprobación `trusted` de Unix.
 
 ### 8. Elevación desde la app (UAC)
 
-- La app lanza el CLI con `powershell.exe -NoProfile -Command Start-Process … -Verb RunAs -Wait` (sin FFI, sin `unsafe`), con argumentos validados en Rust como en macOS y Linux.
+- La app lanza el CLI con `powershell.exe -NoProfile -Command` y `[Diagnostics.Process]::Start` con `Verb = runas` (sin FFI, sin `unsafe`), con argumentos validados en Rust como en macOS y Linux. **Corrección 2026-11-28 (medida en un Windows real):** el diseño original usaba `Start-Process -Verb RunAs`, pero en Windows PowerShell 5.1 su excepción es una `InvalidOperationException` sin excepción interna y la cancelación del UAC (error 1223) no se podía reconocer: salía como error genérico. `Process.Start` lanza `Win32Exception` con `NativeErrorCode`, así que se sale con 126 («Cancelado») como en macOS y Linux.
 - **Canal de resultado:** la salida no se puede capturar, y **el proceso elevado nunca escribe en una ruta que controle el usuario** (sería una escritura privilegiada a una ruta atacante). El CLI elevado escribe `result.json` en `%ProgramData%\Atenea\ui-results\<nonce>\`, creado por el lado elevado con DACL de escritura solo para SYSTEM y Administradores y de lectura para `Users`; el `nonce` (32 hex) lo elige la app y se valida. Tras la operación la app relee `network list` (sin privilegios) como fuente de verdad del estado; `result.json` solo aporta el mensaje de error. El CLI limpia los resultados antiguos.
 - Paridad aceptada con ADR-011: el código de unión (que puede llevar token de un solo uso) viaja como argumento de la orden elevada, igual que con `osascript` y `pkexec`.
 
