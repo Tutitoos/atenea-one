@@ -12,7 +12,7 @@ description = "Control plane de Atenea One"
 workspace = true
 
 [dependencies]
-argon2 = "0.5"
+argon2 = "0.6"
 atenea-observability.workspace = true
 atenea-identity.workspace = true
 atenea-nat-traversal.workspace = true
