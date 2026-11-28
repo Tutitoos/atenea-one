@@ -75,9 +75,10 @@ func TestWindowsElevationRunsPowerShellWithRunAsAndMapsCancellation(t *testing.T
 		t.Fatalf("argumentos inesperados: %q", args)
 	}
 	for _, want := range []string{
-		`-FilePath '` + winCLI + `'`,
-		`-ArgumentList 'network up ` + testID + ` --result ` + winNonce + `'`,
-		`-Verb RunAs`, `-Wait`, `-PassThru`, `-WindowStyle Hidden`,
+		`$i.FileName = '` + winCLI + `'`,
+		`$i.Arguments = 'network up ` + testID + ` --result ` + winNonce + `'`,
+		`$i.UseShellExecute = $true`, `$i.Verb = 'runas'`, `$i.WindowStyle = 'Hidden'`,
+		`[Diagnostics.Process]::Start($i)`, `$p.WaitForExit()`,
 		`exit $p.ExitCode`,
 		// El diálogo cerrado (error 1223) sale con 126, que runCtx traduce a «Cancelado».
 		`NativeErrorCode -eq 1223) { exit 126 }`,
@@ -85,6 +86,11 @@ func TestWindowsElevationRunsPowerShellWithRunAsAndMapsCancellation(t *testing.T
 		if !strings.Contains(args[3], want) {
 			t.Errorf("falta %q en %s", want, args[3])
 		}
+	}
+	// Start-Process no deja ver el error 1223 (InvalidOperationException sin excepción interna): la cancelación saldría
+	// como un error genérico en lugar de «Cancelado».
+	if strings.Contains(args[3], "Start-Process") {
+		t.Error("la elevación no debe usar Start-Process: oculta el error 1223 de la cancelación del UAC")
 	}
 	if strings.Contains(args[3], "texto que Windows no usa") {
 		t.Error("el aviso de Unix no debe viajar a PowerShell")

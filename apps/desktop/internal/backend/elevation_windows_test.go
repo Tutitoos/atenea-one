@@ -14,7 +14,7 @@ import (
 )
 
 // TestWindowsElevationAcceptance ejerce la ruta REAL de la aplicación (comprobación del CLI de Archivos de programa,
-// `powershell.exe Start-Process -Verb RunAs`, canal result.json) contra un cliente ya instalado y una red ya unida.
+// `powershell.exe` con `[Diagnostics.Process]::Start` y `Verb = runas`, canal result.json) contra un cliente ya instalado y una red ya unida.
 // Solo se ejecuta en el runner desechable de CI: `tests/windows/network-checks.ps1` instala, une la red y fija
 // ATENEA_ACCEPTANCE_NETWORK. En el runner UAC no pide confirmación (la cuenta ya es administrador), así que el diálogo
 // y su cancelación NO se ejercitan aquí: eso exige un Windows real (ADR-017 §8).
